@@ -1,0 +1,17 @@
+# IsLoadedByImportOnly is for a module with a runtimeModule
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 5
+
+module m0 path="main" displayPath="main" body=f0
+module m1 path="goodRuntimeSource" displayPath="goodRuntimeSource" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule runtimeModule=BunSqlite body=f1
+module m2 path="goodRuntime" displayPath="goodRuntime" kind=Runtime flags=[IsLoadedByImportOnly] exportRule=RuntimeModule runtimeModule=BunFfi
+module m3 path="badSourceText" displayPath="badSourceText" flags=[IsLoadedByImportOnly]
+module m4 path="badCommonJs" displayPath="badCommonJs" kind=CommonJs flags=[IsLoadedByImportOnly] exportRule=CommonJs body=f2
+module m5 path="badData" displayPath="badData" kind=Data flags=[IsLoadedByImportOnly]
+module m6 path="badExternal" displayPath="badExternal" kind=External flags=[IsLoadedByImportOnly] referrer=m0
+module m7 path="badLibraryWithoutRuntimeModule" displayPath="badLibraryWithoutRuntimeModule" kind=RuntimeSource flags=[IsLibrary, IsLoadedByImportOnly] exportRule=RuntimeModule
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}]
+function f1 name="" results=[{type=anything}]
+function f2 name="" kind=CommonJsModule results=[{type=anything}]

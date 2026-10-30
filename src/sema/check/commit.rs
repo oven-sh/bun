@@ -687,6 +687,11 @@ impl<'s> Checker<'_, 's> {
         self.task.was_discarded()
     }
 
+    /// How often the task has come around a cycle whose results depend on where it's entered.
+    pub fn closed_cycle_count(&self) -> u32 {
+        self.task.closed_cycle_count()
+    }
+
     /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
     /// before the last round.
     pub fn can_recheck_early(&self) -> bool {
@@ -831,6 +836,7 @@ impl<'p, 's> Checker<'p, 's> {
             signature_links: self.signature_links,
             widened_types: self.widened_types,
             apparent_types_of_intersections: self.apparent_types_of_intersections,
+            aot_answers: self.aot_answers,
         });
         spare.task_facts.clear();
         spare.simplified.iter_mut().for_each(|map| map.clear());
@@ -839,6 +845,7 @@ impl<'p, 's> Checker<'p, 's> {
         spare.signature_links.clear();
         spare.widened_types.clear();
         spare.apparent_types_of_intersections.clear();
+        spare.aot_answers.clear();
         spare
     }
 }

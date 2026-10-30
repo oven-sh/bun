@@ -231,7 +231,7 @@ impl NodeModulesFolder {
     /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
     /// syscall on that directory's fd does not walk the directories above it.
     fn path_from_root<'b>(&self, buf: &'b mut [u8], file_path: &ZStr) -> &'b ZStr {
-        let top_level_dir = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        let top_level_dir = strings::without_trailing_slash(FileSystem::get().top_level_dir());
         let folder = (self.path.strip_prefix(top_level_dir))
             .and_then(|rest| rest.strip_prefix(&[SEP]))
             .and_then(|rest| rest.strip_prefix(b"node_modules"))
@@ -975,8 +975,7 @@ impl<'a> PackageInstaller<'a> {
             if self.trees[tree_id].binaries.count() > 0 {
                 self.seen_bin_links.clear();
                 self.node_modules.path.truncate(
-                    strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len()
-                        + 1,
+                    strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1,
                 );
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
@@ -1367,7 +1366,7 @@ impl<'a> PackageInstaller<'a> {
         let path = &mut self.node_modules.path;
         path.clear();
         path.extend_from_slice(strings::without_trailing_slash(
-            FileSystem::instance().top_level_dir(),
+            FileSystem::get().top_level_dir(),
         ));
         path.push(SEP);
         path.extend_from_slice(rel_path.as_bytes());

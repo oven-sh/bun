@@ -1,0 +1,26 @@
+// A static import that cannot be resolved fails the load of every module that reaches it.
+const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+console.log("# an-optional-dependency");
+await import("./an-optional-dependency/an-optional-dependency.mjs");
+await settled();
+console.log("# two-files-above");
+await import("./two-files-above/two-files-above.mjs");
+await settled();
+console.log("# a-file-that-is-not-there");
+await import("./a-file-that-is-not-there/a-file-that-is-not-there.mjs");
+await settled();
+console.log("# in-a-cycle");
+await import("./in-a-cycle/in-a-cycle.mjs");
+await settled();
+console.log("# exported-again");
+await import("./exported-again/exported-again.mjs");
+await settled();
+console.log("# twice");
+await import("./twice/twice.mjs");
+await settled();
+console.log("# required");
+await import("./required/required.cjs");
+await settled();
+console.log("# what-resolves-is-as-it-was");
+await import("./what-resolves-is-as-it-was/what-resolves-is-as-it-was.mjs");
+await settled();

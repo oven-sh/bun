@@ -1,0 +1,255 @@
+# A loop over the generator that a method returns, and calls of values that are no functions: each throws a TypeError where it stands, behind its arguments, and a handler around it catches it.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="generator-method-looped-no-function.ts" displayPath="generator-method-looped-no-function.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Span" module=m0 position=228 constructor=f5 fields=[{key="from" declared={type=number} flags=[IsRequired]}, {key="to" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="sum" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="sumOfSquares" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="Span" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f5
+    v5 = NewClass v4 layout=L0
+    v6 = NewClosure function=f6
+    DefineMethod v5, v6 layout=L0 index=1 key="pairs"
+    v8 = FinishClass v5 layout=L0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v9 variable=g2
+    v11 = Integer
+    v12 = Convert v11 declared={type=number}
+    v13 = Integer
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v12, v14)
+  b1(v15: number, v16: number):
+    LoopHint
+    v18 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    v19 = Integer integer=2000
+    v20 = Less v18, v19
+    Branch v20 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v21):
+    v22 = GetModuleVariable variable=g0
+    v23 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    v24 = Integer integer=3
+    v25 = BitAnd v23, v24
+    v26 = Integer integer=8
+    v27 = Construct v9, -, v25, v26 calleeName="Span"
+    v28 = Convert v27 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v29 = Call v22, -, v28 calleeName="sum"
+    v30 = Convert v29 declared={type=number}
+    v31 = GetModuleVariable variable=g1
+    v32 = Integer
+    v33 = Integer integer=7
+    v34 = BitAnd v23, v33
+    v35 = Construct v9, -, v32, v34 calleeName="Span"
+    v36 = Convert v35 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v37 = Call v31, -, v36 calleeName="sumOfSquares"
+    v38 = Convert v37 declared={type=number}
+    v39 = Add v30, v38
+    v40 = Integer
+    v41 = Integer integer=10
+    v42 = Construct v9, -, v40, v41 calleeName="Span"
+    v43 = Convert v42 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v44 = Integer integer=15
+    v45 = BitAnd v23, v44
+    v46 = Call v1, -, v43, v45 calleeName="firstOver"
+    v47 = Convert v46 declared={type=number}
+    v48 = Add v39, v47
+    v49 = Add v15, v48
+    v50 = Convert v49 declared={type=number}
+    v51 = Increment v23
+    v52 = Convert v51 declared={type=number}
+    Jump -> next b1(v50, v52)
+  b3(v53):
+    v54 = String string="a method deleted from the prototype"
+    v55 = NewClosure function=f19
+    v56 = Call v3, -, v54, v55 calleeName="attempt"
+    v57 = Undefined
+    Return v57
+}
+function f1 name="sum" module=m0 position=444 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="sumOfSquares" module=m0 position=560 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = PropGet v0 key="pairs"
+    v4 = Call v3, v0 calleeKey="pairs" calleeName="span.pairs"
+    LoopHint
+    v6 = Convert v2 declared={type=number}
+    Return v6
+}
+function f3 name="firstOver" module=m0 position=691 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="attempt" module=m0 position=1101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="f"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v3 = Undefined
+    Return v3
+}
+function f5 name="Span" module=m0 position=248 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f6 name="pairs" module=m0 position=360 kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined|null|Generator<undefined|null|Array<number>> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost]
+function f7 module=m0 position=1440 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=1501 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1552 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=1603 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=1655 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=1706 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1759 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=1811 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=1877 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m0 position=1990 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=2105 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 position=2278 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 module=m0 position=2454 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="Span"
+    v2 = PropGet v1 key="prototype"
+    v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v4 = PropDelete v3 key="pairs"
+    v5 = GetModuleVariable variable=g1
+    v6 = GetModuleVariable variable=g2
+    v7 = CheckInitialized v6 name="Span"
+    v8 = Integer
+    v9 = Integer integer=3
+    v10 = Construct v7, -, v8, v9 calleeName="Span"
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = Call v5, -, v11 calleeName="sumOfSquares"
+    ReturnCall v12 casts=[{declared={type=number}}, {declared={type=number}}]
+}
+function f20 module=m0 position=2580 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+# -- generated: f0 sumOfSquares f19 attempt
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=0 [isHeldByClosureTable]
+# CHECK-NEXT: v1: f5 = GetModuleVariable variable=g2
+# CHECK-NEXT: v2: f5 = FinishClass v1 layout=L0
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1(v3)
+# CHECK-NEXT: b1(v5: int[0, 2000] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: int[0, 2000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: 2000 = Integer integer=2000
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b6()
+# CHECK-NEXT: b3(v10: int[0, 1999]):
+# CHECK-NEXT: v11: 3 = Integer integer=3
+# CHECK-NEXT: v12: int[0, 3] = BitAnd v10, v11
+# CHECK-NEXT: v13: 8 = Integer integer=8
+# CHECK-NEXT: v14: anything ~ object = Construct v2, -, v12, v13 calleeName="Span" accessSite=0 callees=[f5]
+# CHECK-NEXT: v15: anything ~ L0 = Expect v14 expectedType=undefined|null|L0
+# CHECK-NEXT: v16: number = Call v4, -, v15 calleeName="sum" accessSite=1 callees=[f1, ..]
+# CHECK-NEXT: v17: 0 = Integer
+# CHECK-NEXT: v18: 7 = Integer integer=7
+# CHECK-NEXT: v19: int[0, 7] = BitAnd v10, v18
+# CHECK-NEXT: v20: anything ~ object = Construct v2, -, v17, v19 calleeName="Span" accessSite=2 callees=[f5]
+# CHECK-NEXT: v21: anything ~ L0 = Expect v20 expectedType=undefined|null|L0
+# CHECK-NEXT: v22: undefined|null|L0 ~ L0 = AssumeType v21 provenType=undefined|null|L0
+# CHECK-NEXT: v23: L0 = RequireObjectCoercible v22 name="pairs"
+# CHECK-NEXT: v24: boolean = AreMembersUnchanged conditions=[{layout=L0 key="pairs"}]
+# CHECK-NEXT: Branch v24 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: 10 = Integer integer=10
+# CHECK-NEXT: v28: anything ~ object = Construct v2, -, v26, v27 calleeName="Span" accessSite=4 callees=[f5]
+# CHECK-NEXT: v29: anything ~ L0 = Expect v28 expectedType=undefined|null|L0
+# CHECK-NEXT: v30: 15 = Integer integer=15
+# CHECK-NEXT: v31: int[0, 15] = BitAnd v10, v30
+# CHECK-NEXT: v32: number = Call v0, -, v29, v31 calleeName="firstOver" accessSite=5 callees=[f3, ..]
+# CHECK-NEXT: v33: int[1, 2000] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v33)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v34: anything = PropGet v23 key="pairs" accessSite=7 receivers=[]
+# CHECK-NEXT: v35: anything ~ f6 = Upcast v34 castType=anything
+# CHECK-NEXT: v36: anything = Call v35, v23 calleeKey="pairs" calleeName="span.pairs" accessSite=8 callees=[]
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v38: 0 = Integer
+# CHECK-NEXT: v39: 10 = Integer integer=10
+# CHECK-NEXT: v40: anything ~ object = Construct v2, -, v38, v39 calleeName="Span" accessSite=4 callees=[f5]
+# CHECK-NEXT: v41: anything ~ L0 = Expect v40 expectedType=undefined|null|L0
+# CHECK-NEXT: v42: 15 = Integer integer=15
+# CHECK-NEXT: v43: int[0, 15] = BitAnd v10, v42
+# CHECK-NEXT: v44: number = Call v0, -, v41, v43 calleeName="firstOver" accessSite=5 callees=[f3, ..]
+# CHECK-NEXT: v45: int[1, 2000] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v45)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v46: undefined = CallDirect function=f43 accessSite=6
+# CHECK-NEXT: v47: undefined = Undefined
+# CHECK-NEXT: Return v47
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="sumOfSquares"
+# CHECK: module=m0 position=560 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|L0):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: L0 = RequireObjectCoercible v0 name="pairs"
+# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L0 key="pairs"}]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: f6 = NewClosure function=f6 [isHeldByClosureTable]
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: anything ~ f6):
+# CHECK-NEXT: v6: anything = Call v5, v2 calleeKey="pairs" calleeName="span.pairs" accessSite=8 callees=[]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v7: anything = PropGet v2 key="pairs" accessSite=7 receivers=[]
+# CHECK-NEXT: Jump -> next b2(v7)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=1101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function f19 module=
+# CHECK: m0 position=2454 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f5 = GetModuleVariable variable=g2
+# CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=10
+# CHECK-NEXT: v2: object = AssumeType v1 provenType=object
+# CHECK-NEXT: v3: boolean = PropDelete v2 key="pairs" accessSite=11
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: 3 = Integer integer=3
+# CHECK-NEXT: v6: anything ~ object = Construct v0, -, v4, v5 calleeName="Span" accessSite=12 callees=[f5]
+# CHECK-NEXT: v7: anything ~ L0 = Expect v6 expectedType=undefined|null|L0
+# CHECK-NEXT: v8: undefined|null|L0 ~ L0 = AssumeType v7 provenType=undefined|null|L0
+# CHECK-NEXT: v9: 0 = CallDirect v8 function=f2 accessSite=13
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=0} resolution=Assume}]
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=1101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4} {
+# CHECK-NEXT: b0() handler=b1():
+# CHECK-NEXT: v2: 0 = CallDirect function=f19 accessSite=9
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

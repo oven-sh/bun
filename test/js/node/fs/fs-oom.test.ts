@@ -202,10 +202,11 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
   // were written as if that call could never error (before the fix it could
   // only abort), so they collapsed `Err` into their all-ASCII fallback. Once
   // the allocation is fallible, `Response.text()` on an `Internal` blob must
-  // throw rather than return an empty string, and a store-backed
-  // `Blob.json()` must throw rather than reinterpret the UTF-8 bytes as
-  // Latin-1. `Blob.text()` is the sibling that was already correct.
-  test("Response.text, Blob.text and Blob.json recover", async () => {
+  // throw rather than return an empty string. `Blob.text()` is the sibling
+  // that was already correct. A store-backed `Blob.json()` parses the bytes
+  // where they lie: the string that it answers with has one byte a character,
+  // fits under the cap, and must not be the UTF-8 bytes read as Latin-1.
+  test("Response.text and Blob.text recover, and Blob.json reads UTF-8", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -216,12 +217,14 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
         const json = Buffer.alloc(${SIZE}, "a");
         json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;
-        for (const run of [() => new Response(buf).text(), () => new Blob([buf]).text(), () => new Blob([json]).json()]) {
+        for (const run of [() => new Response(buf).text(), () => new Blob([buf]).text()]) {
           await run().then(
             v => results.push("UNEXPECTED_SUCCESS length=" + JSON.stringify(v).length),
             e => results.push({ name: e.name, code: e.code, message: e.message }),
           );
         }
+        const parsed = await new Blob([json]).json();
+        results.push({ length: parsed.length, start: parsed.slice(0, 2) });
         console.log(JSON.stringify(results));
         `,
       ],
@@ -238,7 +241,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
       allocationFailed,
       allocationFailed,
-      allocationFailed,
+      { length: SIZE - 3, start: "\u00e9a" },
     ]);
     expect(exitCode).toBe(0);
   });

@@ -1,8 +1,17 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
+#![cfg_attr(any(test, feature = "test_support"), feature(linkage))]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+#[cfg(test)]
+use bun_aot_compiler as _;
+#[cfg(test)]
+use bun_sema_standalone as _;
+
+#[cfg(any(test, feature = "test_support"))]
+mod native_test_shims;
 
 pub mod error;
 pub use error::{Error, Result};
@@ -122,6 +131,7 @@ pub mod ServerComponentParseTask;
 pub mod HTMLImportManifest;
 
 pub mod HTMLScanner;
+pub mod aot;
 pub mod cache;
 pub mod entry_points;
 #[path = "OutputFile.rs"]

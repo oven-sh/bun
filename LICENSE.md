@@ -107,6 +107,17 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 | [`util`](https://npmjs.com/package/util) | MIT |
 | [`vm-browserify`](https://npmjs.com/package/vm-browserify) | MIT |
 
+## Type declarations
+
+The type declarations of these packages are embedded into Bun's binary. `bun build --compile --aot` reads them in a project that hasn't installed `@types/bun`. They're embedded without their comments, except for copyright notices. The `LICENSE` files of `@types/node` and `undici-types` are embedded next to them.
+
+| Package | License |
+|---------|---------|
+| [`@types/node`](https://npmjs.com/package/@types/node) | MIT |
+| [`undici-types`](https://npmjs.com/package/undici-types) | MIT |
+| [`expect-type`](https://npmjs.com/package/expect-type), which `bun-types` includes | Apache 2.0 |
+| Types from [`jest-mock`](https://npmjs.com/package/jest-mock), which `bun-types` includes | MIT |
+
 ## Additional credits
 
 - Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.

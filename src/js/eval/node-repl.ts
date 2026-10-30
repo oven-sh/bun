@@ -15,14 +15,16 @@ if (ext) {
   require(require("node:path").resolve(ext));
 } else {
   const REPL = require("node:repl");
-  const createInternalRepl = (REPL as Record<symbol, Function>)[Symbol.for("bun.repl.createInternalRepl")];
+  type ReplServer = $Node.EventEmitter & { historyManager?: { isFlushing?: boolean } };
+  type CreateInternalRepl = (env: object, callback: (err: Error | null, replServer: ReplServer) => void) => void;
+  const createInternalRepl = (REPL as Record<symbol, CreateInternalRepl>)[Symbol.for("bun.repl.createInternalRepl")];
 
   console.log(
     `Welcome to Bun v${(globalThis as any).Bun.version} (Node.js-compatible REPL, node:repl ${process.version}).\n` +
       'Type ".help" for more information.',
   );
 
-  createInternalRepl(process.env, (err: Error | null, replServer: any) => {
+  createInternalRepl(process.env, (err: Error | null, replServer: ReplServer) => {
     if (err) throw err;
 
     replServer.on("exit", () => {

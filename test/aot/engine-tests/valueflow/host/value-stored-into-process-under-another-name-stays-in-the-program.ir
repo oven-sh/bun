@@ -1,0 +1,28 @@
+# process.helper = helper; Object.getPrototypeOf(process).other = other
+# Native code that was not handed `process` looks up the names of the table's list on it and no other, so nobody but the program finds what lies under `helper` and `other`, and the program never calls it.
+# value-stored-into-process-under-a-name-that-native-code-reads-is-entered.ir has the names of the list, value-stored-into-process-is-entered-once-process-is-in-unknown-hands.ir the same stores beside a call that hands `process` over
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="helper" mode=Strict
+    v3 = Builtin builtin=EventEmitterPrototype
+    v4 = NewClosure function=f2
+    PropSet v3, v4 key="other" mode=Strict
+    Return
+}
+function f1 name="helper" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}

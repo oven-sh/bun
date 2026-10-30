@@ -8,14 +8,24 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { webkitTestFFIPath } from "./deps/webkit.ts";
+import { webkitAotFile, webkitJSCPath, webkitTestAotPath, webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
@@ -246,11 +256,17 @@ const TIMINGS_META_DATA = "timings:";
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
+//           ├── jsc[.exe]                (WebKit's shell, with this bun's table of built-ins where the tarball has its objects)
+//           ├── testaot[.exe]            (the engine's AoT test program, likewise)
+//           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
+//           ├── aot-engine/              (the engine's generators and its schema, for the tests that import them)
+//           ├── aot_builtin_table.json   (the table of built-ins this Bun was built with: test/aot/generate.ts writes programs from it)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
 //           ├── bun-profile.map          (windows; with the above, what the
 //           │                             trace-order step resolves addresses with)
 //           ├── linker.order             (the order file this binary was linked with, if any)
+//           ├── bun-profile.trim/        (what the trimmable link found: entry points, requires, groups, retained-by)
 //           ├── bun-profile.pdb          (windows)
 //           └── bun-profile.dSYM         (mac)
 //
@@ -271,7 +287,7 @@ const TIMINGS_META_DATA = "timings:";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Base triplet (bun-os-arch[-musl][-baseline]). Variant suffix (-profile,
+ * Base triplet (bun-os-arch[-musl][-hardened][-baseline]). Variant suffix (-profile,
  * -asan) is added by the caller. Matches ci.ts getTargetTriplet() and
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
@@ -279,6 +295,8 @@ export function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
+  // The release fetches its files by name, and CI builds a hardened Bun beside the one that ships.
+  if (cfg.hardened) t += "-hardened";
   // No `-baseline` suffix: x64 is always baseline and the historical
   // `-baseline` names are published as release-side aliases.
   return t;
@@ -330,6 +348,42 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     chmodSync(testFFI, 0o755);
     files.push(testFFI);
   }
+  for (const program of [webkitJSCPath(cfg), webkitTestAotPath(cfg)]) {
+    if (existsSync(program)) {
+      chmodSync(program, 0o755);
+      files.push(program);
+    }
+  }
+  const engineTests = webkitAotFile(cfg, "tests");
+  if (existsSync(engineTests)) {
+    // makeZip names an entry by its base name, and this folder's is `tests`.
+    const staged = resolve(buildDir, "aot-tests");
+    rmSync(staged, { recursive: true, force: true });
+    cpSync(engineTests, staged, { recursive: true });
+    files.push("aot-tests");
+  }
+  // What src/codegen/engine-directory.ts looks for: tests import the generators, which are files of the engine.
+  const engineDirectory = webkitAotFile(cfg, "directory");
+  if (existsSync(join(engineDirectory, "builtins", "generator"))) {
+    const staged = resolve(buildDir, "aot-engine");
+    rmSync(staged, { recursive: true, force: true });
+    for (const part of [
+      ["builtins", "generator"],
+      ["ir", "generator"],
+      ["ir", "schema"],
+      ["ir", "AOTSchema.def"],
+    ]) {
+      cpSync(join(engineDirectory, ...part), join(staged, ...part), { recursive: true });
+    }
+    // What the engine was compiled with, where a prebuilt WebKit has it.
+    const compiledWith = webkitAotFile(cfg, "builtins-generated");
+    for (const name of readdirSync(compiledWith).filter(name => name.startsWith("AOTBuiltin"))) {
+      cpSync(join(compiledWith, name), join(staged, "builtins", "generated", name));
+    }
+    files.push("aot-engine");
+  }
+  const builtinTable = resolve(cfg.codegenDir, "aot_builtin_table.json");
+  if (existsSync(builtinTable)) files.push(builtinTable);
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
@@ -346,6 +400,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   if (hasOrderFile) {
     files.push(basename(orderFilePath(cfg)));
   }
+  if (cfg.trimmable) files.push(`${basename(exe)}.trim`);
   zipPaths.push(makeZip(cfg, bunPath, files));
 
   // ─── Stripped zip ───
@@ -367,9 +422,9 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
  *
  * Uses `cmake -E tar cfv x.zip --format=zip` — cmake's cross-platform
  * zip wrapper (wraps libarchive). GNU tar (Linux default) DOESN'T support
- * --format=zip; bsdtar does but isn't guaranteed on Linux. cmake is
- * already a required tool (we use it for nested dep builds), so this
- * adds no new dependency. Identical to cmake's own packaging approach
+ * --format=zip; bsdtar does but isn't guaranteed on Linux. cmake is on
+ * every CI image (`pins.cmake`, ci-images/spec.ts); this is the build's
+ * only use of it. Identical to cmake's own packaging approach
  * (BuildBun.cmake:1544).
  *
  * Files that don't exist are silently skipped (e.g., .pdb on a clean build).
@@ -475,9 +530,9 @@ export function orderFileContext(): OrderFileContext {
   };
 }
 
-/** Targets that use an order file. Every build links. */
+/** Targets that use an order file. Every build links. No step traces a hardened build, so there is none of its name to inherit. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
-  return usesOrderFile(cfg) && ctx.buildkite;
+  return usesOrderFile(cfg) && ctx.buildkite && !cfg.hardened;
 }
 
 /**

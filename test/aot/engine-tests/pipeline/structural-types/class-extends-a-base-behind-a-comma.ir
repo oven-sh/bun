@@ -1,0 +1,393 @@
+# -- source: class-extends-a-base-behind-a-comma.ts
+# class Base {
+#   x = 1;
+#   y: number;
+#   constructor(y: number = 2) {
+#     this.y = y;
+#   }
+#   sum(): number {
+#     return this.x + this.y;
+#   }
+# }
+#
+# let count = 0;
+#
+# class Derived extends (count++, Base) {
+#   extra = "d";
+#   twice(): number {
+#     return this.sum() * 2;
+#   }
+# }
+#
+# const made = new Derived();
+# console.log("keys: " + Object.keys(made).join(" "));
+# console.log("json: " + JSON.stringify(made));
+# console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+# console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+# console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+# made.x = 10;
+# made.extra = "stored";
+# console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="class-extends-a-base-behind-a-comma.ts" displayPath="class-extends-a-base-behind-a-comma.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=143 kind=Variable
+typesite w1 module=m0 position=49 kind=Parameter
+typesite w2 module=m0 position=15 kind=Field
+typesite w3 module=m0 position=24 kind=Field
+typesite w4 module=m0 position=88 kind=This
+typesite w5 module=m0 position=88 kind=Result
+typesite w6 module=m0 position=197 kind=Field
+typesite w7 module=m0 position=212 kind=This
+typesite w8 module=m0 position=212 kind=Result
+typesite w9 module=m0 position=277 kind=CallResult
+typesite w10 module=m0 position=315 kind=CallResult
+typesite w11 module=m0 position=368 kind=CallResult
+typesite w12 module=m0 position=466 kind=CallResult
+typesite w13 module=m0 position=485 kind=CallResult
+typesite w14 module=m0 position=674 kind=Field
+typesite w15 module=m0 position=687 kind=Field
+typesite w16 module=m0 position=741 kind=CallResult
+typesite w17 module=m0 position=770 kind=CallResult
+typesite w18 module=m0 position=70 kind=Field
+typesite w19 module=m0 position=241 kind=CallResult
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f1 fields=[{key="x" declared={type=number site=w2} flags=[IsRequired]}, {key="y" declared={type=number site=w3} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Derived" module=m0 position=161 base=L0 constructor=f3 fields=[{key="extra" declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 key="sum"
+    v5 = FinishClass v1 layout=L0
+    v6 = Convert v5 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Convert v5 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Integer
+    v9 = Convert v8 declared={type=number site=w0}
+    v10 = Increment v9
+    v11 = Convert v10 declared={type=number site=w0}
+    v12 = ResolveHeritage v7
+    v13 = NewClosure function=f3
+    v14 = NewClass v13, v7, v12 layout=L1
+    PutModuleVariable v14 variable=g1
+    v16 = NewClosure function=f4
+    DefineMethod v14, v16 layout=L1 key="twice"
+    v18 = FinishClass v14 layout=L1
+    v19 = Convert v18 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = Convert v18 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v21 = Construct v20 calleeName="Derived"
+    v22 = Convert v21 declared={type=undefined|null|L1 site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="console" [isFreeName]
+    v25 = Convert v24 declared={type=builtin(Console) flags=[IsExpected]}
+    v26 = PropGet v25 key="log"
+    v27 = Convert v26 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v28 = String string="keys: "
+    v29 = Builtin builtin=Object
+    v30 = Builtin builtin=ObjectKeys
+    v31 = Call v30, v29, v22 calleeName="Object.keys"
+    v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|string> site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v33 = PropGet v32 key="join"
+    v34 = String string=" "
+    v35 = Call v33, v32, v34 calleeKey="join" calleeName="join"
+    v36 = Convert v35 declared={type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v37 = Add v28, v36
+    v38 = Call v27, v25, v37 calleeKey="log" calleeName="console.log"
+    v39 = Builtin builtin=GlobalThis
+    v40 = PropGet v39 key="console" [isFreeName]
+    v41 = Convert v40 declared={type=builtin(Console) flags=[IsExpected]}
+    v42 = PropGet v41 key="log"
+    v43 = Convert v42 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v44 = String string="json: "
+    v45 = Builtin builtin=JSON
+    v46 = PropGet v45 key="stringify"
+    v47 = Convert v46 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v48 = Call v47, v45, v22 calleeKey="stringify" calleeName="JSON.stringify"
+    v49 = Convert v48 declared={type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v50 = Add v44, v49
+    v51 = Call v43, v41, v50 calleeKey="log" calleeName="console.log"
+    v52 = Builtin builtin=GlobalThis
+    v53 = PropGet v52 key="console" [isFreeName]
+    v54 = Convert v53 declared={type=builtin(Console) flags=[IsExpected]}
+    v55 = PropGet v54 key="log"
+    v56 = Convert v55 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v57 = String string="members: "
+    v58 = PropGet v22 key="x"
+    v59 = Add v57, v58
+    v60 = String string=" "
+    v61 = Add v59, v60
+    v62 = PropGet v22 key="y"
+    v63 = Add v61, v62
+    v64 = String string=" "
+    v65 = Add v63, v64
+    v66 = PropGet v22 key="extra"
+    v67 = Add v65, v66
+    v68 = String string=" "
+    v69 = Add v67, v68
+    v70 = PropGet v22 key="sum"
+    v71 = Call v70, v22 calleeKey="sum" calleeName="made.sum"
+    v72 = Convert v71 declared={type=number site=w12}
+    v73 = Add v69, v72
+    v74 = String string=" "
+    v75 = Add v73, v74
+    v76 = PropGet v22 key="twice"
+    v77 = Call v76, v22 calleeKey="twice" calleeName="made.twice"
+    v78 = Convert v77 declared={type=number site=w13}
+    v79 = Add v75, v78
+    v80 = Call v56, v54, v79 calleeKey="log" calleeName="console.log"
+    v81 = Builtin builtin=GlobalThis
+    v82 = PropGet v81 key="console" [isFreeName]
+    v83 = Convert v82 declared={type=builtin(Console) flags=[IsExpected]}
+    v84 = PropGet v83 key="log"
+    v85 = Convert v84 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v86 = String string="kinds: "
+    v87 = PropGet v22 key="x"
+    v88 = TypeOf v87
+    v89 = Add v86, v88
+    v90 = String string=" "
+    v91 = Add v89, v90
+    v92 = PropGet v22 key="y"
+    v93 = TypeOf v92
+    v94 = Add v91, v93
+    v95 = String string=" "
+    v96 = Add v94, v95
+    v97 = PropGet v22 key="extra"
+    v98 = TypeOf v97
+    v99 = Add v96, v98
+    v100 = Call v85, v83, v99 calleeKey="log" calleeName="console.log"
+    v101 = Builtin builtin=GlobalThis
+    v102 = PropGet v101 key="console" [isFreeName]
+    v103 = Convert v102 declared={type=builtin(Console) flags=[IsExpected]}
+    v104 = PropGet v103 key="log"
+    v105 = Convert v104 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v106 = String string="instance: "
+    v107 = InstanceOf v22, v20 writtenExpression="made instanceof Derived"
+    v108 = Add v106, v107
+    v109 = String string=" "
+    v110 = Add v108, v109
+    v111 = InstanceOf v22, v7 writtenExpression="made instanceof Base"
+    v112 = Add v110, v111
+    v113 = Call v105, v103, v112 calleeKey="log" calleeName="console.log"
+    v114 = Integer integer=10
+    v115 = Convert v114 declared={type=number site=w14}
+    PropSet v22, v115 key="x"
+    v117 = String string="stored"
+    v118 = Convert v117 declared={type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v22, v118 key="extra"
+    v120 = Builtin builtin=GlobalThis
+    v121 = PropGet v120 key="console" [isFreeName]
+    v122 = Convert v121 declared={type=builtin(Console) flags=[IsExpected]}
+    v123 = PropGet v122 key="log"
+    v124 = Convert v123 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v125 = String string="after stores: "
+    v126 = Builtin builtin=JSON
+    v127 = PropGet v126 key="stringify"
+    v128 = Convert v127 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v129 = Call v128, v126, v22 calleeKey="stringify" calleeName="JSON.stringify"
+    v130 = Convert v129 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v131 = Add v125, v130
+    v132 = String string=" "
+    v133 = Add v131, v132
+    v134 = PropGet v22 key="sum"
+    v135 = Call v134, v22 calleeKey="sum" calleeName="made.sum"
+    v136 = Convert v135 declared={type=number site=w17}
+    v137 = Add v133, v136
+    v138 = Call v124, v122, v137 calleeKey="log" calleeName="console.log"
+    v139 = Undefined
+    Return v139
+}
+function f1 name="Base" module=m0 position=48 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|number site=w1}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|number):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f5
+    v6 = TypeTest v1 testedType=undefined
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = Integer integer=2
+    v9 = Convert v8 declared={type=number site=w1}
+    Jump -> next b5(v9)
+  b4(v10):
+    Jump -> next b5(v10)
+  b5(v11):
+    v12 = Convert v11 declared={type=number site=w18}
+    PropSet v4, v12 key="y"
+    v14 = Undefined
+    v15 = TypeTest v14 testedType=object
+    Branch v15 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v16):
+    Jump -> next b8(v16)
+  b7(v17):
+    Jump -> next b8(v4)
+  b8(v18):
+    Return v18
+}
+function f2 name="sum" module=m0 position=88 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1 site=w4} results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number site=w5}
+    Return v4
+}
+function f3 name="Derived" module=m0 position=161 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1()
+  b1():
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f6
+    Return v5
+}
+function f4 name="twice" module=m0 position=212 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1 site=w7} results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="sum"
+    v2 = Call v1, v0 calleeKey="sum" calleeName="this.sum"
+    v3 = Convert v2 declared={type=number site=w19}
+    v4 = Integer integer=2
+    v5 = Mul v3, v4
+    v6 = Convert v5 declared={type=number site=w8}
+    Return v6
+}
+function f5 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number site=w2}
+    PropDefine v1, v3 key="x"
+    v5 = Undefined
+    PropDefine v1, v5 key="y"
+    v7 = Undefined
+    Return v7
+}
+function f6 module=m0 position=161 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = String string="d"
+    v3 = Convert v2 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v1, v3 key="extra"
+    v5 = Undefined
+    Return v5
+}
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+# -- generated: f0 Base twice
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f15 callPosition=4294967295 isConstruction=true module=m0}, {callee=f6 callPosition=4294967295 parent=3 module=m0}, {callee=f12 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f5 callPosition=4294967295 parent=5 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: "d" = String string="d"
+# CHECK-NEXT: v3: "keys: " = String string="keys: "
+# CHECK-NEXT: v4: L1 = NewObject -, v0, v1, v2 layout=L1 fields=[1, 2, 0] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: v5: Array<string> = CallBuiltin -, v4 overload=ObjectKeys/0 accessSite=3
+# CHECK-NEXT: v6: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: " " = String string=" "
+# CHECK-NEXT: v8: string = CallBuiltin v6, v7 overload=ArrayPrototypeJoin/0 accessSite=5
+# CHECK-NEXT: v9: string = Add v3, v8
+# CHECK-NEXT: v10: undefined = CallBuiltin -, v9 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v11: "json: " = String string="json: "
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: v13: undefined|string = CallBuiltin -, v4, v12 overload=JSONStringify/0 accessSite=10
+# CHECK-NEXT: v14: string = Add v11, v13
+# CHECK-NEXT: v15: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v16: "members: " = String string="members: "
+# CHECK-NEXT: v17: int[-2147483643, 2147483647] = GetSlot v4 key="x" receivers=[L1] level=Proven accessSite=14
+# CHECK-NEXT: v18: " " = String string=" "
+# CHECK-NEXT: v19: int = GetSlot v4 key="y" receivers=[L1] level=Proven accessSite=15
+# CHECK-NEXT: v20: " " = String string=" "
+# CHECK-NEXT: v21: string = GetSlot v4 key="extra" receivers=[L1] level=Proven accessSite=16
+# CHECK-NEXT: v22: " " = String string=" "
+# CHECK-NEXT: v23: int|whole = Add v17, v19
+# CHECK-NEXT: v24: " " = String string=" "
+# CHECK-NEXT: v25: int|whole = CallDirect v4 function=f4 accessSite=20
+# CHECK-NEXT: v26: string = Strcat v16, v17, v18, v19, v20, v21, v22, v23, v24, v25
+# CHECK-NEXT: v27: undefined = CallBuiltin -, v26 overload=ConsoleLog/0 accessSite=21
+# CHECK-NEXT: v28: "kinds: " = String string="kinds: "
+# CHECK-NEXT: v29: string = TypeOf v17
+# CHECK-NEXT: v30: " " = String string=" "
+# CHECK-NEXT: v31: string = TypeOf v19
+# CHECK-NEXT: v32: " " = String string=" "
+# CHECK-NEXT: v33: string = TypeOf v21
+# CHECK-NEXT: v34: string = Strcat v28, v29, v30, v31, v32, v33
+# CHECK-NEXT: v35: undefined = CallBuiltin -, v34 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v36: "instance: true true" = String string="instance: true true"
+# CHECK-NEXT: v37: undefined = CallBuiltin -, v36 overload=ConsoleLog/0 accessSite=30
+# CHECK-NEXT: v38: 10 = Integer integer=10
+# CHECK-NEXT: PutSlot v4, -, v38 key="x" receivers=[L1] level=Proven accessSite=31
+# CHECK-NEXT: v40: "stored" = String string="stored"
+# CHECK-NEXT: PutSlot v4, -, v40 key="extra" receivers=[L1] level=Proven accessSite=32
+# CHECK-NEXT: v42: "after stores: " = String string="after stores: "
+# CHECK-NEXT: v43: undefined = Undefined
+# CHECK-NEXT: v44: undefined|string = CallBuiltin -, v4, v43 overload=JSONStringify/0 accessSite=36
+# CHECK-NEXT: v45: " " = String string=" "
+# CHECK-NEXT: v46: int|whole = Add v38, v19
+# CHECK-NEXT: v47: string = Strcat v42, v44, v45, v46
+# CHECK-NEXT: v48: undefined = CallBuiltin -, v47 overload=ConsoleLog/0 accessSite=39
+# CHECK-NEXT: v49: undefined = Undefined
+# CHECK-NEXT: Return v49
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Base"
+# CHECK: module=m0 position=48 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined site=w1}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: anything, v1: undefined):
+# CHECK-NEXT: v2: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L0
+# CHECK-NEXT: v4: object ~ L0|L1 = NewObject v3 layout=L0 allocationSite=4 allocationClass=0
+# CHECK-NEXT: v5: L1 = AssumeType v4 provenType=L1
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: PutSlotOrAdd v5, -, v6 key="x" receivers=[L1] level=Proven accessSite=48
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: PutSlotOrAdd v5, -, v8 key="y" receivers=[L1] level=Proven accessSite=49
+# CHECK-NEXT: v10: 2 = Integer integer=2
+# CHECK-NEXT: PutSlotOrAdd v5, -, v10 key="y" receivers=[L1] level=Proven accessSite=41
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=212 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1 site=w7} results=[{type=int|whole site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: v1: int[-2147483643, 2147483647] = GetSlot v0 key="x" receivers=[L1] level=Proven accessSite=42
+# CHECK-NEXT: v2: int = GetSlot v0 key="y" receivers=[L1] level=Proven accessSite=43
+# CHECK-NEXT: v3: int|whole = Add v1, v2
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: int|whole = Mul v3, v4
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Base"
+# CHECK: module=m0 position=48 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4: undefined = AssumeType v3 provenType=undefined
+# CHECK-NEXT: v5: L1 = CallDirect v2, v4 function=f1
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Base"
+# CHECK: module=m0 position=48 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0|L1} parameters=[{type=undefined site=w1}] results=[{type=undefined}] functionTypes=[f7] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f1} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=212 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f4, v1: anything) frequency=Rare:
+# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: }

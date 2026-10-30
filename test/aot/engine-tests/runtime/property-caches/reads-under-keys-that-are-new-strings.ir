@@ -1,0 +1,244 @@
+# const rounds = Number(argv[2]);
+# const unseen = new Function("x", "return x");
+# function Parameters() {}
+# Parameters.prototype = Object.create(null);
+# Parameters.prototype.inherited = "above";
+# function read(parameters, key) {
+#   return parameters[key];
+# }
+# let count = 0;
+# for (let round = 0; round < rounds; round++) {
+#   const parameters = unseen(new Parameters());
+#   const header = unseen("text/html; charset=utf-" + (round & 7) + "; inherited=1");
+#   if (read(parameters, header.slice(11, 18)) === undefined) count++;
+#   if (read(parameters, header.slice(26, 35)) === "above") count++;
+# }
+# report(count === 2 * rounds);
+# const header = unseen("text/html; charset=utf-8; inherited=1");
+# Parameters.prototype.charset = "now above";
+# Parameters.prototype.inherited = "changed";
+# report(read(unseen(new Parameters()), header.slice(11, 18)), read(unseen(new Parameters()), header.slice(26, 35)));
+# delete Parameters.prototype.inherited;
+# report(read(unseen(new Parameters()), header.slice(26, 35)), header.slice(26, 35) in unseen(new Parameters()), header.slice(11, 18) in unseen(new Parameters()));
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "4400"]; let reports = 0; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); if (++reports === 3) { for (const name of ["GetByValAndCache", "GetByVal"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 200 ? "seldom" : calls); } } };
+# The key of each read is a new string, cut out of a longer one, so no stub can tell its name by the address. The answer is filed once under the name.
+# CHECK: true
+# CHECK-NEXT: now above changed
+# CHECK-NEXT: undefined false true
+# CHECK-NEXT: GetByValAndCache seldom
+# CHECK-NEXT: GetByVal seldom
+# CHECK-NEXT: exited with 0
+
+module m0 path="text-0.cjs" displayPath="text-0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="read.js" displayPath="read.js" flags=[KeepsError] body=f2 namespaceLayout=L(m1)
+entry module=m1
+layout L0 module=m0
+layout L1 kind=Instance name="Parameters" module=m1 constructor=f3 flags=[IsConstructorFunction]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = Undefined
+    Return v4
+}
+function f1 name="anonymous" module=m0 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    Return v0
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=Number
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="argv" [isFreeName]
+    v7 = Integer integer=2
+    v8 = ElemGet v6, v7
+    v9 = Call v4, -, v8 calleeName="Number"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="Function" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Function) flags=[IsExpected]}
+    v14 = String string="x"
+    v15 = String string="return x"
+    v16 = Builtin builtin=Function [isNotReadFromHolder]
+    v17 = StrictEq v13, v16
+    Branch v17 -> taken b2(), notTaken b3(| 0)
+  b2():
+    v18 = NewClosure function=f1
+    Jump -> next b4(v18)
+  b3(v19):
+    v20 = Construct v19, -, v14, v15 calleeName="Function"
+    Jump -> next b4(v20)
+  b4(v21):
+    v22 = Convert v21 declared={type=undefined|null|function flags=[IsExpected]}
+    v23 = Builtin builtin=Object
+    v24 = Builtin builtin=ObjectCreate
+    v25 = Null
+    v26 = Call v24, v23, v25 calleeName="Object.create"
+    PropSet v1, v26 key="prototype"
+    v28 = PropGet v1 key="prototype"
+    v29 = Convert v28 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v30 = String string="above"
+    PropSet v29, v30 key="inherited"
+    v32 = Integer
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Integer
+    v35 = Convert v34 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5(v33, v35)
+  b5(v36, v37):
+    LoopHint
+    v39 = Less v37, v10
+    Branch v39 -> taken b6(| 0, 1), notTaken b15(| 0, 1)
+  b6(v40, v41):
+    Jump -> next b7()
+  b7():
+    v42 = Construct v1 calleeName="Parameters"
+    v43 = Call v22, -, v42 calleeName="unseen"
+    v44 = Convert v43 declared={type=undefined|null|object flags=[IsExpected]}
+    v45 = String string="text/html; charset=utf-"
+    v46 = Integer integer=7
+    v47 = BitAnd v40, v46
+    v48 = Add v45, v47
+    v49 = String string="; inherited=1"
+    v50 = Add v48, v49
+    v51 = Call v22, -, v50 calleeName="unseen"
+    v52 = PropGet v51 key="slice"
+    v53 = Convert v52 declared={type=undefined|null|function flags=[IsExpected]}
+    v54 = Integer integer=11
+    v55 = Integer integer=18
+    v56 = Call v53, v51, v54, v55 calleeKey="slice" calleeName="header.slice"
+    v57 = Call v3, -, v44, v56 calleeName="read"
+    v58 = TypeTest v57 testedType=undefined
+    Branch v58 -> taken b8(| 0), notTaken b10(| 0)
+  b8(v59):
+    Jump -> next b9()
+  b9():
+    v60 = Increment v36
+    v61 = Convert v60 declared={type=number flags=[IsExpected]}
+    Jump -> next b11(v61)
+  b10(v62):
+    Jump -> next b11(v36)
+  b11(v63):
+    v64 = PropGet v51 key="slice"
+    v65 = Convert v64 declared={type=undefined|null|function flags=[IsExpected]}
+    v66 = Integer integer=26
+    v67 = Integer integer=35
+    v68 = Call v65, v51, v66, v67 calleeKey="slice" calleeName="header.slice"
+    v69 = Call v3, -, v44, v68 calleeName="read"
+    v70 = String string="above"
+    v71 = StrictEq v69, v70
+    Branch v71 -> taken b12(), notTaken b13(v63)
+  b12():
+    v72 = Increment v63
+    v73 = Convert v72 declared={type=number flags=[IsExpected]}
+    Jump -> next b13(v73)
+  b13(v74):
+    Jump -> next b14()
+  b14():
+    v75 = Increment v40
+    v76 = Convert v75 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5(v74, v76)
+  b15(v77, v78):
+    Jump -> next b16()
+  b16():
+    v79 = Builtin builtin=GlobalThis
+    v80 = PropGet v79 key="report" [isFreeName]
+    v81 = Integer integer=2
+    v82 = Mul v81, v78
+    v83 = StrictEq v36, v82
+    v84 = Call v80, -, v83 calleeName="report"
+    v85 = String string="text/html; charset=utf-8; inherited=1"
+    v86 = Call v22, -, v85 calleeName="unseen"
+    v87 = PropGet v1 key="prototype"
+    v88 = Convert v87 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v89 = String string="now above"
+    PropSet v88, v89 key="charset"
+    v91 = PropGet v1 key="prototype"
+    v92 = Convert v91 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v93 = String string="changed"
+    PropSet v92, v93 key="inherited"
+    v95 = Builtin builtin=GlobalThis
+    v96 = PropGet v95 key="report" [isFreeName]
+    v97 = Construct v1 calleeName="Parameters"
+    v98 = Call v22, -, v97 calleeName="unseen"
+    v99 = Convert v98 declared={type=undefined|null|object flags=[IsExpected]}
+    v100 = PropGet v86 key="slice"
+    v101 = Convert v100 declared={type=undefined|null|function flags=[IsExpected]}
+    v102 = Integer integer=11
+    v103 = Integer integer=18
+    v104 = Call v101, v86, v102, v103 calleeKey="slice" calleeName="header.slice"
+    v105 = Call v3, -, v99, v104 calleeName="read"
+    v106 = Construct v1 calleeName="Parameters"
+    v107 = Call v22, -, v106 calleeName="unseen"
+    v108 = Convert v107 declared={type=undefined|null|object flags=[IsExpected]}
+    v109 = PropGet v86 key="slice"
+    v110 = Convert v109 declared={type=undefined|null|function flags=[IsExpected]}
+    v111 = Integer integer=26
+    v112 = Integer integer=35
+    v113 = Call v110, v86, v111, v112 calleeKey="slice" calleeName="header.slice"
+    v114 = Call v3, -, v108, v113 calleeName="read"
+    v115 = Call v96, -, v105, v114 calleeName="report"
+    v116 = PropGet v1 key="prototype"
+    v117 = Convert v116 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v118 = PropDelete v117 key="inherited"
+    v119 = Builtin builtin=GlobalThis
+    v120 = PropGet v119 key="report" [isFreeName]
+    v121 = Construct v1 calleeName="Parameters"
+    v122 = Call v22, -, v121 calleeName="unseen"
+    v123 = Convert v122 declared={type=undefined|null|object flags=[IsExpected]}
+    v124 = PropGet v86 key="slice"
+    v125 = Convert v124 declared={type=undefined|null|function flags=[IsExpected]}
+    v126 = Integer integer=26
+    v127 = Integer integer=35
+    v128 = Call v125, v86, v126, v127 calleeKey="slice" calleeName="header.slice"
+    v129 = Call v3, -, v123, v128 calleeName="read"
+    v130 = PropGet v86 key="slice"
+    v131 = Convert v130 declared={type=undefined|null|function flags=[IsExpected]}
+    v132 = Integer integer=26
+    v133 = Integer integer=35
+    v134 = Call v131, v86, v132, v133 calleeKey="slice" calleeName="header.slice"
+    v135 = Construct v1 calleeName="Parameters"
+    v136 = Call v22, -, v135 calleeName="unseen"
+    v137 = Convert v136 declared={type=undefined|null|object flags=[IsExpected]}
+    v138 = ElemHas v137, v134
+    v139 = PropGet v86 key="slice"
+    v140 = Convert v139 declared={type=undefined|null|function flags=[IsExpected]}
+    v141 = Integer integer=11
+    v142 = Integer integer=18
+    v143 = Call v140, v86, v141, v142 calleeKey="slice" calleeName="header.slice"
+    v144 = Construct v1 calleeName="Parameters"
+    v145 = Call v22, -, v144 calleeName="unseen"
+    v146 = Convert v145 declared={type=undefined|null|object flags=[IsExpected]}
+    v147 = ElemHas v146, v143
+    v148 = Call v120, -, v129, v138, v147 calleeName="report"
+    v149 = Undefined
+    Return v149
+}
+function f3 name="Parameters" module=m1 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="read" module=m1 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f5 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]

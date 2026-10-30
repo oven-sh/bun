@@ -169,6 +169,8 @@ unsafe extern "C" {
     pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         first_member_name_index: u32,
+        dictionary_index: u32,
+        has_every_member: bool,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;

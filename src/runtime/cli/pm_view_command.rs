@@ -73,7 +73,7 @@ pub(crate) fn view(
                 // `root_dir` is in the resolver's directory cache, so lookups must hold
                 // `entries_mutex`.
                 let has_package_json = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
                         .entries_mutex
                         .lock_guard();

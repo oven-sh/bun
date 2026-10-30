@@ -1,0 +1,320 @@
+# An array of one element never leaves its function. A loop stores a new object into the element, the element is read, and a second loop stores another new object or array into it.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="fresh-objects-stored-two-loops-element.js" displayPath="fresh-objects-stored-two-loops-element.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=293 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=1665 fields=[{key="other" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=null elements=[Null]} module=m0
+data d1 root=Array{contents=null elements=[Null]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = NewClosure function=f2
+    v3 = Call v2
+    v4 = Undefined
+    Return v4
+}
+function f1 name="thenAnotherLayout" module=m0 position=1428 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|Array<null> flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Integer integer=400
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v8):
+    v9 = Integer
+    v10 = NewObject layout=L0
+    v11 = FinishObject v10
+    v12 = Convert v11 declared={type=null flags=[IsExpected]}
+    ElemSet v1, v9, v12
+    v14 = Increment v8
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15)
+  b3(v16):
+    v17 = Integer
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v18)
+  b4(v19):
+    LoopHint
+    v21 = Integer integer=40
+    v22 = Less v19, v21
+    Branch v22 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v23):
+    v24 = Integer
+    v25 = Convert v23 declared={type=number flags=[IsExpected]}
+    v26 = NewObject layout=L1
+    PropDefine v26, v25 key="other"
+    v28 = FinishObject v26
+    v29 = Convert v28 declared={type=null flags=[IsExpected]}
+    ElemSet v1, v24, v29
+    v31 = Increment v23
+    v32 = Convert v31 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v32)
+  b6(v33):
+    v34 = Builtin builtin=GlobalThis
+    v35 = PropGet v34 key="console" [isFreeName]
+    v36 = Convert v35 declared={type=builtin(Console) flags=[IsExpected]}
+    v37 = PropGet v36 key="log"
+    v38 = Convert v37 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v39 = Integer
+    v40 = ElemGet v1, v39
+    v41 = Convert v40 declared={type=null flags=[IsExpected]}
+    v42 = PropGet v41 key="other"
+    v43 = Call v38, v36, v42 calleeKey="log" calleeName="console.log"
+    v44 = Undefined
+    Return v44
+}
+function f2 name="thenAStringThatItsLoopReads" module=m0 position=2539 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d1
+    v1 = Convert v0 declared={type=undefined|null|Array<null> flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Integer integer=400
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v8):
+    v9 = Integer
+    v10 = NewObject layout=L0
+    v11 = FinishObject v10
+    v12 = Convert v11 declared={type=null flags=[IsExpected]}
+    ElemSet v1, v9, v12
+    v14 = Increment v8
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15)
+  b3(v16):
+    v17 = Integer
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Integer
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v18, v20)
+  b4(v21, v22):
+    LoopHint
+    v24 = Integer integer=40
+    v25 = Less v22, v24
+    Branch v25 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v26):
+    v27 = Integer
+    v28 = String string="x"
+    v29 = Add v28, v26
+    v30 = PropGet v29 key="repeat"
+    v31 = Convert v30 declared={type=undefined|null|function flags=[IsExpected]}
+    v32 = Integer integer=20
+    v33 = Call v31, v29, v32 calleeKey="repeat" calleeName="repeat"
+    v34 = Convert v33 declared={type=undefined|null|string flags=[IsExpected]}
+    v35 = Convert v34 declared={type=null flags=[IsExpected]}
+    ElemSet v1, v27, v35
+    v37 = Integer
+    v38 = ElemGet v1, v37
+    v39 = Convert v38 declared={type=null flags=[IsExpected]}
+    v40 = PropGet v39 key="charCodeAt"
+    v41 = Integer
+    v42 = Call v40, v39, v41 calleeKey="charCodeAt" calleeName="holder[0].charCodeAt"
+    v43 = Add v21, v42
+    v44 = Convert v43 declared={type=number flags=[IsExpected]}
+    v45 = Increment v26
+    v46 = Convert v45 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v44, v46)
+  b6(v47):
+    v48 = Builtin builtin=GlobalThis
+    v49 = PropGet v48 key="console" [isFreeName]
+    v50 = Convert v49 declared={type=builtin(Console) flags=[IsExpected]}
+    v51 = PropGet v50 key="log"
+    v52 = Convert v51 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v53 = Call v52, v50, v21 calleeKey="log" calleeName="console.log"
+    v54 = Undefined
+    Return v54
+}
+# -- generated: f0 thenAnotherLayout thenAStringThatItsLoopReads
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f1 accessSite=0
+# CHECK-NEXT: v1: undefined = CallDirect function=f2 accessSite=1
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="thenAnotherLayout"
+# CHECK: module=m0 position=1428 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b1(v0, v1)
+# CHECK-NEXT: b1(v2: int[0, 400], v3: int[1, 2]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: 400 = Integer integer=400
+# CHECK-NEXT: v6: boolean = Less v2, v5
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v7: int[0, 399]):
+# CHECK-NEXT: v8: int[1, 400] = Increment v7
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b1(v8, v9)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Jump -> next b4(v10, v3, v11)
+# CHECK-NEXT: b4(v12: int[0, 40], v13: int[1, 8], v14: int[-2147483643, 2147483647]|unspecified):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v16: 40 = Integer integer=40
+# CHECK-NEXT: v17: boolean = Less v12, v16
+# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v18: int[0, 39]):
+# CHECK-NEXT: v19: int[1, 40] = Increment v18
+# CHECK-NEXT: v20: 8 = Integer integer=8
+# CHECK-NEXT: Jump -> next b4(v19, v20, v18)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v21: 5 = Integer integer=5
+# CHECK-NEXT: v22: int[0, 5] = BitAnd v13, v21
+# CHECK-NEXT: v23: boolean = ToBoolean v22
+# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v24: null = Null
+# CHECK-NEXT: v25: never = RequireObjectCoercible v24 name="other"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Switch v13 cases=[2] -> case b9(), otherwise b10()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v26: L0 = NewObject layout=L0 allocationSite=3 storage=Frame allocationClass=0
+# CHECK-NEXT: Jump -> next b11(v26)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v27: fact = Specified
+# CHECK-NEXT: v28: int[-2147483643, 2147483647] = AssumeType v14, v27 provenType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v29: L1 = NewObject -, v28 layout=L1 fields=[0] allocationSite=4 allocationClass=1
+# CHECK-NEXT: Jump -> next b11(v29)
+# CHECK-NEXT: b11(v30: L0|L1):
+# CHECK-NEXT: v31: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v30 key="other" accessSite=8 receivers=[L0, L1]
+# CHECK-NEXT: v32: undefined|int ~ undefined|int[-2147483643, 2147483647] = AssumeType v31 provenType=undefined|int
+# CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: Return v34
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="thenAStringThatItsLoopReads"
+# CHECK: module=m0 position=2539 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b2(v1)
+# CHECK-NEXT: b2(v2: int[0, 40] ~ 0):
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b3(v3: int[0, 40] ~ 0):
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: Jump -> next b4(v4, v3)
+# CHECK-NEXT: b4(v5: int[0, 2147549182] ~ 0, v6: int[0, 40]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: 40 = Integer integer=40
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b5(| 0), notTaken b28()
+# CHECK-NEXT: b5(v10: int[0, 39]):
+# CHECK-NEXT: v11: "x" = String string="x"
+# CHECK-NEXT: v12: string = Add v11, v10
+# CHECK-NEXT: v13: 20 = Integer integer=20
+# CHECK-NEXT: v14: string = CallBuiltin v12, v13 overload=StringPrototypeRepeat/0 accessSite=12
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: int[0, 2147483647] = GetStringLength v14
+# CHECK-NEXT: v17: boolean = Less v15, v16
+# CHECK-NEXT: Branch v17 -> taken b6(), notTaken b8()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v18: int[0, 65535] = GetStringCodeUnit v14, v15
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v5 testedType=i32
+# CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b19(v18, v5, v10)
+# CHECK-NEXT: b7(v20: int[0, 2147483647] ~ 0):
+# CHECK-NEXT: v21: int[0, 2147549182] ~ int[0, 65535] = Add v20, v18
+# CHECK-NEXT: v22: int[1, 40] = Increment v10
+# CHECK-NEXT: Jump -> next b4(v21, v22)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v23: whole = Double number=NaN
+# CHECK-NEXT: v24: boolean ~ true = TypeTest v5 testedType=i32
+# CHECK-NEXT: Branch v24 -> taken b9(| 0), notTaken b19(v23, v5, v10)
+# CHECK-NEXT: b9(v25: int[0, 2147483647] ~ 0) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10(v10, v23, v25)
+# CHECK-NEXT: b10(v26: int[0, 39], v27: int[0, 65535]|whole ~ int[0, 65535], v28: i32 ~ 0) frequency=Unlikely:
+# CHECK-NEXT: v29: int|whole ~ int[0, 65535] = Add v28, v27
+# CHECK-NEXT: v30: int[1, 40] = Increment v26
+# CHECK-NEXT: v31: int|whole ~ 0 = Upcast v29 castType=int|whole
+# CHECK-NEXT: v32: boolean ~ true = TypeTest v31 testedType=0
+# CHECK-NEXT: Branch v32 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3(v30)
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v34: 40 = Integer integer=40
+# CHECK-NEXT: v35: boolean = Less v30, v34
+# CHECK-NEXT: Branch v35 -> taken b13(| 0), notTaken b18()
+# CHECK-NEXT: b13(v36: int[1, 39]) frequency=Unlikely:
+# CHECK-NEXT: v37: "x" = String string="x"
+# CHECK-NEXT: v38: string = Add v37, v36
+# CHECK-NEXT: v39: 20 = Integer integer=20
+# CHECK-NEXT: v40: string = CallBuiltin v38, v39 overload=StringPrototypeRepeat/0 accessSite=12
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: v42: int[0, 2147483647] = GetStringLength v40
+# CHECK-NEXT: v43: boolean = Less v41, v42
+# CHECK-NEXT: Branch v43 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v44: int[0, 65535] = GetStringCodeUnit v40, v41
+# CHECK-NEXT: Jump -> next b16(v44)
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v45: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b16(v45)
+# CHECK-NEXT: b16(v46: int[0, 65535]|whole ~ int[0, 65535]) frequency=Unlikely:
+# CHECK-NEXT: v47: boolean ~ true = TypeTest v31 testedType=i32
+# CHECK-NEXT: Branch v47 -> taken b17(| 0), notTaken b19(v46, v31, v36)
+# CHECK-NEXT: b17(v48: i32 ~ 0) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10(v36, v46, v48)
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v49: undefined = CallBuiltin -, v31 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v50: undefined = Undefined
+# CHECK-NEXT: Return v50
+# CHECK-NEXT: b19(v51: int[0, 65535]|whole ~ int[0, 65535], v52: int|whole ~ 0, v53: int[0, 39]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20(v51, v52, v53)
+# CHECK-NEXT: b20(v54: int[0, 65535]|whole ~ int[0, 65535], v55: int|whole ~ 0, v56: int[0, 39]) frequency=Unlikely:
+# CHECK-NEXT: v57: int|whole ~ int[0, 65535] = Add v55, v54
+# CHECK-NEXT: v58: int[1, 40] = Increment v56
+# CHECK-NEXT: v59: int|whole ~ 0 = Upcast v57 castType=number
+# CHECK-NEXT: v60: boolean ~ true = TypeTest v59 testedType=0
+# CHECK-NEXT: Branch v60 -> taken b21(), notTaken b22()
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b2(v58)
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v62: 40 = Integer integer=40
+# CHECK-NEXT: v63: boolean = Less v58, v62
+# CHECK-NEXT: Branch v63 -> taken b23(| 0), notTaken b27()
+# CHECK-NEXT: b23(v64: int[1, 39]) frequency=Unlikely:
+# CHECK-NEXT: v65: "x" = String string="x"
+# CHECK-NEXT: v66: string = Add v65, v64
+# CHECK-NEXT: v67: 20 = Integer integer=20
+# CHECK-NEXT: v68: string = CallBuiltin v66, v67 overload=StringPrototypeRepeat/0 accessSite=12
+# CHECK-NEXT: v69: 0 = Integer
+# CHECK-NEXT: v70: int[0, 2147483647] = GetStringLength v68
+# CHECK-NEXT: v71: boolean = Less v69, v70
+# CHECK-NEXT: Branch v71 -> taken b24(), notTaken b25()
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v72: int[0, 65535] = GetStringCodeUnit v68, v69
+# CHECK-NEXT: Jump -> next b26(v72)
+# CHECK-NEXT: b25() frequency=Rare:
+# CHECK-NEXT: v73: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b26(v73)
+# CHECK-NEXT: b26(v74: int[0, 65535]|whole ~ int[0, 65535]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20(v74, v59, v64)
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: v75: undefined = CallBuiltin -, v59 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v76: undefined = Undefined
+# CHECK-NEXT: Return v76
+# CHECK-NEXT: b28():
+# CHECK-NEXT: v77: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v78: undefined = Undefined
+# CHECK-NEXT: Return v78
+# CHECK-NEXT: }

@@ -1,0 +1,241 @@
+# The n-body benchmark, with classes.
+# FORM: AsRead
+# RUN: lower-to-air size f2 f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="n-body.ts" displayPath="n-body.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Body" module=m0 position=45 constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}, {key="vx" declared={type=number} flags=[IsRequired]}, {key="vy" declared={type=number} flags=[IsRequired]}, {key="vz" declared={type=number} flags=[IsRequired]}, {key="mass" declared={type=number} flags=[IsRequired]}] ownFieldCount=7
+variable g0 name="Body" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="SOLAR_MASS" module=m0 declared={type=number|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = NewClass v6 layout=L0
+    v8 = FinishClass v7 layout=L0
+    v9 = Convert v8 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v9 variable=g0
+    v11 = Double number=39.47841760435743
+    v12 = Convert v11 declared={type=number}
+    PutModuleVariable v12 variable=g1
+    v14 = Call v1 calleeName="bodies"
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v16 = Integer
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v17)
+  b1(v18: number):
+    LoopHint
+    v20 = Integer integer=5000000
+    v21 = Less v18, v20
+    Branch v21 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v22):
+    v23 = Double number=0.01
+    v24 = Call v3, -, v15, v23 calleeName="advance"
+    v25 = Increment v22
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b1(v26)
+  b3(v27):
+    v28 = Call v5, -, v15 calleeName="energy"
+    v29 = Undefined
+    Return v29
+}
+function f1 name="bodies" module=m0 position=410 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="Body"
+    v2 = Integer
+    v3 = Integer
+    v4 = Integer
+    v5 = Integer
+    v6 = Integer
+    v7 = Integer
+    v8 = GetModuleVariable variable=g1
+    v9 = CheckInitialized v8 name="SOLAR_MASS"
+    v10 = Construct v1, -, v2, v3, v4, v5, v6, v7, v9 calleeName="Body"
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="Body"
+    v14 = Double number=4.841431442464721
+    v15 = Double number=-1.1603200440274284
+    v16 = Double number=-0.10362204447112311
+    v17 = Double number=0.606326392995832
+    v18 = Double number=2.81198684491626
+    v19 = Double number=-0.02521836165988763
+    v20 = Double number=0.03769367487038949
+    v21 = Construct v13, -, v14, v15, v16, v17, v18, v19, v20 calleeName="Body"
+    v22 = Convert v21 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v23 = GetModuleVariable variable=g0
+    v24 = CheckInitialized v23 name="Body"
+    v25 = Double number=8.34336671824458
+    v26 = Double number=4.124798564124305
+    v27 = Double number=-0.4035234171143214
+    v28 = Double number=-1.0107743461787924
+    v29 = Double number=1.8256623712304119
+    v30 = Double number=0.008415761376584154
+    v31 = Double number=0.011286326131968767
+    v32 = Construct v24, -, v25, v26, v27, v28, v29, v30, v31 calleeName="Body"
+    v33 = Convert v32 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v34 = GetModuleVariable variable=g0
+    v35 = CheckInitialized v34 name="Body"
+    v36 = Double number=12.894369562139131
+    v37 = Double number=-15.111151401698631
+    v38 = Double number=-0.22330757889265573
+    v39 = Double number=1.0827910064415354
+    v40 = Double number=0.8687130181696082
+    v41 = Double number=-0.010832637401363636
+    v42 = Double number=0.0017237240570597112
+    v43 = Construct v35, -, v36, v37, v38, v39, v40, v41, v42 calleeName="Body"
+    v44 = Convert v43 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v45 = GetModuleVariable variable=g0
+    v46 = CheckInitialized v45 name="Body"
+    v47 = Double number=15.379697114850917
+    v48 = Double number=-25.919314609987964
+    v49 = Double number=0.17925877295037118
+    v50 = Double number=0.979090732243898
+    v51 = Double number=0.5946989986476762
+    v52 = Double number=-0.034755955504078104
+    v53 = Double number=0.0020336868699246304
+    v54 = Construct v46, -, v47, v48, v49, v50, v51, v52, v53 calleeName="Body"
+    v55 = Convert v54 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v56 = NewArray v11, v22, v33, v44, v55 contents=undefined|null|L0
+    v57 = Convert v56 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    Return v57
+}
+function f2 name="advance" module=m0 position=1767 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number):
+    v2 = PropGet v0 key="length"
+    v3 = Convert v2 declared={type=number} illTypedCause=Assertion
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    LoopHint
+    v7 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v9 = ElemGet v0, v8
+    v10 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v13)
+  b1(v14: number):
+    LoopHint
+    v16 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    v18 = ElemGet v0, v17
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v20 = PropGet v10 key="y"
+    v21 = PropGet v19 key="y"
+    v22 = Increment v17
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b1(v23)
+}
+function f3 name="energy" module=m0 position=2404 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v12):
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v16 = Double number=0.5
+    v17 = PropGet v15 key="mass"
+    v18 = Mul v16, v17
+    v19 = PropGet v15 key="vx"
+    v20 = PropGet v15 key="vx"
+    v21 = Mul v19, v20
+    v22 = PropGet v15 key="vy"
+    v23 = PropGet v15 key="vy"
+    v24 = Mul v22, v23
+    v25 = Add v21, v24
+    v26 = PropGet v15 key="vz"
+    v27 = PropGet v15 key="vz"
+    v28 = Mul v26, v27
+    v29 = Add v25, v28
+    v30 = Mul v18, v29
+    v31 = Add v5, v30
+    v32 = Convert v31 declared={type=number}
+    v33 = Integer integer=1
+    v34 = Add v13, v33
+    v35 = Convert v34 declared={type=number}
+    Jump -> next b3(v32, v35)
+  b3(v36: number, v37: number):
+    LoopHint
+    v39 = Convert v37 declared={type=i32 flags=[IsExpected]}
+    v40 = PropGet v0 key="length"
+    v41 = Convert v40 declared={type=number} illTypedCause=Assertion
+    v42 = Less v39, v41
+    Branch v42 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v43):
+    v44 = Convert v43 declared={type=i32 flags=[IsExpected]}
+    v45 = ElemGet v0, v44
+    v46 = Convert v45 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v47 = PropGet v15 key="x"
+    v48 = PropGet v46 key="x"
+    v49 = Sub v47, v48
+    v50 = Convert v49 declared={type=number}
+    v51 = PropGet v15 key="y"
+    v52 = PropGet v46 key="y"
+    v53 = Sub v51, v52
+    v54 = Convert v53 declared={type=number}
+    v55 = PropGet v15 key="z"
+    v56 = PropGet v46 key="z"
+    v57 = Sub v55, v56
+    v58 = Convert v57 declared={type=number}
+    v59 = PropGet v15 key="mass"
+    v60 = PropGet v46 key="mass"
+    v61 = Mul v59, v60
+    v62 = Builtin builtin=Math
+    v63 = Builtin builtin=MathSqrt
+    v64 = Mul v50, v50
+    v65 = Mul v54, v54
+    v66 = Add v64, v65
+    v67 = Mul v58, v58
+    v68 = Add v66, v67
+    v69 = Call v63, v62, v68 calleeName="Math.sqrt"
+    v70 = Convert v69 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v71 = Div v61, v70
+    v72 = Sub v36, v71
+    v73 = Convert v72 declared={type=number}
+    v74 = Increment v44
+    v75 = Convert v74 declared={type=number}
+    Jump -> next b3(v73, v75)
+  b5(v76):
+    v77 = Increment v13
+    v78 = Convert v77 declared={type=number}
+    Jump -> next b1(v36, v78)
+  b6(v79):
+    v80 = Convert v5 declared={type=number}
+    Return v80
+}
+function f4 name="Body" module=m0 position=149 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=7 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number):
+    v8 = GetConstructPrototype v0 layout=L0
+    v9 = NewObject v8 layout=L0
+    v10 = Convert v9 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v11 = Undefined
+    Return v10
+}
+# -- generated: advance energy
+# CHECK-LABEL: function {{*}}name="advance"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 13, patchpoints: 1, rare instructions: 44
+# CHECK-NEXT: end of function f9
+# CHECK-LABEL: function {{*}}name="energy"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 22, patchpoints: 1, rare instructions: 17, polls: 1
+# CHECK-NEXT: end of function f3

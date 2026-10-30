@@ -126,8 +126,8 @@ extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(ScriptExecutionConte
 
 void ScriptExecutionContext::closeSQLiteDatabases()
 {
-    Bun__closeSQLiteDatabasesOfGraphContext(m_identifier);
-    Bun__closeNodeSqliteDatabasesOfGraphContext(m_identifier);
+    JSC::callRemovable<Bun::Feature::Sqlite, JSC::RemovedFeatureStub::ReturnDefault, Bun__closeSQLiteDatabasesOfGraphContext>(m_identifier);
+    JSC::callRemovable<Bun::Feature::Sqlite, JSC::RemovedFeatureStub::ReturnDefault, Bun__closeNodeSqliteDatabasesOfGraphContext>(m_identifier);
 }
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::ownerOfSQLiteDatabase(JSC::JSGlobalObject* globalObject)

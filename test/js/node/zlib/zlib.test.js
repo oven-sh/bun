@@ -1070,6 +1070,60 @@ describe("dictionary buffer lifetime", () => {
   });
 });
 
+it.concurrent("native streams take a write state and params at an odd address", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { ptr, toArrayBuffer } from "bun:ffi";
+        import zlib from "node:zlib";
+        const { constants } = zlib;
+        const memory = new Uint8Array(256);
+        // Moves the bytes of a small typed array, so it comes before ptr().
+        memory.buffer;
+        const odd = (offset, length) => new Uint32Array(toArrayBuffer(ptr(memory) + 1 + offset, 0, length * 4));
+        const input = Buffer.from("hello hello hello");
+        const run = (handle, state, flush) => {
+          const out = Buffer.alloc(64);
+          handle.writeSync(flush, input, 0, input.length, out, 0, out.length);
+          return [out.subarray(0, out.length - state[0]), state[1]];
+        };
+        {
+          const state = odd(0, 2);
+          const handle = new (zlib.createDeflate()._handle.constructor)(constants.DEFLATE);
+          handle.init(15, 6, 8, 0, state, () => {}, undefined);
+          const [out, availIn] = run(handle, state, constants.Z_FINISH);
+          console.log(zlib.inflateSync(out).toString(), availIn);
+        }
+        {
+          const state = odd(8, 2);
+          const params = odd(16, 10).fill(-1);
+          params[constants.BROTLI_PARAM_QUALITY] = 3;
+          const handle = new (zlib.createBrotliCompress()._handle.constructor)(constants.BROTLI_ENCODE);
+          handle.init(params, state, () => {});
+          const [out, availIn] = run(handle, state, constants.BROTLI_OPERATION_FINISH);
+          console.log(zlib.brotliDecompressSync(out).toString(), availIn);
+        }
+        {
+          const state = odd(64, 2);
+          const handle = new (zlib.createZstdCompress()._handle.constructor)(constants.ZSTD_COMPRESS);
+          handle.init(odd(72, 10).fill(-1), undefined, state, () => {});
+          const [out, availIn] = run(handle, state, constants.ZSTD_e_end);
+          console.log(zlib.zstdDecompressSync(out).toString(), availIn);
+        }
+        console.log((ptr(memory) + 1) % 2);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["hello hello hello 0", "hello hello hello 0", "hello hello hello 0", "1"]);
+  expect(exitCode).toBe(0);
+});
+
 it("params() between two writes changes the level for the second write", async () => {
   const a = Buffer.alloc(32 * 1024, "a");
   const b = Buffer.alloc(32 * 1024, "b");

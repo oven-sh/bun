@@ -1,0 +1,140 @@
+# Classes that are constructed by Reflect.construct, by `new (pick())()`, by new on a member of an array, through new.target, through a bound copy, by a subclass that has no constructor of its own and by Object.create plus call of a function.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="constructors-run-without-new-before-name.ts" displayPath="constructors-run-without-new-before-name.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Old" module=m0 position=865 constructor=f1 fields=[{key="value" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired] originLayout=L3 originField=0}] supertypes=[L3] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="ByNewTarget" module=m0 position=471 constructor=f2 fields=[{key="value" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="copy" declared={type=undefined|null|L1 flags=[OmitsNull]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Instance name="AsNewTarget" module=m0 position=960 constructor=f3
+layout L3 module=m0 position=884 fields=[{key="value" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+data d0 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L2
+    v8 = FinishClass v7 layout=L2
+    v9 = Convert v8 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Construct v5 calleeName="ByNewTarget"
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectCreate
+    v13 = PropGet v1 key="prototype"
+    v14 = Convert v13 declared={type=undefined|null|object flags=[IsExpected]}
+    v15 = Call v12, v11, v14 calleeName="Object.create"
+    v16 = Convert v15 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}
+    v17 = PropGet v1 key="call"
+    v18 = Call v17, v1, v16 calleeKey="call" calleeName="Old.call"
+    v19 = Builtin builtin=Reflect
+    v20 = Builtin builtin=ReflectConstruct
+    v21 = Builtin builtin=Object
+    v22 = Data data=d0
+    v23 = Call v20, v19, v21, v22, v9 calleeName="Reflect.construct" [isDoneInPlace]
+    v24 = Undefined
+    Return v24
+}
+function f1 name="Old" module=m0 position=865 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="ByNewTarget" module=m0 position=642 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|boolean}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: undefined|boolean):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = Boolean
+    v7 = Convert v6 declared={type=boolean}
+    v8 = Boolean boolean=true
+    v9 = Construct v0, -, v8
+    v10 = Undefined
+    Return v4
+}
+function f3 name="AsNewTarget" module=m0 position=960 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2
+function f4 module=m0 position=471 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Undefined
+    Return v1
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+# -- generated: f0 Old ByNewTarget
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f4 callPosition=4294967295 parent=1 module=m0}, {callee=f13 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 @Cell = NewClosure function=f1 allocationSite=0 closureForm=Singleton
+# CHECK-NEXT: v1: f2 @Cell = NewClosure function=f2 allocationSite=1 allocation=0
+# CHECK-NEXT: v2: f2 @Cell = NewClass v1 layout=L1 request=4
+# CHECK-NEXT: v3: f2 @Cell = FinishClass v2 layout=L1
+# CHECK-NEXT: v4: f3 @Cell = NewClosure function=f3 allocationSite=2 allocation=0
+# CHECK-NEXT: v5: f3 @Cell = NewClass v4 layout=L2 request=8
+# CHECK-NEXT: v6: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: v7: L1 @Cell = NewObject layout=L1 storage=Frame allocation=2 allocationClass=1
+# CHECK-NEXT: v8: undefined @JSValue = CallDirect v7, v3, v6 function=f13 accessSite=6 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v9: anything @JSValue = PropGet v0 key="prototype" accessSite=1
+# CHECK-NEXT: v10: object @JSValue = AssumeType v9 provenType=object
+# CHECK-NEXT: TryCallInline -, v10 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b1(), miss b2()
+# CHECK-NEXT: b1(v11: Object @Cell):
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v12: Object @JSValue = CallBuiltin -, v10 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next b1(v12)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Old"
+# CHECK: module=m0 position=865 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: undefined|null|L0 @JSValue):
+# CHECK-NEXT: v1: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ByNewTarget"
+# CHECK: module=m0 position=642 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|true}] results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+# CHECK-LABEL: function {{*}}name="Old"
+# CHECK: module=m0 position=865 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers constructEntrypoint=f11} inlineFrames=[{}, {callee=f1 callPosition=865 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f1 @Cell, v1: anything @JSValue):
+# CHECK-NEXT: v2: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Old"
+# CHECK: module=m0 position=865 role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=2} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f1 callPosition=865 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0(v0: f1 @Cell, v1: anything @JSValue, v2: anything @JSValue):
+# CHECK-NEXT: v3: L0 @Cell = NewObject layout=L0 allocation=1 allocationClass=0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ByNewTarget"
+# CHECK: module=m0 position=642 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f2 callPosition=642 isTailCall=true module=m0}, {callee=f4 callPosition=4294967295 parent=1 module=m0}, {callee=f13 callPosition=4294967295 parent=1 isConstruction=true module=m0}, {callee=f4 callPosition=4294967295 parent=3 module=m0}, {callee=f13 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f4 callPosition=4294967295 parent=5 module=m0}] {
+# CHECK-NEXT: b0(v0: f2 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue):
+# CHECK-NEXT: v4: fact @Void = Entered function=f2 @642 tail
+# CHECK-NEXT: v5: f2 @JSValue = AssumeType v2, v4 provenType=f2
+# CHECK-NEXT: v6: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}] guardBit=0
+# CHECK-NEXT: TestAndBranch v6 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v7: L1 @Cell = NewObject layout=L1 allocationSite=5 allocation=2 allocationClass=1
+# CHECK-NEXT: v8: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: v9: L1 @Cell = NewObject layout=L1 storage=Frame allocation=2 allocationClass=1
+# CHECK-NEXT: v10: undefined @JSValue = CallDirect v9, v5, v8 function=f13 accessSite=6 [isNeverInlined, isConstruction]
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: object @Cell = GetConstructPrototype v5 layout=L1
+# CHECK-NEXT: v12: object @Cell = NewObject v11 layout=L1 allocationSite=5 allocation=2 allocationClass=1
+# CHECK-NEXT: v13: L1 @Cell = AssumeType v12 provenType=L1
+# CHECK-NEXT: v14: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: v15: L1 @Cell = NewObject layout=L1 storage=Frame allocation=2 allocationClass=1
+# CHECK-NEXT: v16: undefined @JSValue = CallDirect v15, v5, v14 function=f13 accessSite=6 [isConstruction]
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ByNewTarget"
+# CHECK: module=m0 position=642 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L1} parameters=[{type=undefined|true}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f2} constructedClass=L1 inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: L1 @Cell, v1: anything @JSValue, v2: undefined|true @JSValue):
+# CHECK-NEXT: v3: f2 @JSValue = AssumeType v1 provenType=f2
+# CHECK-NEXT: v4: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: v5: L1 @Cell = NewObject layout=L1 storage=Frame allocation=2 allocationClass=1
+# CHECK-NEXT: v6: undefined @JSValue = CallDirect v5, v3, v4 function=f13 accessSite=6 [isNeverInlined, isConstruction]
+# CHECK-NEXT: v7: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }

@@ -1,0 +1,350 @@
+# A write that the lock of a built-in object refuses throws a TypeError, whether it assigns, defines or deletes, as a write that JavaScript itself rejects does. A write to a built-in that is not locked succeeds, and so does a new ordinary name on an object that only keeps its members.
+# FORM: AsRead
+# DIAGNOSTIC: LockedBuiltinWriteMayRun
+# RUN: lower-to-b3 optimized f18
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="builtin-write-errors-mention-aot.ts" displayPath="builtin-write-errors-mention-aot.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=323 fields=[{key="configurable" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=undefined|null|function|f1 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="writable" declared={type=boolean} flags=[IsRequired]}] supertypes=[L1] declaredOrder=[1, 0, 2] ownFieldCount=3
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] flags=[IsNeverAllocated] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6 flow={allocation=NeverAllocated}
+layout L2 fields=[{key="configurable" declared={type=true} flags=[IsRequired]}, {key="enumerable" declared={type=true} flags=[IsRequired]}] supertypes=[L3] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L3 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] supertypes=[L2] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+data d0 root=Array{contents=undefined|null|string elements=[String{value="size"}]} module=m0
+variable g0 name="f" module=m0 declared={type=undefined|null|function|absent|f1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="d" module=m0 declared={type=undefined|null|absent|L0|L3 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="size" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=undefined|null|function|f1 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v1 variable=g0
+    v3 = Boolean boolean=true
+    v4 = Convert v3 declared={type=boolean}
+    v5 = Boolean boolean=true
+    v6 = Convert v5 declared={type=boolean}
+    v7 = NewObject -, v1, v4, v6 layout=L0 fields=[1, 0, 2]
+    v8 = FinishObject v7
+    v9 = Convert v8 declared={type=undefined|null|L0|L3 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v9 variable=g1
+    v11 = Data data=d0
+    v12 = Integer
+    v13 = ElemGet v11, v12
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    PutModuleVariable v14 variable=g2
+    v16 = String string="assign over a method of a prototype"
+    v17 = NewClosure function=f2
+    v18 = NewArray v16, v17 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v19 = String string="define over a method of a prototype"
+    v20 = NewClosure function=f3
+    v21 = NewArray v19, v20 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v22 = String string="delete a method of a prototype"
+    v23 = NewClosure function=f4
+    v24 = NewArray v22, v23 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v25 = String string="define a new property of a prototype that is closed"
+    v26 = NewClosure function=f5
+    v27 = NewArray v25, v26 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v28 = String string="define an index of a prototype that takes new names"
+    v29 = NewClosure function=f6
+    v30 = NewArray v28, v29 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v31 = String string="allowed: define a new property of a prototype that takes new names"
+    v32 = NewClosure function=f7
+    v33 = NewArray v31, v32 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v34 = String string="define over a static method"
+    v35 = NewClosure function=f8
+    v36 = NewArray v34, v35 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v37 = String string="define over an inherited static method"
+    v38 = NewClosure function=f9
+    v39 = NewArray v37, v38 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v40 = String string="define over a function of a namespace"
+    v41 = NewClosure function=f10
+    v42 = NewArray v40, v41 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v43 = String string="define over an accessor of a constructor"
+    v44 = NewClosure function=f11
+    v45 = NewArray v43, v44 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v46 = String string="define a property that hides an inherited one"
+    v47 = NewClosure function=f12
+    v48 = NewArray v46, v47 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v49 = String string="define a property that hides an inherited read-only one"
+    v50 = NewClosure function=f13
+    v51 = NewArray v49, v50 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v52 = String string="define a property of a prototype that hides an inherited accessor"
+    v53 = NewClosure function=f14
+    v54 = NewArray v52, v53 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v55 = String string="define over a global variable"
+    v56 = NewClosure function=f15
+    v57 = NewArray v55, v56 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v58 = String string="delete a static method"
+    v59 = NewClosure function=f16
+    v60 = NewArray v58, v59 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v61 = String string="delete an accessor of a prototype"
+    v62 = NewClosure function=f17
+    v63 = NewArray v61, v62 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v64 = String string="delete an accessor of a prototype by a computed key"
+    v65 = NewClosure function=f18
+    v66 = NewArray v64, v65 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v67 = String string="JavaScript rejects: assign to a read-only number"
+    v68 = NewClosure function=f19
+    v69 = NewArray v67, v68 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v70 = String string="JavaScript rejects: define over a read-only number"
+    v71 = NewClosure function=f20
+    v72 = NewArray v70, v71 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v73 = String string="JavaScript rejects: delete a read-only number"
+    v74 = NewClosure function=f21
+    v75 = NewArray v73, v74 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v76 = String string="JavaScript rejects: define over the prototype of a constructor"
+    v77 = NewClosure function=f22
+    v78 = NewArray v76, v77 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v79 = String string="allowed: define a new property of a namespace"
+    v80 = NewClosure function=f23
+    v81 = NewArray v79, v80 contents=undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23
+    v82 = NewArray v18, v21, v24, v27, v30, v33, v36, v39, v42, v45, v48, v51, v54, v57, v60, v63, v66, v69, v72, v75, v78, v81 contents=undefined|null|Array<undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23>
+    v83 = Convert v82 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23>> flags=[OmitsNull, OmitsUndefined]}
+    v84 = IteratorOpen v83
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v86 = IteratorResume v84
+    v87 = ResultAt v86 index=1
+    Jump -> next b2()
+  b2() handler=b10():
+    v88 = Convert v87 declared={type=undefined|null|Array<undefined|null|string|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v89 = IteratorOpen v88 elementCount=2 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b9():
+    v90 = IteratorResume v89 stepIndex=1
+    v91 = ResultAt v90 index=1
+    v92 = Convert v91 declared={type=undefined|null|function|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23} illTypedCause=Assertion
+    Jump -> next b4()
+  b4() handler=b10():
+    Jump -> next b5()
+  b5() handler=b7():
+    v93 = Call v92 calleeName="write"
+    v94 = String string="no error"
+    Jump -> next b6()
+  b6() handler=b10():
+    Jump -> next b8()
+  b7() role=CatchHandler handler=b10():
+    Jump -> next b8()
+  b8() handler=b10():
+    Jump -> next b1()
+  b9() role=IterationCleanup subject=v89 handler=b10():
+    v95 = CatchException
+    Rethrow v95
+  b10() role=IterationCleanup subject=v84:
+    v96 = CatchException
+    Rethrow v96
+}
+function f1 name="f" module=m0 position=297 flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m0 position=493 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|f1 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="f"
+    PropSet v1, v3 key="push"
+    v5 = Convert v3 declared={type=undefined|null|function|f1 flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+function f3 module=m0 position=579 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=674 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = PropDelete v1 key="push"
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f5 module=m0 position=777 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=895 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=ArrayPrototype
+    v3 = String string="7"
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f7 module=m0 position=1023 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=1177 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|builtin(Array) flags=[IsExpected]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Array
+    v3 = String string="from"
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}, {declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}]
+}
+function f9 module=m0 position=1270 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|builtin(Uint8Array) flags=[IsExpected]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=1367 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=1460 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|builtin(Array) flags=[IsExpected]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Array
+    v3 = Builtin builtin=SymbolSpecies
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}, {declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}]
+}
+function f12 module=m0 position=1568 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|builtin(Date) flags=[IsExpected]}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Date" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Date) flags=[IsExpected]}
+    v5 = String string="toString"
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="d"
+    v8 = Call v1, v0, v4, v5, v7 calleeName="Object.defineProperty"
+    ReturnCall v8 casts=[{declared={type=undefined|null|function|builtin(Date) flags=[IsExpected]}}, {declared={type=undefined|null|function|builtin(Date) flags=[IsExpected]}}]
+}
+function f13 module=m0 position=1681 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|builtin(Array) flags=[IsExpected]}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Array
+    v3 = Builtin builtin=SymbolHasInstance
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}, {declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}]
+}
+function f14 module=m0 position=1813 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Uint8ArrayPrototype
+    v3 = String string="buffer"
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f15 module=m0 position=1914 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = String string="Array"
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="d"
+    v8 = Call v1, v0, v4, v5, v7 calleeName="Object.defineProperty"
+    ReturnCall v8 casts=[{declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f16 module=m0 position=1997 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = PropDelete v1 key="from"
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f17 module=m0 position=2072 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=MapPrototype
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = PropDelete v1 key="size"
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f18 module=m0 position=2173 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=MapPrototype
+    v1 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
+    v2 = GetModuleVariable variable=g2
+    v3 = CheckInitialized v2 name="size"
+    v4 = ElemDelete v1, v3
+    v5 = Convert v4 declared={type=boolean}
+    Return v5
+}
+function f19 module=m0 position=2272 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = Integer integer=3
+    PropSet v1, v2 key="PI"
+    v4 = Convert v2 declared={type=number}
+    Return v4
+}
+function f20 module=m0 position=2360 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Math
+    v3 = String string="PI"
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|object flags=[IsExpected]}}, {declared={type=undefined|null|object flags=[IsExpected]}}]
+}
+function f21 module=m0 position=2457 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = PropDelete v1 key="PI"
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f22 module=m0 position=2558 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|function|builtin(Array) flags=[IsExpected]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Array
+    v3 = String string="prototype"
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="d"
+    v6 = Call v1, v0, v2, v3, v5 calleeName="Object.defineProperty"
+    ReturnCall v6 casts=[{declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}, {declared={type=undefined|null|function|builtin(Array) flags=[IsExpected]}}]
+}
+function f23 module=m0 position=2663 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25]
+function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f29]
+# -- generated: f18
+# CHECK-LABEL: function f18 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000008, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v0:Builtin)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@20 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.11, v1:GetModuleVariable)
+# CHECK-NEXT: Int64 b@21 = Patchpoint(b@20:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:ElemDelete)
+# CHECK-NEXT: Int64 b@22 = Patchpoint(b@19:Register(%rax), b@21:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v2:ElemDelete)
+# CHECK-NEXT: Int32 b@23 = Trunc(b@22, v2:ElemDelete)
+# CHECK-NEXT: Int64 b@24 = ZExt32(b@23)
+# CHECK-NEXT: Int64 b@25 = Const64(6)
+# CHECK-NEXT: Int64 b@26 = BitOr(b@24, $6(b@25))
+# CHECK-NEXT: Void b@27 = Return(b@26, Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 425984
+# CHECK-NEXT: b@19: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f18

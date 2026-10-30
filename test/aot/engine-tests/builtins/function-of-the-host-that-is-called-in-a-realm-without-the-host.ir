@@ -1,0 +1,17 @@
+# call(Buffer.from), where call = f => f("a"), in the shell, which is a realm without the host.
+# The image does not hold the function, and nobody has made its object. The realm says what is missing and exits: once the cell was null and a signal ended the shell.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.call = f => f("a");
+# CHECK: AOT: the program needs the host's Buffer.from, and this realm has no host
+# CHECK-NEXT: exited with 4
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="call" [isFreeName]
+    v2 = Builtin builtin=BufferFrom
+    v3 = Call v1, -, v2
+    Return
+}

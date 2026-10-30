@@ -52,13 +52,13 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 
 pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
-    pub import_records: Vec<ImportRecord>,
+    pub import_records: Vec<ImportRecord<'static>>,
     pub log: &'a mut Log,
-    pub source: &'a Source,
+    pub source: &'a Source<'a>,
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
+    pub(crate) fn init(log: &'a mut Log, source: &'a Source<'a>) -> HTMLScanner<'a> {
         HTMLScanner {
             import_records: Vec::new(),
             log,
@@ -73,7 +73,7 @@ impl<'a> HTMLScanner<'a> {
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir(),
+                fs::FileSystem::get().top_level_dir(),
                 &[&input_path[1..]],
             )
         }
@@ -151,7 +151,10 @@ impl<'a> HTMLScanner<'a> {
 }
 
 /// The import records of the HTML file `source`: one per `<script src>`, `<link href>` and other tag the bundler follows.
-pub fn scan_import_records(log: &mut Log, source: &Source) -> Result<Vec<ImportRecord>, Error> {
+pub fn scan_import_records(
+    log: &mut Log,
+    source: &Source,
+) -> Result<Vec<ImportRecord<'static>>, Error> {
     let mut scanner = HTMLScanner::init(log, source);
     scanner.scan(&source.contents)?;
     Ok(scanner.import_records)

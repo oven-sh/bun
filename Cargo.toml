@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "src/opaque",
+  "src/pod",
   "src/analytics",
   "src/base64",
   "src/bundler",
@@ -14,11 +15,15 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/aot",
+  "src/aot/absent",
+  "src/aot/builtins",
+  "src/aot/interface",
   "src/sema",
   "src/sema/baselines",
   "src/sema/driver",
@@ -44,6 +49,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -56,8 +62,12 @@ members = [
   "src/dns",
   "src/dotenv",
   "src/event_loop",
+  "src/executable",
   "src/exe_format",
+  "src/trim",
+  "src/trim/removable_features",
   "src/highway",
+  "src/histogram",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -123,6 +133,7 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
+  "src/builtin_sources",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -208,7 +219,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -371,6 +382,7 @@ encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
+bun_pod = { path = "src/pod" }
 bun_analytics = { path = "src/analytics" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
@@ -382,11 +394,16 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_aot = { path = "src/aot" }
+bun_aot_absent = { path = "src/aot/absent" }
+bun_aot_builtins = { path = "src/aot/builtins" }
+bun_aot_interface = { path = "src/aot/interface" }
+bun_builtin_sources = { path = "src/builtin_sources" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
@@ -411,6 +428,7 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
@@ -424,7 +442,10 @@ bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
+bun_trim = { path = "src/trim" }
+bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
+bun_histogram = { path = "src/histogram" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -488,6 +509,10 @@ bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+# It stands in for vector code that every test program runs over each byte it parses.
+[profile.dev.package.bun_sema_standalone]
+opt-level = 3
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

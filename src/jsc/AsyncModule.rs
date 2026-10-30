@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{EncodedSlice, String as BunString, StringView};
 use bun_install::Resolution;
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
@@ -267,7 +267,9 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 }
 
 impl Queue {
+    #[inline(never)]
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -294,7 +296,9 @@ impl Queue {
         }
     }
 
+    #[inline(never)]
     pub fn on_poll(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::on_poll);
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
             // A synchronous auto-install drains its own tasks; here their failures would be lost.
@@ -607,8 +611,8 @@ impl AsyncModule {
             bun_io::AllocatorType::Js,
         ));
         let result = this.resume_loading_module(&mut log);
-        let spec = BunString::borrow_utf8(this.specifier());
-        let referrer = BunString::borrow_utf8(this.referrer());
+        let spec = StringView::borrow_utf8(this.specifier());
+        let referrer = StringView::borrow_utf8(this.referrer());
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
@@ -1010,22 +1014,12 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
-        // Take `parse_result` by value via `mem::take`, then restore below, to
-        // satisfy borrowck around `linker.link(&mut parse_result)` while
-        // `self` is also borrowed.
+        // `print_with_source_map` consumes the `ParseResult`, so take it by value.
         let arena = *self.parse_result.ast.parts.allocator();
         let mut parse_result =
             core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
-        // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
-        // stable for the lifetime of `*self`; this fn never replaces it, so
-        // slices into it remain valid across the `&mut self` reborrows below
-        // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
-        // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
-        // SAFETY: same `string_buf` stability invariant as `specifier` above —
-        // the backing `Box<[u8]>` is never replaced in this fn.
-        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
-        let path = Fs::Path::init(path_text);
+        let specifier = self.specifier();
+        let path = Fs::Path::init(self.path_text());
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
@@ -1067,15 +1061,9 @@ impl AsyncModule {
                 bun_bundler::options::ImportPathFormat::AbsolutePath,
             )?;
         }
-        self.parse_result = parse_result;
-        // `print_with_source_map` consumes `ParseResult` by
-        // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // read (`is_commonjs_module`) above the move so we
-        // can `mem::take` instead of cloning.
-        let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
-            || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let arena = *self.parse_result.ast.parts.allocator();
-        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+        // Read before `print_with_source_map` moves `ast` into `print_ast`.
+        let is_commonjs_module = parse_result.ast.has_commonjs_export_names
+            || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
 
         // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
@@ -1150,7 +1138,7 @@ impl AsyncModule {
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            source_url: BunString::from_bytes(path.text),
+            source_url: BunString::clone_utf8(path.text),
             is_commonjs_module,
             is_static: self.is_static,
             ..Default::default()

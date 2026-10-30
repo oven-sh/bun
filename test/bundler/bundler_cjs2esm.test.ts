@@ -2076,8 +2076,36 @@ describe("bundler", () => {
       },
     });
   }
+  // A holder of `module.exports` can replace a function that does not read
+  // `this` with one that does, so the call does not bind to the function.
+  itBundled("cjs2esm/StarImportMethodCallThroughExportStarOfWrappedLiftedCommonJSKeepsThisOfReplacedFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./patch.cjs";
+        import * as ns from "./barrel.js";
+        console.log(ns.plain() === ns);
+      `,
+      "/patch.cjs": /* js */ `
+        require("./lib.cjs").plain = function () {
+          return this;
+        };
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+        export const own = 1;
+      `,
+      "/lib.cjs": /* js */ `
+        exports.plain = function () {
+          return "plain";
+        };
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "true",
+    },
+  });
   // The same for a name that an ES module behind the wrapped file declares.
-  // An assignment can give a function declaration a body that reads `this`.
   itBundled("cjs2esm/StarImportMethodCallThroughExportStarOfWrappedLiftedCommonJSOverESModuleKeepsThis", {
     files: {
       "/entry.js": /* js */ `
@@ -2216,32 +2244,47 @@ describe("bundler", () => {
   });
   // `import()` and `require()` narrow the namespace of a barrel to the names
   // read. With the wrapper kept, a lifted function still reaches the other
-  // names of its file through `this`.
-  for (const [name, call] of [
-    ["DynamicImport", `console.log((await import("./barrel.js")).parse("x"));`],
-    ["HeldDynamicImport", `const ns = await import("./barrel.js"); console.log(ns.parse("x"));`],
-    ["Require", `console.log(require("./barrel.js").parse("x"));`],
-    ["HeldRequire", `const ns = require("./barrel.js"); console.log(ns.parse("x"));`],
+  // names of its file through `this`, also a name that the barrel re-exports
+  // by name, and also in the chunk that `import()` loads.
+  for (const [barrelName, namedReExport] of [
+    ["", ""],
+    ["AndNamedReExport", `export { _helper } from "./lib.cjs";`],
   ]) {
-    itBundled(`cjs2esm/${name}MethodCallThroughExportStarOfWrappedLiftedCommonJSKeepsThis`, {
-      files: {
-        "/entry.js": /* js */ `
-          import lib from "./lib.cjs";
-          console.log(Object.keys(lib).join(","));
-          ${call}
-        `,
-        "/barrel.js": /* js */ `
-          export * from "./lib.cjs";
-          export const own = 1;
-        `,
-        ...thisReadingLib,
-      },
-      format: "esm",
-      cjs2esm: { unhandled: ["/lib.cjs"] },
-      run: {
-        stdout: "parse,_helper,tag\nhelped:x",
-      },
-    });
+    for (const [name, call] of [
+      ["DynamicImport", `console.log((await import("./barrel.js")).parse("x"));`],
+      ["HeldDynamicImport", `const ns = await import("./barrel.js"); console.log(ns.parse("x"));`],
+      ["Require", `console.log(require("./barrel.js").parse("x"));`],
+      ["HeldRequire", `const ns = require("./barrel.js"); console.log(ns.parse("x"));`],
+    ]) {
+      for (const splitting of name.includes("DynamicImport") && !barrelName ? [false, true] : [false]) {
+        itBundled(
+          `cjs2esm/${name}MethodCallThroughExportStar${barrelName}OfWrappedLiftedCommonJSKeepsThis${splitting ? "Splitting" : ""}`,
+          {
+            files: {
+              "/entry.js": /* js */ `
+                import lib from "./lib.cjs";
+                console.log(Object.keys(lib).join(","));
+                ${call}
+              `,
+              "/barrel.js": /* js */ `
+                export * from "./lib.cjs";
+                ${namedReExport}
+                export const own = 1;
+              `,
+              ...thisReadingLib,
+            },
+            format: "esm",
+            splitting,
+            outdir: splitting ? "/out" : undefined,
+            cjs2esm: splitting ? undefined : { unhandled: ["/lib.cjs"] },
+            run: {
+              file: splitting ? "/out/entry.js" : undefined,
+              stdout: "parse,_helper,tag\nhelped:x",
+            },
+          },
+        );
+      }
+    }
   }
   itBundled("cjs2esm/MethodCallKeepsThisWhenTheValueCanReadIt", {
     files: {

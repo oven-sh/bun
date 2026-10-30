@@ -1023,9 +1023,7 @@ pub(crate) mod inet {
     pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
-/// The address of a bind or listen host that Node.js's `net.isIP()` takes: a dotted quad or an IPv6 address, with a `%zone` in its grammar. Any other host stays with the resolver, as in Node.js, a zone that `net.isIP()` refuses included.
-///
-/// The zone is read as libuv's `uv_ip6_addr` reads it (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/uv-common.c#L288-L293): the index of the interface that has this name (on Windows the zone is that index), and no zone when no interface has it. Where libuv stops there off Windows, `scope_index` also reads a zone of digits as the index itself, because `dns.lookup()` here prints a scoped address as `%<index>`. A number past `u32::MAX` is no zone.
+/// The address of a bind or listen host that Node.js's `net.isIP()` takes, a `%zone` in its grammar included. Any other host stays with the resolver, as in Node.js. The zone is read as libuv's `uv_ip6_addr` reads it (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/uv-common.c#L288-L293), and `scope_index` also reads a zone of digits as an index off Windows, because `dns.lookup()` here prints a scoped address as `%<index>`.
 pub(crate) fn parse_bind_address(host: &[u8], port: u16) -> Option<bun_sys::net::Address> {
     if let Some(ip) = bun_core::ip_address::parse_strict(host) {
         return Some(bun_sys::net::Address::from_ip(ip, port));

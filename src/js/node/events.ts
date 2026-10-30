@@ -351,9 +351,32 @@ function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $No
   }
 }
 
-// For a caller whose `args` has to stay out of the heap: emitErrorApplied.$apply(emitter, args).
-function emitErrorApplied(this: $Node.EventEmitter, ...args: unknown[]) {
-  return emitError(this, args);
+// For a caller whose `args` has to stay out of the heap: emitErrorApplied.$apply(emitter, args). In a stack trace it is emit().
+const emitErrorApplied = function emit(this: $Node.EventEmitter, er?: unknown) {
+  const { _events: events } = this;
+  if (events !== undefined && events[kErrorMonitor] === undefined) {
+    const handlers = events.error;
+    if (handlers !== undefined) {
+      // One argument is the rule: it is declared, so a listener takes it in a plain call, and a frame that the JIT inlines has room for it.
+      const one = $argumentCount() === 1;
+      if (typeof handlers === "function") {
+        if (one) handlers.$call(this, er);
+        else handlers.$apply(this, arguments);
+      } else {
+        for (let i = 0, { length } = handlers; i < length; i++) {
+          if (one) handlers[i].$call(this, er);
+          else handlers[i].$apply(this, arguments);
+        }
+      }
+      return true;
+    }
+  }
+  return emitError(this, arrayOf.$apply(undefined, arguments));
+};
+
+// An array of its own for such a caller: arrayOf.$apply(undefined, args).
+function arrayOf(...args: unknown[]) {
+  return args;
 }
 
 function addCatch(emitter: $Node.EventEmitter, promise: Promise<unknown>, type: $Node.EventName, args: unknown[]) {

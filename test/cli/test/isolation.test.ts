@@ -1884,6 +1884,60 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
   });
 });
 
+// What a `Bun.*` property makes on first read belongs to the global that reads
+// it. A value of that kind that the VM roots keeps the global of a finished
+// file: the functions that `bun:sql` gives to native code kept the last file
+// that loaded it.
+//
+// The first file reads the property. The second one lists every other global
+// that a root reaches, with the path from that root.
+describe.concurrent("--isolate: no root reaches the global of a finished file that read", () => {
+  const rootWalk = join(import.meta.dir, "../../js/bun/gc/realms-a-root-reaches.fixture.js");
+
+  test.each([
+    ["Bun.sql", `void Bun.sql;`],
+    ["every property of Bun", `for (const name of Object.getOwnPropertyNames(Bun)) void Bun[name];`],
+  ])("%s", async (_, read) => {
+    using dir = tempDir("isolate-reader", {
+      "a-reads.test.js": `
+        import { test } from "bun:test";
+        ${read}
+        test("reads", () => {});
+      `,
+      "b-walks.test.js": `
+        import { test } from "bun:test";
+        import { heapStats } from "bun:jsc";
+        const { realmsARootReaches } = require(${JSON.stringify(rootWalk)});
+        test("walks the roots", async () => {
+          // A JIT plan that waits for its code block is a root for a turn or two, so the walk runs again.
+          for (let attempt = 0; attempt < 3; attempt++) {
+            // The finished file's global can be there with no root: the scan of the machine stack may see it.
+            let realms;
+            for (let i = 0; i < 5 && realms !== 1; i++) {
+              Bun.gc(true);
+              await new Promise(resolve => setImmediate(resolve));
+              realms = heapStats().objectTypeCounts.GlobalObject;
+            }
+            const reached = realms === 1 ? [] : realmsARootReaches();
+            console.log("realms a root reaches: " + JSON.stringify(reached));
+            if (reached.length === 0) break;
+          }
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-reads.test.js", "./b-walks.test.js"],
+    );
+    // The last walk is the one that counts.
+    expect({ said: (stdout + stderr).match(/^realms a root reaches: .*$/gm)?.at(-1), exitCode }).toEqual({
+      said: "realms a root reaches: []",
+      exitCode: 0,
+    });
+  });
+});
+
 // fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue
 // holds a ref that is dropped on the work-pool thread. After unwatchFile +
 // GC of the JS wrapper, that queue ref is the LAST ref, so the watcher is

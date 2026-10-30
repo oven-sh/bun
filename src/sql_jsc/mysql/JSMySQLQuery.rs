@@ -3,8 +3,8 @@ use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
-    VirtualMachineSqlExt as _, bun_string_jsc,
+    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, RealmCallback, VirtualMachine,
+    bun_string_jsc,
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
@@ -221,8 +221,7 @@ impl JSMySQLQuery {
         let Some(target_value) = js::target_get_cached(this_value) else {
             return;
         };
-        let vm = VirtualMachine::get_mut();
-        let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
+        let Some(function) = RealmCallback::MySQLResolveQuery.get(self.global_object()) else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
@@ -231,7 +230,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        vm.event_loop_mut().run_callback(
+        VirtualMachine::get_mut().event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -310,12 +309,11 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let vm = VirtualMachine::get_mut();
-        let Some(function) = vm.sql_state().mysql_context.on_query_reject_fn.get() else {
+        let Some(function) = RealmCallback::MySQLRejectQuery.get(self.global_object()) else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        vm.event_loop_mut().run_callback(
+        VirtualMachine::get_mut().event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),

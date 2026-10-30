@@ -11,7 +11,7 @@ export const binding = b.namespace({
     args: { onResolveQuery: b.callable, onRejectQuery: b.callable },
     capability: "heap",
     length: 0,
-    rustPath: "crate::mysql::my_sql_context::init",
+    rustPath: "crate::jsc::init_mysql",
   },
   createQuery: {
     ...js,

@@ -30,7 +30,7 @@ use super::uuid::UUID;
 // Per docs/PORTING.md §Dispatch the low tier stores **erased** pointers; the
 // high tier owns the typed accessors:
 //
-//   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
+//   - `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
 //   - `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slot; high tier lazy-inits.

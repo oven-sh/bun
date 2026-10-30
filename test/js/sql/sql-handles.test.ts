@@ -1434,6 +1434,44 @@ describe.each(adapters)("$adapter", entry => {
       expect(exitCode).toBe(0);
       expect(log()).toEqual([BEGIN, "SELECT 'T1'", "COMMIT", "SELECT 'pool'"]);
     }));
+
+  // Every realm that loads bun:sql gives native code its own functions for the results of its queries.
+  test("the queries of two realms settle each in its own realm, whichever loaded bun:sql last", () =>
+    scenario(async ({ log, options }) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const options = ${JSON.stringify(options)};
+            const said = result => JSON.stringify([Array.isArray(result), result?.count]);
+            // Only functions and primitives cross into a ShadowRealm, so its client reports through a callback.
+            const inRealm = new ShadowRealm().evaluate(
+              "const sql = new Bun.SQL(" + JSON.stringify(options) + ");" +
+              "const said = " + said + ";" +
+              "(text, report) => void (text ? sql.unsafe(text) : sql.close()).then(result => report(said(result)), error => report(String(error)));",
+            );
+            const sql = new Bun.SQL(options);
+            const results = [said(await sql.unsafe("SELECT 'here'"))];
+            // This realm loaded bun:sql after the ShadowRealm did.
+            results.push(await new Promise(resolve => inRealm("SELECT 'realm'", resolve)));
+            new ShadowRealm().evaluate("void Bun.SQL");
+            // And a second ShadowRealm loaded it after this realm.
+            results.push(said(await sql.unsafe("SELECT 'here again'")));
+            await Promise.all([sql.close(), new Promise(resolve => inRealm("", resolve))]);
+            console.log(results.join(" "));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[true,0] [true,0] [true,0]\n");
+      expect(exitCode).toBe(0);
+      expect(log()).toEqual(["SELECT 'here'", "SELECT 'realm'", "SELECT 'here again'"]);
+    }));
 });
 
 describe.concurrent("sqlite", () => {

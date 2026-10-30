@@ -11,7 +11,7 @@ export const binding = b.namespace({
     args: { onResolveQuery: b.callable, onRejectQuery: b.callable, arrayLiteral: b.callable },
     capability: "heap",
     length: 0,
-    rustPath: "crate::postgres::PostgresSQLContext::init",
+    rustPath: "crate::jsc::init_postgres",
   },
   createQuery: {
     ...js,

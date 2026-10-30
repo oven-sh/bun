@@ -9,10 +9,6 @@ pub mod sasl;
 pub mod authentication_state;
 pub use authentication_state::AuthenticationState;
 
-#[path = "postgres/PostgresSQLContext.rs"]
-pub mod postgres_sql_context;
-pub use postgres_sql_context::PostgresSQLContext;
-
 #[path = "postgres/Signature.rs"]
 pub mod signature;
 pub use signature::Signature;

@@ -363,6 +363,8 @@ public:
     {
         return m_nativeModuleDefaults[static_cast<size_t>(slot)];
     }
+    // One for each `RealmCallback` in src/sql_jsc/jsc.rs.
+    using SQLCallbacksArray = std::array<WriteBarrier<JSObject>, 5>;
 
     // Macro for doing something with each member of GlobalObject that has to be visited by the
     // garbage collector. To use, define a macro taking three arguments (visibility, type, and
@@ -464,6 +466,8 @@ public:
     /* Set when the realm makes its first error of the class: see SQLError.cpp. */                           \
     V(public, WriteBarrier<Structure>, m_mySQLErrorStructure)                                                \
     V(public, WriteBarrier<Structure>, m_postgresErrorStructure)                                             \
+    /* The functions that the realm's bun:sql adapters registered when they loaded: see SQLClient.cpp. */    \
+    V(public, SQLCallbacksArray, m_sqlCallbacks)                                                             \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsBigIntClassStructure)                                        \

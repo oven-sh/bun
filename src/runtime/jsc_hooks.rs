@@ -64,13 +64,8 @@ use crate::webcore::blob::BlobExt as _;
 pub(crate) struct RuntimeState {
     /// setTimeout/setInterval heap + uv timers.
     pub(crate) timer: timer::All,
-    /// `RareData.{mysql,postgresql}_context` — concrete SQL state. The
-    /// `bun_jsc::rare_data::RareData` slots for these are opaque ZSTs (cycle
-    /// break); `bun_sql_jsc` reads them via `Bun__VM__rareData`, which returns
-    /// `&mut runtime_state().sql_rare` cast to its local `#[repr(C)]` view.
-    pub(crate) sql_rare: bun_sql_jsc::jsc::RareData,
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
-    /// Same cycle-break story as `sql_rare`.
+    /// Here because `bun_jsc::rare_data::RareData` cannot name the type (cycle break).
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
     /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
@@ -356,10 +351,6 @@ unsafe fn init_runtime_state(
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
-        sql_rare: bun_sql_jsc::jsc::RareData {
-            mysql_context: Default::default(),
-            postgresql_context: Default::default(),
-        },
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),

@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
+use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, RealmCallback};
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
 use crate::shared::row_decoder::RowDecoder;
@@ -252,14 +252,10 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
-            .sql_state()
-            .postgresql_context
-            .on_query_reject_fn
-            .get()
+        let function = RealmCallback::PostgresRejectQuery
+            .get(global_object)
             .unwrap();
-        let event_loop = vm.event_loop_mut();
+        let event_loop = crate::jsc::VirtualMachine::get().as_mut().event_loop_mut();
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
@@ -336,14 +332,10 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
-            .sql_state()
-            .postgresql_context
-            .on_query_resolve_fn
-            .get()
+        let function = RealmCallback::PostgresResolveQuery
+            .get(global_object)
             .unwrap();
-        let event_loop = vm.event_loop_mut();
+        let event_loop = crate::jsc::VirtualMachine::get().as_mut().event_loop_mut();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,

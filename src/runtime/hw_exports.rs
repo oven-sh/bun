@@ -185,15 +185,8 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 mod sql_hooks {
     use super::*;
     use bun_event_loop::EventLoopTimer::EventLoopTimer;
-    use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
+    use bun_sql_jsc::jsc::SqlRuntimeHooks;
 
-    unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is
-        // an embedded field with stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
-    }
     unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
         crate::jsc_hooks::timer_all().cast()
     }
@@ -262,7 +255,6 @@ mod sql_hooks {
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
-        sql_rare,
         timer_heap,
         timer_insert,
         timer_remove,

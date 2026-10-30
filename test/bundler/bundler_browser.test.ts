@@ -431,9 +431,11 @@ describe("bundler", () => {
         "/entry.js": /* js */ `
           import * as star from "./re.js";
           import { b, readFileSync } from "./re.js";
+          import { e, connect } from "./re-named.js";
           import * as thenPkg from "./re-then-pkg.js";
           const required = require("./re-required.js");
           console.log(JSON.stringify(Object.keys(star)), b, typeof readFileSync);
+          console.log(e, typeof connect);
           console.log(JSON.stringify(Object.keys(required)), typeof required.spawn);
           console.log(JSON.stringify(Object.keys(thenPkg).sort()), thenPkg.name, thenPkg.length);
           import("./re-imported.js").then(imported => {
@@ -443,6 +445,11 @@ describe("bundler", () => {
         "/re.js": /* js */ `
           export * from "fs";
           export const b = 1;
+        `,
+        // Nothing reads this file as a namespace: only names are imported.
+        "/re-named.js": /* js */ `
+          export * from "node:tls";
+          export const e = 4;
         `,
         "/re-required.js": /* js */ `
           export * from "node:child_process";
@@ -466,7 +473,13 @@ describe("bundler", () => {
       target: "browser",
       format,
       run: {
-        stdout: ['["b"] 1 undefined', '["c"] undefined', '["length","name"] pkg 42', '["d"] undefined'].join("\n"),
+        stdout: [
+          '["b"] 1 undefined',
+          "4 undefined",
+          '["c"] undefined',
+          '["length","name"] pkg 42',
+          '["d"] undefined',
+        ].join("\n"),
       },
       onAfterBundle(api) {
         expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
@@ -516,7 +529,59 @@ describe("bundler", () => {
         expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
       },
     });
+    // A plugin module can have the path "fs". The bundler links a later import
+    // of "fs" to that module, so this `export *` has a module behind it and
+    // stays. This case passes without the change.
+    itBundled("browser/PluginModuleWithBuiltinPathExportStar" + format.toUpperCase(), {
+      files: {
+        "/entry.js": /* js */ `
+          import "virtual-fs";
+          import * as star from "after-virtual-fs";
+          console.log(JSON.stringify(Object.keys(star).sort()), star.real);
+        `,
+        "/re.js": /* js */ `
+          export * from "fs";
+          export const own = 1;
+        `,
+      },
+      target: "browser",
+      format,
+      plugins(builder) {
+        const virtualFs = Promise.withResolvers<void>();
+        builder.onResolve({ filter: /^virtual-fs$/ }, () => ({ path: "fs", namespace: "virtual" }));
+        builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+          virtualFs.resolve();
+          return { contents: "module.exports = { real: 1 };", loader: "js" };
+        });
+        // The bundler finds "/re.js" only after the module above exists.
+        builder.onResolve({ filter: /^after-virtual-fs$/ }, async args => {
+          await virtualFs.promise;
+          return { path: args.importer.replace(/entry\.js$/, "re.js") };
+        });
+      },
+      run: {
+        stdout: '["own","real"] 1',
+      },
+    });
   }
+  // For an unwrapped entry point of ESM output the linker plans no run-time
+  // re-export, and the statement prints as written. This case passes without
+  // the change.
+  itBundled("browser/NodeBuiltinStubExportStarEntryPointESM", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "fs";
+        export const b = 1;
+      `,
+    },
+    target: "browser",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([
+        { kind: "import-statement", path: "fs" },
+      ]);
+    },
+  });
   itBundled("browser/NodeBuiltinStubExportStarEntryPointCJS", {
     files: {
       "/entry.js": /* js */ `
@@ -558,9 +623,10 @@ describe("bundler", () => {
       stdout: '["b","self"] 1',
     },
   });
-  // Not an `export *` to remove: in ESM output the bundler prints this file of
-  // `react-dom` as `module.exports = <stub>` inside its wrapper, so the package
-  // still exports the stub. This case passes without the change.
+  // In ESM output, `module.exports = require("fs")` after another statement in
+  // a file of `react-dom` 18 is an `export *` inside the bundler. It is not one
+  // to remove: the `__commonJS` wrapper still assigns the stub. This case passes
+  // without the change.
   itBundled("browser/NodeBuiltinStubModuleExportsRequire", {
     files: {
       "/entry.js": /* js */ `
@@ -581,6 +647,9 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: "function",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("module.exports = fs;");
     },
   });
 

@@ -230,6 +230,8 @@ const out = {
   "empty path": answer(() => Bun.mmap("")),
 };
 fs.rmSync(deep.slice(0, deep.indexOf("/")), { recursive: true });
+// The system's working directory stays here, where no path below leads to the same file.
+process.chdir(disk + "/app");
 process.chdir(root);
 Object.assign(out, {
   "in the embedded folder: file": answer(() => Bun.mmap(path.basename(note))),

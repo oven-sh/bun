@@ -703,7 +703,8 @@ describe("Headers", () => {
               // Only an eden collection shows the fault: a full one visits every global object,
               // and a global object used to mark the cache.
               for (const name of names) {
-                new ShadowRealm().evaluate("[...new Headers({ " + JSON.stringify(name) + ": '1' })].length");
+                const entries = "[...new Headers({ " + JSON.stringify(name) + ": '1' })].length";
+                if (new ShadowRealm().evaluate(entries) !== 1) throw new Error("the realm did not read " + name);
                 edenGC();
               }
               // Strings that take the cells that the collections freed.

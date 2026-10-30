@@ -16,8 +16,9 @@ import {
   targetOfRuntime,
   targets,
 } from "./addons-named-by-the-platform/loaders";
-import { locksEnvironment } from "./hardened";
+import { isHardened } from "./hardened";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withReport } from "./harness/flags";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const here = join(import.meta.dir, "addons-named-by-the-platform");
@@ -299,10 +300,10 @@ const oneOfFew: Record<string, Program> = {
   );
 }
 
-// Only a canary build of Bun reads BUN_AOT_START_AT, which says at which of its programs an executable starts, and none that locks its environment:
-// there an executable does not start where the variable is set. Any other Bun builds each program alone.
-const startsAtAnyEntryPoint =
-  !locksEnvironment && Bun.spawnSync([bunExe(), "--revision"], { env: bunEnv }).stdout.toString().includes("-canary");
+// Programs share a build only where each entry point of a build begins a program of its own and an executable starts at any of them.
+// A hardened Bun makes one program of a build, and only a canary build reads BUN_AOT_START_AT. Any other Bun builds each program alone.
+const sharesBuilds =
+  !isHardened && Bun.spawnSync([bunExe(), "--revision"], { env: bunEnv }).stdout.toString().includes("-canary");
 
 describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named-by-the-platform", () => {
   const folder = String(tempDir("aot-addons-named-by-the-platform", {}));
@@ -346,7 +347,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     });
     // bun test runs twenty of these tests at a time, five with a sanitizer, and each waits for its build. Where programs share builds, every build starts here.
     // The test that waits for a build sees how it ended.
-    if (startsAtAnyEntryPoint) for (const start of new Set(builds.values())) started.push(start().catch(() => {}));
+    if (sharesBuilds) for (const start of new Set(builds.values())) started.push(start().catch(() => {}));
   });
 
   // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time. On Windows a function of the library makes process.env.
@@ -388,9 +389,12 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
   function buildOf(group: Case[], index: number) {
     const isShared = group.length > 1;
     const executable = join(away, (isShared ? `programs-${index}` : group[0].file) + (isWindows ? ".exe" : ""));
+    const report = join(away, `programs-${index}.json`);
     // A program that is built alone is built as anybody builds it: in its folder.
     const pathOf = (file: string, path: string) => (isShared ? `./${file}/${path}` : join(folder, file, path));
-    let results: Promise<{ plain: Map<string, Said>; build: Said; compiled: Map<string, Said> }> | undefined;
+    let results:
+      | Promise<{ plain: Map<string, Said>; build: Said; compiled: Map<string, Said>; programsCompiled?: number }>
+      | undefined;
     return () =>
       (results ??= slot(async () => {
         const [plain, compiled] = [new Map<string, Said>(), new Map<string, Said>()];
@@ -412,7 +416,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
             "build",
             "--compile",
             "--aot",
-            ...(isShared ? ["--aot-separate-programs", "--root=."] : []),
+            ...(isShared ? ["--aot-separate-programs", "--root=.", ...withReport(report, "summary")] : []),
             ...(group.some(({ program }) => usesABuiltInModule(program)) ? [] : ["--no-builtin-modules"]),
             ...group.flatMap(({ file, program, passesAddons }) => [
               pathOf(file, program.entry),
@@ -432,7 +436,12 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
           }
         }
         if (!isWindows) rmSync(executable, { force: true });
-        return { plain, build: said(build), compiled };
+        // How many programs the build has compiled, also those that it compiled again. A build that makes one program of its entry points compiles one.
+        const programsCompiled =
+          isShared && build.exitCode === 0
+            ? (JSON.parse(readFileSync(report, "utf8")).statistics.EngineRuns as number)
+            : undefined;
+        return { plain, build: said(build), compiled, programsCompiled };
       }));
   }
 
@@ -440,7 +449,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
   // each a program of its own as when it is built alone, and BUN_AOT_START_AT says which of them a run starts.
   // A build with an addon among its entry points is one program, so a program that passes its addon is built alone.
   // A build compiles its programs one after another, and each that imports a built-in module takes it a second: those are dealt out four to a build.
-  const shared = cases.filter(it => startsAtAnyEntryPoint && !it.passesAddons);
+  const shared = cases.filter(it => sharesBuilds && !it.passesAddons);
   const withModules = shared.filter(it => usesABuiltInModule(it.program));
   const parts = Math.ceil(withModules.length / 4);
   const builds = new Map(
@@ -469,10 +478,12 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
 
   async function run(title: string, { passesAddons = false } = {}) {
     const file = fileOf(title, passesAddons);
-    const { plain, build, compiled } = await builds.get(file)!();
+    const { plain, build, compiled, programsCompiled } = await builds.get(file)!();
     // Each program prints its title: an executable of several programs has started the one that was asked for.
     expect(plain.get(file)).toEqual({ stdout: `${title} 42\n`, stderr: "", exitCode: 0, signal: null });
     built(build);
+    // Each program of a shared build is compiled as when it is built alone, so the build has compiled no fewer programs than it holds.
+    if (plain.size > 1) expect(programsCompiled).toBeGreaterThanOrEqual(plain.size);
     const others = [...plain.keys()].filter(other => other !== file);
     return { plain: plain.get(file), messages: saidBut(build.stderr, others), compiled: compiled.get(file) };
   }

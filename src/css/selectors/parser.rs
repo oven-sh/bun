@@ -1282,7 +1282,7 @@ pub struct SelectorParser<'a> {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct BlockScope {
     /// How many selectors of the prelude ended with one.
-    pub(crate) selectors: u16,
+    pub(crate) selectors: u32,
     /// The last one was `:global`.
     global: bool,
     /// Two selectors ended with different ones.
@@ -1300,9 +1300,7 @@ impl BlockScope {
         // Every selector must end with the same switch. css-loader also takes `:global .a, .b :global`.
         let list = selectors.v.slice();
         let is_switch_only = list.iter().any(|selector| selector.components.is_empty());
-        if self.mixed
-            || usize::from(self.selectors) != list.len()
-            || (is_switch_only && list.len() > 1)
+        if self.mixed || self.selectors as usize != list.len() || (is_switch_only && list.len() > 1)
         {
             let name: &[u8] = if self.global { b"global" } else { b"local" };
             return Err(input.new_custom_error(
@@ -1341,7 +1339,8 @@ impl<'a> SelectorParser<'a> {
             return false;
         };
         scope.mixed |= scope.selectors > 0 && scope.global != global;
-        scope.selectors = scope.selectors.saturating_add(1);
+        // Cannot overflow: each one takes 6 bytes or more of an input shorter than 2^31 bytes.
+        scope.selectors += 1;
         scope.global = global;
         true
     }

@@ -1008,6 +1008,21 @@ describe("css modules", () => {
     expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
   });
 
+  test.concurrent("a list of 65,536 selectors that end with :global", async () => {
+    const count = 65536;
+    const selectors = Buffer.alloc(count * 9, "a:global,")
+      .toString()
+      .slice(0, -1);
+    using dir = tempDir("css-modules-long-list", { "styles.module.css": `${selectors} { color: red }` });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "styles.module.css")],
+      outdir: join(String(dir), "out"),
+      throw: false,
+    });
+    expect(result.logs).toEqual([]);
+    expect(result.outputs[0].size).toBeGreaterThan(count * "a, ".length);
+  });
+
   // Inside parentheses a bare `:global` that ends a selector is not the scope of a block.
   test.concurrent.each([
     [`.a:is(.b :global) { .x { color: red } }`, { a: "a_H", b: "b_H", x: "x_H" }],

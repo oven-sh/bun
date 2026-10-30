@@ -357,6 +357,16 @@ impl<'a> LinkerContext<'a> {
             && self.chunks_runtime_ref.is_valid()
     }
 
+    /// Whether `chunk` makes the `require` for the bundled `.node` file `source_index` that it holds. The linker
+    /// prints the path of the file for that chunk, and the runtime's `__require` resolves from the chunk of the
+    /// runtime module. This is for Node.js: in a split build for Bun, the file calls `import.meta.require`.
+    pub(crate) fn makes_require_for_asset(&self, chunk: &Chunk, source_index: u32) -> bool {
+        self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Napi
+            && !chunk
+                .files_with_parts_in_chunk
+                .contains(&Index::RUNTIME.get())
+    }
+
     /// An `import()` — or a split `require()` — whose target is a
     /// chunk entry point: the record is resolved at runtime against the
     /// target's chunk instead of binding to a wrapper.
@@ -2369,6 +2379,7 @@ impl<'a> LinkerContext<'a> {
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
+        makes_require_for_asset: bool,
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
@@ -2420,6 +2431,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            require_target_makes_require: makes_require_for_asset,
             require_or_import_meta_for_source_callback: Some(
                 js_printer::RequireOrImportMetaCallback::init(self),
             ),

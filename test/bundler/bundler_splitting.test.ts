@@ -4220,6 +4220,459 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
   });
 
+  // The runtime module makes `__require` in one chunk, and `__require` resolves a request from that chunk. The
+  // linker prints the path of a bundled `.node` file for the chunk that holds the file. So for Bun the file calls
+  // `import.meta.require`, as a split `require()` does. For Node.js, a chunk without the runtime module makes the
+  // `require` for its addon.
+  // The addons here are text files: ERR_DLOPEN_FAILED says that `require` found the file, and MODULE_NOT_FOUND
+  // that it did not.
+  const attempt = /* js */ `
+    export function attempt(load) {
+      try {
+        load();
+        return "loaded";
+      } catch (e) {
+        return e.code;
+      }
+    }
+  `;
+  const addonEntry = (name: string, nested: boolean) => (nested ? `/src/${name}/entry.js` : `/src/${name}.js`);
+  const addonTop = (name: string, nested: boolean) => `/src/${nested ? name + "/" : ""}${name}-top.js`;
+  const addonFiles = (nested: boolean) => {
+    // The two entry points that call `attempt` share this file. All four entry points use the runtime module,
+    // so it is alone in another chunk.
+    const files: Record<string, string> = { "/src/attempt.js": attempt };
+    for (const name of ["a", "b"]) {
+      const dir = nested ? `/src/${name}` : "/src";
+      files[addonEntry(name, nested)] = /* js */ `
+        import { attempt } from "${nested ? "../" : "./"}attempt.js";
+        console.log(JSON.stringify({
+          // The linker wraps a required file in __commonJS.
+          required: attempt(() => require("./${name}-required.node")),
+          // "${name}-imports.js" imports its addon, and the linker wraps both files in __esm.
+          imported: attempt(() => require("./${name}-imports.js")),
+          // "${name}-top.js" is an entry point that imports its addon. Nothing wraps the two files.
+          top: await import("./${name}-top.js").then(() => "loaded", e => e.code),
+        }));
+      `;
+      files[`${dir}/${name}-imports.js`] = `import addon from "./${name}-imported.node"; export default addon;`;
+      files[addonTop(name, nested)] = `import addon from "./${name}-top.node"; export default addon;`;
+      for (const how of ["required", "imported", "top"]) {
+        files[`${dir}/${name}-${how}.node`] = `not an addon: ${name}, ${how}`;
+      }
+    }
+    return files;
+  };
+  const sameNamedAddonFiles = () => {
+    const files: Record<string, string> = {
+      "/src/found.js": /* js */ `
+        import { readFileSync } from "node:fs";
+        process.dlopen = (module, filename) => {
+          module.exports = readFileSync(filename, "utf8");
+        };
+        export function found(load) {
+          try {
+            return load();
+          } catch (e) {
+            return e.code;
+          }
+        }
+      `,
+    };
+    for (const name of ["a", "b"]) {
+      files[`/src/${name}/entry.js`] = /* js */ `
+        import { found } from "../found.js";
+        console.log(JSON.stringify({
+          required: found(() => require("./required.node")),
+          imported: found(() => require("./imports.js").default),
+          top: await import("./top.js").then(top => top.default, e => e.code),
+        }));
+      `;
+      files[`/src/${name}/imports.js`] = `import addon from "./imported.node"; export default addon;`;
+      files[`/src/${name}/top.js`] = `import addon from "./top.node"; export default addon;`;
+      for (const how of ["required", "imported", "top"]) files[`/src/${name}/${how}.node`] = `${how} of ${name}`;
+    }
+    return files;
+  };
+  const addonEntryPoints = (nested: boolean) =>
+    ["a", "b"].flatMap(name => [addonEntry(name, nested), addonTop(name, nested)]);
+  const inOut = (file: string) => file.replace("/src/", "/out/");
+  const everyAddon = (code: string) => JSON.stringify({ required: code, imported: code, top: code });
+  const callsAddon = (callee: string, addon: string) =>
+    new RegExp(String.raw`= ${callee}\("[./a-z]*${addon}-[a-z0-9]+\.node"\);`);
+  const holdsRuntimeModule = (code: string) => /^var __commonJS = /m.test(code);
+  const addonLayouts: {
+    name: string;
+    nested: boolean;
+    chunkNaming?: string;
+    assetNaming?: string;
+    publicPath?: string;
+    minify?: boolean;
+  }[] = [
+    // The chunk of the runtime module is /out/entry-[hash].js, one directory above the entry points.
+    { name: "EntriesInTwoDirectories", nested: true },
+    { name: "EntriesInTwoDirectories-Minified", nested: true, minify: true },
+    // The chunk of the runtime module is in /out/chunks, and the addons are in /out/addons.
+    {
+      name: "ChunksAndAddonsInDirectories",
+      nested: false,
+      chunkNaming: "chunks/[name]-[hash].[ext]",
+      assetNaming: "addons/[name]-[hash].[ext]",
+    },
+    // The chunk of the runtime module is in a directory that the build names.
+    { name: "ChunksInHashedDirectories", nested: false, chunkNaming: "[hash]/[name].[ext]" },
+    // With a public path, the linker prints that prefix and the path from the output directory.
+    {
+      name: "ChunksInADirectoryAndARelativePublicPath",
+      nested: false,
+      chunkNaming: "chunks/[name]-[hash].[ext]",
+      publicPath: "./",
+    },
+  ];
+
+  for (const target of ["bun", "node"] as const) {
+    for (const { name, nested, minify, ...naming } of addonLayouts) {
+      itBundled(`splitting/AddonLoadsFromItsChunk-${name}-${target}`, {
+        files: addonFiles(nested),
+        entryPoints: addonEntryPoints(nested),
+        outputPaths: addonEntryPoints(nested).map(inOut),
+        ...naming,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        minifyIdentifiers: minify,
+        splitting: true,
+        // For Bun, a `require()` of an ES module is a chunk of its own by default. This keeps "a-imports.js" in
+        // the chunk of its entry point, as for Node.js.
+        splitRequire: false,
+        target,
+        format: "esm",
+        outdir: "/out",
+        run: { file: inOut(addonEntry("a", nested)), runtime: target, stdout: everyAddon("ERR_DLOPEN_FAILED") },
+      });
+    }
+
+    // Without code splitting, each output file has the runtime module, and the call is the runtime's `__require`.
+    itBundled(`splitting/AddonCallsRuntimeRequireWithoutSplitting-${target}`, {
+      files: addonFiles(true),
+      entryPoints: addonEntryPoints(true),
+      outputPaths: addonEntryPoints(true).map(inOut),
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        const entry = api.readFile("/out/a/entry.js");
+        expect(entry).toMatch(callsAddon("__require", "a-required"));
+        expect(entry).toMatch(callsAddon("__require", "a-imported"));
+        expect(api.readFile("/out/a/a-top.js")).toMatch(callsAddon("__require", "a-top"));
+      },
+      run: { file: "/out/a/entry.js", runtime: target, stdout: everyAddon("ERR_DLOPEN_FAILED") },
+    });
+
+    // The addon is in the chunk of the runtime module. For Node.js the call is the one that a build without
+    // code splitting prints. For Bun, no file uses `__require` now, so no chunk declares it.
+    itBundled(`splitting/AddonBesideTheRuntimeModule-${target}`, {
+      files: {
+        "/attempt.js": attempt,
+        "/entry.js": /* js */ `
+          import { attempt } from "./attempt.js";
+          console.log(attempt(() => require("./addon.node")));
+        `,
+        "/addon.node": "not an addon",
+      },
+      entryPoints: ["/entry.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toEqual(["entry.js"]);
+        const entry = api.readFile("/out/entry.js");
+        if (target === "bun") {
+          expect(entry).toMatch(callsAddon(String.raw`import\.meta\.require`, "addon"));
+          expect(entry).not.toContain("__require");
+        } else {
+          expect(entry).toMatch(callsAddon("__require", "addon"));
+        }
+      },
+      run: { file: "/out/entry.js", runtime: target, stdout: "ERR_DLOPEN_FAILED" },
+    });
+
+    // One entry point, and a page that it imports when it runs. Both use the runtime module. An entry point
+    // without [hash] in its name takes no chunk fold, so the runtime module is in /out/chunks with the page.
+    // With [hash], the fold puts it into the chunk of the entry point. Each time, one of the two addons is in a
+    // chunk without the runtime module, in another directory.
+    for (const entryNaming of [undefined, "[name].entry-[hash].[ext]"]) {
+      const layout = entryNaming ? "OneEntryPointAndAPage-HashedEntry" : "OneEntryPointAndAPage";
+      itBundled(`splitting/AddonLoadsFromItsChunk-${layout}-${target}`, {
+        files: {
+          "/attempt.js": attempt,
+          "/index.js": /* js */ `
+            import { attempt } from "./attempt.js";
+            console.log("index", attempt(() => require("./index.node")));
+            import("./page.js");
+          `,
+          "/page.js": /* js */ `
+            import { attempt } from "./attempt.js";
+            console.log("page", attempt(() => require("./page.node")));
+          `,
+          "/index.node": "not an addon: index",
+          "/page.node": "not an addon: page",
+        },
+        entryPoints: ["/index.js"],
+        entryNaming,
+        chunkNaming: "chunks/[name]-[hash].[ext]",
+        splitting: true,
+        target,
+        format: "esm",
+        outdir: "/out",
+        onAfterBundle(api) {
+          const entry = jsFilesIn(api).find(file => file.startsWith("index"))!;
+          expect(holdsRuntimeModule(api.readFile("/out/" + entry))).toBe(entryNaming !== undefined);
+          launchHashedEntry(api, "index");
+        },
+        run: { file: "/out/index.js", runtime: target, stdout: "index ERR_DLOPEN_FAILED\npage ERR_DLOPEN_FAILED" },
+      });
+    }
+
+    // A page and the page that it imports use "shared.js" and its addon. The chunk fold puts the two files into
+    // the chunk of the first page, which `[dir]` puts into /out/pages. The runtime module is in /out.
+    itBundled(`splitting/AddonLoadsFromItsChunk-PageInADirectory-${target}`, {
+      files: {
+        "/src/attempt.js": attempt,
+        "/src/index.js": /* js */ `
+          import { attempt } from "./attempt.js";
+          console.log("index", attempt(() => require("./data.cjs")));
+          import("./pages/page.js");
+        `,
+        "/src/pages/page.js": /* js */ `
+          import { attempt } from "../attempt.js";
+          import { load } from "./shared.js";
+          console.log("page", attempt(load));
+          import("./sub/sub.js");
+        `,
+        "/src/pages/sub/sub.js": /* js */ `
+          import { load } from "../shared.js";
+          console.log("sub", typeof load);
+        `,
+        "/src/pages/shared.js": `export function load() { return require("./addon.node"); }`,
+        "/src/data.cjs": `module.exports = "data";`,
+        "/src/pages/addon.node": "not an addon",
+      },
+      entryPoints: ["/src/index.js"],
+      chunkNaming: "[dir]/[name]-[hash].[ext]",
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        const page = readdirSync(join(api.outdir, "pages")).find(file => file.startsWith("page-"))!;
+        api.expectFile("/out/pages/" + page).toMatch(/addon-[a-z0-9]+\.node/);
+      },
+      run: { file: "/out/index.js", runtime: target, stdout: "index loaded\npage ERR_DLOPEN_FAILED\nsub function" },
+    });
+
+    // "d.js" uses the runtime module for its addon alone. That use keeps the runtime module in a chunk of its
+    // own. Without it, the runtime module shares the chunk of "late.js", and "a.js" prints `late` first (#44495).
+    itBundled(`splitting/AddonInOneEntryPointKeepsTheOrderOfTheOthers-${target}`, {
+      files: {
+        "/a.js": `import "./early.js"; import "./late.js"; console.log("a");`,
+        "/b.js": `import "./early.js"; import "./late.js"; console.log("b");`,
+        "/c.js": `import "./late.js"; import only from "./c-only.cjs"; console.log("c", only.name);`,
+        "/d.js": `import addon from "./x.node"; console.log("d", typeof addon);`,
+        "/early.js": `import dep from "./early-dep.cjs"; console.log("early", dep.name);`,
+        "/early-dep.cjs": `module.exports = { name: "dep" };`,
+        "/c-only.cjs": `module.exports = { name: "only" };`,
+        "/late.js": `console.log("late");`,
+        "/x.node": "not an addon",
+      },
+      entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/a.js", runtime: target, stdout: "early dep\nlate\na" },
+    });
+
+    // An unmodified NAPI-RS package: its loader requires the `.node` file of the package for the platform.
+    itBundled(`splitting/AddonOfAPackageLoadsFromItsChunk-${target}`, {
+      files: {
+        "/src/size.js": `export const size = image => image.width + " by " + image.height;`,
+        "/src/a/entry.js": /* js */ `
+          import { size } from "../size.js";
+          import { Resvg } from ${JSON.stringify(Bun.resolveSync("@resvg/resvg-js", import.meta.dir))};
+          console.log(size(new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"/>')));
+        `,
+        // This entry point uses the runtime module too, so that module is in the chunk of "size.js".
+        "/src/b/entry.js": /* js */ `
+          import { size } from "../size.js";
+          console.log(size(require("./image.cjs")));
+        `,
+        "/src/b/image.cjs": `module.exports = { width: 1, height: 2 };`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      run: { file: "/out/a/entry.js", runtime: target, stdout: "40 by 30" },
+    });
+
+    // Each directory has addons of the same three names, and an asset name without [hash] keeps them there.
+    // `[dir]` puts the chunk of the runtime module into /out/a. From there, the path that "b/entry.js" prints
+    // names the addon of "a". `process.dlopen` is replaced: the export of an addon is the text of its file.
+    itBundled(`splitting/AddonOfTheSameNameLoadsFromItsChunk-${target}`, {
+      files: sameNamedAddonFiles(),
+      entryPoints: ["/src/a/entry.js", "/src/a/top.js", "/src/b/entry.js", "/src/b/top.js"],
+      outputPaths: ["/out/a/entry.js", "/out/a/top.js", "/out/b/entry.js", "/out/b/top.js"],
+      assetNaming: "[dir]/[name].[ext]",
+      chunkNaming: "[dir]/[name]-[hash].[ext]",
+      splitting: true,
+      splitRequire: false,
+      target,
+      format: "esm",
+      outdir: "/out",
+      run: ["a", "b"].map(name => ({
+        file: `/out/${name}/entry.js`,
+        runtime: target,
+        stdout: JSON.stringify({
+          required: `required of ${name}`,
+          imported: `imported of ${name}`,
+          top: `top of ${name}`,
+        }),
+      })),
+    });
+
+    // Not changed: a `require` that the program calls or passes is the runtime's `__require`, also in a chunk
+    // without the runtime module. Only the call of a bundled `.node` file is made for its chunk.
+    itBundled(`splitting/ComputedRequireCallsRuntimeRequire-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          const load = name => require(name);
+          console.log(load("./data.cjs"), (given => given("./data.cjs"))(require), require("./bundled.cjs"));
+        `,
+        "/src/a/bundled.cjs": `module.exports = "a";`,
+        "/src/b/entry.js": `console.log(require("./bundled.cjs"));`,
+        "/src/b/bundled.cjs": `module.exports = "b";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        const entry = api.readFile("/out/a/entry.js");
+        expect(holdsRuntimeModule(entry)).toBe(false);
+        expect(entry).toContain("__require(name)");
+        expect(entry).toContain(`given("./data.cjs"))(__require)`);
+        expect(entry).not.toContain("createRequire");
+      },
+    });
+  }
+
+  // For Bun, a `require()` of an ES module is a chunk of its own by default. "a-imports.js" and its addon are then
+  // in a chunk beside the chunk of the runtime module, and nothing wraps them.
+  itBundled("splitting/AddonLoadsFromItsChunk-EntriesInTwoDirectories-SplitRequire", {
+    files: addonFiles(true),
+    entryPoints: addonEntryPoints(true),
+    outputPaths: addonEntryPoints(true).map(inOut),
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/a/entry.js", stdout: everyAddon("ERR_DLOPEN_FAILED") },
+  });
+
+  // A loader that stores into `require`, as the loader of @node-rs/xxhash 1.7.6 does. For Bun, the call of the
+  // addon does not read what the loader stored. For Node.js, the call in the chunk of the runtime module does:
+  // #46640.
+  itBundled("splitting/AddonLoadsWhenItsLoaderAssignsRequire", {
+    files: {
+      "/entry.js": `import code from "./loader.cjs"; console.log(code);`,
+      "/loader.cjs": /* js */ `
+        const { createRequire } = require("node:module");
+        require = createRequire(__filename);
+        try {
+          require("./addon.node");
+          module.exports = "loaded";
+        } catch (error) {
+          module.exports = error.code;
+        }
+      `,
+      "/addon.node": "not an addon",
+    },
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "ERR_DLOPEN_FAILED" },
+  });
+
+  for (const bytecode of [false, true]) {
+    // A standalone executable has a public path, and the path of an embedded addon is absolute. "page.js" and
+    // "top.js" are chunks without the runtime module. The linker wraps the addon of the first one only.
+    itBundled(`splitting/AddonLoadsInAStandaloneExecutable${bytecode ? "+bytecode" : ""}`, {
+      files: {
+        "/attempt.js": attempt,
+        "/entry.js": /* js */ `
+          import { attempt } from "./attempt.js";
+          console.log(
+            attempt(() => require("./entry.node")),
+            await import("./page.js").then(page => page.required),
+            await import("./top.js").then(top => typeof top.default, e => e.code),
+          );
+        `,
+        "/page.js": /* js */ `
+          import { attempt } from "./attempt.js";
+          export const required = attempt(() => require("./page.node"));
+        `,
+        "/top.js": `import addon from "./top.node"; export default addon;`,
+        "/entry.node": "not an addon: entry",
+        "/page.node": "not an addon: page",
+        "/top.node": "not an addon: top",
+      },
+      entryPoints: ["/entry.js"],
+      compile: true,
+      splitting: true,
+      bytecode,
+      format: "esm",
+      run: { stdout: "ERR_DLOPEN_FAILED ERR_DLOPEN_FAILED ERR_DLOPEN_FAILED" },
+    });
+  }
+
+  // Not changed: a text import of a standalone executable is the other `require(<asset>)` that a loader makes.
+  // Its call is the runtime's `__require`, with a wrapper ("entry.txt", "page.txt") and without one ("top.txt").
+  itBundled("splitting/EmbeddedTextCallsRuntimeRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./entry.txt"));
+        const page = await import("./page.js");
+        console.log(page.required, page.top);
+      `,
+      "/page.js": /* js */ `
+        import top from "./top.txt";
+        export const required = require("./page.txt");
+        export { top };
+      `,
+      "/entry.txt": "text of entry",
+      "/page.txt": "text of page",
+      "/top.txt": "text of top",
+    },
+    entryPoints: ["/entry.js"],
+    compile: true,
+    splitting: true,
+    format: "esm",
+    onAfterBundle(api) {
+      const payload = readFileSync(api.outfile).toString("latin1");
+      for (const file of ["entry", "page", "top"]) {
+        expect(payload).toMatch(new RegExp(String.raw`__require\("[^"]*${file}-\w+\.txt"\)`));
+      }
+      expect(payload).not.toMatch(/(import\.meta\.require|createRequire\(import\.meta\.url\))\("[^"]*\.txt"\)/);
+    },
+    run: { stdout: "text of entry\ntext of page text of top" },
+  });
+
   // Browser ESM: every split `import()` first inserts <link rel=modulepreload>
   // for the chunks its target statically imports (transitively), so a deep
   // chunk chain downloads in parallel instead of one round trip per level.

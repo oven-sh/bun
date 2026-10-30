@@ -59,7 +59,7 @@ Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--co
 
 The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.
 
-If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
+If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code. A `process.exit` in a `process.on("exit")` listener of a `node:test` file ends only that file: see [exit listeners of `node:test` files](#exit-listeners-of-node-test-files).
 
 ### When `--parallel` helps, and when it doesn't
 
@@ -83,6 +83,60 @@ Isolating every file is how Jest and Vitest behave by default. It makes "passes 
 To keep that cost low, Bun caches transpiled source and bytecode at the process level and shares them across globals. The second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again.
 
 Without `--isolate` (the default), all files share one global and one module registry. That is the fastest mode and is fine for suites whose files don't leak state into each other.
+
+### Exit listeners of `node:test` files
+
+Node's own tests check from a `process.on("exit")` listener that a callback ran. Jest and Vitest never run these listeners. `bun test` runs them for a test file that calls a `node:test` API: the file registers a test, a suite or a hook, or it uses `mock`. An import alone does not count. A `--preload` file that calls one counts for every test file.
+
+The exit status of a `process` object belongs to its owner. With `--isolate` or `--parallel`, each file has its own `process` object, so the owner is the file:
+
+- Bun emits `exit` on the file's `process` when the file's tests and hooks are done.
+- The listeners receive `1` if the file has a failed test or an error. Otherwise they receive the `process.exitCode` that the file stored, or `0`.
+- The promise jobs that the listeners queue run before the file ends.
+- If the file leaves a non-zero exit code, Bun reports a failed test named `(exit code N)` for the file, and the run exits with code `1`.
+- `process.exit()` in an `exit` listener, or in one of its promise jobs, ends the file. The listeners after it do not run, and the run continues with the next file.
+
+```ts title="must-call.test.ts" icon="/icons/typescript.svg"
+import { test } from "node:test";
+
+let calls = 0;
+const mustBeCalledOnce = () => calls++;
+
+process.on("exit", () => {
+  if (calls !== 1) {
+    console.error(`mustBeCalledOnce ran ${calls} times`);
+    process.exitCode = 1;
+  }
+});
+
+test("forgets to call it", () => {
+  void mustBeCalledOnce;
+});
+```
+
+```sh terminal icon="terminal"
+bun test --isolate must-call.test.ts
+```
+
+```txt
+must-call.test.ts:
+✓ forgets to call it [1.45ms]
+mustBeCalledOnce ran 0 times
+✗ must-call.test.ts (exit code 1)
+
+ 1 pass
+ 1 fail
+Ran 2 tests across 1 file. [21.00ms]
+```
+
+The end of a file is not the end of the process that `node --test` starts for each file:
+
+- Bun does not wait for the file's timers, I/O or child processes before it emits `exit`, and it does not emit `beforeExit`. A callback that is still pending then counts as not called. Finish the work in a test, or do the check in an `after()` hook: a check in a hook counts in every mode.
+- No timeout applies to an `exit` listener. A listener that blocks stops the run at that file.
+
+To run each file in a process of its own, use `run({ files })` from `node:test`.
+
+Without `--isolate`, all files share one `process` object, so the owner is the run. Once a file calls a `node:test` API, Bun emits `exit` once, after the summary, and the listeners of every file run. A non-zero exit code that the listeners leave is the exit code of the run. With `--parallel --no-isolate`, Bun emits `exit` when each worker exits.
 
 ## Concurrent tests within a file
 

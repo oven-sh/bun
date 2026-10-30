@@ -16,6 +16,7 @@
 #include <JavaScriptCore/AOTBuiltinModules.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "JSCommonJSModule.h"
@@ -888,6 +889,40 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
+}
+
+extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject*);
+extern "C" void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject*);
+
+extern "C" uint8_t Process__exitTestFile(Zig::GlobalObject* globalObject, bool failed, uint8_t exitCodeBeforeFile)
+{
+    auto& vm = JSC::getVM(globalObject);
+    void* bunVM = globalObject->bunVM();
+    auto* process = globalObject->hasProcessObject() ? globalObject->processObject() : nullptr;
+    // The VM holds one exit code for the run. A file's own is the one its process.exitCode reads.
+    uint8_t exitCode = failed ? 1 : process && process->m_isExitCodeObservable ? Bun__getExitCode(bunVM)
+                                                                               : 0;
+    // process._exiting turns process.nextTick off, so a file with no listener is not made to exit.
+    if (process && !process->m_isExiting && process->wrapped().hasEventListeners(Identifier::fromString(vm, "exit"_s))) {
+        Bun__setExitCode(bunVM, exitCode);
+        process->m_testFileExit = Process::TestFileExit::Exiting;
+        Process__dispatchOnExit(globalObject, exitCode);
+        // The promise jobs of the listeners are part of the exit, as in node.
+        if (process->m_testFileExit == Process::TestFileExit::Exiting)
+            vm.drainMicrotasks();
+        if (process->m_testFileExit == Process::TestFileExit::ExitCalled) {
+            exitCode = process->m_testFileExitCode;
+            // A promise job that called process.exit() left the termination pending, and nothing queued runs after it.
+            JSGlobalObject__clearTerminationException(globalObject);
+            vm.defaultMicrotaskQueue().clear();
+        } else
+            exitCode = Bun__getExitCode(bunVM);
+        process->m_testFileExit = Process::TestFileExit::NotExiting;
+        // The teardown of the global still runs script that needs process.nextTick.
+        putDirectNamed(vm, process, "_exiting"_s, jsBoolean(false));
+    }
+    Bun__setExitCode(bunVM, exitCodeBeforeFile);
+    return exitCode;
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -3993,10 +4028,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* process = zigGlobal->processObject();
+    if (process->m_testFileExit != Process::TestFileExit::NotExiting) [[unlikely]] {
+        if (process->m_testFileExit == Process::TestFileExit::Exiting) {
+            process->m_testFileExit = Process::TestFileExit::ExitCalled;
+            process->m_testFileExitCode = exitCode;
+        }
+        // Nothing runs after process.exit() in a process: unwind the script that called it.
+        throwScope.release();
+        JSC__JSGlobalObject__throwTerminationException(zigGlobal);
+        return {};
+    }
     // Node's reallyExit is the raw exit that does not run 'exit' listeners. Arm
     // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
-    zigGlobal->processObject()->m_isExiting = true;
+    process->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a

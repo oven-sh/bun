@@ -1346,6 +1346,31 @@ describe.each([0, 1, 2, 5])('emit("error") with %d arguments', count => {
   });
 });
 
+// What a Proxy in the place of the emitter, and one in the place of `_events`, see of emit("error"): each read once, whoever listens.
+test.each([
+  ["a listener", true, false],
+  ["a listener and one of errorMonitor", true, true],
+  ["a listener of errorMonitor alone", false, true],
+  ["no listener", false, false],
+])('emit("error") reads _events, then errorMonitor, then "error", once each, with %s', (_, listened, monitored) => {
+  const emitter = new EventEmitter();
+  if (listened) emitter.on("error", () => {});
+  if (monitored) emitter.on(EventEmitter.errorMonitor, () => {});
+  const reads: PropertyKey[] = [];
+  const logging: ProxyHandler<object> = {
+    get(target, key, receiver) {
+      // A debug build reads the name of the class for its log line.
+      if (key !== "constructor") reads.push(key);
+      const value = Reflect.get(target, key, receiver);
+      return key === "_events" ? new Proxy(value, logging) : value;
+    },
+  };
+  const emit = () => EventEmitter.prototype.emit.call(new Proxy(emitter, logging), "error", new Error("reset"));
+  if (listened) expect(emit()).toBe(true);
+  else expect(emit).toThrow("reset");
+  expect(reads).toEqual(["_events", EventEmitter.errorMonitor, "error"]);
+});
+
 // One more call for every event with several listeners is a sixth more in the interpreter.
 test("emit() itself calls each of several listeners", () => {
   const emitter = new EventEmitter();

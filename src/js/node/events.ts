@@ -351,10 +351,17 @@ function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $No
   }
 }
 
-// For a caller whose `args` has to stay out of the heap: emitErrorApplied.$apply(emitter, args). In a stack trace it is emit().
+// emitError() of this one throws what emit("error") throws when nothing listens.
+const unheard = { _events: undefined } as unknown as $Node.EventEmitter;
+
+// For a caller whose `args` has to stay out of the heap: emitErrorApplied.$apply(emitter, args). It reads what emitError() reads, and in a stack trace it is emit().
 const emitErrorApplied = function emit(this: $Node.EventEmitter, er?: unknown) {
   const { _events: events } = this;
-  if (events !== undefined && events[kErrorMonitor] === undefined) {
+  if (events !== undefined) {
+    const errorMonitor = events[kErrorMonitor];
+    if (errorMonitor !== undefined) {
+      applyHandlers(errorMonitor, this, arrayOf.$apply(undefined, arguments));
+    }
     const handlers = events.error;
     if (handlers !== undefined) {
       // One argument is the rule: it is declared, so a listener takes it in a plain call, and a frame that the JIT inlines has room for it.
@@ -371,7 +378,7 @@ const emitErrorApplied = function emit(this: $Node.EventEmitter, er?: unknown) {
       return true;
     }
   }
-  return emitError(this, arrayOf.$apply(undefined, arguments));
+  return emitError(unheard, arrayOf.$apply(undefined, arguments));
 };
 
 // An array of its own for such a caller: arrayOf.$apply(undefined, args).

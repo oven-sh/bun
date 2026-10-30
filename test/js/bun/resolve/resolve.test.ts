@@ -371,10 +371,15 @@ const require = createRequire(import.meta.url);
 const here = import.meta.dir;
 
 if (isMainThread) {
-  // [0] counts the modules that this thread wrote, [1] is set when the Worker runs, [2] counts the lookups of the Worker.
+  // [0] counts the modules that this thread wrote, [1] is set when the Worker runs, [2] is the count that the Worker last answered.
   const gate = new Int32Array(new SharedArrayBuffer(12));
   new Worker(import.meta.path, { workerData: gate });
-  Atomics.wait(gate, 1, 0);
+  // This thread never goes back to the event loop, so no error event of the Worker reaches it. Each wait for the Worker has a limit.
+  const stopped = what => {
+    console.error("the Worker stopped before its " + what + " lookup");
+    process.exit(1);
+  };
+  if (Atomics.wait(gate, 1, 0, 5000) === "timed-out") stopped("first");
 
   // More folders to look in, which do not exist, keep one lookup at work while the Worker drops the listing.
   const paths = [here, ...Array.from({ length: 192 }, (_, i) => path.join(here, "nowhere", String(i)))];
@@ -393,13 +398,11 @@ if (isMainThread) {
       missed.push(name);
     }
   }
-  // This thread never goes back to the event loop, so no error event of the Worker reaches it. It asks the Worker for one more lookup.
-  const lookups = Atomics.load(gate, 2);
-  Atomics.add(gate, 0, 1);
+  // One more count: the Worker answers it only if it still runs.
+  const last = Atomics.add(gate, 0, 1) + 1;
   Atomics.notify(gate, 0);
-  if (Atomics.wait(gate, 2, lookups, 5000) === "timed-out") {
-    console.error("the Worker stopped before the last lookup");
-    process.exit(1);
+  for (let answered = Atomics.load(gate, 2); answered < last; answered = Atomics.load(gate, 2)) {
+    if (Atomics.wait(gate, 2, answered, 5000) === "timed-out") stopped("last");
   }
   console.log(JSON.stringify(missed));
   process.exit(0);
@@ -419,7 +422,7 @@ if (isMainThread) {
     // The count is read before the lookup, so a module that is written during the lookup starts one more.
     seen = Atomics.load(gate, 0);
     lookUp();
-    Atomics.add(gate, 2, 1);
+    Atomics.store(gate, 2, seen);
     Atomics.notify(gate, 2);
   }
 }
@@ -436,7 +439,8 @@ if (isMainThread) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
-});
+  // The program waits up to 5 s for its Worker, two times. The limit of the test is above that, so the program reports a Worker that stopped.
+}, 20_000);
 
 describe("NODE_PATH test", () => {
   const prepareTest = () => {

@@ -89,7 +89,7 @@ struct Tasks {
     unripe: Vec<(u64, *const ModuleCell<'static>)>,
 }
 
-// SAFETY: `forget_trees_that_went` takes the cells of a program out before the program ends.
+// SAFETY: `watch_no_more` takes the cells of a program out before the program ends.
 unsafe impl Send for Tasks {}
 
 static TASKS: Guarded<Tasks> = Guarded::new(Tasks {
@@ -98,6 +98,11 @@ static TASKS: Guarded<Tasks> = Guarded::new(Tasks {
     taken: [0; WORDS],
     unripe: Vec::new(),
 });
+
+/// Held, with others, by a thread that has taken ripe cells out of `Tasks::unripe`, until it has let their trees go. The list is that
+/// of the process, so they may be cells of another program. That program holds it alone when it takes its cells out of the list:
+/// from then on nobody else has one, and it may end.
+static RELEASING_RIPE_CELLS: bun_threading::RwLock<()> = bun_threading::RwLock::new(());
 
 impl<'s> std::ops::Deref for ModuleCell<'s> {
     type Target = Module<'s>;
@@ -438,10 +443,13 @@ impl Files<'_> {
     pub fn watch_no_more(&self) {
         let cells = self.modules.as_ptr_range();
         let cells = cells.start.cast::<ModuleCell<'static>>()..cells.end.cast();
-        TASKS
-            .lock()
-            .unripe
-            .retain(|entry| !cells.contains(&entry.1));
+        {
+            let _no_thread_is_releasing = RELEASING_RIPE_CELLS.write();
+            TASKS
+                .lock()
+                .unripe
+                .retain(|entry| !cells.contains(&entry.1));
+        }
         for cell in self.modules.iter() {
             cell.awaited.store(0, Relaxed);
             cell.is_committed.store(false, Relaxed);
@@ -522,6 +530,7 @@ impl Drop for ReadingTask {
                 module.let_go();
             }
         }
+        let _releasing = RELEASING_RIPE_CELLS.read();
         let ripe: Vec<(u64, *const ModuleCell<'static>)> = {
             let mut tasks = TASKS.lock();
             tasks.taken[word] &= !bit;
@@ -534,7 +543,7 @@ impl Drop for ReadingTask {
                 .collect()
         };
         for (_, module) in ripe {
-            // SAFETY: as above.
+            // SAFETY: `watch_no_more` of its program waits for `RELEASING_RIPE_CELLS`.
             let module = unsafe { &*module };
             module.is_ripe.store(true, SeqCst);
             module.let_go();

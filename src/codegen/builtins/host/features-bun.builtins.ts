@@ -138,7 +138,7 @@ export default b.declarations(
   extendAll(["Test", ...runtimeTranspilerFeatures, "DeepEquals"], "Bun.jest", "bun:test", "%Expect%"),
   extendAll(
     ["Test"],
-    ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult", "nodeTestFail"),
+    ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult", "nodeTestDone"),
   ),
   extendAll(
     bundlerFeatures,

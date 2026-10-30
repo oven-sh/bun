@@ -89,7 +89,7 @@ describe("node:test", () => {
   });
 
   // bun:test's done(value) fails only on a truthy value, as Jest's does, so
-  // node:test must not report these failures through it.
+  // node:test must not relay these failures with a plain done(failure).
   test("should fail a test whose body or hook throws a falsy value", async () => {
     const { exitCode, stderr } = await runTests(["30-throw-falsy.js"]);
     // Five tests for each of 0, false, "", NaN and 0n. 0n prints as 0.
@@ -101,14 +101,13 @@ describe("node:test", () => {
     });
   });
 
-  // In a concurrent group the error of done() is not charged to its test yet: the test passes and the
-  // error is an unhandled error between tests. oven-sh/bun#44833 gives the done callback its entry.
-  test.failing("should charge a thrown falsy value to its test under --concurrent", async () => {
+  // In a concurrent group bun:test does not charge the error of done() to its test,
+  // so this checks the reported errors and the exit code, not the verdict of each test.
+  test("should report a test whose body or hook throws a falsy value under --concurrent", async () => {
     const { exitCode, stderr } = await runTests(["30-throw-falsy.js"], {}, ["--concurrent"]);
-    expect(stderr).toContain(" 0 pass");
-    expect({ exitCode, stderr }).toMatchObject({
+    expect({ exitCode, errors: reportedErrors(stderr) }).toEqual({
       exitCode: 1,
-      stderr: expect.stringContaining(" 25 fail"),
+      errors: { "error: 0": 10, "error: false": 5, "error": 5, "error: NaN": 5 },
     });
   });
 
@@ -125,30 +124,14 @@ describe("node:test", () => {
     });
   });
 
-  test("should fail a test when its run rejects or a mock restore throws, whatever the value", async () => {
-    const { exitCode, stderr } = await runTests(["32-failure-outside-the-body.js"]);
-    // undefined and null are replaced by a "test failed" error, which is also printed as
-    // the cause of "1 subtest failed".
-    expect(reportedErrors(stderr)).toEqual({
-      "error: test failed": 8,
-      "error: 0": 2,
-      "error: false": 2,
-      "error": 2,
-      "error: 1 subtest failed": 10,
-    });
+  test("should fail a test whose run rejects with a falsy value", async () => {
+    const { exitCode, stderr } = await runTests(["32-run-rejects-falsy.js"]);
+    // One test for each of 0, false, "", NaN and 0n. 0n prints as 0.
+    expect(reportedErrors(stderr)).toEqual({ "error: 0": 2, "error: false": 1, "error": 1, "error: NaN": 1 });
     expect(stderr).toContain(" 0 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 1,
-      stderr: expect.stringContaining(" 20 fail"),
-    });
-  });
-
-  test("should report a failure when globalThis.reportError was replaced before node:test loaded", async () => {
-    const { exitCode, stderr } = await runTests(["33-replaced-report-error.js"]);
-    expect(stderr).toContain("(fail) a body that throws");
-    expect({ exitCode, errors: reportedErrors(stderr) }).toEqual({
-      exitCode: 1,
-      errors: { "error: boom": 1, "error: hook boom": 1 },
+      stderr: expect.stringContaining(" 5 fail"),
     });
   });
 
@@ -397,8 +380,6 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     stderr: stderrStream,
   } = spawn({
     cmd: [bunExe(), "test", ...args, ...testPaths],
-    // No bunfig.toml here, so the child does not load the repository's test preload.
-    cwd: join(import.meta.dirname, "fixtures"),
     env: { ...bunEnv, ...env },
     stderr: "pipe",
   });

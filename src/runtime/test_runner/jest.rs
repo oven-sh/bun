@@ -515,8 +515,8 @@ pub(crate) fn file_generation() -> u32 {
     })
 }
 
-/// Reached only from `node:test`: fails the entry behind `done` with `failure`, whatever its value, and completes it.
-pub(crate) fn node_test_fail(
+/// Reached only from `node:test`: `done(failure)` where every `failure` except undefined and null fails the entry.
+pub(crate) fn node_test_done(
     cx: &mut JsScope<'_>,
     failure: JsLocal<'_>,
     done: JsLocal<'_>,
@@ -525,8 +525,9 @@ pub(crate) fn node_test_fail(
     let Some(dcb) = bun_test::DoneCallback::from_bound(done.to_js()) else {
         return Err(global.throw(format_args!("Expected a bun:test done callback")));
     };
-    let was_error = true;
-    bun_test::BunTest::finish_done(global, dcb, failure.to_js(), was_error)
+    let value = failure.to_js();
+    let was_error = !value.is_empty_or_undefined_or_null();
+    bun_test::BunTest::finish_done(global, dcb, value, was_error)
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

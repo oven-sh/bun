@@ -97,6 +97,7 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${fastRefresh} > jsx/FastRefreshClassExpressionMethod.tsx`]: undeclaredGlobalProperty,
     [`${fastRefresh} > jsx/FastRefreshObjectMethodKeepsSuper.tsx`]: undeclaredGlobalProperty,
     [`${fastRefresh} > jsx/FastRefreshFunctionsAroundAndInsideAMethod`]: undeclaredGlobalProperty,
+    [`${fastRefresh} > jsx/FastRefreshSiblingSignaturesAreDistinct`]: undeclaredGlobalProperty,
   },
   "test/bundler/esbuild/ts.test.ts": {
     "bundler > ts/DeclareClassFields": "TS2304: nothing declares c, d, C and D",

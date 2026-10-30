@@ -305,19 +305,34 @@ impl Execution {
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
-                        // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                        kill_dangling_processes(global_this.bun_vm());
                     }
                 }
             }
+        }
+    }
+
+    /// `node:test`'s own timer ended the test that `data` names. Kills as a bun:test timeout does, if that test started `after_ms` or more ago.
+    pub(crate) fn kill_dangling_processes_on_node_test_timeout(&mut self, data: &RefDataValue, after_ms: f64) {
+        let Some((sequence, group)) = self.get_current_and_valid_execution_sequence(data) else {
+            return;
+        };
+        // As at a bun:test timeout, not in a concurrent group: the processes of its other tests would go too.
+        if group.sequence_end - group.sequence_start != 1 {
+            return;
+        }
+        let Some(entry) = sequence.active_entry else {
+            return;
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let entry = unsafe { entry.as_ref() };
+        if entry.timespec.eql(&Timespec::EPOCH) {
+            return;
+        }
+        // `timespec` is the start of the entry plus `timeout`, on the real clock.
+        let kill_from = entry.timespec.add_ms_float(after_ms - f64::from(entry.timeout));
+        if !kill_from.greater(&Timespec::now_force_real_time()) {
+            kill_dangling_processes(VirtualMachine::get());
         }
     }
 
@@ -780,6 +795,18 @@ impl Execution {
                 HandleUncaughtExceptionResult::ShowHandledError
             }
         }
+    }
+}
+
+fn kill_dangling_processes(vm: &VirtualMachine) {
+    let kill_count = vm.as_mut().auto_killer.kill();
+    if kill_count.processes > 0 {
+        bun_core::pretty_errorln!(
+            "<d>killed {} dangling process{}<r>",
+            kill_count.processes,
+            if kill_count.processes != 1 { "es" } else { "" },
+        );
+        bun_core::Output::flush();
     }
 }
 

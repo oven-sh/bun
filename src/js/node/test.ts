@@ -1556,6 +1556,8 @@ function getTestContext(): TestContext | SuiteContext | undefined {
 // on the TestHook). `result` memoizes a before hook's one run, like Node's
 // runOnce(): every replay observes the same outcome, including the failure.
 type Hook = { fn: Function; timeout: number | undefined; signal: AbortSignal | undefined; result?: Promise<void> };
+// One run of a test that bun:test registered: `timedOut` once a timer of this module ended its body, its plan wait or a hook.
+type TimedRun = { timedOut: boolean };
 type HookSets = { before: Hook[]; after: Hook[]; beforeEach: Hook[]; afterEach: Hook[] };
 
 class TestNode {
@@ -1670,6 +1672,11 @@ const fileGeneration: () => number = $bindgen("jest.bind.ts", "fileGeneration");
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult: (todo: boolean, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestMarkResult");
+// Kills the processes that the test of `done` left running, as a bun:test timeout does, if the test ran for `afterMs` or more.
+const killDanglingProcesses: (done: Done, afterMs: number) => void = $bindgen(
+  "jest.bind.ts",
+  "nodeTestKillDanglingProcesses",
+);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2199,11 +2206,11 @@ function createStopController(timeout: number | undefined) {
 
 // Runs `run` racing Node's test timeout; the timer starts before the body so a
 // long synchronous prefix counts against the timeout, like Node.
-function awaitWithTimeout(run: () => unknown, timeout: number | undefined) {
+function awaitWithTimeout(run: () => unknown, timeout: number | undefined, timedRun?: TimedRun) {
   if (typeof timeout !== "number" || !Number.isFinite(timeout)) {
     return run();
   }
-  return raceWithTimeoutAndSignal(run, timeout, undefined);
+  return raceWithTimeoutAndSignal(run, timeout, undefined, timedRun);
 }
 
 let addAbortListener: $BunModules["internal/abort_listener"]["addAbortListener"] | undefined;
@@ -2212,6 +2219,7 @@ async function raceWithTimeoutAndSignal(
   run: () => unknown,
   timeout: number | undefined,
   signal: AbortSignal | undefined,
+  timedRun?: TimedRun,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abortListener: Disposable | undefined;
@@ -2220,7 +2228,10 @@ async function raceWithTimeoutAndSignal(
     if (typeof timeout === "number" && Number.isFinite(timeout)) {
       racers.push(
         new Promise<never>((_, reject) => {
-          timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+          timer = realSetTimeout(() => {
+            if (timedRun !== undefined) timedRun.timedOut = true;
+            reject(makeTestFailure(`test timed out after ${timeout}ms`));
+          }, timeout);
         }),
       );
     }
@@ -2245,14 +2256,14 @@ async function raceWithTimeoutAndSignal(
   }
 }
 
-async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
+async function runHook(hook: Hook, owner: TestNode, arg: unknown, timedRun?: TimedRun) {
   const { timeout, signal } = hook;
   const run = () => runWithNode(owner, () => invokeTestFn(hook.fn as Function, arg));
   try {
     if (signal === undefined) {
-      await awaitWithTimeout(run, timeout);
+      await awaitWithTimeout(run, timeout, timedRun);
     } else {
-      await raceWithTimeoutAndSignal(run, timeout, signal);
+      await raceWithTimeoutAndSignal(run, timeout, signal, timedRun);
     }
   } catch (err) {
     // A hook that throws a nullish value must still fail the owning test.
@@ -2299,7 +2310,7 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+async function executeTestNode(node: TestNode, fn: TestFn, timedRun?: TimedRun): Promise<unknown> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
@@ -2325,7 +2336,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
-        await runHook(hook, ancestor, ctx);
+        await runHook(hook, ancestor, ctx, timedRun);
       }
     }
   } catch (err) {
@@ -2380,6 +2391,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       node.plan?.cancel();
     }
     cancelled = failure !== undefined && (failure === stop?.error || failure === node.plan?.timeoutError);
+    if (cancelled && timedRun !== undefined) timedRun.timedOut = true;
 
     const { failedSubtests, firstSubtestError } = node;
     if (failure === undefined && failedSubtests > 0) {
@@ -2411,7 +2423,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     const ancestor = ancestors[i];
     for (const hook of ancestor.hooks.afterEach) {
       try {
-        await runHook(hook, ancestor, ctx);
+        await runHook(hook, ancestor, ctx, timedRun);
       } catch (err) {
         if (!acceptedXfail) failure ??= err;
       }
@@ -2420,7 +2432,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   for (const hook of node.hooks.after) {
     try {
-      await runHook(hook, node, ctx);
+      await runHook(hook, node, ctx, timedRun);
     } catch (err) {
       if (!acceptedXfail) failure ??= err;
     }
@@ -2570,18 +2582,23 @@ function bunTest(): BunTest {
 function bunTestOptions(options: TestOptions) {
   // The node-style timeout is enforced by executeTestNode itself so that a
   // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
-  // bun:test's own watchdog only backs it up: it measures the whole wrapper,
-  // and its clock starts before the beforeEach hooks, ahead of the shim's.
   const { timeout } = options;
   if (timeout === Infinity) {
     // Node's "no timeout" must override bun:test's default (bun saturates it).
     return { timeout };
   }
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
-    // bun:test's built-in 5s on top of the node-style timeout, for the hooks
-    // the shim runs around the body. The watchdog then expires after the
-    // shim's timer, and a lower `--timeout` cannot cut a node timeout short.
+    // bun:test's watchdog starts first and also covers the hooks, so it gets 5s more. A lower `--timeout` cannot cut that short.
     return { timeout: timeout + kBunTestDefaultTimeoutMs };
+  }
+  return undefined;
+}
+
+// A bun:test timeout kills the processes of its test. bunTestOptions() puts that timeout 5s behind the shim's, so the shim asks for the kill where it would be without the 5s.
+function bunTestKillAfterMs(options: TestOptions) {
+  const { timeout } = options;
+  if (typeof timeout === "number" && Number.isFinite(timeout)) {
+    return Math.max(timeout, kBunTestDefaultTimeoutMs);
   }
   return undefined;
 }
@@ -2595,6 +2612,7 @@ function currentCollectionParent(): TestNode {
 }
 
 function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
+  const killAfterMs = bunTestKillAfterMs(node.options);
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
@@ -2603,8 +2621,10 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     // the flag was only inherited; under a run() child the suite registers as a
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
-    executeTestNode(node, fn).then(
+    const timedRun = killAfterMs === undefined ? undefined : { timedOut: false };
+    executeTestNode(node, fn, timedRun).then(
       failure => {
+        if (timedRun?.timedOut) killDanglingProcesses(done, killAfterMs!);
         // bun:test has no cancelled count, so the failure of this entry carries it.
         if (node.cancelledTests > 0) {
           done(failure ?? node.firstCancelError);

@@ -916,6 +916,8 @@ Controls whether package dependencies are included in the bundle. Possible value
   </Tab>
 </Tabs>
 
+Bun still bundles an import that a `paths` alias in `tsconfig.json` resolves to a local file. To keep that import external, add it to [`external`](#external).
+
 ### naming
 
 Customizes the generated file names. Defaults to `[dir]/[name].[ext]`.

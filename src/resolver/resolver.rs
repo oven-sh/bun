@@ -1033,11 +1033,19 @@ impl<'a> Resolver<'a> {
         false
     }
 
+    /// True iff a user-supplied `--external` name covers `import_path`. Does
+    /// NOT consider the builtin names that `--target=node` makes external.
+    #[inline(always)] // The scan is out of line: with no such name this is one compare.
+    pub(crate) fn matches_user_external_name(&self, import_path: &[u8]) -> bool {
+        self.opts.external.user_names != 0 && self.opts.external.matches_user_name(import_path)
+    }
+
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
     /// the `MatchResult` iff a key matches AND the mapped target exists on
     /// disk. Used to let path-aliased local files win over `packages=external`
     /// without breaking catch-all `"*"` paths entries that only cover ambient
-    /// type stubs.
+    /// type stubs. A specifier that a user-supplied `--external` name covers
+    /// is not looked up: it stays external.
     pub(crate) fn resolve_via_tsconfig_paths(
         &mut self,
         source_dir: &[u8],
@@ -1058,6 +1066,9 @@ impl<'a> Resolver<'a> {
             return MatchStatus::NotFound;
         };
         if tsconfig.paths.count() == 0 {
+            return MatchStatus::NotFound;
+        }
+        if self.matches_user_external_name(import_path) {
             return MatchStatus::NotFound;
         }
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
@@ -1345,6 +1356,7 @@ impl<'a> Resolver<'a> {
         // the alias first, but only follow it when it actually resolves to
         // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
         // .d.ts stubs must still let real bare imports stay external.
+        // A user's `--external` wins: a wildcard here, a name in `resolve_via_tsconfig_paths`.
         if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)

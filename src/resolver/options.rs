@@ -23,7 +23,10 @@ pub enum Packages {
 pub struct ExternalModules {
     pub patterns: Vec<WildcardPattern>,
     pub abs_paths: StringSet,
+    /// The names of the user's `external` list, then the builtin names of `--target=node`.
     pub node_modules: StringSet,
+    /// How many names at the start of `node_modules` are the user's.
+    pub user_names: usize,
 }
 impl Clone for ExternalModules {
     fn clone(&self) -> Self {
@@ -33,7 +36,29 @@ impl Clone for ExternalModules {
             patterns: self.patterns.clone(),
             abs_paths: self.abs_paths.clone().expect("oom"),
             node_modules: self.node_modules.clone().expect("oom"),
+            user_names: self.user_names,
         }
+    }
+}
+impl ExternalModules {
+    /// Adds a name of the user's `external` list. It has to come before the first builtin name.
+    pub fn add_user_name(&mut self, name: &[u8]) {
+        debug_assert_eq!(self.user_names, self.node_modules.count());
+        bun_core::handle_oom(self.node_modules.insert(name));
+        self.user_names = self.node_modules.count();
+    }
+
+    /// Whether a user's name covers `specifier`, as in the resolver's check of `node_modules`:
+    /// `foo` covers `foo/bar`, and nothing covers `foo/`.
+    #[inline(never)]
+    pub fn matches_user_name(&self, specifier: &[u8]) -> bool {
+        !specifier.ends_with(b"/")
+            && self
+                .node_modules
+                .keys()
+                .iter()
+                .take(self.user_names)
+                .any(|name| matches!(specifier.strip_prefix(&name[..]), Some([] | [b'/', ..])))
     }
 }
 #[derive(Debug, Clone)]
@@ -227,5 +252,61 @@ impl BundleOptions {
             self.production = value;
             self.jsx.development = !value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExternalModules;
+
+    fn externals(user: &[&[u8]], builtin: &[&[u8]]) -> ExternalModules {
+        let mut external = ExternalModules::default();
+        for name in user {
+            external.add_user_name(name);
+        }
+        for name in builtin {
+            external.node_modules.insert(name).expect("oom");
+        }
+        external
+    }
+
+    #[test]
+    fn a_builtin_name_is_not_a_user_name() {
+        // "pkg" is in both lists, and it stays the user's.
+        let external = externals(&[b"@/sub", b"pkg", b"pkg"], &[b"util", b"pkg"]);
+        assert_eq!(external.user_names, 2);
+        for covered in [&b"pkg"[..], b"pkg/a/b", b"@/sub", b"@/sub/x/y/z"] {
+            assert!(
+                external.matches_user_name(covered),
+                "{}",
+                covered.escape_ascii()
+            );
+        }
+        for other in [
+            &b"util"[..],
+            b"util/types",
+            b"@/su",
+            b"@/subx",
+            b"@/subx/y",
+            b"@",
+            b"pkg/",
+            b"@/sub/",
+            b"data:text/javascript;base64,AAAA/BBBB",
+        ] {
+            assert!(
+                !external.matches_user_name(other),
+                "{}",
+                other.escape_ascii()
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_above_a_user_name_is_not_covered() {
+        let external = externals(&[b"a/b/c"], &[]);
+        assert!(external.matches_user_name(b"a/b/c"));
+        assert!(external.matches_user_name(b"a/b/c/d"));
+        assert!(!external.matches_user_name(b"a/b"));
+        assert!(!external.matches_user_name(b"a/b/cd"));
     }
 }

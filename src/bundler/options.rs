@@ -116,10 +116,12 @@ pub(crate) fn init_external_modules(
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
-        node_modules: StringSet::default(),
-        abs_paths: StringSet::default(),
         patterns: default_wildcard_patterns(),
+        ..Default::default()
     };
+
+    // Before the builtin names: see `ExternalModules::add_user_name`.
+    add_user_externals(&mut result, cwd, externals, log);
 
     match target {
         Target::Node => {
@@ -136,8 +138,17 @@ pub(crate) fn init_external_modules(
         _ => {}
     }
 
+    result
+}
+
+fn add_user_externals(
+    result: &mut ExternalModules,
+    cwd: &[u8],
+    externals: &[&[u8]],
+    log: &mut bun_ast::Log,
+) {
     if externals.is_empty() {
-        return result;
+        return;
     }
 
     let mut patterns: Vec<WildcardPattern> = Vec::with_capacity(DEFAULT_WILDCARD_PATTERNS.len());
@@ -156,7 +167,7 @@ pub(crate) fn init_external_modules(
                         bstr::BStr::new(external)
                     ),
                 );
-                return result;
+                return;
             }
 
             patterns.push(WildcardPattern {
@@ -164,7 +175,7 @@ pub(crate) fn init_external_modules(
                 suffix: Box::from(&external[i + 1..]),
             });
         } else if bun_paths::is_package_path(external) {
-            result.node_modules.insert(external).expect("unreachable");
+            result.add_user_name(external);
         } else {
             let normalized = validate_path(log, cwd, external, b"external path");
 
@@ -175,8 +186,27 @@ pub(crate) fn init_external_modules(
     }
 
     result.patterns = patterns;
+}
 
-    result
+#[cfg(test)]
+#[test]
+fn user_external_names_come_before_node_builtin_names() {
+    let mut log = bun_ast::Log::init();
+    let user: [&[u8]; 3] = [b"util", b"@scope/*", b"longer-name"];
+    let external = init_external_modules(b"/", &user, &mut log, Target::Node);
+    let user_names: Vec<&[u8]> = external.node_modules.keys()[..external.user_names]
+        .iter()
+        .map(|name| &name[..])
+        .collect();
+    assert_eq!(user_names, [&b"util"[..], b"longer-name"]);
+    // "util" is a builtin name too, and it stays the user's.
+    assert_eq!(
+        external.node_modules.count(),
+        NODE_BUILTIN_PATTERNS.len() + 1
+    );
+    assert!(external.matches_user_name(b"util/types"));
+    assert!(!external.matches_user_name(b"events"));
+    assert!(external.node_modules.contains(b"events"));
 }
 
 pub use bun_resolve_builtins::node_builtins::{

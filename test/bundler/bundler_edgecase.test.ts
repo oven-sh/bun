@@ -1752,6 +1752,107 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
     },
   });
+  // Under `packages: "external"` a tsconfig `paths` alias that finds a local file is bundled
+  // (#29590), unless `external` names the specifier: as written, or by a prefix of it up to a "/".
+  // Each case builds with files that say "INLINED" and runs the output with files that say
+  // "LOADED". An import that the output still has prints "LOADED".
+  const namedAliasFiles = {
+    "/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"], "util/*": ["./src/util/*"] } } }`,
+    "/src/a.ts": `export const a = "INLINED";`,
+    "/src/sub/index.ts": `export const a = "INLINED";`,
+    "/src/util/a.ts": `export const a = "INLINED";`,
+    "/node_modules/pkg/package.json": `{ "name": "pkg" }`,
+    "/node_modules/pkg/a.js": `export const a = "INLINED";`,
+  };
+  const namedAliasFilesAtRunTime = Object.fromEntries(
+    Object.entries(namedAliasFiles).map(([file, text]) => [file, text.replaceAll("INLINED", "LOADED")]),
+  );
+  const namedAliasCases: [
+    id: string,
+    specifier: string,
+    external: string[],
+    stdout: "LOADED" | "INLINED",
+    options?: Partial<BundlerTestInput>,
+  ][] = [
+    ["Exact", "@/a", ["@/a"], "LOADED"],
+    ["ExactCLI", "@/a", ["@/a"], "LOADED", { backend: "cli" }],
+    ["Prefix", "@/sub/index", ["@/sub"], "LOADED"],
+    [
+      "AfterPluginDeclines",
+      "@/a",
+      ["@/a"],
+      "LOADED",
+      { plugins: builder => void builder.onResolve({ filter: /.*/ }, () => undefined) },
+    ],
+    ["NotNamed", "@/a", [], "INLINED"],
+    ["PartOfASegment", "@/sub/index", ["@/su"], "INLINED"],
+    // As without `packages`, no name covers a specifier that ends in "/". esbuild keeps this import.
+    ["TrailingSlash", "@/sub/", ["@/sub"], "INLINED"],
+    // `target: "node"` makes the names of node's builtin modules external. `external` does not
+    // name those, so an alias that starts with one is still bundled.
+    ["TargetNode", "@/a", ["@/a"], "LOADED", { target: "node" }],
+    ["TargetNodeBuiltinName", "util/a", [], "INLINED", { target: "node" }],
+    ["TargetNodeBuiltinNameAndOtherExternal", "util/a", ["pkg"], "INLINED", { target: "node" }],
+    ["TargetNodeBuiltinNameInExternal", "util/a", ["util"], "LOADED", { target: "node" }],
+    // Without `packages` a name covers the paths inside it too.
+    ["WithoutPackages", "pkg/a", ["pkg"], "LOADED", { packages: undefined }],
+  ];
+  for (const [id, specifier, external, stdout, options] of namedAliasCases) {
+    itBundled(`edgecase/ExternalNameBeatsTSConfigPaths/${id}`, {
+      files: { "/entry.ts": `import { a } from "${specifier}"; console.log(a);`, ...namedAliasFiles },
+      runtimeFiles: namedAliasFilesAtRunTime,
+      packages: "external",
+      external,
+      target: "bun",
+      ...options,
+      run: { stdout },
+    });
+  }
+  // The alias of a named specifier is not looked up, so the build does not read the folder that
+  // the alias names. A lookup reports the package.json of that folder.
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/IsNotLookedUp", {
+    files: {
+      "/entry.ts": `import { a } from "@/folder"; console.log(a);`,
+      "/tsconfig.json": namedAliasFiles["/tsconfig.json"],
+      "/src/folder/package.json": `{ "main": `,
+      "/src/folder/index.ts": `export const a = "INLINED";`,
+    },
+    runtimeFiles: {
+      "/src/folder/package.json": `{ "main": "./index.ts" }`,
+      "/src/folder/index.ts": `export const a = "LOADED";`,
+    },
+    packages: "external",
+    external: ["@/folder"],
+    target: "bun",
+    run: { stdout: "LOADED" },
+  });
+  // The named file is not read either, so an error in it is not an error of the build.
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/IsNotParsed", {
+    files: {
+      "/entry.ts": `import { a } from "@/a"; console.log(a);`,
+      ...namedAliasFiles,
+      "/src/a.ts": `export const a = ;`,
+    },
+    runtimeFiles: namedAliasFilesAtRunTime,
+    packages: "external",
+    external: ["@/a"],
+    target: "bun",
+    run: { stdout: "LOADED" },
+  });
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/CSSImport", {
+    files: {
+      "/entry.css": `@import "@/b.css";\n.a { color: red; }`,
+      "/src/b.css": `.b { color: blue; }`,
+      "/tsconfig.json": namedAliasFiles["/tsconfig.json"],
+    },
+    packages: "external",
+    external: ["@/b.css"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toContain(`@import "@/b.css";`);
+      api.expectFile("/out.css").not.toContain(".b {");
+    },
+  });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `

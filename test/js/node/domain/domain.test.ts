@@ -226,6 +226,34 @@ test.concurrent("EventEmitter constructed with captureRejections has no own emit
   expect(r.exitCode).toBe(0);
 });
 
+// Bun reports a throw of the entry module after the ticks that were queued before it, and node before them.
+test.concurrent("a throw of the entry module goes to the domain that it was thrown in, not to one that a tick entered since", async () => {
+  const r = await run(`
+    const domain = require("domain");
+    const d1 = domain.create();
+    d1.on("error", e => console.log("d1:" + e.message));
+    const d2 = domain.create();
+    d2.on("error", e => console.log("d2:" + e.message));
+    d2.run(() => process.nextTick(() => d2.run(() => {})));
+    d1.run(() => { throw new Error("sync"); });
+  `);
+  expect(r.stdout.trim()).toBe("d1:sync");
+  expect(r.exitCode).toBe(0);
+});
+
+test.concurrent("a throw of the entry module after an await is not taken by a domain that a callback entered before", async () => {
+  const r = await run(`
+    import domain from "node:domain";
+    const d = domain.create();
+    d.on("error", e => console.log("handled:" + e.message));
+    await new Promise(resolve => d.run(() => setTimeout(() => { d.run(() => {}); resolve(); }, 1)));
+    throw new Error("after await");
+  `);
+  expect(r.stdout).toBe("");
+  expect(r.stderr).toContain("after await");
+  expect(r.exitCode).toBe(1);
+});
+
 // Node routes unhandled rejections to domain 'error' via promiseInfo.domain
 describe("unhandled-rejections × domain (promiseInfo.domain)", () => {
   for (const mode of ["strict", "throw", "warn", "warn-with-error-code", "none"] as const) {

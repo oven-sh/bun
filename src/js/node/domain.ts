@@ -187,10 +187,11 @@ function stackClaims(s: any[]): boolean {
   return false;
 }
 
-// atEntryPoint: the entry module's own synchronous throw; no callback boundary
-// preceded it, so its async-context box is not a restored pairing.
+// atEntryPoint: the entry module's own throw. Its box is no restored pairing, and what a callback adopted since is not the entry module's.
 function domainWouldClaim(atEntryPoint: boolean): boolean {
-  return stackClaims(atEntryPoint ? stack : currentStack());
+  if (!atEntryPoint) return stackClaims(currentStack());
+  unadopt();
+  return stackClaims(stack);
 }
 
 function domainUncaughtExceptionClear() {
@@ -201,7 +202,8 @@ function domainUncaughtExceptionClear() {
 }
 
 function fatalErrorDispatch(er: any, atEntryPoint: boolean) {
-  if (!atEntryPoint) adopt();
+  if (atEntryPoint) unadopt();
+  else adopt();
   if (stackClaims(stack)) {
     // node's callback is process.domain._errorHandler(er); fall back to the
     // stack top where node would throw on a nulled process.domain.

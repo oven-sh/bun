@@ -88,13 +88,27 @@ extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 }
 
 #if !OS(WINDOWS)
+#if defined(O_EXEC) && !OS(LINUX)
+// Not the owner-bit test below: like open(O_EXEC), it asks the kernel whether the effective user may execute the file.
+static NEVER_INLINE bool isExecutableFileByPath(const char* path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && faccessat(AT_FDCWD, path, X_OK, AT_EACCESS) == 0;
+}
+#endif // defined(O_EXEC) && !OS(LINUX)
+
 extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC) && !OS(LINUX)
     // musl defines O_EXEC as O_PATH, which opens any file.
     int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
-    if (fd < 0)
+    if (fd < 0) {
+        // No descriptor was free for the open, so its failure is not an answer about the path.
+        int error = errno;
+        if (error == EMFILE || error == ENFILE) [[unlikely]]
+            return isExecutableFileByPath(path);
         return false;
+    }
     close(fd);
     return true;
 #endif // defined(O_EXEC) && !OS(LINUX)

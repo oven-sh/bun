@@ -12,10 +12,12 @@
  *
  * Where Bun differs from Node.js, the case says so: `expectFailure` marks what
  * Bun does not do yet, and a case that only one runtime can pass is skipped in
- * the other with the reason.
+ * the other with the reason. A difference that Bun keeps on purpose has one
+ * expectation for each runtime in the same case, with the reason.
  */
 import assert from "node:assert";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
 import { getEventListeners } from "node:events";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -26,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import util from "node:util";
 
 const isBun = typeof Bun !== "undefined";
+const harness = isBun ? await import("harness") : undefined;
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-stat-signal-"));
 const file = path.join(dir, "f.txt");
@@ -67,6 +70,12 @@ const optionsTypeError = (received: string) => ({
   code: "ERR_INVALID_ARG_TYPE",
   message: `The "options" argument must be of type object. Received ${received}`,
 });
+// Node.js v26.8.0 and later reject an `options` value that is not an object (nodejs/node#63143). Bun takes it as no
+// options, as every earlier Node.js does and as the callback forms of both do: exifr@7.1.3 calls `filehandle.stat(path)`.
+async function notAnObject(call: Promise<any>, received: string) {
+  if (isBun) assert.ok((await call).isFile(), received);
+  else await assert.rejects(call, optionsTypeError(received));
+}
 const notSignals: [unknown, string][] = [
   ["nope", "type string ('nope')"],
   [null, "null"],
@@ -142,11 +151,28 @@ for (const [name, form] of Object.entries(promiseForms)) {
     });
     after(() => handle.close());
 
-    test("rejects an options value that is not an object", async () => {
+    test("an options value that is not an object means no options in Bun, and Node.js rejects it", async () => {
       for (const [options, received] of notObjects) {
-        await assert.rejects(form.call(target, options), optionsTypeError(received));
+        await notAnObject(form.call(target, options), received);
       }
     });
+
+    test(
+      "an array is read as an options object and a function is not",
+      { skip: !isBun && "Node.js rejects both" },
+      async () => {
+        const signal = AbortSignal.abort("r");
+        await assert.rejects(form.call(target, Object.assign([], { signal })), abortError("r"));
+        assert.ok(
+          (
+            await form.call(
+              target,
+              Object.assign(() => {}, { signal }),
+            )
+          ).isFile(),
+        );
+      },
+    );
 
     test("accepts undefined and an object of any class", async () => {
       for (const options of [undefined, {}, { signal: undefined }, new Date(), new Map(), { __proto__: null }]) {
@@ -244,8 +270,9 @@ describe("fsPromises.stat and fsPromises.lstat", () => {
   const [stat, lstat] = [fsp.stat, fsp.lstat] as ((path: any, options?: any) => Promise<any>)[];
 
   for (const fn of [stat, lstat]) {
-    test(`${fn.name} checks options, then the signal, then aborted, then the path`, async () => {
-      await assert.rejects(fn(123, "x"), optionsTypeError("type string ('x')"));
+    test(`${fn.name} checks the signal, then aborted, then the path`, async () => {
+      // Node.js checks `options` first. Bun takes "x" as no options (see `notAnObject`), so the path is what fails.
+      await assert.rejects(fn(123, "x"), isBun ? pathTypeError : optionsTypeError("type string ('x')"));
       await assert.rejects(fn(123, { signal: "nope" }), signalTypeError("type string ('nope')"));
       const signal = AbortSignal.abort();
       await assert.rejects(fn(123, { signal }), abortError(signal.reason));
@@ -258,8 +285,15 @@ describe("fsPromises.stat and fsPromises.lstat", () => {
       await assert.rejects(fn(123, { signal: { aborted: false } }), pathTypeError);
     });
 
-    test(`${fn.name} rejects the index that Array.prototype.map passes as options`, async () => {
-      await assert.rejects(Promise.all([file, dir].map(fn)), optionsTypeError("type number (0)"));
+    test(`${fn.name} as the callback of Array.prototype.map, which passes the index as options`, async () => {
+      const all = Promise.all([file, dir].map(fn));
+      // See `notAnObject`.
+      if (isBun)
+        assert.deepStrictEqual(
+          (await all).map(stats => stats.isFile()),
+          [true, false],
+        );
+      else await assert.rejects(all, optionsTypeError("type number (0)"));
     });
 
     test(`${fn.name} rejects with the error of the stat when the signal stays live`, async () => {
@@ -297,6 +331,17 @@ describe("fsPromises.stat and fsPromises.lstat", () => {
         await laterStats();
       },
     );
+
+    test(`${fn.name}: an aborted stat does not borrow the path buffer of the caller`, async () => {
+      const controller = new AbortController();
+      const bytes = new Uint8Array(Buffer.from(file));
+      const promise = fn(bytes, { signal: controller.signal });
+      controller.abort();
+      await assert.rejects(promise, abortError(controller.signal.reason));
+      // transfer() copies a buffer that a pending call borrows, and leaves it attached.
+      bytes.buffer.transfer();
+      assert.strictEqual(bytes.buffer.detached, true);
+    });
 
     test(`${fn.name} takes a Buffer and a URL as the path when there is a signal`, async () => {
       const controller = new AbortController();
@@ -337,10 +382,21 @@ describe("FileHandle", () => {
     await assert.rejects(handle.stat({ signal: AbortSignal.abort() } as any), { code: "EBADF", syscall: "fstat" });
   });
 
+  test("stat(path), the call that exifr@7.1.3 makes, fulfils in Bun", async () => {
+    const handle = await fsp.open(file, "r");
+    try {
+      // Node.js shortens a long string in the message.
+      const shown = file.length > 28 ? `${file.slice(0, 25)}...` : file;
+      await notAnObject(handle.stat(file as any), `type string ('${shown}')`);
+    } finally {
+      await handle.close();
+    }
+  });
+
   test("a rejected stat leaves the handle open", async () => {
     const handle = await fsp.open(file, "r");
     try {
-      await assert.rejects(handle.stat("x" as any), optionsTypeError("type string ('x')"));
+      await notAnObject(handle.stat("x" as any), "type string ('x')");
       await assert.rejects(handle.stat({ signal: AbortSignal.abort() } as any), { name: "AbortError" });
       assert.ok((await handle.stat()).isFile());
       assert.notStrictEqual(handle.fd, -1);
@@ -674,6 +730,44 @@ describe("callback forms", () => {
     }
   });
 
+  test("fs.stat and fs.lstat: the callback of an aborted stat can transfer the path buffer", () => {
+    for (const fn of pathForms) {
+      for (const abortInFlight of [true, false]) {
+        const controller = new AbortController();
+        if (!abortInFlight) controller.abort();
+        const bytes = new Uint8Array(Buffer.from(file));
+        let detached: boolean | undefined;
+        fn(bytes, { signal: controller.signal }, (err: any) => {
+          abortError(controller.signal.reason)(err);
+          // transfer() copies a buffer that a pending call borrows, and leaves it attached.
+          bytes.buffer.transfer();
+          detached = bytes.buffer.detached;
+        });
+        controller.abort();
+        assert.strictEqual(detached, true, `abort in flight: ${abortInFlight}`);
+      }
+    }
+  });
+
+  test("with an aborted signal, fs.stat and fs.lstat read no other option", () => {
+    for (const fn of pathForms) {
+      for (const target of [file, Buffer.from(file), pathToFileURL(file)]) {
+        let reads = 0;
+        const options = {
+          signal: AbortSignal.abort("r"),
+          get bigint() {
+            reads++;
+            return 1;
+          },
+        };
+        let error: unknown;
+        fn(target, options, (err: unknown) => void (error = err));
+        abortError("r")(error);
+        assert.strictEqual(reads, 0, util.inspect(target));
+      }
+    }
+  });
+
   test(
     "with a signal, fs.lstat does not follow a link and fs.stat does",
     { skip: !canLink && "cannot create a symbolic link" },
@@ -754,9 +848,44 @@ describe("the text of an error, where Bun does not have the text of Node.js yet"
   );
 });
 
+describe("functions that the program replaced", () => {
+  // Node.js keeps its own copies of these functions. The replacements throw, so the work is done in another process.
+  test("do not reach a stat that has a signal, before or after node:fs is loaded", async () => {
+    const fixture = path.join(import.meta.dirname, "fs-stat-signal-fixture.ts");
+    const env = { ...(harness?.bunEnv ?? process.env), STAT_SIGNAL_FILE: file };
+    const child = await util
+      .promisify(execFile)(process.execPath, [fixture], { env })
+      .catch(error => error);
+    const results = {
+      "fsPromises.stat": "Stats",
+      "fsPromises.lstat": "Stats",
+      "filehandle.stat": "Stats",
+      "fsPromises.stat, aborted while its options are read": "ABORT_ERR",
+      "fs.stat": "AbortError",
+      "fs.lstat": "AbortError",
+      "fs.stat, null byte in the path": "ERR_INVALID_ARG_VALUE",
+    };
+    const calls = {
+      "Promise.resolve": 0,
+      "Promise.race": 0,
+      "String.prototype.indexOf": 0,
+      "String.prototype.includes": 0,
+    };
+    assert.deepStrictEqual(
+      child instanceof Error ? String(child.stack) + child.stdout + child.stderr : JSON.parse(child.stdout),
+      {
+        beforeLoad: { results, calls },
+        afterLoad: { results, calls: { ...calls, Symbol: 0, queueMicrotask: 0 } },
+        // A stat with a signal whose promise has no handler is still reported: two that fail, two that are aborted.
+        unhandled: ["ABORT_ERR", "ABORT_ERR", "ENOENT", "ENOENT"],
+      },
+    );
+  });
+});
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (isBun) {
-  const { bunEnv, nodeExeAtLeast } = await import("harness");
+  const { bunEnv, nodeExeAtLeast } = harness!;
   // The expected values are those of v26.12.1. The signal itself is in v26.8.0 (nodejs/node#63143).
   const node = nodeExeAtLeast("26.12.1");
 

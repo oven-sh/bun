@@ -61,12 +61,11 @@ function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
   );
 }
 
-const StringPrototypeIndexOf = String.prototype.indexOf;
-function dropStats() {}
+const isUint8Array = types.isUint8Array;
 
 // fs.stat, fs.lstat and fs.fstat with `options.signal`: node's checkAborted and bindSignalToReq. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L406
 function statWithSignal(
-  op: (callback: (error: Error | null, stats?: AnyStats) => unknown, target: any, options: any) => void,
+  op: (callback: (error: Error | null, stats?: AnyStats) => unknown, target: any, options?: any) => void,
   callback: ((...args: any[]) => unknown) | undefined,
   target: unknown,
   targetKind: "path" | "fd",
@@ -77,12 +76,22 @@ function statWithSignal(
   if (targetKind === "path") validateAbortSignal(signal, "options.signal");
   if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   if (targetKind === "fd") validateAbortSignal(signal, "options.signal");
+  if (isUint8Array(target)) {
+    // The callback can hear of an abort while the stat still runs, and a stat borrows a path buffer until it ends. So it gets a copy.
+    try {
+      target = new $Buffer(target);
+    } catch {
+      // A detached buffer cannot be copied. The native check reports it.
+    }
+  }
 
   if (signal.aborted) {
     // Node checks the path before `aborted`, so a path that is not a string free of null bytes goes to the native check. It throws, or it runs a stat that nothing reads.
-    if (targetKind === "path" && (typeof target !== "string" || StringPrototypeIndexOf.$call(target, "\0") !== -1)) {
-      op.$call(fs, dropStats, target, options);
+    let needsNativeCheck = targetKind === "path" && typeof target !== "string";
+    if (typeof target === "string") {
+      for (let i = 0; i < target.length && !needsNativeCheck; i++) needsNativeCheck = target.$charCodeAt(i) === 0;
     }
+    if (needsNativeCheck) op.$call(fs, function dropStats() {}, target);
     // Node calls back before it returns, so a throw from the callback reaches the caller.
     callback($makeAbortError(undefined, { cause: signal.reason }));
     return;

@@ -4,11 +4,12 @@ import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import { built, unsupported, withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
 
-// A build keeps two to three processors busy and writes an executable the size of Bun. The tests run side by side, one
-// at work for every three processors and every three gigabytes of the machine: more of them at once are not faster.
+// A build keeps two to three processors busy and writes an executable the size of Bun. As scripts/runner.node.ts does
+// for files that build executables, one test works for every three processors and every three gigabytes of the machine.
 const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
-const atOnce = Math.min(Math.round(availableParallelism() / 3), Math.floor(memory / (3 * 2 ** 30)));
-let free = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || atOnce);
+const fits = Math.min(Math.ceil(availableParallelism() / 3), Math.floor(memory / (3 * 2 ** 30)));
+const atOnce = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || fits);
+let free = atOnce;
 const waiting: (() => void)[] = [];
 async function inTurn<T>(work: () => Promise<T>): Promise<T> {
   if (free > 0) free--;
@@ -22,11 +23,14 @@ async function inTurn<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-// The time limit of a test also runs while it waits for its turn, and a debug build of Bun compiles for minutes.
-const timeout = isDebug ? 600_000 : 120_000;
-// bun:test kills nothing that a concurrent test leaves running. A command that hangs is killed by this limit, so that
-// it fails its test, leaves no process behind and lets the next test work.
-const limit = { timeout: (timeout * 3) / 4, killSignal: "SIGKILL" } as const;
+// Where one test works at a time, the tests run in series. Side by side, the time limit of a test also runs while it
+// waits for its turn, and a debug build of Bun compiles for minutes.
+const sideBySide = atOnce > 1;
+const timeout = isDebug && sideBySide ? 600_000 : 120_000;
+// bun:test kills nothing that a concurrent test leaves running. There a command that hangs is killed by this limit, so
+// that it fails its test, leaves no process behind and lets the next test work.
+const limit = sideBySide ? ({ timeout: (timeout * 3) / 4, killSignal: "SIGKILL" } as const) : {};
+const testCompiled = test.skipIf(isWindows || !!unsupported).concurrentIf(sideBySide);
 const crashIfInterpreted = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
 async function run(cmd: string[], cwd: string | undefined, env: Record<string, string | undefined>) {
@@ -41,7 +45,7 @@ async function build(folder: string, flags: string[] = []) {
   return join(folder, "program");
 }
 
-test.skipIf(!!unsupported).concurrent(
+test.skipIf(!!unsupported).concurrentIf(sideBySide)(
   "BUN_JSC_crashIfInterpreterIsUsed names the code and crashes",
   async () => {
     const { stdout, stderr, exitCode, signal } = await inTurn(() =>
@@ -61,7 +65,7 @@ test.skipIf(!!unsupported).concurrent(
   timeout,
 );
 
-test.skipIf(isWindows || !!unsupported).concurrent(
+testCompiled(
   "a compiled program started with BUN_INSPECT does not crash on Bun's debugger module",
   () =>
     inTurn(async () => {
@@ -124,7 +128,7 @@ const importing = (url: string) => ({
   "program.mjs": `const url = ${url}; const made = await import(url); console.log(made.default, made.f());`,
 });
 
-test.skipIf(isWindows || !!unsupported).concurrent.each(forms)(
+testCompiled.each(forms)(
   "a module in a data: URL that the program spells out runs: %s",
   async (_form, isExecutable) => {
     // Nothing on stderr: the build took the URL for a constant, and nothing was reported when the program ran.
@@ -146,7 +150,7 @@ describe.each([
     "blob:[0-9a-f-]{36}",
   ],
 ])("a module made from a string at run time: %s", (_kind, url, name) => {
-  test.skipIf(isWindows || !!unsupported).concurrent.each(forms)(
+  testCompiled.each(forms)(
     "is refused by an error, which is no crash: %s",
     async (_form, isExecutable) => {
       const { stdout, stderr, exitCode, signal } = await runCompiled(importing(url), isExecutable, { TEXT: text });
@@ -164,7 +168,7 @@ describe.each([
   );
 });
 
-test.skipIf(isWindows || !!unsupported).concurrent(
+testCompiled(
   "a file that a computed name with a constant start can reach is compiled",
   async () => {
     const { stdout, stderr, exitCode, signal } = await runCompiled(
@@ -187,7 +191,7 @@ const namedAtRunTime = {
   "program.mjs": `const made = await import(process.cwd() + process.env.LATE); console.log(made.default);`,
 };
 
-test.skipIf(isWindows || !!unsupported).concurrent.each(forms)(
+testCompiled.each(forms)(
   "a file that is loaded by a name made at run time is refused by an error, which is no crash: %s",
   async (_form, isExecutable) => {
     const { stdout, stderr, exitCode, signal } = await runCompiled(namedAtRunTime, isExecutable, {

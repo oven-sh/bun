@@ -442,6 +442,7 @@ declare module "bun" {
     };
 
     interface PrerenderResult {
+      /** The files of this page. A static build fails if another page generates one of them too. */
       files?: Record<string, Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[]>;
       // /**
       //  * For dynamic builds, `partialData` will be provided to `render` to allow

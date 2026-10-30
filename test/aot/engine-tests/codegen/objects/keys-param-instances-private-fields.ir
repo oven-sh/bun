@@ -1,0 +1,361 @@
+# Own keys are walked: spreads, Object.assign, Object.values, for..in, over objects whose layouts are known.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="keys-param-instances-private-fields.ts" displayPath="keys-param-instances-private-fields.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="WithPrivate" module=m0 position=444 constructor=f10 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=4
+layout L1 kind=Instance name="WithoutPrivate" module=m0 position=563 constructor=f11 fields=[{key="p" declared={type=number} flags=[IsRequired]}, {key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+layout L2 name="Point" module=m0 position=120 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 position=190 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+layout L4 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="p" declared={type=number} flags=[IsRequired]}] declaredOrder=[2, 0, 1] ownFieldCount=3
+data d0 root=Array{contents=undefined|null|L0|L1|L2|L3|L4} module=m0
+data d1 root=Array{contents=undefined|null|L0} module=m0
+data d2 root=Array{contents=undefined|null|L1} module=m0
+data d3 root=Object{layout=L2} module=m0
+variable g0 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f8
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f9
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClassToken layout=L0
+    PutModuleVariable v18 variable=g0
+    v20 = NewClosure function=f10
+    v21 = NewClass v20 layout=L0
+    v22 = FinishClass v21 layout=L0
+    v23 = Convert v22 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v24 = NewClosure function=f11
+    v25 = NewClass v24 layout=L1
+    v26 = FinishClass v25 layout=L1
+    v27 = Convert v26 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v28 = Data data=d0
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|L0|L1|L2|L3|L4> flags=[OmitsNull, OmitsUndefined]}
+    v30 = Integer
+    v31 = Convert v30 declared={type=number}
+    Jump -> next b1(v31)
+  b1(v32: number):
+    LoopHint
+    v34 = Integer integer=8
+    v35 = Less v32, v34
+    Branch v35 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v36):
+    v37 = PropGet v29 key="push"
+    v38 = Convert v36 declared={type=number}
+    v39 = Integer integer=1
+    v40 = Add v36, v39
+    v41 = Convert v40 declared={type=number}
+    v42 = NewObject -, v38, v41 layout=L2 fields=[0, 1]
+    v43 = FinishObject v42
+    v44 = Call v37, v29, v43 calleeKey="push" calleeName="points.push"
+    v45 = Increment v36
+    v46 = Convert v45 declared={type=number}
+    Jump -> next b1(v46)
+  b3(v47):
+    v48 = Data data=d1
+    v49 = Convert v48 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v50 = Data data=d2
+    v51 = Convert v50 declared={type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]}
+    v52 = Integer
+    v53 = Convert v52 declared={type=number}
+    Jump -> next b4(v53)
+  b4(v54: number):
+    LoopHint
+    v56 = Integer integer=8
+    v57 = Less v54, v56
+    Branch v57 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v58):
+    v59 = PropGet v49 key="push"
+    v60 = Construct v23 calleeName="WithPrivate"
+    v61 = Convert v60 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v62 = Call v59, v49, v61 calleeKey="push" calleeName="privates.push"
+    v63 = PropGet v51 key="push"
+    v64 = Construct v27 calleeName="WithoutPrivate"
+    v65 = Convert v64 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v66 = Call v63, v51, v65 calleeKey="push" calleeName="publics.push"
+    v67 = Increment v58
+    v68 = Convert v67 declared={type=number}
+    Jump -> next b4(v68)
+  b6(v69):
+    v70 = Integer
+    v71 = Convert v70 declared={type=number}
+    v72 = Integer
+    v73 = Convert v72 declared={type=number}
+    Jump -> next b7(v71, v73)
+  b7(v74: number, v75: number):
+    LoopHint
+    v77 = Convert v75 declared={type=i32 flags=[IsExpected]}
+    v78 = Integer integer=200000
+    v79 = Less v77, v78
+    Branch v79 -> taken b8(| 0), notTaken b9(| 0)
+  b8(v80):
+    v81 = Convert v80 declared={type=i32 flags=[IsExpected]}
+    v82 = Integer integer=7
+    v83 = BitAnd v81, v82
+    v84 = ElemGet v29, v83
+    v85 = Convert v84 declared={type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v86 = Call v1, -, v85 calleeName="spreadOfParameter"
+    v87 = Convert v86 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    v88 = PropGet v87 key="c"
+    v89 = Call v1, -, v85 calleeName="spreadOfParameter"
+    v90 = Convert v89 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    v91 = PropGet v90 key="b"
+    v92 = Add v88, v91
+    v93 = Add v74, v92
+    v94 = Convert v93 declared={type=number}
+    v95 = Call v3, -, v85 calleeName="assignOfParameter"
+    v96 = Convert v95 declared={type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}
+    v97 = PropGet v96 key="a"
+    v98 = Add v94, v97
+    v99 = Convert v98 declared={type=number}
+    v100 = Call v5, -, v85 calleeName="valuesOfParameter"
+    v101 = Convert v100 declared={type=number}
+    v102 = Add v99, v101
+    v103 = Convert v102 declared={type=number}
+    v104 = Integer integer=7
+    v105 = BitAnd v81, v104
+    v106 = ElemGet v49, v105
+    v107 = Convert v106 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v108 = PropGet v107 key="bump"
+    v109 = Call v7, -, v107 calleeName="spreadOfPrivate"
+    v110 = Convert v109 declared={type=number}
+    v111 = Call v9, -, v107 calleeName="valuesOfPrivate"
+    v112 = Convert v111 declared={type=number}
+    v113 = Add v110, v112
+    v114 = Call v11, -, v107 calleeName="namesOfPrivate"
+    v115 = Convert v114 declared={type=number}
+    v116 = Add v113, v115
+    v117 = PropGet v107 key="p"
+    v118 = Convert v117 declared={type=number} illTypedCause=Assertion
+    v119 = Integer integer=1
+    v120 = BitAnd v118, v119
+    v121 = Add v116, v120
+    v122 = Add v103, v121
+    v123 = Convert v122 declared={type=number}
+    v124 = Integer integer=7
+    v125 = BitAnd v81, v124
+    v126 = ElemGet v51, v125
+    v127 = Convert v126 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v128 = Call v13, -, v127 calleeName="spreadOfPublic"
+    v129 = Convert v128 declared={type=number}
+    v130 = Call v15, -, v127 calleeName="valuesOfPublic"
+    v131 = Convert v130 declared={type=number}
+    v132 = Add v129, v131
+    v133 = Call v17, -, v127 calleeName="namesOfPublic"
+    v134 = Convert v133 declared={type=number}
+    v135 = Add v132, v134
+    v136 = Add v123, v135
+    v137 = Convert v136 declared={type=number}
+    v138 = Integer integer=1000003
+    v139 = Mod v137, v138
+    v140 = Convert v139 declared={type=number}
+    v141 = Increment v81
+    v142 = Convert v141 declared={type=number}
+    Jump -> next b7(v140, v142)
+  b9(v143):
+    v144 = Builtin builtin=GlobalThis
+    v145 = PropGet v144 key="console" [isFreeName]
+    v146 = Convert v145 declared={type=builtin(Console) flags=[IsExpected]}
+    v147 = PropGet v146 key="log"
+    v148 = Convert v147 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v149 = Call v148, v146, v74 calleeKey="log" calleeName="console.log"
+    v150 = Undefined
+    Return v150
+}
+function f1 name="spreadOfParameter" module=m0 position=152 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1|L2|L3|L4):
+    v1 = NewObject layout=L3
+    v2 = FinishObject v1
+    v3 = Convert v2 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    Return v3
+}
+function f2 name="assignOfParameter" module=m0 position=256 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1|L2|L3|L4):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectAssign
+    v3 = Data data=d3
+    v4 = Call v2, v1, v3, v0 calleeName="Object.assign"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f3 name="valuesOfParameter" module=m0 position=336 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1|L2|L3|L4):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, v1, v0 calleeName="Object.values"
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Integer integer=1
+    v8 = ElemGet v4, v7
+    v9 = Add v6, v8
+    v10 = Convert v9 declared={type=number} illTypedCause=FromLooseType
+    Return v10
+}
+function f4 name="spreadOfPrivate" module=m0 position=610 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = NewObject layout=L2
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    v4 = Convert v3 declared={type=undefined|null|L0|L1|L2|L3|L4 flags=[OmitsNull, OmitsUndefined]}
+    v5 = PropGet v4 key="a"
+    v6 = PropGet v4 key="b"
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=number}
+    Return v8
+}
+function f5 name="valuesOfPrivate" module=m0 position=715 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, v1, v0 calleeName="Object.values"
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v5 = PropGet v4 key="length"
+    v6 = Convert v5 declared={type=number} illTypedCause=Assertion
+    v7 = Integer
+    v8 = ElemGet v4, v7
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Add v6, v9
+    v11 = Convert v10 declared={type=number} illTypedCause=FromLooseType
+    Return v11
+}
+function f6 name="namesOfPrivate" module=m0 position=825 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = ForInOpen v0
+    Jump -> next b1(v2)
+  b1(v4: number):
+    LoopHint
+    v6 = ForInStep v3, v0
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Convert v4 declared={type=number}
+    Return v9
+  b3():
+    v10 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v11 = PropGet v10 key="length"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Add v4, v12
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v14)
+}
+function f7 name="spreadOfPublic" module=m0 position=939 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = NewObject layout=L4
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    v4 = Convert v3 declared={type=undefined|null|L1|L4 flags=[OmitsNull, OmitsUndefined]}
+    v5 = PropGet v4 key="a"
+    v6 = PropGet v4 key="b"
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=number}
+    Return v8
+}
+function f8 name="valuesOfPublic" module=m0 position=1046 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, v1, v0 calleeName="Object.values"
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v5 = PropGet v4 key="length"
+    v6 = Convert v5 declared={type=number} illTypedCause=Assertion
+    v7 = Integer
+    v8 = ElemGet v4, v7
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Add v6, v9
+    v11 = Convert v10 declared={type=number} illTypedCause=FromLooseType
+    Return v11
+}
+function f9 name="namesOfPublic" module=m0 position=1158 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = ForInOpen v0
+    Jump -> next b1(v2)
+  b1(v4: number):
+    LoopHint
+    v6 = ForInStep v3, v0
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Convert v4 declared={type=number}
+    Return v9
+  b3():
+    v10 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v11 = PropGet v10 key="length"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Add v4, v12
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v14)
+}
+function f10 name="WithPrivate" module=m0 position=444 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f12
+    Return v3
+}
+function f11 name="WithoutPrivate" module=m0 position=563 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f13
+    Return v3
+}
+function f12 module=m0 position=444 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    v4 = GetModuleVariable variable=g0
+    PrivateDefine v1, v4, v3 layout=L0 field=1
+    v6 = Integer integer=2
+    v7 = Convert v6 declared={type=number}
+    PropDefine v1, v7 key="a"
+    v9 = Integer integer=3
+    v10 = Convert v9 declared={type=number}
+    PropDefine v1, v10 key="b"
+    v12 = Undefined
+    Return v12
+}
+function f13 module=m0 position=563 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    PropDefine v1, v3 key="p"
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number}
+    PropDefine v1, v6 key="a"
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number}
+    PropDefine v1, v9 key="b"
+    v11 = Undefined
+    Return v11
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 561, patchpoints: 88, rare instructions: 539, polls: 3
+# CHECK-NEXT: end of function f0

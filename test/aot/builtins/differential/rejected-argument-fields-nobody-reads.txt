@@ -1,0 +1,21 @@
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object]
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received {}
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype]
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype] {}
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object]
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received {}
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object]
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received [Object]
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received {}
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype]
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype] {}
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received [Object]
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received {}
+ERR_INVALID_ARG_TYPE: The "target" argument must be an instance of Buffer or Uint8Array. Received [Object]
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received [Object]
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received {}
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received [Object: null prototype]
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received [Object: null prototype] {}
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received [Object]
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received {}
+ERR_INVALID_ARG_TYPE: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received [Object]

@@ -1,6 +1,7 @@
 //! Classes.
 
 use super::declared::Declares;
+use super::runtime_syntax::Prologue;
 use super::stmt::{ModifiersOf, Start};
 use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Rejection;
@@ -205,7 +206,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 match self.is_ecmascript {
                     true if self.is_for_oxc() => {}
                     true => self.report(),
-                    false => self.flag(DiagnosticKind::Grammar, misplaced, keyword, &[]),
+                    false => self.flag_early_error(misplaced, keyword, &[]),
                 }
                 heritage.has_error = true;
             }
@@ -239,7 +240,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                             match p.is_ecmascript {
                                 true if p.is_for_oxc() => {}
                                 true => p.report(),
-                                false => p.flag(DiagnosticKind::Grammar, 1174, first_token, &[]),
+                                false => p.flag_early_error(1174, first_token, &[]),
                             }
                             heritage.has_error = true;
                         }
@@ -294,7 +295,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             match comma {
                 _ if heritage.has_error => {}
                 Some(_) if is_rejected => self.report(),
-                Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, comma, &[]),
+                Some(comma) => self.flag_early_error(1009, comma, &[]),
                 None if count == 0 && is_rejected => self.report(),
                 None if count == 0 => {
                     let at = (keyword.1, Diagnostic::NO_LENGTH);
@@ -303,13 +304,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     } else {
                         b"implements"
                     };
-                    self.flag(DiagnosticKind::Grammar, 1097, at, &[keyword]);
+                    self.flag_early_error(1097, at, &[keyword]);
                 }
-                None => {
-                    if let Some((at, code)) = element_error {
-                        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+                None => match element_error {
+                    Some((at, code @ (1009 | 1099))) if is_extends => {
+                        self.flag_early_error(code, at, &[]);
                     }
-                }
+                    Some((at, code)) => self.flag(DiagnosticKind::Grammar, code, at, &[]),
+                    None => {}
+                },
             }
             match (is_extends, has_implements) {
                 (true, _) => has_extends = true,
@@ -336,7 +339,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_too_deep() {
             return ClassId::NONE;
         }
+        let text_start = self.pos();
         self.next();
+        let outer = self.enter_context(ctx::STRICT, 0);
         // `GetContainingClass`: a class also contains its heritage clauses.
         self.class_depth += 1;
         // `parseNameOfClassDeclarationOrExpression`
@@ -368,7 +373,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if let Some(empty_list) = empty_list
             && !heritage.has_error
         {
-            self.flag(DiagnosticKind::Grammar, 1098, empty_list, &[]);
+            self.flag_early_error(1098, empty_list, &[]);
         }
         // Private names scanned from here to the `}` are inside the class. Those in its `extends` clause and decorators
         // aren't.
@@ -402,6 +407,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.expect(T::CloseBrace);
         }
         self.names_are_in_await_context = saved_names_context;
+        self.context = outer;
         self.class_depth -= 1;
         if std::mem::replace(&mut self.has_odd_members, has_odd_members) {
             let (parsed_members, call_site) = (&self.s.members[members..], self.call_site());
@@ -442,6 +448,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             other_implements: heritage.other_implements,
             members,
             start,
+            text_start,
             modifiers,
         })
     }
@@ -544,6 +551,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.token() == T::Static && self.peek() == T::OpenBrace {
             return self.class_static_block(start, first_modifier);
         }
+        let text_start = self.text_start_after_modifiers(first_modifier);
         let is_parent_ambient = self.has_context(ctx::AMBIENT);
         let mut kind = MemberKind::Property;
         if matches!(self.token(), T::Get | T::Set) {
@@ -714,6 +722,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if is_generator {
                 fn_flags |= Flags::GENERATOR;
             }
+            if self.options.compiles && is_constructor && declared_flags.contains(Flags::STATIC) {
+                fn_flags |= declared_flags & Flags::ASYNC;
+            }
             let name = key.name().unwrap_or(Atom::NONE);
             // "'{' or ';' expected."
             let code = match fn_kind {
@@ -728,6 +739,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (name, name_pos),
                 start.pos,
             );
+            self.f[member.func].text_start = text_start;
         } else {
             // `parsePropertyDeclaration`
             if self.token() == T::Exclamation {
@@ -818,7 +830,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let open = self.pos();
         // `parseClassStaticBlockBody`
         let suspensions = self.suspensions;
-        let (body, _) = self.function_block(ctx::AWAIT | self.context & ctx::OUTSIDE_BODIES);
+        let context = ctx::AWAIT | self.context & ctx::OUTSIDE_BODIES;
+        let (body, _) = self.function_block(context, Prologue::None);
         if self.is_for_oxc() {
             oxc::returns_in_static_block(&mut self.f, body);
         }
@@ -837,6 +850,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             anchor: open,
             start: start.pos,
+            text_start: start.pos,
+            is_strict: true,
+            is_strict_by_syntax: true,
         });
         if self.reads_jsdoc() {
             self.static_block_jsdoc(start);

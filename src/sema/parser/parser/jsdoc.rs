@@ -8,6 +8,7 @@
 //! All of this only runs with `Options::reads_jsdoc`. Without it, a node that can have comments costs one flag test.
 
 use super::reparse::Host;
+use super::runtime_syntax::{CodeDialect, class_in_comment};
 use super::stmt::{ModifiersOf, Start};
 use super::{Checkpoint, ListKind, Parser, ctx, take_span};
 use crate::lexer::Mark;
@@ -82,7 +83,8 @@ impl State {
     /// `typescript_flags` is the result of `read_by_checker` for a file that's being parsed a second time.
     pub(crate) fn new(options: &Options, has_interner: bool, typescript_flags: u8) -> State {
         let is_script = options.is_javascript && !options.is_json;
-        let is_other_dialect = is_script && (options.dialect.ecmascript || options.dialect.flow);
+        let is_other_dialect =
+            is_script && (options.dialect.ecmascript && !options.compiles || options.dialect.flow);
         let reads = options.reads_jsdoc && has_interner && !options.is_json && !is_other_dialect;
         let wanted = match reads {
             false => 0,
@@ -215,6 +217,7 @@ struct Outer<'a> {
     last_nullable_type: (TypeNodeId, u32),
     parameter_question_pos: u32,
     has_top_level_await: bool,
+    dialect: CodeDialect,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
 }
@@ -583,6 +586,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     | DiagnosticKind::OxcSecondReading => false,
                 }
         });
+        for it in &mut reported {
+            it.class = class_in_comment(it.kind);
+        }
         self.f.diagnostics.append(&mut reported);
     }
 
@@ -720,7 +726,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 self.f.specifier_expressions.push(expression);
             }
         }
+        let attributes_base = self.f.import_attributes.len();
         let mode = self.import_attributes_of_declaration(false);
+        let attributes = self.attributes_since(attributes_base);
         self.lx.skips_jsdoc_asterisks = false;
         // The specifiers store the index the declaration was expected to get.
         if self.f.imports.len() != imports {
@@ -749,6 +757,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             is_deferred: false,
             mode,
             stmt: StmtId::NONE,
+            attributes,
         };
         (declaration, self.pos(), has_clause)
     }
@@ -812,6 +821,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             last_nullable_type: self.last_nullable_type,
             parameter_question_pos: self.parameter_question_pos,
             has_top_level_await: self.has_top_level_await,
+            dialect: self.enter_typescript_dialect(),
             diagnostics: self.f.diagnostics.len(),
         };
         self.lx
@@ -839,6 +849,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             .comment_directives
             .truncate(outer.comment_directives);
         self.context = outer.context;
+        self.leave_typescript_dialect(outer.dialect);
         self.lists = outer.lists;
         self.errors_at = outer.errors_at;
         self.last_nullable_type = outer.last_nullable_type;
@@ -893,6 +904,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 self.jsdoc.attached.push(start);
                 for error in self.f.diagnostics.iter_mut().skip(outer.diagnostics) {
                     error.kind = DiagnosticKind::JsDoc;
+                    error.class = class_in_comment(error.kind);
                 }
             } else {
                 self.f.diagnostics.truncate(outer.diagnostics);

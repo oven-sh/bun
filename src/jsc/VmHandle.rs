@@ -177,7 +177,7 @@ impl Shared {
     /// on the condvar, not on the loop).
     fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
         let el = self.loop_of(kind);
-        el.concurrent_tasks.push(task);
+        el.post(task);
         if self.state() >= State::Draining {
             self.notify();
         } else {
@@ -853,13 +853,7 @@ impl ConcurrentPoster {
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
-            }
+            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }
@@ -955,7 +949,7 @@ impl IsolatedPosterInner {
         if open {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.concurrent_tasks.push(task);
+            el.post(task);
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);

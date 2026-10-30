@@ -1,0 +1,26 @@
+icu-data break-iteration : IntlSegmenter
+icu-data sentence-break : IntlSegmenter IntlDisplayNames
+icu-data collation by-locale : IntlCollation
+icu-data collation-root : IntlCollation RuntimeTranspiler Bundler
+icu-data currency by-locale : IntlDisplayNames IntlOther IntlDateTimeFormat IntlNumberFormat
+icu-data language-names by-locale : IntlDisplayNames IntlDateTimeFormat
+icu-data region-names by-locale : IntlDisplayNames IntlDateTimeFormat
+icu-data number-spellout : IntlDisplayNames IntlOther IntlDateTimeFormat
+icu-data transliteration : Tools
+icu-data unit by-locale : IntlUnits
+icu-data zone except-windows by-locale : IntlDateTimeFormat
+icu-data locale except-windows by-locale : IntlDisplayNames IntlOther IntlDateTimeFormat IntlNumberFormat
+icu-data currency-codes : IntlOther IntlDateTimeFormat IntlNumberFormat
+icu-data gender-list : IntlOther IntlDateTimeFormat IntlNumberFormat
+icu-data day-periods : IntlDateTimeFormat
+icu-data plural-rules : IntlNumberFormat
+icu-data converter : Tools
+icu-data string-prep : Tools
+icu-data confusables : Tools
+icu-data character-names : Tools
+icu-data nfkc-simple-case-fold : Tools
+icu-data windows-zones except-windows : Tools
+
+icu-language-group nb nn no
+icu-language-group en hi
+icu-language-group yue zh

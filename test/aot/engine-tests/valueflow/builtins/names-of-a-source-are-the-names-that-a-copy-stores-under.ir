@@ -1,0 +1,64 @@
+# function Base() {}  Base.prototype.run = 1;  function Heir() {}
+# const accessors = { other: { set: neverByKeys } };  Object.defineProperties(Heir.prototype, accessors);  kept.accessors = accessors;
+# Heir.prototype[Object.keys(Base.prototype)[0]] = 2;
+# const target = {};  Object.defineProperty(target, "other", { set: neverByAssign });  Object.assign(target, { run: 3 });
+# The map of descriptors goes elsewhere only behind the call, so the call defines `other` and no other name. The prototype object of a constructor function lists the names that were stored on it.
+# Object.assign stores under the names of the literal. So no store here is under `other`, and neither setter runs.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f3
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Heir" constructor=f2 flags=[IsConstructorFunction]
+layout L2 fields=[{key="set" declared={type=anything}}] ownFieldCount=1
+layout L3 fields=[{key="other" declared={type=anything}}] ownFieldCount=1
+layout L4 fields=[{key="run" declared={type=anything}}] ownFieldCount=1
+layout L5 fields=[{key="accessors" declared={type=anything}}] ownFieldCount=1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = NewClosure function=f1
+    v2 = PropGet v1 key="prototype"
+    v3 = Integer integer=1
+    PropSet v2, v3 key="run" mode=Strict
+    v5 = NewClosure function=f2
+    v6 = PropGet v5 key="prototype"
+    v7 = NewClosure function=f3
+    v8 = NewObject -, v7 layout=L2 fields=[0]
+    v9 = NewObject -, v8 layout=L3 fields=[0]
+    v10 = Builtin builtin=ObjectDefineProperties
+    v11 = Call v10, v0, v6, v9
+    v12 = Undefined
+    v13 = NewObject -, v12 layout=L5 fields=[0]
+    PropSet v13, v9 key="accessors" mode=Strict
+    v15 = Builtin builtin=ObjectKeys
+    v16 = Call v15, v0, v2
+    v17 = Integer integer=0
+    v18 = ElemGet v16, v17
+    v19 = Integer integer=2
+    ElemSet v6, v18, v19
+    v21 = NewDictionary
+    v22 = NewClosure function=f4
+    v23 = NewObject -, v22 layout=L2 fields=[0]
+    v24 = String string="other"
+    v25 = Builtin builtin=ObjectDefineProperty
+    v26 = Call v25, v0, v21, v24, v23
+    v27 = Integer integer=3
+    v28 = NewObject -, v27 layout=L4 fields=[0]
+    v29 = Builtin builtin=ObjectAssign
+    v30 = Call v29, v0, v21, v28
+    Return
+}
+function f1 name="Base" flags=[HasThis] results=[{type=anything}] constructedClass=L0 {
+    Return
+}
+function f2 name="Heir" flags=[HasThis] results=[{type=anything}] constructedClass=L1 {
+    Return
+}
+function f3 name="neverByKeys" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f4 name="neverByAssign" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

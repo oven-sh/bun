@@ -41,6 +41,7 @@ or don't match the cross-platform behavior the runtime needs.
 | `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
 | `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
 | `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
+| `from_raw_parts` / `transmute` on bytes | `bun_core::{bytes_of, slice_as_bytes, cast_slice, read_prefix}` (see below)          |
 
 ## `bun_sys` — System Calls (`src/sys/`)
 
@@ -306,6 +307,40 @@ allocator and similar) do **not** run `Drop` when the arena resets — the
 backing pages are bulk-freed. If a type owns a heap allocation, refcount, or
 fd, free it explicitly before the arena resets. Don't rely on `Drop` for
 correctness in arena-backed code.
+
+## Bytes ↔ values (`bun_pod`, re-exported by `bun_core`)
+
+Viewing a value as bytes, or bytes as a value, is safe code. Four marker traits
+say which types allow it, and `impl_*!` macros implement them only if rustc can
+prove the claim from the type's layout (padding, a `bool`, an enum or a pointer
+in the wrong place is a compile error at the macro call). The `#[repr(..)]` is
+required: without one rustc picks the field order, and so the byte order:
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Header { magic: u32, len: u16, flags: u16 }
+bun_core::impl_pod!(Header);            // NoUninit + AnyBitPattern + Zeroable
+// impl_no_uninit!(T)        every byte initialized:  &T → &[u8]   (enums and bool qualify)
+// impl_any_bit_pattern!(T)  every byte pattern valid: &[u8] → T   (padding is fine)
+// impl_zeroable!(T)         all-zero valid: bun_core::ffi::zeroed::<T>()
+
+bun_core::bytes_of(&header)                  // &[u8]
+bun_core::slice_as_bytes(utf16)              // &[T] → &[u8], cannot fail
+bun_core::read_prefix::<Header>(bytes)       // Option<Header>, any alignment
+bun_core::vec_from_bytes::<Header>(bytes)    // Option<Vec<Header>>, any alignment
+bun_core::try_cast_slice::<u8, u16>(bytes)   // Option<&[u16]>: None if misaligned or a partial element
+bun_core::cast_slice::<u8, u16>(bytes)       // same, panics: only for layouts Bun itself established
+bun_core::Unaligned::<u16>::slice_of(bytes)  // &[Unaligned<u16>], cannot fail; `.get()` each element
+```
+
+Memory whose address JS controls (an `ArrayBuffer` can wrap any `bun:ffi` or
+N-API pointer) is not aligned to anything: never `cast_slice` it. Use
+`Unaligned::slice_of`, `read_prefix`, `vec_from_bytes` or `try_cast_slice`. A
+hand-written `unsafe impl` of these traits is only for what rustc cannot analyze
+(generic parameters, associated-type fields such as `bitflags!` storage, types
+over 4 KiB, and pointers for `Zeroable`). If a function is generic over "`u8` or
+`u16`", dispatch with a trait method (`PathByte::units`), not a cast.
 
 ## Environment Variables (`bun_core::env_var`)
 

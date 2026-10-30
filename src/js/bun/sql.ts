@@ -183,9 +183,7 @@ function onFileRead(this: Target, query: Query, text: string) {
 }
 
 function readFileThenDispatch(this: Target, query: Query) {
-  Bun.file(query[_strings] as string)
-    .text()
-    .$then(onFileRead.bind(this, query), rejectQuery.bind(query));
+  (Bun.file(query[_strings] as string) as Blob).text().$then(onFileRead.bind(this, query), rejectQuery.bind(query));
 }
 
 function file(this: Target, path: string, values?: unknown) {
@@ -465,7 +463,7 @@ function idleOrTimeout(scope: Scope, ms: number): Promise<void> | undefined {
     return;
   }
   const { promise, resolve } = Promise.withResolvers<void>();
-  const timer = setTimeout(resolve, ms);
+  const timer: NodeJS.Timeout = setTimeout(resolve, ms);
   timer.unref();
   scope.whenIdle = stopWaiting.bind(null, timer, resolve);
   return promise;

@@ -1,0 +1,79 @@
+# Many callers of a recursive function and an lookalikes with which it never ends.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="/$bun/text/many-callers-recursive-function-which.js/0.cjs" displayPath="/$bun/text/many-callers-recursive-function-which.js/0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="many-callers-recursive-function-which.js" displayPath="many-callers-recursive-function-which.js" body=f1 namespaceLayout=L(m1)
+entry module=m1
+variable g0 name="isEven" module=m1 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="isOdd" module=m1 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="after"
+    v3 = Call v1, -, v2 calleeName="honest"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="isEven" module=m1 position=992 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = GetModuleVariable variable=g1
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Sub v3, v4
+    v6 = Call v2, -, v5 calleeName="isOdd"
+    v7 = Convert v6 declared={type=boolean flags=[IsExpected]}
+    v8 = ToBoolean v7
+    v9 = LogicalNot v8
+    v10 = Boolean
+    v11 = StrictEq v9, v10
+    v12 = Convert v11 declared={type=boolean flags=[IsExpected]}
+    Return v12
+}
+function f3 name="isOdd" module=m1 position=1067 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = GetModuleVariable variable=g0
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Sub v3, v4
+    v6 = Call v2, -, v5 calleeName="isEven"
+    v7 = Convert v6 declared={type=boolean flags=[IsExpected]}
+    v8 = ToBoolean v7
+    v9 = LogicalNot v8
+    v10 = Boolean
+    v11 = StrictEq v9, v10
+    v12 = Convert v11 declared={type=boolean flags=[IsExpected]}
+    Return v12
+}
+function f4 name="honest" module=m1 position=1234 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=7
+    v3 = Call v1, -, v2 calleeName="isOdd"
+    v4 = Undefined
+    Return v4
+}
+# -- generated: isOdd
+# CHECK-LABEL: function {{*}}name="isOdd"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@15 = ArgumentReg(%r13)
+# CHECK-NEXT: Double b@16 = Load(b@15, offset = -56, ReadsImmutable, v2:Sub)
+# CHECK-NEXT: Double b@18 = ArgumentReg(%xmm0)
+# CHECK-NEXT: Double b@21 = Sub(b@18, b@16, v2:Sub)
+# CHECK-NEXT: Double b@17 = Load(b@15, offset = -56, ReadsImmutable, v4:Sub)
+# CHECK-NEXT: Double b@22 = Sub(b@21, b@17, v4:Sub)
+# CHECK-NEXT: Int32 b@23 = Patchpoint(b@22:Register(%xmm0), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}|Reads:Top, v5:CallDirect)
+# CHECK-NEXT: Int32 b@24 = Const32(1, v6:LogicalNot)
+# CHECK-NEXT: Int32 b@25 = BitXor(b@23, $1(b@24), v6:LogicalNot)
+# CHECK-NEXT: Int32 b@26 = Const32(0, v7:Boolean)
+# CHECK-NEXT: Int32 b@29 = Equal(b@25, $0(b@26), v8:StrictEq)
+# CHECK-NEXT: Void b@30 = Return(b@29, Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@23: range = [0,1]
+# CHECK-NEXT: end of function f3

@@ -1,0 +1,80 @@
+---
+title: "Troubleshooting"
+description: "The errors you're most likely to hit when you first build a program with bun compile, and the fix for each"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Find your message in one of the tables. They show the part of each message that doesn't change.
+
+## The build stops at a type error
+
+```ts port.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./port.ts
+```
+
+```txt
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/port.ts:1:7
+```
+
+`bun run` never checks your types, so a project can carry type errors for years. [`bun compile` relies on them](/compiler/aot#type-errors-stop-the-build).
+
+`bun check --aot ./port.ts` lists every error the build would report, and builds nothing. Fix them, or put `// @ts-expect-error` above a line that you can't fix yet.
+
+The errors are TypeScript 7's, whichever version of `typescript` you have installed. [Coming from TypeScript 5](/runtime/check#coming-from-typescript-5) lists what changed.
+
+## Other messages from the build
+
+| Message                                         | Fix                                                                               |
+| ----------------------------------------------- | --------------------------------------------------------------------------------- |
+| `TS7016: Could not find a declaration file`     | `bun add -d @types/<package>`                                                     |
+| `TS100009: ... compiled without its types`      | None needed. See below                                                            |
+| `TS100014: this assignment always throws`       | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
+| `TS100064: this import path isn't a constant`   | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
+| `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
+| `can't run code compiled by this Bun`           | Pass a `bun` of the same revision                                                 |
+| `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                           |
+
+`TS100009` is a warning. A dependency ships TypeScript that has type errors in your project, so Bun compiles it like JavaScript. It behaves the same and runs slower. `bun check --all ./app.ts` lists the errors. The usual cause is a `declare module` of yours that changes the package's types, or a `"bun"` export condition, which needs `"customConditions": ["bun"]` in your `tsconfig.json`.
+
+## Errors when the program runs
+
+| Message                                          | Fix                                                                               |
+| ------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `... because built-in objects are read-only`     | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
+| `Cannot load ...: it isn't in this executable`   | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `Cannot find module`, only on another machine    | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `... was not compiled into this executable`      | Use that API once in your own code                                                |
+| `EvalError: ... the compiler couldn't tell ...`  | Call `eval` or `new Function` directly                                            |
+| `Cannot replace a loader in Module._extensions`  | [Remove the hook](/compiler/compatibility#loader-hooks-and-the-module-cache)      |
+| `--preload can't be used with this executable`   | Import the file from your entry point                                             |
+| `BUN_INSPECT can't be used with this executable` | Build with `--compile-inspector`                                                  |
+| `... can have 256 JSCallbacks open at a time`    | `close()` the callbacks you're done with                                          |
+| `Cannot compile C code ... (PR_SET_MDWE)`        | Compile the C file first, then `dlopen()`                                         |
+
+If your error tracker shows new groups after you switch, that's because [some messages are shorter](/compiler/compatibility#error-messages).
+
+## The executable is slower than `bun run`
+
+Look for these causes, in this order.
+
+1. Your hot code is untyped. [`bun compile --explain`](/compiler/explain) lists the code that compiled to a slow path, worst first, with a fix for each.
+2. A value doesn't match its declared type in hot code. Nothing is printed, because nothing goes wrong. [Find the guards that fail](/compiler/debugging#find-the-guards-that-fail).
+3. A library generates code at run time, and [Bun interprets it](/compiler/compatibility#code-from-strings).
+4. The program runs [WebAssembly that it doesn't import](/compiler/compatibility#webassembly).
+5. Code is loaded from disk, with `--external` or `--aot-allow-code-from-disk`. Bun interprets that too.
+
+## The executable is too large
+
+[`--trim`](/compiler/size) removes the Bun and Node.js APIs that your code never calls. If that changes little, something in your program could reach any API, usually `eval` or a dynamic `require()`. [`--explain=trim`](/compiler/size#what-blocks---trim) says what. `--no-compile-function-source` leaves out the source text of your functions.
+
+## Something else
+
+If a program passes `bun check --aot` and still behaves differently from `bun run` in a way that [Compatibility](/compiler/compatibility) doesn't describe, [open an issue](https://github.com/oven-sh/bun/issues) with the smallest program that shows it.

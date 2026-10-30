@@ -1,0 +1,70 @@
+# class Alone { a = v }  class Base { b = v }  class Derived extends Base { c = v }  new Alone(1).a; new Derived(1).c
+# process.emitWarning(Alone); process.emitWarning(Derived); Reflect.construct(Base, [], handedIn)
+# Nobody knows the new.target of the construction: it may be any class that has come into other hands. An allocation picks the layout of new.target only where the class of new.target lies below
+# the class that allocates, and makes an ordinary object under any other new.target. So Reflect.construct(Base, [], Derived) makes a Derived that the constructor of Derived never fills.
+# The constructor of Base allocates for no Alone: every object of that layout has passed its own constructor, and its field is set at creation as it is without the construction.
+# What the constructor of Base stores, and what native code may put on the object that it has constructed, lands on no Alone either: the names that are added to one are all known.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Alone" {{*}}initialization=SetAtCreation{{*}}addedKeysAreComplete=true
+# CHECK: layout L2 kind=Instance name="Derived"
+# CHECK-NOT: initialization=SetAtCreation
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Alone" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Base" constructor=f2 fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Derived" base=L1 constructor=f3 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Undefined
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = NewClosure function=f2
+    v6 = NewClass v5 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = NewClosure function=f3
+    v9 = ResolveHeritage v7
+    v10 = NewClass v8, v7, v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = Integer integer=1
+    v13 = Construct v4, -, v12
+    v14 = PropGet v13 key="a"
+    v15 = Construct v11, -, v12
+    v16 = PropGet v15 key="c"
+    v17 = PropGet v15 key="b"
+    v18 = Builtin builtin=Process
+    v19 = PropGet v18 key="emitWarning"
+    v20 = Call v19, v18, v4 calleeKey="emitWarning"
+    v21 = Call v19, v18, v11 calleeKey="emitWarning"
+    v22 = PropGet v0 key="handedIn" [isFreeName]
+    v23 = NewArray contents=anything
+    v24 = Builtin builtin=Reflect
+    v25 = PropGet v24 key="construct"
+    v26 = Call v25, v24, v7, v23, v22 calleeKey="construct"
+    Return
+}
+function f1 name="Alone" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropDefine v3, v1 key="a"
+    Return v3
+}
+function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropDefine v3, v1 key="b"
+    Return v3
+}
+function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L2
+    PropDefine v4, v2 key="c"
+    Return v4
+}

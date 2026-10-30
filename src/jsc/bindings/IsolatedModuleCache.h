@@ -56,6 +56,12 @@ public:
     // bypassed, which is exactly the gating bug this consolidation prevents.
     static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&);
 
+    // For callers that run some time after their lookup, or without one: the
+    // answer of the transpiler's thread, which another fetch of the key may
+    // have preceded, and Module._extensions[".js"] called by a program. The
+    // provider that is cached for the key stays.
+    static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&);
+
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
 };

@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "types": [],
+    "strict": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "length-jsx"
+  }
+}

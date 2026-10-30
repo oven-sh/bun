@@ -203,22 +203,13 @@ describe("String search — Highway memMem/indexOfChar", () => {
   });
 });
 
-function crc32(bytes: Uint8Array): number {
-  let crc = ~0 >>> 0;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return ~crc >>> 0;
-}
-
 function pngChunk(type: string, data: Uint8Array): Uint8Array {
   const chunk = new Uint8Array(12 + data.length);
   const view = new DataView(chunk.buffer);
   view.setUint32(0, data.length);
   chunk.set(Buffer.from(type, "latin1"), 4);
   chunk.set(data, 8);
-  view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));
+  view.setUint32(8 + data.length, Bun.hash.crc32(chunk.subarray(4, 8 + data.length)));
   return chunk;
 }
 
@@ -305,23 +296,32 @@ describe("PNG codec: Highway runtime dispatch", () => {
     return inflateSync(Buffer.concat(idat));
   }
 
-  /** What byte `i` of row `y` is filtered against, by filter type. https://www.w3.org/TR/png-3/#9Filter-types */
-  function predictions(rows: Uint8Array, stride: number, bytesPerPixel: number, y: number, i: number): number[] {
+  // Under Intel SDE code is slow the first time it runs: the first of these tests took 6 s, the fifth 0.1 s. Hence
+  // plain loops and few functions, so that less runs for the first time, and the small pictures first, to spread it.
+
+  /** What byte `i` of row `y` is filtered against. https://www.w3.org/TR/png-3/#9Filter-types */
+  function prediction(type: number, rows: Uint8Array, stride: number, bytesPerPixel: number, y: number, i: number) {
     const a = i >= bytesPerPixel ? rows[y * stride + i - bytesPerPixel] : 0;
     const b = y > 0 ? rows[(y - 1) * stride + i] : 0;
     const c = y > 0 && i >= bytesPerPixel ? rows[(y - 1) * stride + i - bytesPerPixel] : 0;
-    const [pa, pb, pc] = [Math.abs(b - c), Math.abs(a - c), Math.abs(a + b - 2 * c)];
-    return [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c];
+    if (type === 1) return a;
+    if (type === 2) return b;
+    if (type === 3) return (a + b) >> 1;
+    if (type !== 4) return 0;
+    const pa = Math.abs(b - c);
+    const pb = Math.abs(a - c);
+    const pc = Math.abs(a + b - 2 * c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
   }
 
   describe.each([
+    // Most rows are shorter than a vector.
+    3,
+    // Every row is whole vectors.
+    32,
     // No row is whole vectors of 16 or 32 bytes, at any pixel size, nor is a row of RGBA without its first pixel, which
     // the encoder takes by itself.
     119,
-    // Every row is whole vectors.
-    32,
-    // Most rows are shorter than a vector.
-    3,
   ])("%i px wide", width => {
     test.each([
       // Where red, green, blue and alpha are in a pixel. Of 16 bits Bun keeps the first 8, so the other 8 go unseen.
@@ -346,35 +346,44 @@ describe("PNG codec: Highway runtime dispatch", () => {
       for (let y = 0; y < height; y++) {
         lines[y * (1 + stride)] = filterTypes[y];
         for (let i = 0; i < stride; i++) {
-          const prediction = predictions(rows, stride, bytesPerPixel, y, i)[filterTypes[y]];
-          lines[y * (1 + stride) + 1 + i] = rows[y * stride + i] - prediction;
+          const predicted = prediction(filterTypes[y], rows, stride, bytesPerPixel, y, i);
+          lines[y * (1 + stride) + 1 + i] = rows[y * stride + i] - predicted;
         }
       }
       const [red, green, blue, alpha] = channels;
       const rgba = new Uint8Array(height * width * 4).fill(255);
       for (let pixel = 0; pixel < height * width; pixel++) {
         const at = pixel * bytesPerPixel;
-        rgba.set([rows[at + red], rows[at + green], rows[at + blue]], pixel * 4);
+        rgba[pixel * 4] = rows[at + red];
+        rgba[pixel * 4 + 1] = rows[at + green];
+        rgba[pixel * 4 + 2] = rows[at + blue];
         if (alpha !== undefined) rgba[pixel * 4 + 3] = rows[at + alpha];
       }
 
       // At level 0 Bun.Image writes the rows as they are. Above it, it also filters each row in the four ways there
       // are, and of the five keeps the first whose bytes, taken as signed, are nearest to zero.
-      const asTheyAre: Uint8Array[] = [];
-      const nearestToZero: Uint8Array[] = [];
+      const lineLength = 1 + width * 4;
+      const asTheyAre = Buffer.alloc(height * lineLength);
+      const nearestToZero = Buffer.alloc(height * lineLength);
+      const candidate = new Uint8Array(lineLength);
       for (let y = 0; y < height; y++) {
-        const candidates = Array.from({ length: 5 }, (_, filterType) => new Uint8Array(1 + width * 4).fill(filterType));
-        for (let i = 0; i < width * 4; i++) {
-          const byte = rgba[y * width * 4 + i];
-          predictions(rgba, width * 4, 4, y, i).forEach((prediction, t) => (candidates[t][1 + i] = byte - prediction));
+        let least = Infinity;
+        for (let type = 0; type <= 4; type++) {
+          candidate[0] = type;
+          let distance = 0;
+          for (let i = 0; i < width * 4; i++) {
+            const filtered = (rgba[y * width * 4 + i] - prediction(type, rgba, width * 4, 4, y, i)) & 255;
+            candidate[1 + i] = filtered;
+            distance += Math.min(filtered, 256 - filtered);
+          }
+          if (type === 0) asTheyAre.set(candidate, y * lineLength);
+          if (distance < least) nearestToZero.set(candidate, y * lineLength);
+          least = Math.min(least, distance);
         }
-        const distances = candidates.map(line => line.subarray(1).reduce((sum, b) => sum + Math.min(b, 256 - b), 0));
-        asTheyAre.push(candidates[0]);
-        nearestToZero.push(candidates[distances.indexOf(Math.min(...distances))]);
       }
       const file = pngFile(width, height, depth, colorType, lines);
-      expect(linesOf(await new Bun.Image(file).png({ compressionLevel: 0 }).bytes())).toEqual(Buffer.concat(asTheyAre));
-      expect(linesOf(await new Bun.Image(file).png().bytes())).toEqual(Buffer.concat(nearestToZero));
+      expect(linesOf(await new Bun.Image(file).png({ compressionLevel: 0 }).bytes())).toEqual(asTheyAre);
+      expect(linesOf(await new Bun.Image(file).png().bytes())).toEqual(nearestToZero);
     });
   });
 });

@@ -22,7 +22,7 @@ use enum_map::EnumMap;
 /// arena-backed lifetime-erased slice wrapper that centralises the raw deref
 /// (one `unsafe` in `StoreStr::slice`), so the renamer's name-table reads stay
 /// safe. Phase B may later thread `'bump` and rewrite to `&'bump [u8]`.
-type NameStr = bun_ast::StoreStr;
+pub type NameStr = bun_ast::StoreStr;
 
 #[inline]
 const fn name_str_empty() -> NameStr {
@@ -1126,6 +1126,27 @@ impl<'r> NestedRenamer<'r> {
         }
     }
 
+    /// Reserves `name` for this file, as the root reserves a name for the
+    /// chunk. Call it before `assign_names_recursive`.
+    pub fn reserve(&mut self, name: NameStr) {
+        debug_assert_eq!(self.scope, ROOT_SCOPE);
+        let id = match self.id_of(name.slice()) {
+            Some(id) => id,
+            None => self.intern(name),
+        };
+        if self.slot(id).scope != NO_SCOPE {
+            return;
+        }
+        self.set_slot(
+            id,
+            NameSlot {
+                scope: ROOT_SCOPE,
+                count: 1,
+                owner: Ref::NONE,
+            },
+        );
+    }
+
     pub fn into_names(self) -> NestedNames {
         NestedNames {
             source_index: self.source_index,
@@ -1452,13 +1473,24 @@ pub fn compute_reserved_names_for_scope(
     symbols: &symbol::Map,
     names: &mut StringHashMap<u32>,
 ) {
+    for_each_reserved_name_in_scope(scope, symbols, &mut |name| {
+        names.put(name.slice(), 1).expect("unreachable");
+    });
+}
+
+/// Calls `f` with every name that `scope` and its descendants must keep: an
+/// unbound name, a name marked as not renameable, and everything below a
+/// direct `eval` or a `with`.
+pub fn for_each_reserved_name_in_scope(
+    scope: &js_ast::Scope,
+    symbols: &symbol::Map,
+    f: &mut impl FnMut(NameStr),
+) {
     for member in scope.members.values() {
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
-            names
-                .put(symbol.original_name.slice(), 1)
-                .expect("unreachable");
+            f(symbol.original_name);
         }
     }
 
@@ -1466,9 +1498,7 @@ pub fn compute_reserved_names_for_scope(
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
-            names
-                .put(symbol.original_name.slice(), 1)
-                .expect("unreachable");
+            f(symbol.original_name);
         }
     }
 
@@ -1477,7 +1507,7 @@ pub fn compute_reserved_names_for_scope(
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             if child.contains_direct_eval || child.contains_with {
-                compute_reserved_names_for_scope(child, symbols, names);
+                for_each_reserved_name_in_scope(child, symbols, f);
             }
         }
     }

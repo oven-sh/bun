@@ -149,15 +149,20 @@ devTest("onResolve + onLoad virtual file", {
 //   },
 // });
 
-// A module that the incremental graph already holds is not bundled again when
-// an importer changes, whether the resolver or a plugin resolved it.
+// A module that the incremental graph already holds is bundled again when an
+// importer changes (the bundler cannot tell that a plugin-loaded module is
+// fresh). When its output is the same, it is left out of the hot update,
+// whether the resolver or a plugin resolved it.
 // https://github.com/oven-sh/bun/issues/47398
 const sharedModuleFiles = {
   "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+  // `someGlobalName` is a global here and a local in the shared module. A
+  // module's names must not change with the other modules in the bundle.
   "index.ts": `
     import "./foo.ts";
     import { registerComponent } from "SHARED";
     registerComponent();
+    void typeof someGlobalName;
     console.log("index loaded");
     import.meta.hot.accept(() => { console.log("accept index.ts"); });
   `,
@@ -196,7 +201,10 @@ devTest("virtual module shared by two importers is not re-sent when one importer
             return { path: args.path.slice("virtual:".length), namespace: "virtual" };
           });
           build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
-            return { contents: "console.log('shared evaluated'); export function registerComponent() {}", loader: "js" };
+            return {
+              contents: "const someGlobalName = 1; console.log('shared evaluated'); export function registerComponent() { return someGlobalName; }",
+              loader: "js",
+            };
           });
         },
       };
@@ -205,6 +213,48 @@ devTest("virtual module shared by two importers is not re-sent when one importer
   },
   async test(dev) {
     await expectOnlyFooInHotUpdate(dev, "virtual:__foo__");
+  },
+});
+devTest("virtual json module shared by two importers is not re-sent when one importer changes", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "virtual-json",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => {
+            return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+            return { contents: '{ "name": "shared" }', loader: "json" };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./foo.ts";
+      import data from "virtual:__foo__";
+      console.log("index " + data.name);
+      import.meta.hot.accept(() => { console.log("accept index.ts"); });
+    `,
+    "foo.ts": `
+      import data from "virtual:__foo__";
+      console.log("foo 1 " + data.name);
+      import.meta.hot.accept(() => { console.log("accept foo.ts"); });
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("foo 1 shared", "index shared");
+    await dev.patch("foo.ts", { find: "foo 1", replace: "foo 2" });
+    await c.expectMessage("foo 2 shared", "accept foo.ts");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toContain('"foo.ts": [');
+    expect(chunk).not.toContain('"virtual:__foo__": [');
   },
 });
 devTest("disk module matched by an onResolve filter that returns nothing is not re-sent when one importer changes", {

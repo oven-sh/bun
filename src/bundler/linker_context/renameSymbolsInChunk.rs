@@ -144,13 +144,16 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     };
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
-    for &source_index in files_in_order {
-        renamer::compute_reserved_names_for_scope(
-            &all_module_scopes[source_index as usize],
-            // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
-            unsafe { &*symbols },
-            &mut reserved_names,
-        );
+    // Under the dev server each module reserves its own names (`run_nested_rename_task`).
+    if c.dev_server.is_none() {
+        for &source_index in files_in_order {
+            renamer::compute_reserved_names_for_scope(
+                &all_module_scopes[source_index as usize],
+                // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
+                unsafe { &*symbols },
+                &mut reserved_names,
+            );
+        }
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {
@@ -332,9 +335,9 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         // A dev server module is its own closure, `(hmr) => { ... }`, and nothing
         // outside it refers to its bindings. Name it like a CommonJS closure, so
         // its output does not change with the other modules in the bundle.
-        if c.options.output_format == crate::options::Format::InternalBakeDev
-            && !crate::Index::init(source_index).is_runtime()
-        {
+        // `bun build --format=internal_bake_dev` still links imports across
+        // files, so it keeps the chunk-wide root scope.
+        if c.dev_server.is_some() {
             nested_scopes.push((
                 source_index,
                 &raw const all_module_scopes[source_index as usize],
@@ -582,6 +585,15 @@ pub(crate) fn run_nested_rename_task(
     // Made-up names go in this thread's worker arena, which lives until the
     // bundle is done.
     let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);
+    if c.dev_server.is_some() {
+        // The module is its own closure: only its own unbound names are reserved,
+        // so its output does not change with the other modules in the bundle.
+        // SAFETY: read-only column view; see `rename_symbols_in_chunk`.
+        let module_scope = unsafe { &(&(*ast.module_scope))[source_index as usize] };
+        renamer::for_each_reserved_name_in_scope(module_scope, &c.graph.symbols, &mut |name| {
+            nested.reserve(name)
+        });
+    }
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {
         // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).

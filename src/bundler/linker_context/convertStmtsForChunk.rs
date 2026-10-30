@@ -168,6 +168,21 @@ pub(crate) fn convert_stmts_for_chunk(
                         && !(record.source_index.is_valid()
                             && record.source_index.get() == source_index);
 
+                    // A disabled record with no source index has no module behind it,
+                    // so its star re-exports nothing. An unwrapped entry point of ESM
+                    // output is left as it is: `scan_imports_and_exports` plans no
+                    // run-time re-export there, and the statement prints as written.
+                    if record.path.is_disabled
+                        && !record.source_index.is_valid()
+                        && !is_module_exports_of_wrapped_file
+                        && !(output_format.keep_es6_import_export_syntax()
+                            && wrap == WrapKind::None
+                            && c.graph.files.items_entry_point_kind()[source_index as usize]
+                                .is_entry_point())
+                    {
+                        continue 'stmt_loop;
+                    }
+
                     // Is this export star evaluated at run time?
                     if !record.source_index.is_valid()
                         && c.options.output_format.keep_es6_import_export_syntax()

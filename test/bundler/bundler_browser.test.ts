@@ -422,6 +422,168 @@ describe("bundler", () => {
     },
   });
 
+  // No module is behind a disabled import, so `export *` of it re-exports
+  // nothing. A Node.js builtin with no polyfill is a stub function: its
+  // `length` and `name` must not become exports of the importing module.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled("browser/NodeBuiltinStubExportStar" + format.toUpperCase(), {
+      files: {
+        "/entry.js": /* js */ `
+          import * as star from "./re.js";
+          import { b, readFileSync } from "./re.js";
+          import * as thenPkg from "./re-then-pkg.js";
+          const required = require("./re-required.js");
+          console.log(JSON.stringify(Object.keys(star)), b, typeof readFileSync);
+          console.log(JSON.stringify(Object.keys(required)), typeof required.spawn);
+          console.log(JSON.stringify(Object.keys(thenPkg).sort()), thenPkg.name, thenPkg.length);
+          import("./re-imported.js").then(imported => {
+            console.log(JSON.stringify(Object.keys(imported)), typeof imported.lookup);
+          });
+        `,
+        "/re.js": /* js */ `
+          export * from "fs";
+          export const b = 1;
+        `,
+        "/re-required.js": /* js */ `
+          export * from "node:child_process";
+          export const c = 2;
+        `,
+        "/re-imported.js": /* js */ `
+          export * from "node:dns";
+          export const d = 3;
+        `,
+        // The stub must not shadow the "name" and "length" that "pkg" exports.
+        "/re-then-pkg.js": /* js */ `
+          export * from "node:fs";
+          export * from "pkg";
+        `,
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+        "/node_modules/pkg/index.js": /* js */ `
+          exports.name = "pkg";
+          exports.length = 42;
+        `,
+      },
+      target: "browser",
+      format,
+      run: {
+        stdout: ['["b"] 1 undefined', '["c"] undefined', '["length","name"] pkg 42', '["d"] undefined'].join("\n"),
+      },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+      },
+    });
+    // A file that a "browser" map sets to false, re-exported by another file
+    // of the package: the shape of @aws-sdk/credential-provider-web-identity 3.664.0.
+    itBundled("browser/BrowserFieldDisabledExportStar" + format.toUpperCase(), {
+      files: {
+        "/entry.js": /* js */ `
+          import * as sdk from "sdk";
+          import * as local from "./local.js";
+          console.log(JSON.stringify(Object.keys(sdk).sort()), JSON.stringify(Object.keys(local).sort()));
+        `,
+        "/node_modules/sdk/package.json": JSON.stringify({
+          name: "sdk",
+          version: "1.0.0",
+          main: "index.js",
+          browser: { "./from-file": false },
+        }),
+        "/node_modules/sdk/index.js": /* js */ `
+          export * from "./from-file";
+          export * from "./from-web";
+        `,
+        "/node_modules/sdk/from-file.js": /* js */ `
+          import { readFileSync } from "fs";
+          export const fromFile = () => readFileSync;
+        `,
+        "/node_modules/sdk/from-web.js": /* js */ `
+          export const fromWeb = () => "web";
+        `,
+        "/package.json": JSON.stringify({ name: "app", browser: { "./node-only.js": false } }),
+        "/local.js": /* js */ `
+          export * from "./node-only.js";
+          export const own = 1;
+        `,
+        "/node-only.js": /* js */ `
+          export const nodeOnly = 1;
+        `,
+      },
+      target: "browser",
+      format,
+      run: {
+        stdout: '["fromWeb"] ["own"]',
+      },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+      },
+    });
+  }
+  itBundled("browser/NodeBuiltinStubExportStarEntryPointCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "fs";
+        export const b = 1;
+      `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(Object.keys(require("./out.js"))));
+      `,
+    },
+    target: "browser",
+    format: "cjs",
+    run: {
+      file: "/test.js",
+      stdout: '["b"]',
+    },
+  });
+  // An entry point that the bundle also requires is wrapped, and an `export`
+  // statement cannot stay inside the wrapper.
+  itBundled("browser/NodeBuiltinStubExportStarWrappedEntryPoint", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "fs";
+        export const b = 1;
+        export const self = () => require("./entry.js");
+      `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as entry from "./out.js";
+        console.log(JSON.stringify(Object.keys(entry).sort()), entry.self().b);
+      `,
+    },
+    target: "browser",
+    run: {
+      file: "/test.js",
+      stdout: '["b","self"] 1',
+    },
+  });
+  // Not an `export *` to remove: in ESM output the bundler prints this file of
+  // `react-dom` as `module.exports = <stub>` inside its wrapper, so the package
+  // still exports the stub. This case passes without the change.
+  itBundled("browser/NodeBuiltinStubModuleExportsRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import reactDom from "react-dom";
+        console.log(typeof reactDom);
+      `,
+      "/node_modules/react-dom/package.json": JSON.stringify({
+        name: "react-dom",
+        version: "18.2.0",
+        main: "index.js",
+      }),
+      "/node_modules/react-dom/index.js": /* js */ `
+        function checkDCE() {}
+        checkDCE();
+        module.exports = require("fs");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "function",
+    },
+  });
+
   // An entry point the "browser" field maps to false has nothing to bundle.
   // This used to reach the linker with zero entry points and crash
   // ("index out of bounds" in generateChunksInParallel); with a second, live

@@ -49,6 +49,8 @@ jsxImportSource = "react"
 
 Supported `jsx` values are `"automatic"`, `"classic"`, `"react"`, `"react-jsx"`, `"react-jsxdev"`, and `"preserve"`.
 
+`"preserve"` keeps JSX syntax in `bun build` output for another tool to transform. Files that `bun run` executes still need their JSX transformed, so set it in the `bunfig.toml` of a build step rather than one that also configures `bun run`.
+
 Refer to the tsconfig docs for more information on these fields.
 
 - [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)

@@ -69,6 +69,44 @@ describe("tsconfig compilerOptions.jsx", () => {
     }
   });
 
+  // "preserve" is selected with --jsx-runtime, Bun.build or bunfig, never from
+  // tsconfig: `bun run` executes the output, and tsconfigs written for other
+  // toolchains (Next.js) ask for it.
+  test.concurrent('"preserve" in tsconfig is ignored by bun run and bun build', async () => {
+    using dir = tempDir("jsx-tsconfig-preserve", {
+      ...shimFiles,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", jsxImportSource: "shim" } }),
+    });
+    const env = { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined };
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "m.jsx"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "dev jsxDEV", stderr: "", exitCode: 0 });
+    }
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", "--external", "shim*"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain('"shim/jsx-dev-runtime"');
+      expect(stdout).not.toContain("<div");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  });
+
   describe.each([
     ["react-jsx", "shim/jsx-runtime"],
     ["react-jsxdev", "shim/jsx-dev-runtime"],
@@ -126,15 +164,19 @@ describe("tsconfig compilerOptions.jsx", () => {
     expect(out).not.toContain("React.createElement");
   });
 
-  test('Bun.Transpiler with jsx "preserve" and jsxImportSource "solid-js" retains JSX', () => {
+  test('Bun.Transpiler ignores tsconfig jsx "preserve" and keeps JSX for the pragma', () => {
     const transpiler = new Bun.Transpiler({
       loader: "tsx",
       autoImportJSX: true,
       tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } },
     });
     const out = transpiler.transformSync(`export default <div>hi</div>;`);
-    expect(out).toBe(`export default <div>hi</div>;\n`);
-    expect(transpiler.scanImports(`export default <div>hi</div>;`)).toEqual([]);
+    expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+
+    const preserved = transpiler.transformSync(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`);
+    expect(preserved).toContain(`export default <div>hi</div>;`);
+    expect(preserved).not.toContain("jsx-runtime");
+    expect(transpiler.scanImports(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`)).toEqual([]);
   });
 });
 

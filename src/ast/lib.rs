@@ -1607,16 +1607,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_error_fmt_no_excerpt(
-        &mut self,
-        source: &Source,
-        loc: Loc,
-        args: fmt::Arguments<'_>,
-    ) {
-        self.add_fmt_no_excerpt(Kind::Err, source, loc, args);
-    }
-
-    fn add_fmt_no_excerpt(
+    pub fn add_fmt_no_excerpt(
         &mut self,
         kind: Kind,
         source: &Source,

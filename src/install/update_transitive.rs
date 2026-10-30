@@ -815,11 +815,12 @@ fn report_patch_key_without_version(
         "patchedDependencies keys need a version: {}",
         bun_core::fmt::for_terminal(BStr::new(&keys))
     );
-    if allow_unused {
-        log.add_warning_fmt_no_excerpt(source, key_loc, message);
-        return;
-    }
-    log.add_error_fmt_no_excerpt(source, key_loc, message);
+    let kind = if allow_unused {
+        bun_ast::Kind::Warn
+    } else {
+        bun_ast::Kind::Err
+    };
+    log.add_fmt_no_excerpt(kind, source, key_loc, message);
 }
 
 pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Result<()> {

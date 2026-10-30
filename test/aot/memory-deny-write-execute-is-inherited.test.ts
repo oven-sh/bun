@@ -155,35 +155,50 @@ function folderOfState() {
 }
 const builtState = () => (stateIsBuilt ??= build(folderOfState(), "state"));
 
+// Bun starts the clock of a concurrent test before the test has a slot. So the limit also covers the wait for one.
+const queueTimeout = 600_000;
+
 describe.skipIf(!!obstacle)("an executable that is started with memory-deny-write-execute already on", () => {
-  test.concurrent("leaves the request as the launcher made it", () =>
-    slot(async () => {
-      const directory = folderOfState();
-      expect(await inherited([await builtState(), join(directory, "twice.c")], directory)).toEqual(restricted);
-    }),
+  test.concurrent(
+    "leaves the request as the launcher made it",
+    () =>
+      slot(async () => {
+        const directory = folderOfState();
+        expect(await inherited([await builtState(), join(directory, "twice.c")], directory)).toEqual(restricted);
+      }),
+    queueTimeout,
   );
 
-  test.concurrent("hands it on to an executable that it starts", () =>
-    slot(async () => {
-      const directory = folderOfState();
-      const [parent, child] = await Promise.all([build(directory, "starts-another-executable"), builtState()]);
-      expect(await inherited([parent, child, join(directory, "twice.c")], directory)).toEqual(restricted);
-    }),
+  test.concurrent(
+    "hands it on to an executable that it starts",
+    () =>
+      slot(async () => {
+        const directory = folderOfState();
+        const [parent, child] = await Promise.all([build(directory, "starts-another-executable"), builtState()]);
+        expect(await inherited([parent, child, join(directory, "twice.c")], directory)).toEqual(restricted);
+      }),
+    queueTimeout,
   );
 
-  test.concurrent.each(["hello", "a-worker"])("%s", name =>
-    slot(async () => {
-      using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, [name + ".ts"]: own[name] });
-      await printsTheSameBothWays(String(dir), name);
-    }),
+  test.concurrent.each(["hello", "a-worker"])(
+    "%s",
+    name =>
+      slot(async () => {
+        using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, [name + ".ts"]: own[name] });
+        await printsTheSameBothWays(String(dir), name);
+      }),
+    queueTimeout,
   );
 
-  test.concurrent.each(sharedNames)("%s", name =>
-    slot(async () => {
-      using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "tsconfig.json": tsconfigWithTypesOfBun });
-      const directory = String(dir);
-      await Bun.write(join(directory, name + ".ts"), Bun.file(join(shared, name + ".ts")));
-      await printsTheSameBothWays(directory, name);
-    }),
+  test.concurrent.each(sharedNames)(
+    "%s",
+    name =>
+      slot(async () => {
+        using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "tsconfig.json": tsconfigWithTypesOfBun });
+        const directory = String(dir);
+        await Bun.write(join(directory, name + ".ts"), Bun.file(join(shared, name + ".ts")));
+        await printsTheSameBothWays(directory, name);
+      }),
+    queueTimeout,
   );
 });

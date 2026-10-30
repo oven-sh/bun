@@ -8,11 +8,11 @@
  * packages/h3blast, the HTTP/3 load generator, is a second program linked from those objects (scripts/build/bun.ts
  * `emitH3blast`), compiled with the flags that compiled them. Its Makefile linked them by hand and broke each time
  * the build changed how it compiles them (LTO bitcode, no PIE, ASan, the functions BoringSSL expects bun's runtime to
- * define). No CI lane links the program. These check what the graph says about it, and the last test links and runs
- * it where this bun sits in the build directory that made it.
+ * define). No CI lane links the program. These check what the graph says about it, and the last block links it and
+ * runs it where this bun sits in the build directory that made it.
  */
 import { which } from "bun";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -341,10 +341,11 @@ describe.skipIf(isWindows)("h3blast in the build graph", () => {
       const cfg = linuxConfig(partial, String(dir));
       const emitted = emitProgram(cfg);
       expect(Object.keys(boringsslEmbedderHooks(cfg))).toEqual(hooks);
-      // What BoringSSL's own objects are compiled with.
-      expect(Object.keys((boringssl.build(cfg) as DirectBuild).defines ?? {}).filter(isHookDefine)).toEqual(
-        expect.arrayContaining(hooks),
-      );
+      // What BoringSSL's own objects are compiled with: that they are BoringSSL itself, and the same hooks.
+      expect(Object.keys((boringssl.build(cfg) as DirectBuild).defines ?? {}).filter(isHookDefine)).toEqual([
+        "BORINGSSL_IMPLEMENTATION",
+        ...hooks,
+      ]);
       expect(emitted.hooks.defines.filter(isHookDefine)).toEqual(hooks);
       expect(emitted.program.defines.filter(isHookDefine)).toEqual([]);
     });
@@ -467,20 +468,28 @@ describe("h3blast, linked in this bun's build directory", () => {
         ? "no ninja"
         : null;
 
+  // What `ninja h3blast` said. The test reports it: a hook that fails has no name in the output.
+  let built: { stdout: string; stderr: string; exitCode: number } | undefined;
+
+  beforeAll(async () => {
+    // A hook runs even when every test of its scope is skipped.
+    if (why !== null) return;
+    // Not bunEnv: if ninja has to configure again, it does so in the environment the tree was configured in.
+    await using build = Bun.spawn({
+      cmd: [ninja!, "-C", buildDir, "h3blast"],
+      env: { ...process.env, CCACHE_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    built = { stdout: stdout.slice(-4096), stderr: stderr.slice(-4096), exitCode };
+    // Two compiles and a link. In a release tree the link is LTO, and takes longer than a hook has by default.
+  }, 60_000);
+
   test.skipIf(why !== null)(
     `completes requests against Bun.serve({ http3: true })${why === null ? "" : ` (skipped: ${why})`}`,
     async () => {
-      {
-        // Not bunEnv: if ninja has to configure again, it does so in the environment the tree was configured in.
-        await using build = Bun.spawn({
-          cmd: [ninja!, "-C", buildDir, "h3blast"],
-          env: { ...process.env, CCACHE_DISABLE: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-        expect({ stdout: stdout.slice(-4096), stderr: stderr.slice(-4096), exitCode }).toMatchObject({ exitCode: 0 });
-      }
+      expect(built).toMatchObject({ exitCode: 0 });
 
       await using server = Bun.serve({
         port: 0,
@@ -495,8 +504,8 @@ describe("h3blast, linked in this bun's build directory", () => {
           join(buildDir, "h3blast"),
           "--json",
           ...["--threads", "1", "--connections", "1", "--streams", "4"],
-          // --requests clears the time limit, so --duration comes after it: a run that stalls ends with its counters.
-          ...["--requests", String(requests), "--duration", "10"],
+          // The run ends at this count of responses, not at a time.
+          ...["--requests", String(requests)],
           `https://127.0.0.1:${server.port}/`,
         ],
         env: bunEnv,
@@ -516,7 +525,5 @@ describe("h3blast, linked in this bun's build directory", () => {
       });
       expect(exitCode).toBe(0);
     },
-    // Two compiles, a link (with LTO in a release tree) and a run of the program: not a wait for a condition.
-    60_000,
   );
 });

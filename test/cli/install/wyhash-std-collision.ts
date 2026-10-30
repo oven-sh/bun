@@ -233,3 +233,44 @@ export function namesWithTheSameWyhash(dir: string, suffix: string): [string, st
   if (Bun.hash.wyhash(str1, 0n) !== Bun.hash.wyhash(str2, 0n)) throw new Error("the two paths do not collide");
   return [str1, str2].map(path => path.slice(dir.length + 1, path.length - suffix.length)) as [string, string];
 }
+
+/**
+ * Returns the names of a folder and a file in `dir`. The folder's path, with "/" after it, has the wyhash of the
+ * file's path.
+ */
+export function folderAndFileWithTheSameWyhash(dir: string): [string, string] {
+  // Each path is `base + round + b`. `base` is a whole number of rounds. `round` is one more round and then the
+  // word a. b is the last word. At its end, wyhash multiplies `a ^ SECRET[1]` by `b ^ state`. The two paths differ
+  // in the first word of `round`, which changes only lane 0 of the state, and in b. So they collide when
+  // `b ^ lane 0` is the same for both.
+  const prefix = enc(dir + "/m");
+  const base = Buffer.alloc(Math.ceil(prefix.length / 48) * 48, "x");
+  base.set(prefix);
+  const round = Buffer.alloc(48 + 8, "x");
+  const fixedWord = round.readBigUInt64LE(8) ^ roundsOver(0n, base, base.length / 48)[0];
+  const nameBytes = enc("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+  // half[d] is a name byte whose XOR with d is a name byte too, or 0 when there is none.
+  const half = new Uint8Array(256);
+  for (const x of nameBytes) for (const y of nameBytes) half[x ^ y] = x;
+  const [slash, s] = enc("/s");
+  // Each round so far and its lane 0, by the last byte of the lane 0.
+  const rounds: { round: Buffer; lane0: Buffer }[][] = Array.from({ length: 256 }, () => []);
+  for (let count = 0; count < 10_000; count++) {
+    round.write(String(count).padStart(8, "0"));
+    const lane0 = Buffer.alloc(8);
+    lane0.writeBigUInt64LE(mix(round.readBigUInt64LE(0) ^ SECRET[1], fixedWord));
+    // The file's b ends with ".js". The folder's b is the file's b XOR the two lane 0s, and it has to end with "/".
+    for (const other of rounds[lane0[7] ^ slash ^ s]) {
+      const fileB = Buffer.from("00000.js");
+      for (let i = 0; i < 5; i++) fileB[i] = half[lane0[i] ^ other.lane0[i]];
+      const folderB = fileB.map((byte, i) => byte ^ lane0[i] ^ other.lane0[i]);
+      if (fileB.includes(0) || !nameBytes.includes(folderB[5]) || !nameBytes.includes(folderB[6])) continue;
+      const folder = Buffer.concat([base, other.round, folderB]).toString();
+      const file = Buffer.concat([base, round, fileB]).toString();
+      if (Bun.hash.wyhash(folder, 0n) !== Bun.hash.wyhash(file, 0n)) throw new Error("the two paths do not collide");
+      return [folder.slice(dir.length + 1, -1), file.slice(dir.length + 1)];
+    }
+    rounds[lane0[7]].push({ round: Buffer.from(round), lane0 });
+  }
+  throw new Error("found no pair");
+}

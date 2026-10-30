@@ -16,7 +16,7 @@ import {
 } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join, sep } from "path";
-import { namesWithTheSameWyhash } from "../install/wyhash-std-collision";
+import { folderAndFileWithTheSameWyhash, namesWithTheSameWyhash } from "../install/wyhash-std-collision";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -1451,48 +1451,19 @@ it.skipIf(isWindows).each(["--hot", "--watch"])(
   },
 );
 
-/** Returns the names of a folder and a file in `dir`. The folder's path, with `sep` after it, has the 32-bit watcher hash of the file's path. */
-function folderAndFileWithTheSameWatcherHash(dir: string) {
-  // A debug build hashes a Buffer ten times faster than a new string, so the two paths count up in place.
-  const folder = Buffer.from(`${dir}${sep}d000000${sep}`);
-  const file = Buffer.from(`${dir}${sep}m000000.js`);
-  const lastDigit = Buffer.byteLength(dir + sep) + 6;
-  const [zero, nine] = [48, 57];
-  const name = (count: number) => String(count).padStart(6, "0");
-  const folders = new Map<bigint, number>();
-  for (let count = 0; count < 1_000_000; count++) {
-    folders.set(BigInt.asUintN(32, Bun.hash.wyhash(folder, 0n) as bigint), count);
-    const match = folders.get(BigInt.asUintN(32, Bun.hash.wyhash(file, 0n) as bigint));
-    if (match !== undefined) return [`d${name(match)}`, `m${name(count)}.js`];
-    for (let at = lastDigit; ; at--) {
-      if (folder[at] !== nine) {
-        file[at] = ++folder[at];
-        break;
-      }
-      file[at] = folder[at] = zero;
-    }
-  }
-  throw new Error("found no pair");
-}
-
 // The event of a folder names a file that a rename replaced. The reloader then looks for the watch of that file.
-it.skipIf(!isLinux)(
-  "--hot reloads an import in a folder that has the watcher hash of a file",
-  async () => {
-    using dir = tempDir("hot-same-hash-folder-and-file", {});
-    const cwd = realpathSync(String(dir));
-    const [folder, file] = folderAndFileWithTheSameWatcherHash(cwd);
-    mkdirSync(join(cwd, folder));
-    // The folder is watched first, so a lookup by hash alone takes the folder for the file.
-    await expectReloadOnEachSave("--hot", cwd, [`${folder}/mod.js`, file], {
-      load: "require",
-      save: writeHotFileAtomicSync,
-      watchedFolders: [folder],
-    });
-  },
-  // The search for the two names takes seconds on a debug build.
-  timeout,
-);
+it.skipIf(!isLinux)("--hot reloads an import in a folder that has the watcher hash of a file", async () => {
+  using dir = tempDir("hot-same-hash-folder-and-file", {});
+  const cwd = realpathSync(String(dir));
+  const [folder, file] = folderAndFileWithTheSameWyhash(cwd);
+  mkdirSync(join(cwd, folder));
+  // The folder is watched first, so a lookup by hash alone takes the folder for the file.
+  await expectReloadOnEachSave("--hot", cwd, [`${folder}/mod.js`, file], {
+    load: "require",
+    save: writeHotFileAtomicSync,
+    watchedFolders: [folder],
+  });
+});
 
 // After a failed import, the resolver has the watcher watch the folder of the missing file.
 it.skipIf(!isLinux)("--hot watches the folder of a failed import when it has the watcher hash of a file", async () => {

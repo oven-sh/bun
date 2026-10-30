@@ -108,6 +108,11 @@ export const descriptorCandidate: Candidate = {
   },
 };
 
+/** The file stays open and its number taken, for a thread that may still work on the number. The next call gets another file. */
+export function leaveDescriptorOpen(): void {
+  openDescriptor = undefined;
+}
+
 export const combinedKinds = [
   "object:proxy",
   "object:primitives",

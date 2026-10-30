@@ -1,6 +1,8 @@
 // Functions written for the test, whose behavior is therefore known: each kind of change is noticed, and what native code may do is not taken for one.
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { readSync, writeSync } from "node:fs";
 import { undefinedCandidate } from "../differential/instances";
 import { Realm } from "../differential/members";
 import { Table, type OperandUse } from "../differential/table-description";
@@ -8,11 +10,13 @@ import { checkTarget, type TargetReport } from "./check-target";
 import type { Target } from "./targets";
 
 const realm = new Realm(new Table(aotBuiltinEntries()));
+// The realm finds the built-in objects of the table when it is first asked about one. In a debug build that takes longer than a test may.
+realm.isKnownObject(globalThis);
 
-function check(callee: Function): Promise<TargetReport> {
+function check(callee: Function, path = "fixture"): Promise<TargetReport> {
   const target: Target = {
     name: "fixture",
-    path: "fixture",
+    path,
     mode: "Call",
     isInTable: false,
     declaredUses: [],
@@ -211,4 +215,71 @@ test("reading, calling, keeping and returning an operand is no change", async ()
   expect(report.returned).toBeGreaterThan(100);
   expect(report.callsOperands).toBe("BeforeReturn");
   expect(report.namesRead[0]).toContain("port");
+});
+
+// Closed before the answer, the number of the descriptor names the next file that the test opens, and the member works on that file.
+test("a descriptor stays open until the member that was handed it has answered", async () => {
+  using folder = tempDir("aot-late-answer", {});
+  const foundAnotherFile: string[] = [];
+  const hasAnswered = { throughCallback: false, throughPromise: false };
+  let calls = 0;
+  let unanswered = 0;
+  // The work of a call takes two tasks: the one wait that every call gets is over before it is done. It marks its file at once, and
+  // looks for the mark behind the same number when it is done.
+  function work(descriptor: number, answer: () => void): void {
+    const mark = `call ${calls++}`;
+    writeSync(descriptor, mark, 0);
+    unanswered++;
+    setImmediate(() =>
+      setImmediate(() => {
+        const bytes = Buffer.alloc(Buffer.byteLength(mark));
+        let found: string;
+        try {
+          readSync(descriptor, bytes, 0, bytes.length, 0);
+          found = bytes.toString();
+        } catch (error) {
+          found = String((error as NodeJS.ErrnoException).code);
+        }
+        if (found !== mark) foundAnotherFile.push(`${mark}: ${JSON.stringify(found)}`);
+        unanswered--;
+        answer();
+      }),
+    );
+  }
+
+  // The files of the descriptors are made in the working folder.
+  const workingFolder = process.cwd();
+  process.chdir(String(folder));
+  try {
+    // Like the members of node:fs that leave their work with another thread: one answers through its first argument, the other
+    // through the promise that it returns.
+    const { callsOperands } = await check(function (callback: unknown, descriptor: unknown) {
+      if (typeof callback !== "function" || typeof descriptor !== "number") throw new TypeError("refused");
+      work(descriptor, () => {
+        hasAnswered.throughCallback = true;
+        // A class that is handed over as the callback throws when it is called.
+        try {
+          callback(null);
+        } catch {}
+      });
+    }, "%NodeJSFS%.prototype.fixtureCb");
+    await check(function (descriptor: unknown) {
+      if (typeof descriptor !== "number") throw new TypeError("refused");
+      return new Promise<void>(resolve =>
+        work(descriptor, () => {
+          hasAnswered.throughPromise = true;
+          resolve();
+        }),
+      );
+    }, "%NodeJSFS%.prototype.fixture");
+    while (unanswered > 0) await new Promise(resolve => setImmediate(resolve));
+
+    expect({ foundAnotherFile, hasAnswered, callsOperands }).toEqual({
+      foundAnotherFile: [],
+      hasAnswered: { throughCallback: true, throughPromise: true },
+      callsOperands: "AfterReturn",
+    });
+  } finally {
+    process.chdir(workingFolder);
+  }
 });

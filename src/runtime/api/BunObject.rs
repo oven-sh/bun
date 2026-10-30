@@ -1249,15 +1249,18 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
     {
         use core::ffi::c_void;
 
-        if path.len() >= MAX_PATH_BYTES {
-            return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
+        if let Some(err) = node::types::Valid::path_too_long(path) {
+            use bun_sys_jsc::SystemErrorJsc as _;
+            return Err(global_this.throw_value(err.to_error_instance(global_this)));
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
         let throw = |err: sys::Error| {
             use bun_jsc::SysErrorJsc as _;
-            // The error names the path as the caller wrote it.
-            let written = node::types::join_onto_working_directory_in_executable(path);
-            let err = node::fs::error_for_caller([written.as_ref(), None], err);
+            let mut err = node::fs::error_for_caller([None, None], err);
+            // The error names the path as the caller wrote it, whichever text of it was opened.
+            if !err.path.is_empty() {
+                err.path = path.into();
+            }
             global_this.throw_value(err.to_js(global_this))
         };
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -1305,7 +1308,7 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         let embedded = graph.and_then(|graph| graph.find_ref(buf_z.as_bytes()));
         if graph.is_some_and(|graph| graph.find_dir(buf_z.as_bytes())) {
             let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open);
-            return Err(throw(err.with_path(buf_z.as_bytes())));
+            return Err(throw(err.with_path(path)));
         }
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.

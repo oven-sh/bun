@@ -1200,7 +1200,7 @@ pub(crate) enum RelativePaths {
 }
 
 /// The system resolves a relative path against its own working directory, which is never a folder of the executable.
-pub(crate) fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<PathLike<'static>> {
+fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<PathLike<'static>> {
     use bun_paths::resolve_path::{self, platform};
     let directory = bun_core::working_directory_in_executable()?;
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {

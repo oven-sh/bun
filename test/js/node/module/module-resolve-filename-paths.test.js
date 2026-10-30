@@ -310,13 +310,61 @@ test("require.resolve with options.paths finds an absolute path created after a 
 });
 
 test("require.resolve with options.paths still misses a file that does not exist", () => {
-  const { path: dir, cleanup } = createTempDir("paths-real-miss", { "package.json": "{}", "other.cjs": "" });
+  const { path: dir, cleanup } = createTempDir("paths-real-miss", {
+    "package.json": "{}",
+    "other.cjs": "",
+    "dir-no-index/readme.txt": "",
+    "node_modules/installed/index.js": "",
+  });
   try {
     for (let i = 0; i < 3; i++) {
       expect(resolveOrCode(() => require.resolve("./missing.cjs", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+      expect(resolveOrCode(() => require.resolve("./dir-no-index", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
       expect(resolveOrCode(() => require.resolve("missing-pkg-47457", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+      expect(resolveOrCode(() => require.resolve("installed/missing.js", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
     }
   } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds an index created later in a known directory", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-index-known", {
+    "package.json": "{}",
+    "late/readme.txt": "",
+  });
+  try {
+    expect(resolveOrCode(() => require.resolve("./late", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    writeFileSync(join(dir, "late/index.js"), "exports.x = 1;");
+    expect(require.resolve("./late", { paths: [dir] })).toBe(join(dir, "late/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+if (isBun) {
+  // Bun rewrites `./late.js` to `late.ts`. Node does not.
+  test("require.resolve with options.paths finds a .ts file created after a miss of its .js name", () => {
+    const { path: dir, cleanup } = createTempDir("paths-late-ts", { "package.json": "{}" });
+    try {
+      expect(resolveOrCode(() => require.resolve("./late.js", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+      writeFileSync(join(dir, "late.ts"), "export const x = 1;");
+      expect(require.resolve("./late.js", { paths: [dir] })).toBe(join(dir, "late.ts"));
+    } finally {
+      cleanup();
+    }
+  });
+}
+
+test("require.resolve with options.paths finds a require.extensions file created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-extension", { "package.json": "{}" });
+  require.extensions[".late47457"] = require.extensions[".js"];
+  try {
+    expect(resolveOrCode(() => require.resolve("./late", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    writeFileSync(join(dir, "late.late47457"), "exports.x = 1;");
+    expect(require.resolve("./late", { paths: [dir] })).toBe(join(dir, "late.late47457"));
+  } finally {
+    delete require.extensions[".late47457"];
     cleanup();
   }
 });

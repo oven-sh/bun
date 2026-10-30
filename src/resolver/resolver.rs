@@ -331,9 +331,9 @@ enum CustomDirPathsMiss {
     Package,
 }
 
-/// `access(2)` of `buf[..len]` with `suffix` appended. The bytes past `len`
-/// are scratch for the suffix and the NUL.
-fn exists_with_suffix(buf: &mut [u8], len: usize, suffix: &[&[u8]]) -> bool {
+/// `stat(2)` of `buf[..len]` with `suffix` appended: is it a regular file?
+/// The bytes past `len` are scratch for the suffix and the NUL.
+fn file_exists_with_suffix(buf: &mut [u8], len: usize, suffix: &[&[u8]]) -> bool {
     let mut end = len;
     for part in suffix {
         if end + part.len() >= buf.len() {
@@ -346,7 +346,9 @@ fn exists_with_suffix(buf: &mut [u8], len: usize, suffix: &[&[u8]]) -> bool {
         return false;
     }
     buf[end] = 0;
-    bun_sys::exists_z(bun_core::ZStr::from_buf(buf, end))
+    bun_sys::stat(bun_core::ZStr::from_buf(buf, end)).is_ok_and(|st| {
+        bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::EntryKind::File
+    })
 }
 
 /// A temporary threadlocal buffer with a lifetime more than the current
@@ -2786,9 +2788,9 @@ impl<'a> Resolver<'a> {
     }
 
     /// `check_relative_path(entry, import_path)` missed. When disk now holds a
-    /// candidate that `load_as_file_or_directory` looks for, the cached listing
-    /// of the candidate's directory is stale: evict it and the candidate's own
-    /// directory slot.
+    /// file that `load_as_file` or `load_as_directory` looks for, the cached
+    /// listing of the candidate's directory is stale: evict it and the
+    /// candidate's own directory slot.
     fn bust_stale_relative_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(len) = self
@@ -2799,16 +2801,30 @@ impl<'a> Resolver<'a> {
             return false;
         };
         let extensions = self.opts.ext_order_slice(self.extension_order);
+        let extra_extensions = &self.opts.extra_cjs_extensions[..];
         let index = const_format::concatcp!(SEP_STR, "index").as_bytes();
         let package_json = const_format::concatcp!(SEP_STR, "package.json").as_bytes();
-        let on_disk = exists_with_suffix(&mut buf[..], len, &[])
-            || extensions
-                .iter()
-                .any(|ext| exists_with_suffix(&mut buf[..], len, &[ext]))
-            || exists_with_suffix(&mut buf[..], len, &[package_json])
-            || extensions
-                .iter()
-                .any(|ext| exists_with_suffix(&mut buf[..], len, &[index, ext]));
+        // The same rewrite as `load_as_file`: `./a.js` finds `a.ts`.
+        let base = bun_paths::basename(&buf[..len]);
+        let rewrite = strings::last_index_of_char(base, b'.').map(|dot| {
+            let ext = &base[dot..];
+            let exts = rewritten_file_extensions(ext, || {
+                strings::path_contains_node_modules_folder(&buf[..len])
+                    && !self.opts.conditions.import.contains_key(b"aot")
+            });
+            (len - ext.len(), exts)
+        });
+        let all_extensions = || extensions.iter().chain(extra_extensions);
+        let buf = &mut buf[..];
+        let on_disk = file_exists_with_suffix(buf, len, &[])
+            || all_extensions().any(|ext| file_exists_with_suffix(buf, len, &[ext]))
+            || rewrite.is_some_and(|(stem_len, exts)| {
+                exts
+                    .iter()
+                    .any(|ext| file_exists_with_suffix(buf, stem_len, &[ext]))
+            })
+            || file_exists_with_suffix(buf, len, &[package_json])
+            || all_extensions().any(|ext| file_exists_with_suffix(buf, len, &[index, ext]));
         if !on_disk {
             return false;
         }
@@ -2847,9 +2863,7 @@ impl<'a> Resolver<'a> {
         }
         // A package directory the cache knows is not what went stale: the miss
         // is inside the package (a subpath, an exports target).
-        if self.dir_cache_mut().get(&buf[..len]).is_some()
-            || !exists_with_suffix(&mut buf[..], len, &[])
-        {
+        if self.dir_cache_mut().get(&buf[..len]).is_some() || !bun_sys::exists(&buf[..len]) {
             return false;
         }
         let package_dir = &buf[..len];

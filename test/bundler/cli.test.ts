@@ -520,6 +520,21 @@ describe.concurrent.skipIf(!isWindows)("an output directory that starts with \\\
     expect(await built(String(dir))).toContain("built");
   });
 
+  test("bun build --metafile \\\\?\\C:\\", async () => {
+    using dir = tempDir("build-metafile-verbatim", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", "dist", `--metafile=\\\\?\\${dir}\\fresh\\nested\\meta.json`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const metafile = await Bun.file(path.join(String(dir), "fresh", "nested", "meta.json")).json();
+    expect(Object.keys(metafile.inputs)).toEqual(["entry.ts"]);
+  });
+
   // `\\?\UNC\server\share\dir` is `\\server\share\dir`. bun does not create it yet, and it is not `UNC\server\...` here.
   test("bun build --outdir \\\\?\\UNC\\ creates nothing in the working directory", async () => {
     using dir = tempDir("build-outdir-verbatim-unc", files);

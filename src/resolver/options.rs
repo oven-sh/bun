@@ -26,9 +26,7 @@ pub struct ExternalModules {
     pub abs_paths: StringSet,
     /// The package names that the build was given and, under `--target=node`, the Node builtins.
     pub node_modules: StringSet,
-    /// The package names that the build was given: those of `external`, with the `node:` spelling
-    /// of each Node builtin among them, and the dependencies of a library. They are decided
-    /// before any lookup.
+    /// The package names that the build was given, which are decided before any lookup.
     pub user_names: ExternalNames,
 }
 impl Clone for ExternalModules {
@@ -85,11 +83,7 @@ impl ExternalNames {
 }
 
 /// The key of `names` that is `import_path` or a package that holds it: `foo` for `foo/bar`.
-///
-/// `max_len` bounds the length of every key. No longer prefix is hashed, so the `/`s of a
-/// megabyte `data:` URL cost nothing.
-// Inlined: as a call, it costs every resolution a few instructions in `resolve_without_symlinks`.
-#[inline(always)]
+#[inline(always)] // As a call it costs `resolve_without_symlinks` instructions on every resolution.
 pub fn match_name<'a>(
     names: &StringSet,
     max_len: usize,
@@ -100,6 +94,7 @@ pub fn match_name<'a>(
         return None;
     }
     let mut query = import_path;
+    // No key is longer than `max_len`, so a megabyte `data:` URL is not hashed once for each `/`.
     if query.len() > max_len {
         let slash = strings::last_index_of_char(&query[..=max_len], b'/')?;
         query = &query[..slash];
@@ -108,8 +103,7 @@ pub fn match_name<'a>(
         if names.contains(query) {
             return Some(query);
         }
-        // If the module "foo" has been marked as external, we also want to treat
-        // paths into that module such as "foo/bar" as external too.
+        // A path into an external module is external too: "foo/bar" for "foo".
         let slash = strings::last_index_of_char(query, b'/')?;
         query = &query[..slash];
     }
@@ -370,8 +364,7 @@ mod tests {
         );
     }
 
-    /// Every text of up to 8 bytes over `a`, `b` and `/`, a longer text with one `/` at each
-    /// position, and a text shaped like a base64 `data:` URL.
+    /// Every text of up to 8 bytes over `a`, `b` and `/`, and longer ones like a `data:` URL.
     #[test]
     fn bound_on_name_length_changes_no_match() {
         let ExternalNames { names, max_len } =

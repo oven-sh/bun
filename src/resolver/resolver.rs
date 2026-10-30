@@ -1018,10 +1018,7 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(source_dir, import_path)
     }
 
-    /// True iff the text of `import_path` matches a user-supplied `--external`
-    /// value: a wildcard pattern, a package name, or a path into that package.
-    /// Does NOT consider `packages = external`; use `is_external_pattern` for
-    /// the combined check.
+    /// True iff `--external` names `import_path`: a pattern, a package, or a path into a package.
     pub(crate) fn matches_user_external_pattern(
         &self,
         source_dir: &[u8],

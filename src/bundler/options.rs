@@ -166,8 +166,7 @@ pub(crate) fn init_external_modules(
             });
         } else if bun_paths::is_package_path(external) {
             result.add_user_name(external);
-            // `stream` and `node:stream` are one module in Node.js, and one name in the
-            // polyfill table of the browser target.
+            // Node.js and the browser polyfills take `stream` and `node:stream` for one module.
             if !external.starts_with(b"node:") && is_node_builtin(external) {
                 result
                     .user_names

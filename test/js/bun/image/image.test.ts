@@ -950,7 +950,7 @@ describe("Bun.Image", () => {
       test.each([8, 5, 4, 1].map((eighths, i) => [eighths, pixels[i]] as const))(
         "at %d/8",
         async (eighths, expected) => {
-          let jpeg = await Bun.file(join(import.meta.dir, "../../node/test/fixtures", name)).bytes();
+          let jpeg: Uint8Array = await Bun.file(join(import.meta.dir, "../../node/test/fixtures", name)).bytes();
           if (again) jpeg = await new Bun.Image(jpeg).jpeg(again).bytes();
           const { width, height } = await new Bun.Image(jpeg).metadata();
           // A resize to exactly what the decoder gives at this scale is left to the decoder alone.

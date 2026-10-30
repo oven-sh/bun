@@ -4323,10 +4323,20 @@ pub mod formatter {
                         if empty_start.is_none() {
                             empty_start = Some(i);
                         }
-                        // Skip the run of holes at once: probing each index is O(length).
-                        match value.next_present_index(i + 1) {
-                            Some(next) if (next as u64) < len => i = next,
-                            _ => break,
+                        if js_type.is_array() {
+                            // Skip the whole run of holes at once: probing each
+                            // index is O(length), and a sparse array's length
+                            // can be 2^32 - 1 with no elements at all.
+                            match value.next_present_index(i + 1) {
+                                Some(next) if (next as u64) < len => i = next,
+                                _ => break,
+                            }
+                        } else {
+                            // The same for an arguments object: its `length` is a writable property.
+                            match value.next_present_arguments_index(i + 1, len) {
+                                Some(next) if (next as u64) < len => i = next,
+                                _ => break,
+                            }
                         }
                         continue;
                     }

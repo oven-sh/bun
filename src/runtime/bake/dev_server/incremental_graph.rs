@@ -300,8 +300,6 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: file indices contributing to the current chunk (emit order).
     /// Server side: unused (server stores code slices in `current_chunk_code`).
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
-    /// Client side: `current_chunk_parts` as a set.
-    pub(crate) current_chunk_bits: DynamicBitSetUnmanaged,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -397,7 +395,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // Approximate the map's memory usage via key+value slice cost.
         graph += self.bundled_files.count() * (size_of::<Box<[u8]>>() + size_of::<File>());
         graph += self.stale_files.bytes().len();
-        graph += self.current_chunk_bits.bytes().len();
         graph += self.edge_lists.capacity() * size_of::<EdgeLists>();
         graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
@@ -443,53 +440,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
         self.current_chunk_parts.clear();
-        self.current_chunk_bits.set_all(false);
-    }
-
-    /// Client side: adds a file's code to the current chunk once.
-    fn push_chunk_part(&mut self, file_index: FileIndex<SIDE>) -> Result<(), crate::Error> {
-        let i = file_index.get() as usize;
-        if self.current_chunk_bits.bit_length <= i {
-            const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
-            let aligned = (i + 1).div_ceil(STEP) * STEP;
-            self.current_chunk_bits.resize(aligned, false)?;
-        }
-        if self.current_chunk_bits.is_set(i) {
-            return Ok(());
-        }
-        self.current_chunk_bits.set(i);
-        let len = self.bundled_files.values()[i]
-            .content
-            .js_code()
-            .map(|c| c.len())
-            .unwrap_or(0);
-        self.current_chunk_parts.push(file_index);
-        self.current_chunk_len += len;
-        Ok(())
-    }
-
-    /// A client may not hold a module that a changed file now imports. Put the
-    /// module and everything it imports into the chunk, unless already there.
-    fn carry_graph_held_module(&mut self, file_index: FileIndex<SIDE>) -> Result<(), crate::Error> {
-        let mut queue: Vec<FileIndex<SIDE>> = vec![file_index];
-        while let Some(file_index) = queue.pop() {
-            let i = file_index.get() as usize;
-            if self.current_chunk_bits.bit_length > i && self.current_chunk_bits.is_set(i) {
-                continue;
-            }
-            let file = &self.bundled_files.values()[i];
-            if file.failed || file.content.js_code().is_none() {
-                continue;
-            }
-            self.push_chunk_part(file_index)?;
-            let mut it = self.edge_lists[i].first_import;
-            while let Some(edge_index) = it {
-                let edge = self.edges[edge_index.get() as usize];
-                it = edge.next_import;
-                queue.push(edge.imported);
-            }
-        }
-        Ok(())
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -790,8 +740,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     content: new_content,
                 };
 
-                if code_len.is_some() {
-                    self.push_chunk_part(file_index)?;
+                if let Some(len) = code_len {
+                    self.current_chunk_parts.push(file_index);
+                    self.current_chunk_len += len;
                 }
             }
             Side::Server => {
@@ -1162,9 +1113,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
 
             self.dev_incremental_result().had_adjusted_edges = true;
-            if matches!(SIDE, Side::Client) {
-                self.carry_graph_held_module(imported_file_index)?;
-            }
 
             *gop.value_ptr = TempLookup {
                 edge_index: edge,
@@ -1410,7 +1358,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
 
                 if goal == TraceImportGoal::FindClientModules {
-                    self.push_chunk_part(file_index)?;
+                    let len = self.bundled_files.values()[file_index.get() as usize]
+                        .content
+                        .js_code()
+                        .map(|c| c.len())
+                        .unwrap_or(0);
+                    self.current_chunk_parts.push(file_index);
+                    self.current_chunk_len += len;
                 }
             }
         }

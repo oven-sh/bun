@@ -2,7 +2,7 @@ use crate::mal_prelude::*;
 use bstr::BStr;
 
 use bun_alloc::Arena;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Range};
+use bun_ast::{ImportKind, ImportRecord, Range};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::{StackCheck, handle_oom};
 
@@ -236,8 +236,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         continue;
                     }
 
-                    // Record external depednencies
-                    if !record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
+                    // Record external dependencies. A disabled path is an empty file, not an
+                    // external one: a "browser" map entry set to `false`, a Node.js builtin stub.
+                    if !record.path.is_disabled {
                         // If this import has conditions, append it to the list of overall
                         // conditions for this external import. Note that an external import
                         // may actually have multiple sets of conditions that can't be

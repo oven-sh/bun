@@ -725,6 +725,24 @@ devTest("an error in a stylesheet reaches a page through an @import that another
     expect(await load()).toEqual(["3px", "3px"]);
   },
 });
+devTest('an @import of a path that a "browser" map disables is left out of the stylesheet', {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `@import "pkg";\n@import "./b.css";\n.m { width: 1px; }`,
+    "b.css": `.b { width: 2px; }`,
+    "node_modules/pkg/package.json": JSON.stringify({
+      name: "pkg",
+      main: "./node.css",
+      browser: { "./node.css": false },
+    }),
+    "node_modules/pkg/node.css": `.node { width: 3px; }`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
+    expect(css).toBe("/* b.css */\n.b {\n  width: 2px;\n}\n\n/* main.css */\n.m {\n  width: 1px;\n}\n");
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

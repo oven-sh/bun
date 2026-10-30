@@ -873,6 +873,239 @@ describe("esbuild-bundler", () => {
 /* entry.css */`);
     },
   });
+
+  // A path that a package.json "browser" map sets to `false` is an empty file
+  // in a browser build. An "@import" of it imports nothing, so the bundle has no
+  // "@import" for it. It is not an external import.
+  const disabledByBrowserField = {
+    "/package.json": /* json */ `{ "name": "app", "browser": { "./node.css": false } }`,
+    "/node.css": /* css */ `.node { color: green }`,
+  };
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`css/CSSAtImportDisabledByBrowserField${backend === "cli" ? "CLI" : ""}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          @import "./node.css";
+          .entry { color: red }
+        `,
+        ...disabledByBrowserField,
+      },
+      target: "browser",
+      outfile: "/out/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+          /* entry.css */
+          .entry {
+            color: red;
+          }
+        `);
+      },
+    });
+  }
+  for (const main of ["./main.css", "./main"]) {
+    itBundled(`css/CSSAtImportDisabledByBrowserFieldPackageMain${main.endsWith(".css") ? "" : "WithoutExtension"}`, {
+      files: {
+        "/entry.css": /* css */ `
+          @import "pkg";
+          .entry { color: red }
+        `,
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main, browser: { "./main.css": false } }),
+        "/node_modules/pkg/main.css": /* css */ `.main { color: green }`,
+      },
+      target: "browser",
+      outfile: "/out/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+          /* entry.css */
+          .entry {
+            color: red;
+          }
+        `);
+      },
+    });
+  }
+  itBundled("css/CSSAtImportDisabledByBrowserFieldConditions", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./node.css" screen;
+        @import "./node.css" layer(foo);
+        @import "./node.css" supports(display: grid);
+        @import "./node.css";
+        @import "./node.css";
+        .entry { color: red }
+      `,
+      ...disabledByBrowserField,
+    },
+    target: "browser",
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportDisabledByBrowserFieldNested", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./a.css";
+        @import "./b.css" screen;
+        .entry { color: red }
+      `,
+      "/a.css": /* css */ `
+        @import "./node.css";
+        .a { color: red }
+      `,
+      "/b.css": /* css */ `
+        @import "./node.css" layer(foo);
+        .b { color: red }
+      `,
+      ...disabledByBrowserField,
+    },
+    target: "browser",
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* a.css */
+        .a {
+          color: red;
+        }
+
+        /* b.css */
+        @media screen {
+          .b {
+            color: red;
+          }
+        }
+
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportDisabledByBrowserFieldFromJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./entry.css";
+        console.log("entry");
+      `,
+      "/entry.css": /* css */ `
+        @import "./node.css";
+        .entry { color: red }
+      `,
+      ...disabledByBrowserField,
+    },
+    target: "browser",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportDisabledByBrowserFieldNextToExternal", {
+    external: ["./external.css"],
+    files: {
+      "/entry.css": /* css */ `
+        @import "./node.css";
+        @import "./external.css";
+        @import "./node.css" print;
+        @import "https://www.example.com/style.css" print;
+        .entry { color: red }
+      `,
+      ...disabledByBrowserField,
+    },
+    target: "browser",
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @import "./external.css";
+        @import "https://www.example.com/style.css" print;
+
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportDisabledByBrowserFieldMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./node.css";
+        @import "./a.css" screen;
+        .entry { color: red }
+      `,
+      "/a.css": /* css */ `
+        @import "./node.css" layer(foo);
+        .a { color: red }
+      `,
+      ...disabledByBrowserField,
+    },
+    minifyWhitespace: true,
+    target: "browser",
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toBe("@media screen{.a{color:red}}.entry{color:red}\n");
+    },
+  });
+  itBundled("css/CSSAtImportDisabledByBrowserFieldAfterPlugin", {
+    // An onResolve plugin that declines the import sends it through the
+    // resolver on another code path. The result is the same.
+    files: {
+      "/entry.css": /* css */ `
+        @import "./node.css";
+        .entry { color: red }
+      `,
+      ...disabledByBrowserField,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /node\.css$/ }, () => undefined);
+    },
+    target: "browser",
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportNodeBuiltinStubForBrowser", {
+    // A browser build resolves a Node.js builtin that has no polyfill to an
+    // empty module. A stylesheet that imports one gets an empty file too.
+    // esbuild has no such modules and fails with "Could not resolve".
+    skipOnEsbuild: true,
+    files: {
+      "/entry.css": /* css */ `
+        @import "fs";
+        @import "node:fs";
+        @import "fs/promises";
+        @import "node:worker_threads";
+        .entry { color: red }
+      `,
+    },
+    target: "browser",
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
   itBundled("css/CSSAtImport", {
     // GENERATED
     files: {

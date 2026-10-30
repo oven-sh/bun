@@ -1010,9 +1010,8 @@ describe("css modules", () => {
 
   test.concurrent("a list of 65,536 selectors that end with :global", async () => {
     const count = 65536;
-    const selectors = Buffer.alloc(count * 9, "a:global,")
-      .toString()
-      .slice(0, -1);
+    const repeat = (text: string) => Buffer.alloc(text.length * count, text).toString();
+    const selectors = repeat("a:global,").slice(0, -1);
     using dir = tempDir("css-modules-long-list", { "styles.module.css": `${selectors} { color: red }` });
     const result = await Bun.build({
       entrypoints: [join(String(dir), "styles.module.css")],
@@ -1020,7 +1019,11 @@ describe("css modules", () => {
       throw: false,
     });
     expect(result.logs).toEqual([]);
-    expect(result.outputs[0].size).toBeGreaterThan(count * "a, ".length);
+    const css = await result.outputs[0].text();
+    const list = css.slice(css.indexOf("a"), css.indexOf(" {"));
+    const expected = repeat("a, ").slice(0, -2);
+    expect(list.length).toBe(expected.length);
+    expect(list === expected).toBe(true);
   });
 
   // Inside parentheses a bare `:global` that ends a selector is not the scope of a block.

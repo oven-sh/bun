@@ -2,14 +2,17 @@
 // it under any extension of JavaScript or TypeScript. Programs start workers and import modules by those names, and tools read
 // them from the executable. With --aot the same names find the same modules. What a module shows as its own path is another
 // matter: that is the path of its source below the virtual root.
-import { expect, setDefaultTimeout } from "bun:test";
+import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
-import { test } from "./supported";
+import { test as oneAtATime } from "./supported";
 
 setDefaultTimeout(240_000);
+
+// Each test has folders of its own. The two that ask one executable only read it.
+const test = oneAtATime.concurrent;
 
 const virtualRoot = isWindows ? "B:/~BUN/root/" : "/$bunfs/root/";
 const stems = { typed: "ts", module: "mjs", plain: "js", common: "cjs" };
@@ -91,12 +94,12 @@ const additional = [
 const expected = ["absolute", "relative"]
   .flatMap(kind => [
     ...Object.entries(stems).flatMap(([stem, written]) =>
-      extensions.map(extension => `${kind} ${stem}.${extension} ${stem}.${written}`),
+      extensions.map(extension => `${kind} ${stem}.${extension} ${stem}.${written}\n`),
     ),
-    `${kind} worker.js worker.ts`,
-    `${kind} worker.ts worker.ts`,
+    `${kind} worker.js worker.ts\n`,
+    `${kind} worker.ts worker.ts\n`,
   ])
-  .join("\n");
+  .join("");
 
 async function build(folder: string, flags: string[], entryPoints: string[], name: string): Promise<string> {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
@@ -106,22 +109,36 @@ async function build(folder: string, flags: string[], entryPoints: string[], nam
   return executable;
 }
 
+const shared: Disposable[] = [];
+afterAll(() => {
+  for (const folder of shared) folder[Symbol.dispose]();
+});
+
 for (const [title, flags] of [
   ["bundled", []],
   ["compiled", ["--aot"]],
 ] as const) {
+  // One test asks what this executable prints, one what its file holds: one build, in a folder that outlives both.
+  let once: Promise<string> | undefined;
+  function withEveryEntryPoint(): Promise<string> {
+    if (!once) {
+      const dir = tempDir("aot-entry-point-names", files);
+      shared.push(dir);
+      once = build(String(dir), [...flags], ["src/main.ts", ...additional], title);
+    }
+    return once;
+  }
+
   test(`${title}: an entry point is found under the name of its output and under every extension`, async () => {
-    using dir = tempDir("aot-entry-point-names", files);
     using elsewhere = tempDir("aot-entry-point-names-elsewhere", {});
-    const executable = await build(String(dir), [...flags], ["src/main.ts", ...additional], title);
-    const run = await spawned([executable], String(elsewhere), bunEnv);
-    expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+    const run = await spawned([await withEveryEntryPoint()], String(elsewhere), bunEnv);
+    expect(run).toEqual({ stdout: expected, stderr: "", exitCode: 0, signal: null });
   });
 
   test(`${title}: the executable lists its entry points under the names of their outputs`, async () => {
-    using dir = tempDir("aot-entry-point-names-list", files);
-    const bytes = readFileSync(await build(String(dir), [...flags], ["src/main.ts", ...additional], title));
-    const isListed = (name: string) => bytes.includes(Buffer.from(virtualRoot + name + "\0"));
+    const bytes = readFileSync(await withEveryEntryPoint());
+    // The file is the size of Bun and the names are near its end.
+    const isListed = (name: string) => bytes.lastIndexOf(Buffer.from(virtualRoot + name + "\0")) !== -1;
     const names = [...Object.keys(stems), "worker"].map(stem => `sub/${stem}.js`);
     expect(names.filter(name => !isListed(name))).toEqual([]);
   });
@@ -131,9 +148,11 @@ for (const [title, flags] of [
     using elsewhere = tempDir("aot-entry-point-names-same-stem-elsewhere", {});
     const executable = await build(String(dir), [...flags], ["./same.js", "./same.ts"], title);
     const run = await spawned([executable], String(elsewhere), bunEnv);
-    expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({
-      stdout: "same.js\nimport same.ts\nworker same.ts",
+    expect(run).toEqual({
+      stdout: "same.js\nimport same.ts\nworker same.ts\n",
+      stderr: "",
       exitCode: 0,
+      signal: null,
     });
   });
 
@@ -147,12 +166,12 @@ for (const [title, flags] of [
     const others = ["./page.css", "./page.html"];
     const executable = await build(String(dir), [...flags], [...others, "./first.js", "./second.js"], title);
     const run = await spawned([executable], String(dir), bunEnv);
-    expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({ stdout: "first.js true", exitCode: 0 });
+    expect(run).toEqual({ stdout: "first.js true\n", stderr: "", exitCode: 0, signal: null });
 
     const command = [bunExe(), "build", "--compile", ...flags, ...others, "--outfile", join(String(dir), "none")];
     const refused = await spawned(command, String(dir), bunEnv);
-    expect(refused.exitCode).not.toBe(0);
-    expect(refused.stdout + refused.stderr).toContain("No output files to bundle");
+    expect(refused).toMatchObject({ stderr: expect.stringContaining("No output files to bundle"), exitCode: 1 });
+    expect(readdirSync(String(dir)).filter(name => name.startsWith("none"))).toEqual([]);
   });
 }
 
@@ -161,7 +180,7 @@ test("compiled: a Worker starts from the source it names beside an entry point w
   using elsewhere = tempDir("aot-entry-point-names-worker-elsewhere", {});
   const executable = await build(String(dir), ["--aot"], ["./main.ts", "./task.ts"], "worker");
   const run = await spawned([executable], String(elsewhere), bunEnv);
-  expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({ stdout: "task.js", exitCode: 0 });
+  expect(run).toEqual({ stdout: "task.js\n", stderr: "", exitCode: 0, signal: null });
 });
 
 test("compiled: a module shows the path of its source", async () => {
@@ -169,9 +188,11 @@ test("compiled: a module shows the path of its source", async () => {
   using elsewhere = tempDir("aot-entry-point-names-shown-elsewhere", {});
   const executable = await build(String(dir), ["--aot"], ["src/shown.ts", "src/sub/typed.ts"], "shown");
   const run = await spawned([executable], String(elsewhere), bunEnv);
-  expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({
-    stdout: `${virtualRoot}shown.ts\n${virtualRoot}sub/typed.ts`,
+  expect(run).toEqual({
+    stdout: `${virtualRoot}shown.ts\n${virtualRoot}sub/typed.ts\n`,
+    stderr: "",
     exitCode: 0,
+    signal: null,
   });
 });
 
@@ -196,7 +217,11 @@ test("compiled: two entry points with one output name are an error, as in a bund
       String(dir),
       bunEnv,
     );
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("Multiple files share the same output path");
+    // The error names the output that the two share.
+    expect(result).toMatchObject({
+      stderr: expect.stringMatching(/Multiple files share the same output path[^]*\bsub[\\/]typed\.js\b/),
+      exitCode: 1,
+    });
+    expect(readdirSync(String(dir)).filter(name => name.startsWith("equal"))).toEqual([]);
   }
 });

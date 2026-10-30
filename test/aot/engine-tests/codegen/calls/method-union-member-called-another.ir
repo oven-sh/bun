@@ -352,8 +352,8 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#20: ; frequency = 0.147059
 # CHECK-NEXT: Predecessors: #10
 # CHECK-NEXT: Int64 b@129 = SlotBase(stack0, v35:NewClosure)
-# CHECK-NEXT: Int64 b@128 = Const64(2147483686, v35:NewClosure)
-# CHECK-NEXT: Int64 b@131 = Patchpoint($2147483686(b@128):Register(%r10), b@129:Register(%rax), runsWithoutFrame, resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v35:NewClosure)
+# CHECK-NEXT: Int64 b@128 = Const64(2147483657, v35:NewClosure)
+# CHECK-NEXT: Int64 b@131 = Patchpoint($2147483657(b@128):Register(%r10), b@129:Register(%rax), runsWithoutFrame, resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v35:NewClosure)
 # CHECK-NEXT: Int64 b@132 = Patchpoint(b@131:Register(%r8), b@60:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v36:Call)
 # CHECK-NEXT: Int64 b@49 = Load(b@202, offset = 96, ReadsImmutable, v37:AssumeType)
 # CHECK-NEXT: Int32 b@133 = AboveEqual(b@132, b@49, v37:AssumeType)

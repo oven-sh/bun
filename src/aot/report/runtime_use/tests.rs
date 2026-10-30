@@ -137,7 +137,6 @@ fn blocker_codes_do_not_follow_enumerator_names() {
             "no-aot",
             "no-report",
             "analysis-disabled",
-            "limit-reached",
             "eval",
             "external-import",
             "dynamic-import",
@@ -315,7 +314,7 @@ fn cause_line_has_builtin_and_position() {
         unseen(UnseenCodeCause::EvaluatesText, Some(0)),
         unseen(UnseenCodeCause::RunsUnseenCode, Some(1)),
         unseen(UnseenCodeCause::LoadsModuleByName, Some(2)),
-        unseen(UnseenCodeCause::FlowGaveUp, Some(3)),
+        unseen(UnseenCodeCause::FlowResultDisabled, Some(3)),
         unseen(UnseenCodeCause::ReportMissing, None),
     ];
     let mut entries = Vec::new();
@@ -338,7 +337,7 @@ fn cause_line_has_builtin_and_position() {
                 None,
             ),
             line(
-                "blocked by limit-reached: the analysis hit a compiler limit",
+                "blocked by analysis-disabled: a developer option turned the analysis off",
                 None
             ),
             line(

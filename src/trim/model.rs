@@ -21,7 +21,6 @@ pub enum UnseenCodeCause {
     ProgramNotCompiled,
     ReportMissing,
     FlowResultDisabled,
-    FlowGaveUp,
     EvaluatesText,
     ImportsUncompiledCode,
     LoadsModuleByName,
@@ -33,11 +32,10 @@ pub enum UnseenCodeCause {
 
 impl UnseenCodeCause {
     #[cfg(any(test, feature = "test_support"))]
-    pub const ALL: [UnseenCodeCause; 11] = [
+    pub const ALL: [UnseenCodeCause; 10] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
         UnseenCodeCause::FlowResultDisabled,
-        UnseenCodeCause::FlowGaveUp,
         UnseenCodeCause::EvaluatesText,
         UnseenCodeCause::ImportsUncompiledCode,
         UnseenCodeCause::LoadsModuleByName,

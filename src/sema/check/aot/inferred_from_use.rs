@@ -6,7 +6,7 @@ use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, S
 use crate::check::root_declaration;
 use crate::hir::{
     self, BinOp, CallId, Chain, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind,
-    MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
+    MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
 };
 use crate::program::{FileId, FileRole};
 use crate::session::vec_from_iter_in;
@@ -1129,7 +1129,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn compute_binding_type(&mut self, symbol: SymbolId) -> TypeId {
         let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
-            return self.compute_type_from_uses(Subject::Binding(symbol));
+            // Uses only guess: what a constant is made from knows.
+            return match self.find_type_a_constant_is_made_with(symbol) {
+                Some(made) => made,
+                None => self.compute_type_from_uses(Subject::Binding(symbol)),
+            };
         };
         let declared = self.find_declared_parameter_type(name);
         if !self.c.is_any(declared) {
@@ -1152,6 +1156,26 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         match !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
             true => given,
             false => used_as,
+        }
+    }
+
+    /// `const kept = list.filter(..)`. It asks nothing of the uses of the initializer, which are the uses of the constant.
+    fn find_type_a_constant_is_made_with(&mut self, symbol: SymbolId) -> Option<TypeId> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let &[Decl::Var(name)] = bound.symbol(symbol).decls else {
+            return None;
+        };
+        let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
+            return None;
+        };
+        if hir[variable].kind != VarKind::Const {
+            return None;
+        }
+        let made = self.find_result_of_inferred_method(hir[variable].init.some()?)?;
+        // A list of anything says less than the uses of its elements may.
+        match self.c.array_element(made) {
+            Some(element) if self.c.is_any(element) => None,
+            Some(_) | None => Some(made),
         }
     }
 
@@ -1439,14 +1463,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let callee = hir[site].callee;
         hir.member_key(callee)?;
         let method = self.find_type_in_inferred_receiver(callee)?;
-        let signatures = self.c.signatures(method, false);
-        let (&first, others) = signatures.split_first()?;
-        let result = self.c.sig_return(first);
-        let is_one_result = others
-            .iter()
-            .all(|&other| self.c.sig_return(other) == result);
-        let says_something = !self.c.is_any(result) && !self.c.has_type_variables(result);
-        (is_one_result && says_something).then_some(result)
+        // `filter<S extends T>(..): S[]` beside `filter(..): T[]`: a result that hangs on the call says nothing here.
+        let mut result = None;
+        for &signature in self.c.signatures(method, false).iter() {
+            let returned = self.c.sig_return(signature);
+            if self.c.has_type_variables(returned) {
+                continue;
+            }
+            if result.is_some_and(|result| result != returned) {
+                return None;
+            }
+            result = Some(returned);
+        }
+        result.filter(|&result| !self.c.is_any(result))
     }
 
     fn find_element_type(&mut self, list: TypeId) -> Option<TypeId> {
@@ -1627,7 +1656,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= required_if(!is_optional);
                 match self.calls_its_object(access) {
                     true => usage.facts |= Facts::FUNCTION,
-                    false => self.add_evidence(walk, access, usage.member_mut(name)),
+                    false => {
+                        self.add_evidence(walk, access, usage.member_mut(name));
+                        self.add_uses_of_elements_in_callbacks(walk, access, name, usage);
+                    }
                 }
             }
             Use::Keyed {
@@ -1667,6 +1699,91 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Use::ComparedWith(other) => self.add_comparison(other, usage),
             Use::Stored { op, value } => self.add_store(op, value, usage),
         }
+    }
+
+    /// `list.filter(x => x > 2)`: a list hands its elements to the callback, so what the callback does with them says
+    /// what the list holds.
+    fn add_uses_of_elements_in_callbacks(
+        &mut self,
+        walk: &mut Walk,
+        access: ExprId,
+        method: Atom,
+        usage: &mut Usage,
+    ) {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Parent::Expr(call) = bound.parent_of_expr(access) else {
+            return;
+        };
+        let Some(call) = call.some() else {
+            return;
+        };
+        let ExprKind::Call(site) = hir[call].kind else {
+            return;
+        };
+        if hir[site].callee != access {
+            return;
+        }
+        for (index, argument) in hir.ids(hir[site].args).enumerate() {
+            let callback = match hir[argument].kind {
+                ExprKind::Fn(callback) => callback,
+                ExprKind::Spread(_) => break,
+                _ => continue,
+            };
+            let taking_elements = self.find_parameters_taking_elements(method, index);
+            for (position, parameter) in hir[callback].params.iter().enumerate().take(8) {
+                if taking_elements & (1 << position) == 0 {
+                    continue;
+                }
+                let Ok(checked) = self.checked_binding_type(hir[parameter].pat) else {
+                    continue;
+                };
+                let subject = self.find_parameter_subject(self.file, parameter, checked);
+                let Some(subject) = subject else {
+                    continue;
+                };
+                let mut found = Usage::default();
+                self.add_uses_of_subject(walk, subject, &mut found);
+                if !found.facts.contains(Facts::NUMBER_AT_EVERY_VALUE) {
+                    found.facts -= Facts::NUMBER | Facts::INT32;
+                }
+                let says = self.type_of_usage(&found);
+                if self.is_number_type(says) || self.is_string_type(says) {
+                    usage.elements_mut().merge(walk, &found);
+                }
+            }
+        }
+    }
+
+    /// Which parameters of the callback that a list's method takes at `index` are elements of the list: a bit each.
+    fn find_parameters_taking_elements(&mut self, method: Atom, index: usize) -> u8 {
+        if let Some(&known) = self.memo.parameters_taking_elements.get(&(method, index)) {
+            return known;
+        }
+        // No method of a list names `never` by itself, so a parameter of that type has the type of the elements.
+        let list = self.c.array_of(TypeId::NEVER);
+        let mut taking_elements = 0;
+        let signatures = match self.c.type_of_property(list, method) {
+            Some(method) => self.c.signatures(method, false),
+            None => Default::default(),
+        };
+        for &signature in signatures.iter() {
+            let parameters = self.c.sig_params(signature);
+            let Some(callback) = find_parameter(&parameters, index) else {
+                continue;
+            };
+            let callback = self.without_nullish(callback.ty).unwrap_or(callback.ty);
+            for &signature in self.c.signatures(callback, false).iter() {
+                let parameters = self.c.sig_params(signature);
+                for (position, parameter) in parameters.iter().enumerate().take(8) {
+                    if parameter.ty == TypeId::NEVER && !parameter.rest {
+                        taking_elements |= 1 << position;
+                    }
+                }
+            }
+        }
+        let known = &mut self.memo.parameters_taking_elements;
+        known.insert((method, index), taking_elements);
+        taking_elements
     }
 
     fn number_fact_of_operand(&self, operand: ExprId) -> Facts {

@@ -1,7 +1,7 @@
 // What a function is compiled to does not hang on which file is the entry point, nor on how many files stand between it and the
 // entry point. One small server is written in several shapes: its file is the entry point, is imported by the entry point, stands
 // behind sixteen files that each import the next one twice, is loaded by import() or by require(), takes its handler from a third
-// file. Each shape answers the same, and its machine code is within one percent of that of the first shape.
+// file, takes createServer from a file that exports it again. Each shape answers the same, and its machine code is within one percent of that of the first shape.
 // Each shape is a build of node:http, so there are few: the three with a static import are the ones that have failed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -74,6 +74,14 @@ const families: Record<string, Record<string, Shape>> = {
         "main.ts": `import "./app";\n`,
         "app.ts": createServer + `import { handle } from "./handler";\n` + listen,
         "handler.ts": types + "export " + handler,
+      },
+    },
+    "createServer exported again by a third file": {
+      entry: "main.ts",
+      files: {
+        "main.ts": `import "./app";\n`,
+        "app.ts": types + `import { createServer } from "./http";\n` + handler + listen,
+        "http.ts": `export { createServer } from "node:http";\n`,
       },
     },
     "loaded by import()": { entry: "main.ts", files: { "main.ts": `await import("./app");\n`, "app.ts": app } },

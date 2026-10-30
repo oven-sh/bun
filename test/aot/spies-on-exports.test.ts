@@ -401,11 +401,8 @@ test("a namespace object handed to a helper that spies does not build the progra
   expect(exitCode).toBe(0);
 });
 
-// A program too large for whole-program analysis is built the same way. Nothing follows the name here, so only that build can tell.
-for (const [name, words, loads] of [
-  ["analysis switched off", "disable=flow-results", 2],
-  ["tests that look too large to analyze", "limit=MaxSourceBytesExpectedToBeAnalyzed:1", 1],
-] as const)
+// Nothing follows the name here, so only that build can tell.
+for (const [name, words, loads] of [["analysis switched off", "disable=flow-results", 2]] as const)
   test(`${name}: a spy may replace any export, and a mock any module, after ${loads} loads`, async () => {
     using dir = tempDir("spies-without-flow", {
       ...math,

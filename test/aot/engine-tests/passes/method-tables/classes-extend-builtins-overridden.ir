@@ -522,8 +522,8 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#41: ; frequency = 0.001911
 # CHECK-NEXT: Predecessors: #5
 # CHECK-NEXT: Int32 b@197 = Load(b@191, offset = 12, ControlDependent|Reads:AOTSlimClosure_word, v52:TypeTest)
-# CHECK-NEXT: Int32 b@198 = Const32(2109734963, v52:TypeTest)
-# CHECK-NEXT: Int32 b@199 = Equal(b@197, $2109734963(b@198), v52:TypeTest)
+# CHECK-NEXT: Int32 b@198 = Const32(2109734920, v52:TypeTest)
+# CHECK-NEXT: Int32 b@199 = Equal(b@197, $2109734920(b@198), v52:TypeTest)
 # CHECK-NEXT: Void b@200 = Branch(b@199, Terminal, v52:TypeTest)
 # CHECK-NEXT: Successors: Then:#6, Else:Rare:#40
 # CHECK-NEXT: BB#6: ; frequency = 0.001909

@@ -356,7 +356,13 @@ impl FileBinder<'_, '_> {
                 continue;
             }
             match *answer {
-                ScannedSite::Module(module) => self.mock(module),
+                ScannedSite::Module(module) => {
+                    self.mock(module);
+                    let modules = self.context.modules;
+                    for form in modules.forms_of(module) {
+                        self.mock(form);
+                    }
+                }
                 ScannedSite::AllModules | ScannedSite::Candidates(_) => self.mock_every_module(),
                 ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
@@ -432,6 +438,10 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
+        // In a test run a file taken out of `require.cache` loads again: the answer is another object, not these variables.
+        if self.context.runs_tests && self.context.order.is_code_of_program(target) {
+            return self.look_at(answer);
+        }
         if self.bind_copy(site, view, roots, holders) {
             return;
         }

@@ -77,6 +77,13 @@ JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral built
 bool isDebuggerAdmitted();
 JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
 
+void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
+bool requireCacheListsCompiledFiles(Zig::GlobalObject*);
+bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);
+JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
+bool isRecordOfCompiledModule(JSC::AbstractModuleRecord*);
+void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(const WTF::String&)>&);
+
 // These two come before the change they announce, and throw: the code of an ahead-of-time executable calls the module that each name stood for when it was compiled.
 void willSetRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key, JSC::JSValue entry);
 

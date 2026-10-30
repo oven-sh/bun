@@ -9,7 +9,7 @@ use super::state::{
     Definitions, ExportWriter, ModuleRecords, ModuleTable, Numbering, VariableDefinition,
 };
 use super::unit::LinkUnit;
-use super::{LinkProject, key_context};
+use super::{LinkError, LinkProject, key_context};
 use crate::builtins::{RuntimeModule, table};
 use crate::ir::generated::{
     self, ModuleExportKind, ModuleFlags, RuntimeFunctionEntry, WebAssemblyModule,
@@ -25,6 +25,7 @@ use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
+use core::cell::Cell;
 use rustc_hash::FxHashMap;
 
 pub(super) struct RecordInput<'a, 's> {
@@ -35,13 +36,29 @@ pub(super) struct RecordInput<'a, 's> {
     pub variables: &'a MergedKeys<ProgramVariableKey>,
     pub definitions: &'a Definitions,
     pub numbering: &'a Numbering,
+    pub progress: RecordProgress,
+}
+
+#[derive(Default)]
+pub(super) struct RecordProgress {
+    current: Cell<Option<ProgramModule>>,
+    error: Cell<Option<LinkError>>,
 }
 
 impl RecordInput<'_, '_> {
     fn id_of(&self, project: ProjectId, module: ModuleRef) -> ModuleId {
         let module = key_context(self.projects, project).module(module);
-        self.numbering.modules[self.modules.index_of(module) as usize]
-            .expect("every module has an id")
+        let index = self.modules.index_by_module.get(&module);
+        if let Some(id) = index.and_then(|&index| self.numbering.modules[index as usize]) {
+            return id;
+        }
+        let error = LinkError::MissingRecord {
+            module,
+            named_by: self.progress.current.get(),
+        };
+        let first = self.progress.error.take();
+        self.progress.error.set(first.or(Some(error)));
+        ModuleId::new(0)
     }
 
     fn exported_variable(&self, project: ProjectId, key: VariableKey) -> VariableId {
@@ -75,7 +92,7 @@ pub(super) fn build_module_records(
     units: &mut [LinkUnit],
     input: &RecordInput<'_, '_>,
     strings: &mut StringTable,
-) -> ModuleRecords {
+) -> Result<ModuleRecords, LinkError> {
     let mut builder = RecordBuilder {
         input,
         strings: &mut *strings,
@@ -84,14 +101,18 @@ pub(super) fn build_module_records(
         is_named_at_run_time: find_modules_named_at_run_time(input),
     };
     let modules = builder.build_modules(units);
+    input.progress.current.set(None);
     let module_failures = builder.build_failures();
-    ModuleRecords {
+    if let Some(error) = input.progress.error.take() {
+        return Err(error);
+    }
+    Ok(ModuleRecords {
         modules,
         module_failures,
         entries: build_entries(input, strings),
         runtime_functions: collect_runtime_functions(input),
         web_assembly_modules: collect_web_assembly_modules(input),
-    }
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -176,6 +197,7 @@ impl RecordBuilder<'_, '_, '_> {
                 continue;
             };
             debug_assert_eq!(id.index(), records.len());
+            input.progress.current.set(Some(module));
             records.push(match module {
                 ProgramModule::File(file) => self.build_file_record(units, index, file),
                 ProgramModule::Inner { file, .. }
@@ -271,6 +293,9 @@ impl RecordBuilder<'_, '_, '_> {
                 self.fill_export_table_record(file, &mut record);
             }
             ModuleKind::Data => {
+                if graph.may_be_mocked(ModuleRef::File(file.file)) {
+                    record.flags |= ModuleFlags::MAY_BE_MOCKED;
+                }
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
             }
@@ -370,6 +395,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.may_be_mocked(module) {
             flags |= ModuleFlags::MAY_BE_MOCKED;
         }
+        if graph.may_be_evicted() && graph.is_code_of_program(module) {
+            flags |= ModuleFlags::MAY_BE_EVICTED;
+        }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }
@@ -432,35 +460,53 @@ impl RecordBuilder<'_, '_, '_> {
             .collect();
         let requests = graph.requests_of(ModuleRef::File(file));
         let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
-        // The loader may be left with an empty record of such a file, which lacks even `default`.
-        let mut faces_asked_for_default: Vec<FileId> = graph
-            .import_bindings(file)
-            .iter()
-            .filter_map(|&(_, binding)| match binding {
-                ImportBinding::Synthetic(export) => {
-                    let export = graph.synthetic_export(export);
-                    (export.name == known::default).then_some(export.module)
-                }
-                ImportBinding::Exports { module } => Some(module),
-                _ => None,
-            })
-            .filter(|&exporter| graph.may_be_imported_while_it_runs(exporter))
-            .filter_map(|exporter| match graph.face(exporter) {
-                Some(ModuleRef::Face(face)) => Some(face),
-                _ => None,
-            })
+        // The loader may be left with an empty record of such a file, which lacks even `default`. A link asks for what the module hands on before what it imports.
+        let default_of = |export: modules::SyntheticExportId| {
+            let export = graph.synthetic_export(export);
+            (export.name == known::default).then_some(export.module)
+        };
+        let written = graph.exports(file).iter();
+        let handed_on = written.filter(|export| !export.is_from_star_export);
+        let handed_on = handed_on.filter_map(|export| match export.binding {
+            ExportBinding::Synthetic(id) => Some((default_of(id)?, Some(export.name))),
+            ExportBinding::Indirect { module, name } if name == known::default => {
+                Some((module, Some(export.name)))
+            }
+            _ => None,
+        });
+        let imported = graph.import_bindings(file).iter();
+        let imported = imported.filter_map(|&(_, binding)| match binding {
+            ImportBinding::Synthetic(export) => Some((default_of(export)?, None)),
+            ImportBinding::Exports { module } => Some((module, None)),
+            _ => None,
+        });
+        let mut asked_for_default: Vec<(FileId, Option<Atom>)> = Vec::new();
+        for (exporter, export_name) in handed_on.chain(imported) {
+            if let ModuleRef::File(exporter) = exporter
+                && graph.may_be_imported_while_it_runs(ModuleRef::File(exporter))
+                && !asked_for_default.iter().any(|asked| asked.0 == exporter)
+            {
+                asked_for_default.push((exporter, export_name));
+            }
+        }
+        let written = graph.requests(file);
+        for (file, export_name) in asked_for_default {
+            // The name comes through an export statement of another module, whose link fails first.
+            let is_written = written.iter().any(|it| it.target == ModuleRef::File(file));
+            let export_name = export_name.or_else(|| (!is_written).then_some(known::default));
+            let exporter = graph.face(ModuleRef::File(file));
+            let exporter = exporter.unwrap_or(ModuleRef::File(file));
             // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
-            .filter(|&face| is_requested(ModuleRef::Face(face)))
-            .collect();
-        faces_asked_for_default.sort_unstable();
-        faces_asked_for_default.dedup();
-        for face in faces_asked_for_default {
+            if !is_requested(exporter) {
+                continue;
+            }
+            let path = input.projects.get(project).sources.public_path(file);
             record.required_names.push(generated::RequiredName {
-                module: input.id_of(project, ModuleRef::Face(face)),
+                module: input.id_of(project, exporter),
                 name: self.intern_atom(known::default),
                 may_be_absent: false,
-                export_name: None,
-                specifier: None,
+                export_name: export_name.map(|name| self.intern_atom(name)),
+                specifier: export_name.map(|_| self.strings.intern(path)),
             });
         }
     }

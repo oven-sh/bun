@@ -268,6 +268,54 @@ fn text_file_exports_default_only() {
 }
 
 #[test]
+fn text_file_answers_its_text_only_where_the_bundler_links_every_require() {
+    let linked = [
+        ("main.cjs", "require('./notes.txt');"),
+        ("main.cjs", "module.require('./notes.txt');"),
+        ("main.mjs", "require('./notes.txt');"),
+        ("main.cts", "import notes = require('./notes.txt'); notes;"),
+        (
+            "main.cjs",
+            "require('./notes.txt'); require(process.argv[2]);",
+        ),
+    ];
+    let left_to_loader = [
+        (
+            "main.mjs",
+            "import { createRequire } from 'node:module'; createRequire(import.meta.url)('./notes.txt');",
+        ),
+        (
+            "main.mjs",
+            "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); require('./notes.txt'); load('./notes.txt');",
+        ),
+        ("main.mjs", "import.meta.require('./notes.txt');"),
+        ("main.cjs", "const load = require; load('./notes.txt');"),
+        ("main.cjs", "require.call(null, './notes.txt');"),
+        (
+            "main.cjs",
+            "for (const name of ['notes']) require('./' + name + '.txt');",
+        ),
+    ];
+    let linked = linked.map(|main| (main, DATA_WITH_DEFAULT));
+    let left_to_loader = left_to_loader.map(|main| (main, IMPORTED_DATA));
+    for (main, expected) in linked.into_iter().chain(left_to_loader) {
+        with_graph(&[main, ("notes.txt", "text")], |graph, input| {
+            let file = file_named(input, "notes.txt");
+            assert_eq!(graph.interop(ModuleRef::File(file)), expected, "{}", main.1);
+        });
+    }
+}
+
+#[test]
+fn other_data_answers_its_value_to_a_require_that_the_bundler_does_not_link() {
+    let files = [
+        ("main.mjs", "import.meta.require('./data.json');"),
+        ("data.json", r#"{ "x": 1 }"#),
+    ];
+    check_interop(&files, "data.json", DATA_WITH_DEFAULT);
+}
+
+#[test]
 fn data_file_that_is_only_required_answers_its_value() {
     let files = [
         ("main.cjs", "console.log(require('./data.json'));"),

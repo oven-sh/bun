@@ -31,7 +31,7 @@ impl<'s> Folder<'_, 's> {
                     None => None,
                 };
                 roots.all.extend(excluded.map(TreeNode::Stmt));
-                if self.is_folded_by_bun_run(test) {
+                if self.is_truthy_in_bun_run(test).is_some() {
                     roots.in_bun_run.extend(excluded.map(TreeNode::Stmt));
                 }
             } else {

@@ -1005,6 +1005,13 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * glob
     RETURN_IF_EXCEPTION(scope, {});
     if (!record)
         return JSValue::encode(jsUndefined());
+    if (Bun::isRecordOfCompiledModule(record)) [[unlikely]] {
+        WTF::String key = asString(callFrame->argument(0))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue compiled = Bun::loadCompiledModuleNamespace(defaultGlobalObject(globalObject), key);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(compiled ? compiled : jsUndefined());
+    }
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
@@ -1016,6 +1023,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    if (!record && callFrame->argument(0).isString() && Bun::hasCompiledModules()) {
+        WTF::String key = asString(callFrame->argument(0))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsBoolean(Bun::isEvaluatedCompiledFile(defaultGlobalObject(globalObject), key)));
+    }
     return JSValue::encode(jsBoolean(!!record));
 }
 
@@ -1053,9 +1065,40 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue keyValue = callFrame->argument(0);
+    if (!Bun::hasCompiledModules() || !keyValue.isString())
+        return JSValue::encode(jsUndefined());
+    WTF::String key = asString(keyValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::didDeleteRequireCacheEntry(uncheckedDowncast<Zig::GlobalObject>(globalObject), key);
+    return JSValue::encode(jsUndefined());
+}
+
+// Without an argument: whether the cache lists files of the compiled program at all.
+JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsBoolean(Bun::hasCompiledModules() && Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject))));
+    JSValue keyValue = callFrame->uncheckedArgument(0);
+    if (!keyValue.isString())
+        return JSValue::encode(jsUndefined());
+    WTF::String key = asString(keyValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue entry = Bun::compiledRequireCacheEntry(defaultGlobalObject(globalObject), key);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(entry ? entry : jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (!Bun::hasCompiledModules()) [[likely]]
+        return JSValue::encode(jsBoolean(false));
+    // A file can come back from the disk there: the cache shows it, as plain's does.
+    if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
         return JSValue::encode(jsBoolean(false));
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(true));
@@ -1073,12 +1116,20 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer keys;
+    HashSet<String> seen;
+    auto add = [&](const String& key) {
+        if (seen.add(key).isNewEntry)
+            keys.append(jsString(vm, key));
+    };
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
             if (isModuleEvaluated(entry->record()))
-                keys.append(jsString(vm, String { specifier }));
+                add(String { specifier });
         });
     }
+    Bun::forEachEvaluatedCompiledFile(defaultGlobalObject(globalObject), [&](const String& path) {
+        add(path);
+    });
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -3384,6 +3435,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
         { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
         { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
+        { BuiltinName::k_requireCacheDidDelete, 1, functionRequireCacheDidDelete },
+        { BuiltinName::k_requireCacheCompiledEntry, 1, functionRequireCacheCompiledEntry },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },

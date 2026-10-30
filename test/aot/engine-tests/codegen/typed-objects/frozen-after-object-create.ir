@@ -91,7 +91,7 @@ function f3 module=m0 position=1037 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: Int64 b@34 = Load(b@10, offset = 7720, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:NewClosure)
 # CHECK-NEXT: Void b@35 = Store(b@34, b@28, offset = 24, ControlDependent|Writes:JSFunction_executableOrRareData, v0:NewClosure)
 # CHECK-NEXT: Int64 b@36 = Load(b@10, offset = 7696, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:NewClosure)
-# CHECK-NEXT: Int64 b@37 = Load(b@36, offset = 48, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v0:NewClosure)
+# CHECK-NEXT: Int64 b@37 = Load(b@36, offset = 8, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v0:NewClosure)
 # CHECK-NEXT: Void b@38 = Store(b@37, b@28, offset = 32, ControlDependent|Writes:AOTClosure_entry, v0:NewClosure)
 # CHECK-NEXT: Void b@39 = Fence(Fence|Reads:jscRoot, v0:NewClosure)
 # CHECK-NEXT: Int64 b@41 = Const64(4, v1:NewClass)

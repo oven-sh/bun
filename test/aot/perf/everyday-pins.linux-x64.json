@@ -112,7 +112,7 @@
     "untyped": 275.6
   },
   "everyday-array-methods-on-lists-nobody-proves/a-field-of-a-parsed-object-handed-in-map": {
-    "typed": 148.4,
+    "typed": 136.8,
     "untyped": 241.5
   },
   "everyday-array-methods-on-lists-nobody-proves/a-field-of-this-for-each": {
@@ -961,7 +961,7 @@
   },
   "everyday-copies-of-lists-of-every-kind/filter.fractions-parsed": {
     "typed": 313.2,
-    "untyped": 825.5
+    "untyped": 322.4
   },
   "everyday-copies-of-lists-of-every-kind/filter.fractions-with-a-hole": {
     "typed": 441.3,
@@ -977,7 +977,7 @@
   },
   "everyday-copies-of-lists-of-every-kind/filter.whole-parsed": {
     "typed": 302.6,
-    "untyped": 392.6
+    "untyped": 311.3
   },
   "everyday-copies-of-lists-of-every-kind/filter.whole-pushed": {
     "typed": 243.4,
@@ -2008,8 +2008,8 @@
     "untyped": 32.5
   },
   "everyday-functions/function-with-members": {
-    "typed": 58,
-    "untyped": 59
+    "typed": 12,
+    "untyped": 12
   },
   "everyday-functions/functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name": {
     "typed": 206.4,
@@ -3368,8 +3368,8 @@
     "untyped": 9
   },
   "everyday-objects/grouping-by-string-key": {
-    "typed": 827.8,
-    "untyped": 828.7
+    "typed": 644.7,
+    "untyped": 644.4
   },
   "everyday-objects/has-own": {
     "typed": 61.7,
@@ -4524,8 +4524,8 @@
     "untyped": 7
   },
   "everyday-spellings/static.function-property": {
-    "typed": 54,
-    "untyped": 54
+    "typed": 10,
+    "untyped": 10
   },
   "everyday-spellings/static.global-this": {
     "typed": 18,

@@ -1,10 +1,14 @@
 use super::evaluate::Value;
-use super::folder::Folder;
+use super::folder::{Effects, Folder};
 use crate::bind::CommonJsVariable;
 use crate::hir::{
     BinOp, ExprId, ExprKind, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
 };
 use crate::import_sites::is_free_common_js;
+
+fn is_logical(op: BinOp) -> bool {
+    matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+}
 
 #[derive(Copy, Clone)]
 pub(super) struct ExcludedOperand {
@@ -77,31 +81,112 @@ impl Folder<'_, '_> {
         self.condition(e).filter(|_| self.is_folded_by_bun_run(e))
     }
 
-    /// As a condition, `void x` is false and `typeof x` is true whatever `x` is.
+    /// `to_boolean`
     pub(super) fn is_truthy_in_bun_run(&self, e: ExprId) -> Option<bool> {
-        let (mut e, mut is_negated) = (e, false);
-        let is_truthy = loop {
-            match self.hir[e].kind {
-                ExprKind::Unary {
-                    op: UnOp::Not,
-                    operand,
-                } => {
-                    (e, is_negated) = (operand, !is_negated);
-                }
-                ExprKind::Unary { op: UnOp::Void, .. } => break Some(false),
-                ExprKind::Unary {
-                    op: UnOp::Typeof, ..
-                } => break Some(true),
-                _ => break self.condition_in_bun_run(e),
-            }
-        };
-        is_truthy.map(|is_truthy| is_truthy != is_negated)
+        self.condition(e).filter(|_| {
+            self.is_folded_by_bun_run(e) || self.conditions_told_by_shape.contains(e.idx())
+        })
     }
 
-    pub(super) fn exclude_operand(&mut self, operand: ExprId, decided_by: ExprId) {
+    /// As a condition, `void x` is false and `typeof x` is true whatever `x` is, so `bun run` knows them where the build alone knows `x`.
+    pub(super) fn tells_condition_by_shape(&self, e: ExprId) -> bool {
+        let is_known = |operand: ExprId| self.is_truthy_in_bun_run(operand).is_some();
+        match self.hir[e].kind {
+            ExprKind::Unary { op, operand } => match op {
+                UnOp::Typeof | UnOp::Void => true,
+                UnOp::Not => is_known(operand),
+                _ => false,
+            },
+            ExprKind::Binary { op, left, right } => {
+                let is_either = |condition: bool| {
+                    [left, right]
+                        .map(|operand| self.is_truthy_in_bun_run(operand))
+                        .contains(&Some(condition))
+                };
+                match op {
+                    BinOp::Comma => is_known(right),
+                    BinOp::And => is_either(false),
+                    BinOp::Or => is_either(true),
+                    _ => false,
+                }
+            }
+            ExprKind::As { expr, .. }
+            | ExprKind::Satisfies { expr, .. }
+            | ExprKind::AsConst(expr)
+            | ExprKind::NonNull(expr)
+            | ExprKind::Instantiation { expr, .. } => is_known(expr),
+            _ => false,
+        }
+    }
+
+    /// `to_null_or_undefined`: an operator that always answers a number, a string or a boolean answers neither, whatever its operands are.
+    pub(super) fn is_nullish_in_bun_run(&self, e: ExprId) -> Option<bool> {
+        let hir = self.hir;
+        let mut e = e;
+        loop {
+            e = hir.skip_type_assertions(e);
+            let kind = hir[e].kind;
+            if let ExprKind::Binary { op, .. } = kind
+                && is_logical(op)
+            {
+                return self.nullish_logical_results.get(&e).copied();
+            }
+            if let Value::Known(value) = self.folded(e).value
+                && self.is_folded_by_bun_run(e)
+            {
+                return Some(self.evaluator.is_nullish(value));
+            }
+            return match kind {
+                ExprKind::Regex { .. }
+                | ExprKind::Fn(_)
+                | ExprKind::Class(_)
+                | ExprKind::Object(_)
+                | ExprKind::Array(_) => Some(false),
+                ExprKind::Unary { op, .. } => Some(op == UnOp::Void),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => {
+                    e = right;
+                    continue;
+                }
+                ExprKind::Binary { .. } => Some(false),
+                ExprKind::Assign { op: Some(op), .. } => (!is_logical(op)).then_some(false),
+                _ => None,
+            };
+        }
+    }
+
+    /// `bun run` puts one operand in place of `left op right` where the left one decides, and knows of the whole what it knows of that operand.
+    pub(super) fn note_nullish_logical_result(
+        &mut self,
+        e: ExprId,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) {
+        let is_left_result = match op {
+            BinOp::And => self.is_truthy_in_bun_run(left).map(|is_truthy| !is_truthy),
+            BinOp::Or => self.is_truthy_in_bun_run(left),
+            _ => self
+                .is_nullish_in_bun_run(left)
+                .map(|is_nullish| !is_nullish),
+        };
+        let result = match is_left_result {
+            Some(true) => left,
+            Some(false) if self.folded(left).effects == Effects::None => right,
+            Some(false) | None => return,
+        };
+        if let Some(is_nullish) = self.is_nullish_in_bun_run(result) {
+            self.nullish_logical_results.insert(e, is_nullish);
+        }
+    }
+
+    pub(super) fn exclude_operand(&mut self, operand: ExprId, is_excluded_by_bun_run: bool) {
         self.excluded_operands.push(ExcludedOperand {
             operand,
-            is_excluded_by_bun_run: self.is_folded_by_bun_run(decided_by),
+            is_excluded_by_bun_run,
         });
     }
 
@@ -118,6 +203,14 @@ impl Folder<'_, '_> {
             ExprKind::Binary { op, left, right } => match op {
                 BinOp::Comma => by_build_alone(right),
                 BinOp::EqEq | BinOp::NotEq if self.converts_an_operand(left, right) => true,
+                // `bun run` compares literals.
+                BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
+                    if [left, right]
+                        .iter()
+                        .any(|&operand| matches!(self.folded(operand).value, Value::Unknown)) =>
+                {
+                    true
+                }
                 _ if !by_build_alone(left) && !by_build_alone(right) => false,
                 BinOp::And => !self.is_logical_result_known_to_bun_run(left, right, false),
                 BinOp::Or => !self.is_logical_result_known_to_bun_run(left, right, true),

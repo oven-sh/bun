@@ -100,7 +100,10 @@ fn observe(module: &str) -> String {
     format!("import * as observed from './{module}';\nconsole.log(observed);\n")
 }
 
-fn build_records(projects: &Projects<'_, '_>, numbered: &mut Numbered) -> ModuleRecords {
+fn build_records(
+    projects: &Projects<'_, '_>,
+    numbered: &mut Numbered,
+) -> Result<ModuleRecords, LinkError> {
     let Numbered {
         prepared,
         numbering,
@@ -115,8 +118,36 @@ fn build_records(projects: &Projects<'_, '_>, numbered: &mut Numbered) -> Module
         variables: &prepared.variables,
         definitions: &prepared.definitions,
         numbering,
+        progress: RecordProgress::default(),
     };
     build_module_records(&mut prepared.units, &input, strings)
+}
+
+#[test]
+fn request_for_a_module_without_a_record_is_an_error() {
+    let files = [
+        ("main.js", "import './other.js';\n"),
+        ("other.js", "console.log(1);\n"),
+    ];
+    with_lowered_units(&files, |units, projects| {
+        let mut numbered = number_units(units, projects);
+        let [main, other] = ["main.js", "other.js"]
+            .map(|name| ProgramModule::File(application_file(find_file(projects, name))));
+        let index = numbered.prepared.modules.index_of(other) as usize;
+        let dropped = numbered.numbering.modules[index].take();
+        let dropped = dropped.expect("the module has a record");
+        for id in numbered.numbering.modules.iter_mut().flatten() {
+            if id.index() > dropped.index() {
+                *id = ModuleId::new(id.index() - 1);
+            }
+        }
+        match build_records(projects, &mut numbered) {
+            Err(LinkError::MissingRecord { module, named_by }) => {
+                assert_eq!((module, named_by), (other, Some(main)));
+            }
+            _ => panic!("the records name a module that has none"),
+        }
+    });
 }
 
 #[test]
@@ -596,7 +627,7 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
             numbered.strings.intern(name);
         }
 
-        let records = build_records(projects, &mut numbered);
+        let records = build_records(projects, &mut numbered).expect("every module has a record");
 
         let exporter = ProgramModule::File(application_file(find_file(projects, "names.js")));
         let exporter = numbered.prepared.modules.index_of(exporter) as usize;

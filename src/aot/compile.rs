@@ -144,10 +144,6 @@ pub struct Compilation {
     replaced_exports: Vec<ReplacedExport>,
     /// Tests were not analyzed, by the word of the engine, and their exports were compiled as exports that keep their values.
     lacks_replaceable_exports: bool,
-    /// A program is too large for whole-program analysis, by the word of the engine.
-    is_too_large_to_analyze: bool,
-    /// The load expected the analysis to stop, and it came to an end, by the word of the engine.
-    holds_whole_library_for_nothing: bool,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -276,8 +272,6 @@ pub(crate) struct Build<'a> {
     pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
     /// `KnownWorkerFiles::of_the_one_program`, where the load can tell: it then ends ahead of all other stages.
     pub(crate) files_of_the_one_program: Vec<WorkerFile>,
-    /// The load expects whole-program analysis to stop, so it holds all of Bun's own code from the start.
-    pub(crate) holds_whole_library_as_guess: bool,
     pub(crate) expects_exports_to_be_replaced: bool,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) brings_bun_types: bool,
@@ -386,9 +380,6 @@ struct FrontEndOutput {
     lets_process_out_of_sight: bool,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
-    holds_whole_library_as_guess: bool,
-    /// `Build::skips_analysis_of_tests`
-    skips_analysis_of_tests: bool,
     /// `Build::expects_exports_to_be_replaced`
     expects_exports_to_be_replaced: bool,
     /// Of a build that runs tests.
@@ -717,12 +708,8 @@ fn find_library_code_lacked(
 
 // The engine did not analyze the program, so its lists of what is used are empty and say nothing.
 fn has_followed_nothing(found: FlowFindings<'_>) -> bool {
-    found.unseen_code.iter().any(|record| {
-        matches!(
-            record.cause,
-            UnseenCodeCause::FlowResultDisabled | UnseenCodeCause::LimitReached
-        )
-    })
+    let mut causes = found.unseen_code.iter().map(|record| record.cause);
+    causes.any(|cause| cause == UnseenCodeCause::FlowResultDisabled)
 }
 
 // The analysis says which exports the spies of tests replace. Without it they may replace any.
@@ -732,12 +719,6 @@ fn lacks_replaceable_exports(options: &Options<'_>, found: FlowFindings<'_>) -> 
         && !load.mocks_any_module
         && !options.aot.checks_only
         && has_followed_nothing(found)
-}
-
-// The analysis stopped at its budget, and would stop there again.
-fn is_too_large_to_analyze(found: FlowFindings<'_>) -> bool {
-    let mut causes = found.unseen_code.iter().map(|record| record.cause);
-    causes.any(|cause| cause == UnseenCodeCause::LimitReached)
 }
 
 // An executable keeps track of which file is the main module where the front end has seen somebody ask.
@@ -863,8 +844,6 @@ fn find_load_options_with_what_engine_found(
         compiled.ways_named_that_nobody_reads,
         &compiled.replaced_exports,
         compiled.lacks_replaceable_exports,
-        compiled.is_too_large_to_analyze,
-        compiled.holds_whole_library_for_nothing,
     )
 }
 
@@ -876,15 +855,7 @@ fn find_load_options_with(
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     replaced_exports: &[ReplacedExport],
     lacks_replaceable_exports: bool,
-    is_too_large_to_analyze: bool,
-    holds_whole_library_for_nothing: bool,
 ) -> Option<LoadOptions> {
-    // The program is compiled as if nothing had been expected. What the engine found beside all that code says nothing about it.
-    if holds_whole_library_for_nothing {
-        let mut load = options.load.clone();
-        load.is_known_to_be_analyzed = true;
-        return Some(load);
-    }
     let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
     if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
         let load = load.get_or_insert_with(|| options.load.clone());
@@ -913,9 +884,6 @@ fn find_load_options_with(
     if lacks_replaceable_exports {
         let load = load.get_or_insert_with(|| options.load.clone());
         load.mocks_any_module = true;
-    }
-    if let Some(load) = &mut load {
-        load.is_too_large_to_analyze |= is_too_large_to_analyze;
     }
     load
 }
@@ -971,8 +939,6 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
                 load.ways_named_that_nobody_reads.parent,
             ),
             ("takes the run time as any", load.takes_runtime_as_any),
-            ("too large to analyze", load.is_too_large_to_analyze),
-            ("known to be analyzed", load.is_known_to_be_analyzed),
         ]
     };
     let changed: Vec<&str> = (flags(before).iter().zip(flags(after)))
@@ -1464,8 +1430,6 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
     first.replaced_exports.extend(program.replaced_exports);
     first.lacks_replaceable_exports |= program.lacks_replaceable_exports;
-    first.is_too_large_to_analyze |= program.is_too_large_to_analyze;
-    first.holds_whole_library_for_nothing |= program.holds_whole_library_for_nothing;
 }
 
 fn compile_written_entry_points(
@@ -1711,13 +1675,7 @@ fn compile_programs<'a>(
         thread_count: options.thread_count(),
         reports_functions: options.lists_modules,
     };
-    let engine_options = EngineOptions::new(&request).and_then(|mut engine_options| {
-        if options.load.is_too_large_to_analyze {
-            engine_options.skip_flow_analysis()?;
-        }
-        Ok(engine_options)
-    });
-    let mut engine_options = match engine_options {
+    let mut engine_options = match EngineOptions::new(&request) {
         Ok(engine_options) => engine_options,
         Err(rejected) => {
             let mut diagnostics = Diagnostics::new();
@@ -1736,9 +1694,6 @@ fn compile_programs<'a>(
     };
     let caches = ThreadCaches::default();
     let mut build = Build::new(options, provider, &caches, engine_options.limit_values());
-    if options.load.is_too_large_to_analyze {
-        build.diagnostics.add_program_too_large_to_analyze();
-    }
     build.programs = programs;
     build.known_worker_files =
         known_worker_files.map(|known| (known.splits, known.left_out.to_vec()));
@@ -1801,15 +1756,6 @@ fn compile_programs<'a>(
         if options.aot.checks_only {
             engine_options.check_only();
         }
-        if output.skips_analysis_of_tests && !options.load.is_too_large_to_analyze {
-            if let Err(rejected) = engine_options.skip_flow_analysis() {
-                build.diagnostics.add_internal_error(InternalError {
-                    stage: Stage::Any,
-                    message: rejected.sentence,
-                });
-                return Err(build.finish::<()>(Err(Stage::Any), log).unwrap_err());
-            }
-        }
         let own = match (place, programs) {
             (ProgramPlace::OneOfSeveral(index), Some(all)) => {
                 let position = all.indexes.iter().position(|&it| it == index);
@@ -1822,15 +1768,9 @@ fn compile_programs<'a>(
         let lets_process_out_of_sight = output.lets_process_out_of_sight;
         let ways_not_followed = output.ways_not_followed_out_of_sight;
         let ways_followed = output.ways_followed_for_their_names;
-        let holds_whole_library = output.holds_whole_library_as_guess;
-        let skips_analysis = output.skips_analysis_of_tests;
         let expects_replaced = output.expects_exports_to_be_replaced;
         let exported_variables = &output.exported_variables;
-        // All of it was asked for, so what is still lacked is not to be had.
-        let find_lacked = |found: FlowFindings<'_>| match holds_whole_library {
-            true => RuntimeUses::default(),
-            false => find_library_code_lacked(found, held, platform),
-        };
+        let find_lacked = |found: FlowFindings<'_>| find_library_code_lacked(found, held, platform);
         // A program that is compiled again, with what the engine has found: nothing is made of it now.
         let goes_on = |found: FlowFindings<'_>| {
             let lacked = find_lacked(found);
@@ -1838,7 +1778,6 @@ fn compile_programs<'a>(
                 lacks_main_module && reads_main_module(found, lets_process_out_of_sight);
             let ways = find_ways_read_out_of_sight(found, ways_not_followed);
             let nobody_reads = find_ways_named_that_nobody_reads(found, ways_followed);
-            let is_too_large = is_too_large_to_analyze(found);
             let load = find_load_options_with(
                 own,
                 &lacked,
@@ -1849,9 +1788,7 @@ fn compile_programs<'a>(
                     true => Vec::new(),
                     false => exported_variables.find_replaced(found),
                 },
-                !skips_analysis && !expects_replaced && lacks_replaceable_exports(own, found),
-                is_too_large,
-                holds_whole_library && !has_followed_nothing(found),
+                !expects_replaced && lacks_replaceable_exports(own, found),
             );
             load.is_none()
         };
@@ -1961,18 +1898,12 @@ fn compile_programs<'a>(
                 true => Vec::new(),
                 false => (output.exported_variables).find_replaced(engine.flow_findings()),
             };
-            let lacks_replaceable_exports = !output.skips_analysis_of_tests
-                && !output.expects_exports_to_be_replaced
+            let lacks_replaceable_exports = !output.expects_exports_to_be_replaced
                 && lacks_replaceable_exports(options, engine.flow_findings());
-            let is_too_large_to_analyze = is_too_large_to_analyze(engine.flow_findings());
-            let holds_whole_library_for_nothing = output.holds_whole_library_as_guess
-                && !has_followed_nothing(engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 replaced_exports,
                 lacks_replaceable_exports,
-                is_too_large_to_analyze,
-                holds_whole_library_for_nothing,
                 reads_main_module_without_its_name,
                 ways_read_out_of_sight,
                 ways_named_that_nobody_reads,
@@ -2073,17 +2004,8 @@ fn fail(
 }
 
 impl<'a> Build<'a> {
-    /// Flow runs for tests. A test of the net names the limit, to have a load that expects flow to stop go on without it.
-    pub(crate) fn skips_analysis_of_tests(&self) -> bool {
-        self.options.load.runs_tests
-            && self.holds_whole_library_as_guess
-            && load_stage::names_limit_of_analysis(self.options)
-    }
-
     pub(crate) fn mocks_any_module(&self) -> bool {
-        self.options.load.mocks_any_module
-            || self.expects_exports_to_be_replaced
-            || self.skips_analysis_of_tests()
+        self.options.load.mocks_any_module || self.expects_exports_to_be_replaced
     }
 
     pub(crate) fn new(
@@ -2125,7 +2047,6 @@ impl<'a> Build<'a> {
             is_one_program: false,
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
-            holds_whole_library_as_guess: false,
             expects_exports_to_be_replaced: false,
             started_workers: StartedWorkers::default(),
             brings_bun_types: false,

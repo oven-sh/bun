@@ -2,7 +2,7 @@ use bun_sema::bind::CommonJsVariable;
 use bun_sema::check::aot::{
     ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeIdentity, TypeParameterRef,
 };
-use bun_sema::hir::MemberId;
+use bun_sema::hir::{ExprId, MemberId};
 use bun_sema::program::{FileId, Sym};
 
 use crate::modules::SyntheticExportId;
@@ -89,6 +89,11 @@ pub enum VariableKey {
         class: ClassRef,
         slot: ClassSlot,
     },
+    /// A member that the statements of a file store on a function declared among them. `store` is the first such statement.
+    FunctionMember {
+        function: FunctionRef,
+        store: ExprId,
+    },
     /// `__filename` or `__dirname` of an ES module that stores to it.
     ModulePath {
         file: FileId,
@@ -160,6 +165,7 @@ impl VariableKey {
         match *self {
             VariableKey::Symbol(symbol) => Some(symbol.file),
             VariableKey::ClassSlot { class, .. } => Some(class.file),
+            VariableKey::FunctionMember { function, .. } => Some(function.file),
             VariableKey::ModuleExports(file) | VariableKey::ModulePath { file, .. } => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),

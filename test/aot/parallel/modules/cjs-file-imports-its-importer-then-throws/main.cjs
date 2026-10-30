@@ -57,6 +57,25 @@ try {
   say("whole: threw", text(error));
 }
 try {
+  require("./stores/module.mjs");
+  say("stores: required");
+} catch (error) {
+  say("stores: threw", text(error));
+}
+for (const kind of ["handed", "exported"]) {
+  try {
+    say(kind + ": required", Object.keys(kind === "handed" ? require("./handed/module.mjs") : require("./exported/module.mjs")).join());
+  } catch (error) {
+    say(kind + ": threw", text(error));
+  }
+}
+try {
+  require("./barrel/module.mjs");
+  say("barrel: required");
+} catch (error) {
+  say("barrel: threw", text(error));
+}
+try {
   require("./again/module.mjs");
   say("again: required");
 } catch (error) {

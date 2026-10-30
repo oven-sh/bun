@@ -781,12 +781,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let outer = self
                     .builder
                     .set_tail_position(self.is_call_in_tail_position);
+                // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
+                let modules = self.file.inputs.modules;
+                let may_load_again = modules.may_be_evicted()
+                    && modules.is_code_of_program(module)
+                    && matches!(module, ModuleRef::File(file) if modules.kind(file) == ModuleKind::SourceText);
                 let required = match (site.plan, site.specifier) {
-                    (Some(plan), _) => self.emit_planned_require(plan),
-                    (None, ImportSpecifier::Constant(text)) => {
+                    (Some(plan), _) if !may_load_again => self.emit_planned_require(plan),
+                    (_, ImportSpecifier::Constant(text)) => {
                         let text = self.file.intern_atom(text);
                         self.emit_require_module(module, text)
                     }
+                    (Some(plan), _) => self.emit_planned_require(plan),
                     (None, _) => unreachable!("only a constant specifier names one module"),
                 };
                 self.builder.set_tail_position(outer);

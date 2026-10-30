@@ -161,31 +161,30 @@ function f4 name="Chain" module=m0 position=2807 kind=BaseConstructor flags=[Has
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 60 = Integer integer=60
-# CHECK-NEXT: v1: Array = NewArrayLike v0 allocationSite=1 arrayStorage=Int32
+# CHECK-NEXT: v1: Array<int[0, 82], Int32> = NewArray contents=int[0, 82] capacity=v0 allocationSite=1 arrayStorage=Int32 [contentsAreProven]
 # CHECK-NEXT: v2: Array<int[0, 82], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<int[0, 82], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: Array<int[0, 82], proven, Int32, pristine[Storage, Names]> = AssumeType v1 provenType=Array<int[0, 82], proven, Int32, pristine[Storage, Names]>
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v4)
-# CHECK-NEXT: b1(v5: int[0, 60]):
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v3)
+# CHECK-NEXT: b1(v4: int[0, 60]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: 60 = Integer integer=60
-# CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v9: int[0, 59]):
-# CHECK-NEXT: v10: 29 = Integer integer=29
-# CHECK-NEXT: v11: int[0, 1711] = Mul v9, v10
-# CHECK-NEXT: v12: 83 = Integer integer=83
-# CHECK-NEXT: v13: int[0, 82] = Mod v11, v12
-# CHECK-NEXT: PutArrayElement v3, v5, v13 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, fillsNewList]
-# CHECK-NEXT: v15: int[1, 60] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v15)
+# CHECK-NEXT: v6: 60 = Integer integer=60
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v8: int[0, 59]):
+# CHECK-NEXT: v9: 29 = Integer integer=29
+# CHECK-NEXT: v10: int[0, 1711] = Mul v8, v9
+# CHECK-NEXT: v11: 83 = Integer integer=83
+# CHECK-NEXT: v12: int[0, 82] = Mod v10, v11
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v2, v12 overload=ArrayPrototypePush/0 accessSite=1
+# CHECK-NEXT: v14: int[1, 60] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v14)
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v16: number = CallDirect v2 function=f9 accessSite=3
+# CHECK-NEXT: v15: number = CallDirect v2 function=f9 accessSite=3
+# CHECK-NEXT: v16: 0 = Integer
 # CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: v19: undefined|null|string = CallDirect v17, v18 function=f2 accessSite=4
-# CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v18: undefined|null|string = CallDirect v16, v17 function=f2 accessSite=4
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tallyFrom"
 # CHECK: module=m0 position=451 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=L1 flags=[OmitsNull, OmitsUndefined]}, {type=Array<int[0, 82], proven, Int32, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=int|whole}, {type=int|whole}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f6} inlineFrames=[{}, {callee=f10 callPosition=451 module=m0}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}] {

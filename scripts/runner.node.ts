@@ -342,6 +342,8 @@ const aotTestsThatAskTheSystem = [
   "aot/a-busy-caller-unbinds-no-child",
   "aot/programs-that-died-in-the-shell-on-one-platform",
   "aot/back-end-options-from-environment",
+  "aot/program-handover",
+  "aot/macos-shared-memory",
   "aot/parallel/process/",
   "aot/parallel/globals/",
   "aot/parallel/host-classes/process-env-read-fast-every-variable",

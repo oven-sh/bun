@@ -230,7 +230,10 @@ impl PartBuilder {
             vm.event_loop().cast(),
         ));
         #[cfg(windows)]
-        let handle = spawned.to_process_handle(vm.event_loop());
+        let handle = {
+            let mut spawned = spawned;
+            spawned.to_process_handle(vm.event_loop())
+        };
         let mut builder = Box::new(PartBuilder {
             part,
             process: None,

@@ -1,10 +1,12 @@
 // `import * as other` used by every function of a module: each use ties the namespace object to all the exports of the
-// other module, so one round of flow logged uses times exports edges, nearly all of them the same, and went past the edge
-// budget long before the program did. No test program is that large, so the budget is lowered: the program logs 4,500,000
-// edges that way, and needs far fewer than the budget.
+// other module, so one round of flow logged uses times exports edges, nearly all of them the same: 4,500,000 for this
+// program, which needs far fewer than the bound below.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "path";
+import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 
@@ -29,9 +31,10 @@ console.log(sum);
 `,
   });
 
-  test("keeps whole-program analysis and prints what plain Bun prints", async () => {
-    const built = await build("main.js", "--aot", "--aot-limit=MaxValueFlowEdgesLogged:2000000");
-    expect(built.stderr + built.stdout).not.toContain("TS100073");
+  test("logs few edges and prints what plain Bun prints", async () => {
+    const report = join(folder, "report.json");
+    const built = await build("main.js", "--aot", ...withReport(report, "summary"));
+    expect(readBuildReport(report).statistics.FlowEdgesLogged).toBeLessThan(2000000);
     const printedBy = async (cmd: string[]) => {
       const { stdout, exitCode } = await run(cmd, folder, bunEnv);
       return { stdout, exitCode };

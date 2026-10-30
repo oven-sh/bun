@@ -54,7 +54,7 @@ use definitions::{
 };
 use keys::merge_keys;
 use marks::mark;
-use module_records::{RecordInput, build_module_records};
+use module_records::{RecordInput, RecordProgress, build_module_records};
 use module_table::{collect_module_origins, collect_modules};
 use move_definitions::{MoveInput, move_definitions};
 use numbering::{ProgramDefinitions, number_program};
@@ -129,6 +129,10 @@ pub enum LinkError {
     },
     MissingUnit {
         file: ProgramFile,
+    },
+    MissingRecord {
+        module: ProgramModule,
+        named_by: Option<ProgramModule>,
     },
     TypeHashCollision {
         files: [ProgramFile; 2],
@@ -315,6 +319,7 @@ pub fn link_while(
                         variables: &variables,
                         definitions: &definitions,
                         numbering: &numbering,
+                        progress: RecordProgress::default(),
                     },
                     &mut strings,
                 )
@@ -322,6 +327,7 @@ pub fn link_while(
             run_beside(beside, build_records, || meanwhile(&keys)).0
         },
     );
+    let records = records.map_err(|error| vec![error])?;
     let module_origins = collect_module_origins(&projects, &modules, &numbering);
     let mut writes_preload = false;
     run_beside(

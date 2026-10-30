@@ -286,6 +286,8 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
+declare function $requireCacheCompiledEntry(key?: string): any;
+declare function $requireCacheDidDelete(key: string): void;
 declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
 /** Without a key: does this process hide any file from require.cache? */
 declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;

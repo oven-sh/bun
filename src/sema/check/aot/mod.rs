@@ -43,6 +43,7 @@ pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
     BuiltinValuePath, BuiltinValuePathList, Denotation,
 };
+pub use class_shape::can_have_static_side;
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
 pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_types};

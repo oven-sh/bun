@@ -134,7 +134,6 @@ fn with_bundle(
             input.sources,
             provider,
             &|_| true,
-            &[],
             session.arena(),
             &atoms,
             &mut log,

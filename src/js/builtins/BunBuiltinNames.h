@@ -170,6 +170,8 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheCompiledEntry) \
+    macro(requireCacheDidDelete) \
     macro(requireCacheWillSet) \
     macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \

@@ -9,6 +9,7 @@ use bun_aot::load::source_provider::{ComponentFile, Failed, MacroCall};
 use bun_ast::{E, Expr, ExprData, ExprNodeList, Loc, Log, Range, Source};
 use bun_core::{Output, zstr};
 use bun_js_parser as js_parser;
+use bun_js_parser::Macro::KnownAnswers;
 use bun_react_compiler::Observer;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::DataValue;
@@ -19,11 +20,13 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+/// By the importer and the position of the call in it.
+type Answers = Guarded<BTreeMap<(Vec<u8>, u32), Arc<PortableValue>>>;
+
 pub(crate) struct MacroThread {
     shared: Arc<Shared>,
     handle: Guarded<Option<JoinHandle<()>>>,
-    /// By the importer and the position of the call in it.
-    answers: Guarded<BTreeMap<(Vec<u8>, u32), Arc<PortableValue>>>,
+    answers: Answers,
 }
 
 impl MacroThread {
@@ -95,6 +98,7 @@ impl MacroThread {
             context,
             file,
             observer,
+            answers: &self.answers,
         };
         // `submit` returns after the job has run, or without running it.
         let work = Work::Parse(BorrowedParse(NonNull::from(&mut parse).cast()));
@@ -194,6 +198,39 @@ struct Parse<'a> {
     context: &'a BuildContext,
     file: &'a ComponentFile<'a>,
     observer: &'a mut dyn Observer,
+    answers: &'a Answers,
+}
+
+/// The answers of the build, for Bun's parser.
+struct AnswersForParser<'a> {
+    answers: &'a Answers,
+    /// Holds the strings of what `find` returns.
+    arena: Arena,
+}
+
+impl KnownAnswers for AnswersForParser<'_> {
+    fn find(&mut self, source: &Source, call: Loc) -> Option<Expr> {
+        let site = (source.path.text.to_vec(), u32::try_from(call.start).ok()?);
+        let portable = self.answers.lock().get(&site).cloned()?;
+        let mut builder = ExprBuilder::new(&self.arena);
+        portable.replay(&mut builder);
+        Some(builder.finish())
+    }
+
+    fn add(&mut self, source: &Source, call: Loc, answer: &Expr) {
+        let Ok(position) = u32::try_from(call.start) else {
+            return;
+        };
+        // The load reports an answer that is no data when it comes to the call itself.
+        let mut portable = PortableValue::default();
+        if !matches!(answer.data, ExprData::ECall(_))
+            && write_expr(answer, &self.arena, &mut portable).is_ok()
+        {
+            let site = (source.path.text.to_vec(), position);
+            let mut answers = self.answers.lock();
+            answers.entry(site).or_insert_with(|| Arc::new(portable));
+        }
+    }
 }
 
 /// A parse the submitting thread is blocked on.
@@ -281,8 +318,13 @@ fn thread_main(shared: Arc<Shared>, context: BuildContext) {
             Work::Parse(parse) => {
                 // SAFETY: the submitting thread keeps the `Parse` alive until this job finishes, and does not touch it.
                 let parse = unsafe { &mut *parse.0.as_ptr() };
-                let (context, file) = (parse.context, parse.file);
-                match components::compile_components(context, file, parse.observer, &mut log) {
+                let (context, file, observer) = (parse.context, parse.file, &mut *parse.observer);
+                let mut answers = AnswersForParser {
+                    answers: parse.answers,
+                    arena: Arena::new(),
+                };
+                let known = Some(&mut answers as &mut dyn KnownAnswers);
+                match components::compile_components(context, file, observer, known, &mut log) {
                     true => Ok(PortableValue::default()),
                     false => Err(Failed),
                 }

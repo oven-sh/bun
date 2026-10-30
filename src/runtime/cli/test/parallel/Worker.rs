@@ -86,6 +86,8 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) cwd: &'a [u8],
     pub(crate) argv: &'a [bun_spawn::CStrPtr],
     pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
+    /// Windows hands it over as an inherited handle, which the worker's arguments name.
+    #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     /// A run of test files one after another prints to the stdout of `bun test`, as without workers.
     pub(crate) inherits_stdout: bool,

@@ -73,10 +73,6 @@ pub struct LoadOptions {
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
-    /// An earlier compile of the same program was too large for whole-program analysis, by the word of the engine.
-    pub is_too_large_to_analyze: bool,
-    /// An earlier compile of the same program held all of Bun's own code because it expected the analysis to stop, and the analysis came to an end, by the word of the engine.
-    pub is_known_to_be_analyzed: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -179,8 +175,6 @@ impl LoadOptions {
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
             mocks_any_module: false,
-            is_too_large_to_analyze: false,
-            is_known_to_be_analyzed: false,
         }
     }
 }

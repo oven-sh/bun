@@ -407,7 +407,9 @@ impl<'a, 's> KnownObjects<'a, 's> {
     /// What a variable of a module of data holds from before any code of the program runs, where that is no object: `import { version } from "./data.json"`.
     pub(crate) fn find_data_variable(&self, variable: Sym) -> Option<(Sym, Constant)> {
         let variable = self.follow_imports(variable)?;
-        if !self.is_data_module(variable.file) {
+        // A mock stores in the variable.
+        let may_be_mocked = || self.graph.may_be_mocked(ModuleRef::File(variable.file));
+        if !self.is_data_module(variable.file) || may_be_mocked() {
             return None;
         }
         let (hir, bound) = (

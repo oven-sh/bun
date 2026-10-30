@@ -317,7 +317,7 @@ fn limit_separates_causes() {
     };
     let records = [
         reached(0, LimitId::MaxTypeNodes),
-        reached(4, LimitId::MaxValueFlowEdgesLogged),
+        reached(4, LimitId::MaxValueFlowSetMembers),
         reached(8, LimitId::MaxTypeNodes),
     ];
     let found: Vec<(LimitId, u64)> = collect(&records)
@@ -328,7 +328,7 @@ fn limit_separates_causes() {
         found,
         [
             (LimitId::MaxTypeNodes, 2),
-            (LimitId::MaxValueFlowEdgesLogged, 1)
+            (LimitId::MaxValueFlowSetMembers, 1)
         ]
     );
 }
@@ -665,7 +665,7 @@ fn rank_is_total() {
         one(UnprovenCause::FieldDeleted, LimitId::None, 10),
         one(
             UnprovenCause::LimitReached,
-            LimitId::MaxValueFlowEdgesLogged,
+            LimitId::MaxValueFlowSetMembers,
             10,
         ),
         one(UnprovenCause::UnknownObject, LimitId::None, 10),
@@ -755,7 +755,7 @@ fn share_of_one_access_is_singular() {
 
 #[test]
 fn text_entry_orders_notes() {
-    let limit = LimitId::MaxValueFlowEdgesLogged;
+    let limit = LimitId::MaxValueFlowSetMembers;
     let cause = Cause {
         ill_typed_cause: IllTypedCause::Assertion,
         limit,
@@ -948,7 +948,7 @@ fn limit_value_is_asked_per_cause() {
     };
     let causes = [
         reached(LimitId::MaxTypeNodes, 0),
-        reached(LimitId::MaxValueFlowEdgesLogged, 4),
+        reached(LimitId::MaxValueFlowSetMembers, 4),
     ];
     let value_of = |limit| {
         if limit == LimitId::MaxTypeNodes {
@@ -965,7 +965,7 @@ fn limit_value_is_asked_per_cause() {
         notes.find(|note| note.starts_with(b"limit ")).unwrap()
     };
     assert!(limit_note(&entries[1]).starts_with(b"limit MaxTypeNodes = 3 (limits "));
-    assert!(limit_note(&entries[2]).starts_with(b"limit MaxValueFlowEdgesLogged = 70 (limits "));
+    assert!(limit_note(&entries[2]).starts_with(b"limit MaxValueFlowSetMembers = 70 (limits "));
 }
 
 #[test]

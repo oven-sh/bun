@@ -607,7 +607,7 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
 #if ENABLE(AOT)
     auto specifier = specifierString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    loaded.compiledModule = Bun::compiledModuleForPath(specifier);
+    loaded.compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::compiledModuleForPath(specifier));
 #endif
     return loaded;
 }
@@ -792,7 +792,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     RETURN_IF_EXCEPTION(scope, {});
 
 #if ENABLE(AOT)
-    if (auto compiledModule = Bun::compiledModuleForPath(specifier); compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
+    if (auto compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::compiledModuleForPath(specifier)); compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
         return {};
     }
@@ -808,11 +808,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 #if ENABLE(AOT)
     // As under `bun run`, the factory waits for the first import of a module that has not loaded.
     if (loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule && !JSC::AOT::hasBegunToLoad(globalObject, *loaded.compiledModule)) {
-        uint32_t module = loaded.compiledModule->index();
         auto& waiting = globalObject->onLoadPlugins.compiledMocksToRun;
-        waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
-        waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
-        JSC::AOT::deferMock(globalObject, *loaded.compiledModule);
+        auto wait = [&](JSC::AOT::ModuleID form) {
+            uint32_t module = form.index();
+            waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
+            waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
+            JSC::AOT::deferMock(globalObject, form);
+        };
+        wait(*loaded.compiledModule);
+        for (JSC::AOT::ModuleID form : JSC::AOT::formsThatAttributesAskFor(globalObject, specifier))
+            wait(form);
         globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
         return JSValue::encode(jsUndefined());
     }
@@ -895,6 +900,7 @@ void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
         return;
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
+    loaded.compiledModule = module;
     JSC::JSPromise* pendingFactory = nullptr;
     patchLoadedModule(globalObject, mock, loaded, pendingFactory);
     RETURN_IF_EXCEPTION(scope, );

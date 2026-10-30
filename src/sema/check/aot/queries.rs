@@ -83,6 +83,7 @@ pub(super) struct Memo<'c> {
     /// For a call: which of its arguments is the first spread. `u32::MAX`: none.
     pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
     pub(super) exported_symbols: Option<FxHashSet<Sym>>,
+    pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
     pub(super) types_in_progress: TypesInProgress,

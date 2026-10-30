@@ -23,6 +23,8 @@ const privateGlobalFunctions = [
   "evictIsolationSourceProviderCache",
   "internalRequire",
   "isHiddenFromRequireCache",
+  "requireCacheCompiledEntry",
+  "requireCacheDidDelete",
   "loadEsmIntoCjs",
   "makeAbortError",
   "peekPromiseSettledValue",

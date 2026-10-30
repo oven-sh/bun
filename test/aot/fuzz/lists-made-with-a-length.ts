@@ -42,6 +42,10 @@ const before = [
 ];
 
 const heads = [
+  "let k = 0; turns++ < n; k++",
+  "let k = 0; turns++ < 16; k++",
+  "let k = 0; turns++ < n; k += 2",
+  "let k = 0; k < n && turns++ < 16; k++",
   "let k = 0; list.push(k), k < n; k++",
   "let k = 0; list.push(() => k), k < n; k++",
   "let k = 0; k < n; list.push(k), k++",
@@ -61,6 +65,10 @@ const heads = [
 ];
 
 const bodies = [
+  "if (k === 1) list = [];\n      list.push(k);",
+  "list.push(k);\n      if (k === 2) list = [];",
+  "if (turn % 3 === 0 && k === n >> 1) list = [];\n      list.push(k * 2);",
+  "if (k % 2) list = [k];\n      list.push(k);",
   "if (k === n >> 1) continue; list.push(k);",
   "if (k === 0) continue; list.push(k);",
   "if (k % 2) continue; list.push(() => k);",
@@ -142,19 +150,35 @@ export function generate(random: Random, typed: boolean): string {
     const body = head.includes("push")
       ? random.pick(["", "said += k;", "held += k;"])
       : isPlain
-        ? random.pick(bodies.slice(0, 11))
+        ? random.pick(bodies.slice(0, 15))
         : random.pick(bodies);
     const asked = [random.pick(asks.slice(0, 9)), ...random.sample(asks, random.between(0, 2))];
     const turns = random.pick([6, 40, 300, 3000]);
-    const pushesInHead = head.includes("push");
+    // Bare: a constant empty list, a bound that is small by itself and no way out of the loop, as people write it.
+    const pushesInHead =
+      head.includes("push") || (body.includes("push") && !head.includes("list.length") && random.chance(0.7));
     const start2 = pushesInHead && !isStrange ? "given" : start;
     const made2 = pushesInHead ? "[]" : made;
     const keyword = pushesInHead && !isStrange ? "const" : "let";
     const isWrapped = !isPlain && random.chance(0.2);
-    scenes.push(`function fill${scene}(given${as("number")}, turn${as("number")}) {
+    // A coroutine's body is compiled as a worker of its own, where a counter may have another type than in a plain function.
+    const form = random.pick(["plain", "plain", "plain", "generator", "generator", "async"]);
+    const pause = random.chance(0.4) ? (form === "generator" ? "yield 0;" : form === "async" ? "await null;" : "") : "";
+    const call = `fill${scene}(4 + turn % 3, turn)`;
+    scenes.push(`${form === "async" ? "async " : ""}function${form === "generator" ? "*" : ""} fill${scene}(given${as("number")}, turn${as("number")})${
+      typed
+        ? form === "generator"
+          ? ": Generator<number, string>"
+          : form === "async"
+            ? ": Promise<string>"
+            : ": string"
+        : ""
+    } {
   let said = "";
+  let turns = 0;
+  ${pause}
   ${keyword} n${as("number")} = ${start2};
-  ${keyword} list${as("any[]")} = ${pushesInHead || isStrange ? "[]" : made2};
+  ${body.includes("list = ") ? "let" : keyword} list${as("any[]")} = ${pushesInHead || isStrange ? "[]" : made2};
   ${
     isStrange
       ? `try {
@@ -166,9 +190,9 @@ export function generate(random: Random, typed: boolean): string {
   }
   try {
     ${change && !pushesInHead ? `if (turn % ${seldom} === 0) { ${change} }` : ""}
-    ${isWrapped ? "let round = 0; do {" : ""}
+    ${isWrapped ? "let round = 0; do { turns = 0;" : ""}
     for (${head}) {
-      ${body.includes("k + 1") || body.includes("push") ? "if (k > 300) break;" : ""}
+      ${body.includes("k + 1") || (body.includes("push") && !pushesInHead) ? "if (k > 300) break;" : ""}
       ${body}
     }
     ${isWrapped ? "} while (++round < 2);" : ""}
@@ -182,20 +206,26 @@ export function generate(random: Random, typed: boolean): string {
   }
   return said;
 }
-{
+${form === "async" ? "chain = chain.then(async () => {" : "{"}
   let hash = 0;
   let last = "";
   for (let turn = 0; turn < ${turns}; turn++) {
-    last = fill${scene}(4 + turn % 3, turn);
+    last = ${form === "generator" ? `drained(${call})` : form === "async" ? `await ${call}` : call};
     for (let at = 0; at < last.length; at++) hash = (hash * 31 + last.charCodeAt(at)) | 0;
   }
   console.log("scene ${scene}", hash, last);
-}`);
+}${form === "async" ? ");" : ""}`);
   }
   return `const word${as("(text: string) => string")} = Function("text", "return text")${
     typed ? " as (text: string) => string" : ""
   };
 let held = 0;
+let chain${as("Promise<void>")} = Promise.resolve();
+function drained(steps${as("Generator<number, string>")})${as("string")} {
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
 let kept${as("any")} = null;
 function handOn(list${as("any[]")}, turn${as("number")} = 0) {
   if (turn % 5 === 4) list.length = 1;

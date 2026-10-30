@@ -1,10 +1,13 @@
 // Classes reach an array one a round, and many functions read through values taken from it under declared interfaces, so
 // that each site's set of receivers grows through as many versions as there are rounds. A statement that ran for every
-// version left nodes and edges behind for each: sites times rounds, which went past the edge budget on small programs. No
-// test program is that large, so the budget is lowered: the program below needs about a tenth of it when reads wait.
+// version left nodes and edges behind for each: sites times rounds. The program below needs about a tenth of the bound
+// when reads wait.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "path";
+import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 
@@ -46,9 +49,10 @@ describe.skipIf(!!unsupported)("receivers that grow a member a round", () => {
     "main.ts": lines.join("\n") + "\n",
   });
 
-  test("keep whole-program analysis and print what plain Bun prints", async () => {
-    const built = await build("main.ts", "--aot", "--aot-limit=MaxValueFlowEdgesLogged:1000000");
-    expect(built.stderr + built.stdout).not.toContain("TS100073");
+  test("log few edges and print what plain Bun prints", async () => {
+    const report = join(folder, "report.json");
+    const built = await build("main.ts", "--aot", ...withReport(report, "summary"));
+    expect(readBuildReport(report).statistics.FlowEdgesLogged).toBeLessThan(1000000);
     const printedBy = async (cmd: string[]) => {
       const { stdout, exitCode } = await run(cmd, folder, bunEnv);
       return { stdout, exitCode };

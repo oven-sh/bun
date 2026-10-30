@@ -9,7 +9,9 @@ use bun_aot_interface::statistics::limit_values;
 use bun_core::current_work::{self, set_step_of_build};
 use bun_sema::check::aot::QueryStatistics;
 
-pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build};
+pub use self::limit_values::{
+    HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build, is_lowered_by_all,
+};
 use crate::diagnostics::{ProgramView, SourcePosition, Span, SpanLocator};
 pub use crate::ir::generated::{Architecture, DegradesTo, LimitId, Stage, StatisticId};
 
@@ -388,11 +390,12 @@ mod tests {
     }
 
     #[test]
-    fn build_error_limit_cannot_be_lowered() {
+    fn build_error_limit_is_lowered_by_its_name_alone() {
         assert!(fails_build(LimitId::MaxProgramIds));
-        assert!(!can_be_lowered(LimitId::MaxProgramIds));
+        assert!(can_be_lowered(LimitId::MaxProgramIds));
+        assert!(!is_lowered_by_all(LimitId::MaxProgramIds));
         assert!(!can_be_lowered(LimitId::None));
-        assert!(can_be_lowered(LimitId::MaxTypeNodes));
+        assert!(is_lowered_by_all(LimitId::MaxTypeNodes));
     }
 
     #[test]

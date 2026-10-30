@@ -343,7 +343,7 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v30: 1000 = Integer integer=1000
 # CHECK-NEXT: v31: boolean = Less v28, v30
-# CHECK-NEXT: Branch v31 -> taken b2(| 0), notTaken b110()
+# CHECK-NEXT: Branch v31 -> taken b2(| 0), notTaken b107()
 # CHECK-NEXT: b2(v32: int[0, 999]):
 # CHECK-NEXT: v33: 2 = Integer integer=2
 # CHECK-NEXT: v34: "t" = String string="t"
@@ -357,397 +357,390 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: v42: L2 = NewObject -, v37, v41 layout=L2 fields=[1, 0] allocationSite=16 allocationClass=2
 # CHECK-NEXT: v43: L2 = FinishObject v42
 # CHECK-NEXT: v44: L3 = NewObject -, v40, v43 layout=L3 fields=[0, 1] allocationSite=12 allocationClass=3
-# CHECK-NEXT: v45: boolean = IsPrototypeOfClass v2 layout=L3
-# CHECK-NEXT: Branch v45 -> taken b4(), notTaken b3()
-# CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: SetLiteralPrototype v44, v2 [refusesOtherValues]
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: v46: L3 = FinishObject v44
+# CHECK-NEXT: v47: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
+# CHECK-NEXT: Branch v47 -> taken b3(), notTaken b6()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v48: boolean = IsSlotFilled v40 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v48 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v47: L3 = FinishObject v44
-# CHECK-NEXT: v48: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
-# CHECK-NEXT: Branch v48 -> taken b5(), notTaken b8()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v49: boolean = IsSlotFilled v40 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v49 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b11(v32)
+# CHECK-NEXT: Jump -> next b9(v32)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v49: anything ~ int[-2147483643, 2147483647] = PropGet v40 key="width" accessSite=52 receivers=[L1]
+# CHECK-NEXT: v50: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v49 provenType=undefined|int|whole
+# CHECK-NEXT: Jump -> next b12(v50)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v51: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v51 -> taken b7(), notTaken b22()
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v50: anything ~ int[-2147483643, 2147483647] = PropGet v40 key="width" accessSite=52 receivers=[L1]
-# CHECK-NEXT: v51: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v50 provenType=undefined|int|whole
-# CHECK-NEXT: Jump -> next b14(v51)
+# CHECK-NEXT: v52: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}]
+# CHECK-NEXT: Branch v52 -> taken b8(), notTaken b22()
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v52: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v52 -> taken b9(), notTaken b24()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v53: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}]
-# CHECK-NEXT: Branch v53 -> taken b10(), notTaken b24()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v54: undefined|int|whole = CallDirect v47 function=f16 accessSite=8 [calleeIsPredicted]
-# CHECK-NEXT: v55: undefined|int|whole ~ int[-2147483643, 2147483647] = Upcast v54 castType=undefined|int|whole
-# CHECK-NEXT: v56: boolean ~ true = TypeTest v55 testedType=i32
-# CHECK-NEXT: Branch v56 -> taken b11(| 0), notTaken b14(v55)
-# CHECK-NEXT: b11(v57: i32 ~ int[0, 999]):
-# CHECK-NEXT: v58: 1 = Integer integer=1
-# CHECK-NEXT: v59: int[-2147483647, 2147483648] ~ int[1, 1000] = Add v57, v58
-# CHECK-NEXT: v60: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
-# CHECK-NEXT: Branch v60 -> taken b12(), notTaken b19(v59)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v61: boolean ~ true = TypeTest v59 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v61 -> taken b13(| 0), notTaken b16(v59)
-# CHECK-NEXT: b13(v62: int[-2147483643, 2147483647] ~ int[1, 1000]):
-# CHECK-NEXT: PutSlot v40, v39, v62 key="width" receivers=[L1] level=Expected accessSite=43
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b14(v64: undefined|int|whole ~ int[-2147483643, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v65: 1 = Integer integer=1
-# CHECK-NEXT: v66: number ~ int[-2147483642, 2147483648] = Add v64, v65
-# CHECK-NEXT: v67: int|whole ~ int[-2147483642, 2147483648] = AssumeType v66 provenType=int|whole
-# CHECK-NEXT: v68: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
-# CHECK-NEXT: Branch v68 -> taken b15(), notTaken b19(v67)
-# CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v67)
-# CHECK-NEXT: b16(v69: int|whole ~ int[1, 1000]) frequency=Unlikely:
-# CHECK-NEXT: v70: boolean ~ true = TypeTest v69 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v70 -> taken b17(| 0), notTaken b18(| 0)
-# CHECK-NEXT: b17(v71: int[-2147483643, 2147483647] ~ int[1, 1000]) frequency=Unlikely:
-# CHECK-NEXT: PutSlot v40, v39, v71 key="width" receivers=[L1] level=Expected accessSite=43
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b18(v73: int|whole) frequency=Rare:
-# CHECK-NEXT: PropSet v40, v73 key="width" accessSite=43 receivers=[L1]
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b19(v75: int|whole ~ int[1, 1000]) frequency=Unlikely:
-# CHECK-NEXT: v76: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v76 -> taken b20(), notTaken b27(v75)
-# CHECK-NEXT: b20() frequency=Unlikely:
-# CHECK-NEXT: v77: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}]
-# CHECK-NEXT: Branch v77 -> taken b21(), notTaken b27(v75)
-# CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: v78: boolean ~ true = TypeTest v75 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v78 -> taken b22(| 0), notTaken b23(| 0)
-# CHECK-NEXT: b22(v79: int[-2147483643, 2147483647] ~ int[1, 1000]) frequency=Unlikely:
-# CHECK-NEXT: PutSlot v40, v39, v79 key="width" receivers=[L1] level=Expected accessSite=43
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b23(v81: int|whole) frequency=Rare:
-# CHECK-NEXT: PropSet v40, v81 key="width" accessSite=43 receivers=[L1]
-# CHECK-NEXT: Jump -> next b32()
+# CHECK-NEXT: v53: undefined|int|whole = CallDirect v46 function=f16 accessSite=8 [calleeIsPredicted]
+# CHECK-NEXT: v54: undefined|int|whole ~ int[-2147483643, 2147483647] = Upcast v53 castType=undefined|int|whole
+# CHECK-NEXT: v55: boolean ~ true = TypeTest v54 testedType=i32
+# CHECK-NEXT: Branch v55 -> taken b9(| 0), notTaken b12(v54)
+# CHECK-NEXT: b9(v56: i32 ~ int[0, 999]):
+# CHECK-NEXT: v57: 1 = Integer integer=1
+# CHECK-NEXT: v58: int[-2147483647, 2147483648] ~ int[1, 1000] = Add v56, v57
+# CHECK-NEXT: v59: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
+# CHECK-NEXT: Branch v59 -> taken b10(), notTaken b17(v58)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v60: boolean ~ true = TypeTest v58 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v60 -> taken b11(| 0), notTaken b14(v58)
+# CHECK-NEXT: b11(v61: int[-2147483643, 2147483647] ~ int[1, 1000]):
+# CHECK-NEXT: PutSlot v40, v39, v61 key="width" receivers=[L1] level=Expected accessSite=43
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b12(v63: undefined|int|whole ~ int[-2147483643, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v64: 1 = Integer integer=1
+# CHECK-NEXT: v65: number ~ int[-2147483642, 2147483648] = Add v63, v64
+# CHECK-NEXT: v66: int|whole ~ int[-2147483642, 2147483648] = AssumeType v65 provenType=int|whole
+# CHECK-NEXT: v67: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
+# CHECK-NEXT: Branch v67 -> taken b13(), notTaken b17(v66)
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b14(v66)
+# CHECK-NEXT: b14(v68: int|whole ~ int[1, 1000]) frequency=Unlikely:
+# CHECK-NEXT: v69: boolean ~ true = TypeTest v68 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v69 -> taken b15(| 0), notTaken b16(| 0)
+# CHECK-NEXT: b15(v70: int[-2147483643, 2147483647] ~ int[1, 1000]) frequency=Unlikely:
+# CHECK-NEXT: PutSlot v40, v39, v70 key="width" receivers=[L1] level=Expected accessSite=43
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b16(v72: int|whole) frequency=Rare:
+# CHECK-NEXT: PropSet v40, v72 key="width" accessSite=43 receivers=[L1]
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b17(v74: int|whole ~ int[1, 1000]) frequency=Unlikely:
+# CHECK-NEXT: v75: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v75 -> taken b18(), notTaken b25(v74)
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v76: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}]
+# CHECK-NEXT: Branch v76 -> taken b19(), notTaken b25(v74)
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: v77: boolean ~ true = TypeTest v74 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v77 -> taken b20(| 0), notTaken b21(| 0)
+# CHECK-NEXT: b20(v78: int[-2147483643, 2147483647] ~ int[1, 1000]) frequency=Unlikely:
+# CHECK-NEXT: PutSlot v40, v39, v78 key="width" receivers=[L1] level=Expected accessSite=43
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b21(v80: int|whole) frequency=Rare:
+# CHECK-NEXT: PropSet v40, v80 key="width" accessSite=43 receivers=[L1]
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v82: anything = PropGet v46 key="width" accessSite=8 receivers=[L3]
+# CHECK-NEXT: v83: undefined|int|whole = AssumeType v82 provenType=undefined|int|whole
+# CHECK-NEXT: v84: undefined|int|whole ~ int|whole = Upcast v83 castType=anything
+# CHECK-NEXT: v85: 1 = Integer integer=1
+# CHECK-NEXT: v86: number ~ int|whole = Add v84, v85
+# CHECK-NEXT: v87: int|whole = AssumeType v86 provenType=int|whole
+# CHECK-NEXT: v88: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
+# CHECK-NEXT: Branch v88 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v89: undefined|int|whole = CallDirect v46, v87 function=f8 accessSite=9
+# CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: v83: anything = PropGet v47 key="width" accessSite=8 receivers=[L3]
-# CHECK-NEXT: v84: undefined|int|whole = AssumeType v83 provenType=undefined|int|whole
-# CHECK-NEXT: v85: undefined|int|whole ~ int|whole = Upcast v84 castType=anything
-# CHECK-NEXT: v86: 1 = Integer integer=1
-# CHECK-NEXT: v87: number ~ int|whole = Add v85, v86
-# CHECK-NEXT: v88: int|whole = AssumeType v87 provenType=int|whole
-# CHECK-NEXT: v89: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
-# CHECK-NEXT: Branch v89 -> taken b25(), notTaken b26()
-# CHECK-NEXT: b25() frequency=Unlikely:
-# CHECK-NEXT: v90: undefined|int|whole = CallDirect v47, v88 function=f8 accessSite=9
-# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: Jump -> next b25(v87)
+# CHECK-NEXT: b25(v90: int|whole) frequency=Rare:
+# CHECK-NEXT: v91: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
+# CHECK-NEXT: Branch v91 -> taken b26(), notTaken b27()
 # CHECK-NEXT: b26() frequency=Rare:
-# CHECK-NEXT: Jump -> next b27(v88)
-# CHECK-NEXT: b27(v91: int|whole) frequency=Rare:
-# CHECK-NEXT: v92: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
-# CHECK-NEXT: Branch v92 -> taken b28(), notTaken b29()
+# CHECK-NEXT: v92: undefined|int|whole = CallDirect v46, v90 function=f8 accessSite=9
+# CHECK-NEXT: Jump -> next b28()
+# CHECK-NEXT: b27() frequency=Rare:
+# CHECK-NEXT: PropSet v46, v90 key="width" accessSite=9 receivers=[L3]
+# CHECK-NEXT: Jump -> next b28()
 # CHECK-NEXT: b28() frequency=Rare:
-# CHECK-NEXT: v93: undefined|int|whole = CallDirect v47, v91 function=f8 accessSite=9
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b29() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b30()
-# CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: PropSet v47, v91 key="width" accessSite=9 receivers=[L3]
-# CHECK-NEXT: Jump -> next b30()
-# CHECK-NEXT: b30() frequency=Rare:
-# CHECK-NEXT: Jump -> next b31()
-# CHECK-NEXT: b31() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b32():
-# CHECK-NEXT: v95: boolean = AreMembersUnchanged conditions=[{layout=L3 key="area"}, {kind=MemberNotHidden layout=L3 key="area"}]
-# CHECK-NEXT: Branch v95 -> taken b33(), notTaken b37()
-# CHECK-NEXT: b33():
-# CHECK-NEXT: v96: undefined|L1 = GetSlotOrUndefined v47 key="box" receivers=[L3] level=Proven accessSite=59
-# CHECK-NEXT: v97: L1 = RequireObjectCoercible v96
-# CHECK-NEXT: v98: boolean = IsSlotFilled v97 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v98 -> taken b34(| 0), notTaken b35()
-# CHECK-NEXT: b34(v99: guard):
-# CHECK-NEXT: v100: int[-2147483643, 2147483647] = GetSlot v97, v99 key="width" receivers=[L1] level=Expected accessSite=44 [holdsDeclaredType]
-# CHECK-NEXT: v101: int[-2147483643, 2147483647] = GetSlot v97 key="height" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: v102: int|whole = Mul v100, v101
-# CHECK-NEXT: Jump -> next b36(v102) @330:3 tail
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v94: boolean = AreMembersUnchanged conditions=[{layout=L3 key="area"}, {kind=MemberNotHidden layout=L3 key="area"}]
+# CHECK-NEXT: Branch v94 -> taken b31(), notTaken b34()
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v95: undefined|L1 = GetSlotOrUndefined v46 key="box" receivers=[L3] level=Proven accessSite=59
+# CHECK-NEXT: v96: L1 = RequireObjectCoercible v95
+# CHECK-NEXT: v97: boolean = IsSlotFilled v96 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v97 -> taken b32(| 0), notTaken b33()
+# CHECK-NEXT: b32(v98: guard):
+# CHECK-NEXT: v99: int[-2147483643, 2147483647] = GetSlot v96, v98 key="width" receivers=[L1] level=Expected accessSite=44 [holdsDeclaredType]
+# CHECK-NEXT: v100: int[-2147483643, 2147483647] = GetSlot v96 key="height" receivers=[L1] level=Proven accessSite=45
+# CHECK-NEXT: v101: int|whole = Mul v99, v100
+# CHECK-NEXT: Jump -> next b39(v101)
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v102: anything ~ int[-2147483643, 2147483647] = PropGet v96 key="width" accessSite=44 receivers=[L1]
+# CHECK-NEXT: v103: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v102 provenType=undefined|int|whole
+# CHECK-NEXT: v104: int[-2147483643, 2147483647] = GetSlot v96 key="height" receivers=[L1] level=Proven accessSite=45
+# CHECK-NEXT: v105: number ~ int|whole = Mul v103, v104
+# CHECK-NEXT: v106: int|whole = AssumeType v105 provenType=int|whole
+# CHECK-NEXT: Jump -> next b39(v106)
+# CHECK-NEXT: b34() frequency=Unlikely:
+# CHECK-NEXT: v107: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v107 -> taken b35(), notTaken b37()
 # CHECK-NEXT: b35() frequency=Unlikely:
-# CHECK-NEXT: v103: anything ~ int[-2147483643, 2147483647] = PropGet v97 key="width" accessSite=44 receivers=[L1]
-# CHECK-NEXT: v104: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v103 provenType=undefined|int|whole
-# CHECK-NEXT: v105: int[-2147483643, 2147483647] = GetSlot v97 key="height" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: v106: number ~ int|whole = Mul v104, v105
-# CHECK-NEXT: v107: int|whole = AssumeType v106 provenType=int|whole
-# CHECK-NEXT: Jump -> next b36(v107) @330:3 tail
-# CHECK-NEXT: b36(v108: int|whole):
-# CHECK-NEXT: Jump -> next b42(v108)
-# CHECK-NEXT: b37() frequency=Unlikely:
-# CHECK-NEXT: v109: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v109 -> taken b38(), notTaken b40()
-# CHECK-NEXT: b38() frequency=Unlikely:
-# CHECK-NEXT: v110: boolean = AreMembersUnchanged conditions=[{layout=L3 key="area"}]
-# CHECK-NEXT: Branch v110 -> taken b39(), notTaken b40()
-# CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: v111: Array<undefined> = EmptyArgumentList valueType=Array<undefined>
-# CHECK-NEXT: v112: int|whole = CallDirect v47, v111 function=f38 accessSite=11
-# CHECK-NEXT: Jump -> next b42(v112)
-# CHECK-NEXT: b40() frequency=Rare:
-# CHECK-NEXT: v113: anything = PropGet v47 key="area" accessSite=10 receivers=[L3]
-# CHECK-NEXT: v114: undefined|f20 = AssumeType v113 provenType=undefined|f20
-# CHECK-NEXT: v115: boolean = TypeTest v114 testedType=f20
-# CHECK-NEXT: Branch v115 -> taken b41(), notTaken b109()
-# CHECK-NEXT: b41() frequency=Rare:
-# CHECK-NEXT: v116: Array<undefined> = EmptyArgumentList valueType=Array<undefined>
-# CHECK-NEXT: v117: int|whole = CallDirect v47, v116 function=f38 accessSite=11
-# CHECK-NEXT: Jump -> next b42(v117)
-# CHECK-NEXT: b42(v118: int|whole):
-# CHECK-NEXT: v119: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
-# CHECK-NEXT: Branch v119 -> taken b43(), notTaken b44()
-# CHECK-NEXT: b43():
-# CHECK-NEXT: v120: undefined|L1 = GetSlotOrUndefined v47 key="box" receivers=[L3] level=Proven accessSite=55
-# CHECK-NEXT: v121: L1 = RequireObjectCoercible v120
-# CHECK-NEXT: v122: int[-2147483643, 2147483647] = GetSlot v121 key="height" receivers=[L1] level=Proven accessSite=56
-# CHECK-NEXT: Jump -> next b47(v122)
-# CHECK-NEXT: b44() frequency=Unlikely:
-# CHECK-NEXT: v123: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v123 -> taken b45(), notTaken b57()
-# CHECK-NEXT: b45() frequency=Unlikely:
-# CHECK-NEXT: v124: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}]
-# CHECK-NEXT: Branch v124 -> taken b46(), notTaken b57()
+# CHECK-NEXT: v108: boolean = AreMembersUnchanged conditions=[{layout=L3 key="area"}]
+# CHECK-NEXT: Branch v108 -> taken b36(), notTaken b37()
+# CHECK-NEXT: b36() frequency=Unlikely:
+# CHECK-NEXT: v109: Array<undefined> = EmptyArgumentList valueType=Array<undefined>
+# CHECK-NEXT: v110: int|whole = CallDirect v46, v109 function=f38 accessSite=11
+# CHECK-NEXT: Jump -> next b39(v110)
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: v111: anything = PropGet v46 key="area" accessSite=10 receivers=[L3]
+# CHECK-NEXT: v112: undefined|f20 = AssumeType v111 provenType=undefined|f20
+# CHECK-NEXT: v113: boolean = TypeTest v112 testedType=f20
+# CHECK-NEXT: Branch v113 -> taken b38(), notTaken b106()
+# CHECK-NEXT: b38() frequency=Rare:
+# CHECK-NEXT: v114: Array<undefined> = EmptyArgumentList valueType=Array<undefined>
+# CHECK-NEXT: v115: int|whole = CallDirect v46, v114 function=f38 accessSite=11
+# CHECK-NEXT: Jump -> next b39(v115)
+# CHECK-NEXT: b39(v116: int|whole):
+# CHECK-NEXT: v117: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
+# CHECK-NEXT: Branch v117 -> taken b40(), notTaken b41()
+# CHECK-NEXT: b40():
+# CHECK-NEXT: v118: undefined|L1 = GetSlotOrUndefined v46 key="box" receivers=[L3] level=Proven accessSite=55
+# CHECK-NEXT: v119: L1 = RequireObjectCoercible v118
+# CHECK-NEXT: v120: int[-2147483643, 2147483647] = GetSlot v119 key="height" receivers=[L1] level=Proven accessSite=56
+# CHECK-NEXT: Jump -> next b44(v120)
+# CHECK-NEXT: b41() frequency=Unlikely:
+# CHECK-NEXT: v121: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v121 -> taken b42(), notTaken b54()
+# CHECK-NEXT: b42() frequency=Unlikely:
+# CHECK-NEXT: v122: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}]
+# CHECK-NEXT: Branch v122 -> taken b43(), notTaken b54()
+# CHECK-NEXT: b43() frequency=Unlikely:
+# CHECK-NEXT: v123: int[-2147483643, 2147483647] = CallDirect v46 function=f18 accessSite=12 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b44(v123)
+# CHECK-NEXT: b44(v124: int[-2147483643, 2147483647]):
+# CHECK-NEXT: v125: int|whole = Add v116, v124
+# CHECK-NEXT: v126: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}, {kind=MemberNotHidden layout=L3 key="text"}]
+# CHECK-NEXT: Branch v126 -> taken b45(), notTaken b46()
+# CHECK-NEXT: b45():
+# CHECK-NEXT: v127: undefined|L2 = GetSlotOrUndefined v46 key="label" receivers=[L3] level=Proven accessSite=65
+# CHECK-NEXT: v128: L2 = RequireObjectCoercible v127
+# CHECK-NEXT: v129: string = GetSlot v128 key="text" receivers=[L2] level=Proven accessSite=66
+# CHECK-NEXT: Jump -> next b49(v129)
 # CHECK-NEXT: b46() frequency=Unlikely:
-# CHECK-NEXT: v125: int[-2147483643, 2147483647] = CallDirect v47 function=f18 accessSite=12 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b47(v125)
-# CHECK-NEXT: b47(v126: int[-2147483643, 2147483647]):
-# CHECK-NEXT: v127: int|whole = Add v118, v126
-# CHECK-NEXT: v128: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}, {kind=MemberNotHidden layout=L3 key="text"}]
-# CHECK-NEXT: Branch v128 -> taken b48(), notTaken b49()
-# CHECK-NEXT: b48():
-# CHECK-NEXT: v129: undefined|L2 = GetSlotOrUndefined v47 key="label" receivers=[L3] level=Proven accessSite=65
-# CHECK-NEXT: v130: L2 = RequireObjectCoercible v129
-# CHECK-NEXT: v131: string = GetSlot v130 key="text" receivers=[L2] level=Proven accessSite=66
-# CHECK-NEXT: Jump -> next b52(v131)
-# CHECK-NEXT: b49() frequency=Unlikely:
-# CHECK-NEXT: v132: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v132 -> taken b50(), notTaken b63(v127)
-# CHECK-NEXT: b50() frequency=Unlikely:
-# CHECK-NEXT: v133: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}]
-# CHECK-NEXT: Branch v133 -> taken b51(), notTaken b63(v127)
+# CHECK-NEXT: v130: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v130 -> taken b47(), notTaken b60(v125)
+# CHECK-NEXT: b47() frequency=Unlikely:
+# CHECK-NEXT: v131: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}]
+# CHECK-NEXT: Branch v131 -> taken b48(), notTaken b60(v125)
+# CHECK-NEXT: b48() frequency=Unlikely:
+# CHECK-NEXT: v132: string = CallDirect v46 function=f22 accessSite=13 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b49(v132)
+# CHECK-NEXT: b49(v133: string):
+# CHECK-NEXT: v134: int[0, 2147483647] = GetStringLength v133
+# CHECK-NEXT: v135: int|whole = Add v125, v134
+# CHECK-NEXT: v136: int|whole = Add v26, v135
+# CHECK-NEXT: v137: "!" = String string="!"
+# CHECK-NEXT: v138: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
+# CHECK-NEXT: Branch v138 -> taken b50(), notTaken b51()
+# CHECK-NEXT: b50():
+# CHECK-NEXT: v139: undefined|L2 = GetSlotOrUndefined v46 key="label" receivers=[L3] level=Proven accessSite=69
+# CHECK-NEXT: v140: L2 = RequireObjectCoercible v139
+# CHECK-NEXT: v141: string = GetSlot v140 key="text" receivers=[L2] level=Proven accessSite=46
+# CHECK-NEXT: v142: string = CallBuiltin v141 overload=StringPrototypeToUpperCase/0 accessSite=48
+# CHECK-NEXT: v143: string = Add v142, v137
+# CHECK-NEXT: Jump -> next b72(v143, v136)
 # CHECK-NEXT: b51() frequency=Unlikely:
-# CHECK-NEXT: v134: string = CallDirect v47 function=f22 accessSite=13 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b52(v134)
-# CHECK-NEXT: b52(v135: string):
-# CHECK-NEXT: v136: int[0, 2147483647] = GetStringLength v135
-# CHECK-NEXT: v137: int|whole = Add v127, v136
-# CHECK-NEXT: v138: int|whole = Add v26, v137
-# CHECK-NEXT: v139: "!" = String string="!"
-# CHECK-NEXT: v140: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
-# CHECK-NEXT: Branch v140 -> taken b53(), notTaken b54()
-# CHECK-NEXT: b53():
-# CHECK-NEXT: v141: undefined|L2 = GetSlotOrUndefined v47 key="label" receivers=[L3] level=Proven accessSite=69
-# CHECK-NEXT: v142: L2 = RequireObjectCoercible v141
-# CHECK-NEXT: v143: string = GetSlot v142 key="text" receivers=[L2] level=Proven accessSite=46
-# CHECK-NEXT: v144: string = CallBuiltin v143 overload=StringPrototypeToUpperCase/0 accessSite=48
-# CHECK-NEXT: v145: string = Add v144, v139
-# CHECK-NEXT: Jump -> next b75(v145, v138)
-# CHECK-NEXT: b54() frequency=Unlikely:
-# CHECK-NEXT: v146: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v146 -> taken b55(), notTaken b70(v138)
-# CHECK-NEXT: b55() frequency=Unlikely:
-# CHECK-NEXT: v147: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}]
-# CHECK-NEXT: Branch v147 -> taken b56(), notTaken b70(v138)
-# CHECK-NEXT: b56() frequency=Unlikely:
-# CHECK-NEXT: v148: Array<undefined|"!"> = NewArray v139 contents=undefined|"!" storage=Frame
-# CHECK-NEXT: v149: string = CallDirect v47, v148 function=f39 accessSite=16
-# CHECK-NEXT: Jump -> next b75(v149, v138)
-# CHECK-NEXT: b57() frequency=Rare:
-# CHECK-NEXT: v150: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
-# CHECK-NEXT: Branch v150 -> taken b58(), notTaken b59()
-# CHECK-NEXT: b58() frequency=Rare:
-# CHECK-NEXT: v151: int[-2147483643, 2147483647] = CallDirect v47 function=f18 accessSite=12
-# CHECK-NEXT: Jump -> next b60(v151)
+# CHECK-NEXT: v144: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v144 -> taken b52(), notTaken b67(v136)
+# CHECK-NEXT: b52() frequency=Unlikely:
+# CHECK-NEXT: v145: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}]
+# CHECK-NEXT: Branch v145 -> taken b53(), notTaken b67(v136)
+# CHECK-NEXT: b53() frequency=Unlikely:
+# CHECK-NEXT: v146: Array<undefined|"!"> = NewArray v137 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v147: string = CallDirect v46, v146 function=f39 accessSite=16
+# CHECK-NEXT: Jump -> next b72(v147, v136)
+# CHECK-NEXT: b54() frequency=Rare:
+# CHECK-NEXT: v148: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
+# CHECK-NEXT: Branch v148 -> taken b55(), notTaken b56()
+# CHECK-NEXT: b55() frequency=Rare:
+# CHECK-NEXT: v149: int[-2147483643, 2147483647] = CallDirect v46 function=f18 accessSite=12
+# CHECK-NEXT: Jump -> next b57(v149)
+# CHECK-NEXT: b56() frequency=Rare:
+# CHECK-NEXT: v150: anything = PropGet v46 key="height" accessSite=12 receivers=[L3]
+# CHECK-NEXT: v151: undefined|int = AssumeType v150 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b57(v151)
+# CHECK-NEXT: b57(v152: undefined|int) frequency=Rare:
+# CHECK-NEXT: v153: number = Add v116, v152
+# CHECK-NEXT: v154: int|whole = AssumeType v153 provenType=int|whole
+# CHECK-NEXT: v155: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}, {kind=MemberNotHidden layout=L3 key="text"}]
+# CHECK-NEXT: Branch v155 -> taken b58(), notTaken b59()
+# CHECK-NEXT: b58() frequency=Unlikely:
+# CHECK-NEXT: v156: string = CallDirect v46 function=f22 accessSite=13
+# CHECK-NEXT: Jump -> next b64(v156, v154)
 # CHECK-NEXT: b59() frequency=Rare:
-# CHECK-NEXT: v152: anything = PropGet v47 key="height" accessSite=12 receivers=[L3]
-# CHECK-NEXT: v153: undefined|int = AssumeType v152 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b60(v153)
-# CHECK-NEXT: b60(v154: undefined|int) frequency=Rare:
-# CHECK-NEXT: v155: number = Add v118, v154
-# CHECK-NEXT: v156: int|whole = AssumeType v155 provenType=int|whole
-# CHECK-NEXT: v157: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}, {kind=MemberNotHidden layout=L3 key="text"}]
-# CHECK-NEXT: Branch v157 -> taken b61(), notTaken b62()
-# CHECK-NEXT: b61() frequency=Unlikely:
-# CHECK-NEXT: v158: string = CallDirect v47 function=f22 accessSite=13
-# CHECK-NEXT: Jump -> next b67(v158, v156)
+# CHECK-NEXT: Jump -> next b60(v154)
+# CHECK-NEXT: b60(v157: int|whole) frequency=Rare:
+# CHECK-NEXT: v158: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}, {kind=MemberNotHidden layout=L3 key="text"}]
+# CHECK-NEXT: Branch v158 -> taken b61(), notTaken b62()
+# CHECK-NEXT: b61() frequency=Rare:
+# CHECK-NEXT: v159: string = CallDirect v46 function=f22 accessSite=13
+# CHECK-NEXT: Jump -> next b63(v159)
 # CHECK-NEXT: b62() frequency=Rare:
-# CHECK-NEXT: Jump -> next b63(v156)
-# CHECK-NEXT: b63(v159: int|whole) frequency=Rare:
-# CHECK-NEXT: v160: boolean = AreMembersUnchanged conditions=[{layout=L3 key="text"}, {kind=MemberNotHidden layout=L3 key="text"}]
-# CHECK-NEXT: Branch v160 -> taken b64(), notTaken b65()
-# CHECK-NEXT: b64() frequency=Rare:
-# CHECK-NEXT: v161: string = CallDirect v47 function=f22 accessSite=13
-# CHECK-NEXT: Jump -> next b66(v161)
-# CHECK-NEXT: b65() frequency=Rare:
-# CHECK-NEXT: v162: anything = PropGet v47 key="text" accessSite=13 receivers=[L3]
-# CHECK-NEXT: v163: undefined|string = AssumeType v162 provenType=undefined|string
-# CHECK-NEXT: Jump -> next b66(v163)
-# CHECK-NEXT: b66(v164: undefined|string) frequency=Rare:
-# CHECK-NEXT: Jump -> next b67(v164, v159)
-# CHECK-NEXT: b67(v165: undefined|string, v166: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v167: string = RequireObjectCoercible v165 name="length"
-# CHECK-NEXT: v168: int[0, 2147483647] = GetStringLength v167
-# CHECK-NEXT: v169: int|whole = Add v166, v168
-# CHECK-NEXT: v170: int|whole = Add v26, v169
-# CHECK-NEXT: v171: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
-# CHECK-NEXT: Branch v171 -> taken b68(), notTaken b69()
-# CHECK-NEXT: b68() frequency=Unlikely:
-# CHECK-NEXT: v172: "!" = String string="!"
-# CHECK-NEXT: v173: Array<undefined|"!"> = NewArray v172 contents=undefined|"!" storage=Frame
-# CHECK-NEXT: v174: string = CallDirect v47, v173 function=f39 accessSite=16
-# CHECK-NEXT: Jump -> next b74(v170, v174)
+# CHECK-NEXT: v160: anything = PropGet v46 key="text" accessSite=13 receivers=[L3]
+# CHECK-NEXT: v161: undefined|string = AssumeType v160 provenType=undefined|string
+# CHECK-NEXT: Jump -> next b63(v161)
+# CHECK-NEXT: b63(v162: undefined|string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b64(v162, v157)
+# CHECK-NEXT: b64(v163: undefined|string, v164: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v165: string = RequireObjectCoercible v163 name="length"
+# CHECK-NEXT: v166: int[0, 2147483647] = GetStringLength v165
+# CHECK-NEXT: v167: int|whole = Add v164, v166
+# CHECK-NEXT: v168: int|whole = Add v26, v167
+# CHECK-NEXT: v169: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
+# CHECK-NEXT: Branch v169 -> taken b65(), notTaken b66()
+# CHECK-NEXT: b65() frequency=Unlikely:
+# CHECK-NEXT: v170: "!" = String string="!"
+# CHECK-NEXT: v171: Array<undefined|"!"> = NewArray v170 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v172: string = CallDirect v46, v171 function=f39 accessSite=16
+# CHECK-NEXT: Jump -> next b71(v168, v172)
+# CHECK-NEXT: b66() frequency=Rare:
+# CHECK-NEXT: Jump -> next b67(v168)
+# CHECK-NEXT: b67(v173: int|whole) frequency=Rare:
+# CHECK-NEXT: v174: "!" = String string="!"
+# CHECK-NEXT: v175: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
+# CHECK-NEXT: Branch v175 -> taken b68(), notTaken b69()
+# CHECK-NEXT: b68() frequency=Rare:
+# CHECK-NEXT: v176: Array<undefined|"!"> = NewArray v174 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v177: string = CallDirect v46, v176 function=f39 accessSite=16
+# CHECK-NEXT: Jump -> next b71(v173, v177)
 # CHECK-NEXT: b69() frequency=Rare:
-# CHECK-NEXT: Jump -> next b70(v170)
-# CHECK-NEXT: b70(v175: int|whole) frequency=Rare:
-# CHECK-NEXT: v176: "!" = String string="!"
-# CHECK-NEXT: v177: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
-# CHECK-NEXT: Branch v177 -> taken b71(), notTaken b72()
-# CHECK-NEXT: b71() frequency=Rare:
-# CHECK-NEXT: v178: Array<undefined|"!"> = NewArray v176 contents=undefined|"!" storage=Frame
-# CHECK-NEXT: v179: string = CallDirect v47, v178 function=f39 accessSite=16
-# CHECK-NEXT: Jump -> next b74(v175, v179)
-# CHECK-NEXT: b72() frequency=Rare:
-# CHECK-NEXT: v180: anything = PropGet v47 key="shout" accessSite=15 receivers=[L3]
-# CHECK-NEXT: v181: undefined|f24 = AssumeType v180 provenType=undefined|f24
-# CHECK-NEXT: v182: boolean = TypeTest v181 testedType=f24
-# CHECK-NEXT: Branch v182 -> taken b73(), notTaken b108()
-# CHECK-NEXT: b73() frequency=Rare:
-# CHECK-NEXT: v183: Array<undefined|"!"> = NewArray v176 contents=undefined|"!" storage=Frame
-# CHECK-NEXT: v184: string = CallDirect v47, v183 function=f39 accessSite=16
-# CHECK-NEXT: Jump -> next b74(v175, v184)
-# CHECK-NEXT: b74(v185: int|whole, v186: string) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b75(v186, v185)
-# CHECK-NEXT: b75(v187: string, v188: int|whole):
-# CHECK-NEXT: v189: boolean = AreMembersUnchanged conditions=[{layout=L3 key="describe"}, {kind=MemberNotHidden layout=L3 key="describe"}]
-# CHECK-NEXT: Branch v189 -> taken b76(), notTaken b98()
-# CHECK-NEXT: b76():
-# CHECK-NEXT: v190: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
-# CHECK-NEXT: Branch v190 -> taken b77(), notTaken b80()
-# CHECK-NEXT: b77():
-# CHECK-NEXT: v191: undefined|L1 = GetSlotOrUndefined v47 key="box" receivers=[L3] level=Proven accessSite=51
-# CHECK-NEXT: v192: L1 = RequireObjectCoercible v191
-# CHECK-NEXT: v193: boolean = IsSlotFilled v192 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v193 -> taken b78(| 0), notTaken b79()
-# CHECK-NEXT: b78(v194: guard):
-# CHECK-NEXT: v195: int[-2147483643, 2147483647] = GetSlot v192, v194 key="width" receivers=[L1] level=Expected accessSite=52 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b84(v195)
+# CHECK-NEXT: v178: anything = PropGet v46 key="shout" accessSite=15 receivers=[L3]
+# CHECK-NEXT: v179: undefined|f24 = AssumeType v178 provenType=undefined|f24
+# CHECK-NEXT: v180: boolean = TypeTest v179 testedType=f24
+# CHECK-NEXT: Branch v180 -> taken b70(), notTaken b105()
+# CHECK-NEXT: b70() frequency=Rare:
+# CHECK-NEXT: v181: Array<undefined|"!"> = NewArray v174 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v182: string = CallDirect v46, v181 function=f39 accessSite=16
+# CHECK-NEXT: Jump -> next b71(v173, v182)
+# CHECK-NEXT: b71(v183: int|whole, v184: string) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b72(v184, v183)
+# CHECK-NEXT: b72(v185: string, v186: int|whole):
+# CHECK-NEXT: v187: boolean = AreMembersUnchanged conditions=[{layout=L3 key="describe"}, {kind=MemberNotHidden layout=L3 key="describe"}]
+# CHECK-NEXT: Branch v187 -> taken b73(), notTaken b95()
+# CHECK-NEXT: b73():
+# CHECK-NEXT: v188: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}, {kind=MemberNotHidden layout=L3 key="width"}]
+# CHECK-NEXT: Branch v188 -> taken b74(), notTaken b77()
+# CHECK-NEXT: b74():
+# CHECK-NEXT: v189: undefined|L1 = GetSlotOrUndefined v46 key="box" receivers=[L3] level=Proven accessSite=51
+# CHECK-NEXT: v190: L1 = RequireObjectCoercible v189
+# CHECK-NEXT: v191: boolean = IsSlotFilled v190 key="width" receivers=[L1] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v191 -> taken b75(| 0), notTaken b76()
+# CHECK-NEXT: b75(v192: guard):
+# CHECK-NEXT: v193: int[-2147483643, 2147483647] = GetSlot v190, v192 key="width" receivers=[L1] level=Expected accessSite=52 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b81(v193)
+# CHECK-NEXT: b76() frequency=Unlikely:
+# CHECK-NEXT: v194: anything ~ int[-2147483643, 2147483647] = PropGet v190 key="width" accessSite=52 receivers=[L1]
+# CHECK-NEXT: v195: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v194 provenType=undefined|int|whole
+# CHECK-NEXT: v196: "x" = String string="x"
+# CHECK-NEXT: v197: string = Add v195, v196
+# CHECK-NEXT: v198: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
+# CHECK-NEXT: Branch v198 -> taken b82(v197), notTaken b83(v197)
+# CHECK-NEXT: b77() frequency=Unlikely:
+# CHECK-NEXT: v199: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v199 -> taken b78(| 0), notTaken b87()
+# CHECK-NEXT: b78(v200: guard) frequency=Unlikely:
+# CHECK-NEXT: v201: boolean = HasNoExtraProperties v46, v200
+# CHECK-NEXT: Branch v201 -> taken b79(), notTaken b87()
 # CHECK-NEXT: b79() frequency=Unlikely:
-# CHECK-NEXT: v196: anything ~ int[-2147483643, 2147483647] = PropGet v192 key="width" accessSite=52 receivers=[L1]
-# CHECK-NEXT: v197: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v196 provenType=undefined|int|whole
-# CHECK-NEXT: v198: "x" = String string="x"
-# CHECK-NEXT: v199: string = Add v197, v198
-# CHECK-NEXT: v200: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
-# CHECK-NEXT: Branch v200 -> taken b85(v199), notTaken b86(v199)
+# CHECK-NEXT: v202: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}]
+# CHECK-NEXT: Branch v202 -> taken b80(), notTaken b87()
 # CHECK-NEXT: b80() frequency=Unlikely:
-# CHECK-NEXT: v201: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v201 -> taken b81(| 0), notTaken b90()
-# CHECK-NEXT: b81(v202: guard) frequency=Unlikely:
-# CHECK-NEXT: v203: boolean = HasNoExtraProperties v47, v202
-# CHECK-NEXT: Branch v203 -> taken b82(), notTaken b90()
-# CHECK-NEXT: b82() frequency=Unlikely:
-# CHECK-NEXT: v204: boolean = AreMembersUnchanged conditions=[{layout=L3 key="width"}]
-# CHECK-NEXT: Branch v204 -> taken b83(), notTaken b90()
-# CHECK-NEXT: b83() frequency=Unlikely:
-# CHECK-NEXT: v205: undefined|int|whole = CallDirect v47 function=f16 accessSite=33 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b84(v205)
-# CHECK-NEXT: b84(v206: undefined|int|whole ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v207: "x" = String string="x"
-# CHECK-NEXT: v208: string = Add v206, v207
-# CHECK-NEXT: v209: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
-# CHECK-NEXT: Branch v209 -> taken b85(v208), notTaken b86(v208)
-# CHECK-NEXT: b85(v210: string):
-# CHECK-NEXT: v211: undefined|L1 = GetSlotOrUndefined v47 key="box" receivers=[L3] level=Proven accessSite=55
-# CHECK-NEXT: v212: L1 = RequireObjectCoercible v211
-# CHECK-NEXT: v213: int[-2147483643, 2147483647] = GetSlot v212 key="height" receivers=[L1] level=Proven accessSite=56
-# CHECK-NEXT: Jump -> next b89(v213, v210)
-# CHECK-NEXT: b86(v214: string) frequency=Unlikely:
-# CHECK-NEXT: v215: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v215 -> taken b87(), notTaken b93(v214)
-# CHECK-NEXT: b87() frequency=Unlikely:
-# CHECK-NEXT: v216: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}]
-# CHECK-NEXT: Branch v216 -> taken b88(), notTaken b93(v214)
+# CHECK-NEXT: v203: undefined|int|whole = CallDirect v46 function=f16 accessSite=33 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b81(v203)
+# CHECK-NEXT: b81(v204: undefined|int|whole ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v205: "x" = String string="x"
+# CHECK-NEXT: v206: string = Add v204, v205
+# CHECK-NEXT: v207: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
+# CHECK-NEXT: Branch v207 -> taken b82(v206), notTaken b83(v206)
+# CHECK-NEXT: b82(v208: string):
+# CHECK-NEXT: v209: undefined|L1 = GetSlotOrUndefined v46 key="box" receivers=[L3] level=Proven accessSite=55
+# CHECK-NEXT: v210: L1 = RequireObjectCoercible v209
+# CHECK-NEXT: v211: int[-2147483643, 2147483647] = GetSlot v210 key="height" receivers=[L1] level=Proven accessSite=56
+# CHECK-NEXT: Jump -> next b86(v211, v208)
+# CHECK-NEXT: b83(v212: string) frequency=Unlikely:
+# CHECK-NEXT: v213: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v213 -> taken b84(), notTaken b90(v212)
+# CHECK-NEXT: b84() frequency=Unlikely:
+# CHECK-NEXT: v214: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}]
+# CHECK-NEXT: Branch v214 -> taken b85(), notTaken b90(v212)
+# CHECK-NEXT: b85() frequency=Unlikely:
+# CHECK-NEXT: v215: int[-2147483643, 2147483647] = CallDirect v46 function=f18 accessSite=34 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b86(v215, v212)
+# CHECK-NEXT: b86(v216: int[-2147483643, 2147483647], v217: string):
+# CHECK-NEXT: v218: string = Add v217, v216
+# CHECK-NEXT: Jump -> next b103(v218)
+# CHECK-NEXT: b87() frequency=Rare:
+# CHECK-NEXT: v219: anything = PropGet v46 key="width" accessSite=33 receivers=[L3]
+# CHECK-NEXT: v220: undefined|int|whole = AssumeType v219 provenType=undefined|int|whole
+# CHECK-NEXT: v221: "x" = String string="x"
+# CHECK-NEXT: v222: string = Add v220, v221
+# CHECK-NEXT: v223: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
+# CHECK-NEXT: Branch v223 -> taken b88(), notTaken b89()
 # CHECK-NEXT: b88() frequency=Unlikely:
-# CHECK-NEXT: v217: int[-2147483643, 2147483647] = CallDirect v47 function=f18 accessSite=34 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b89(v217, v214)
-# CHECK-NEXT: b89(v218: int[-2147483643, 2147483647], v219: string):
-# CHECK-NEXT: v220: string = Add v219, v218
-# CHECK-NEXT: Jump -> next b106(v220)
-# CHECK-NEXT: b90() frequency=Rare:
-# CHECK-NEXT: v221: anything = PropGet v47 key="width" accessSite=33 receivers=[L3]
-# CHECK-NEXT: v222: undefined|int|whole = AssumeType v221 provenType=undefined|int|whole
-# CHECK-NEXT: v223: "x" = String string="x"
-# CHECK-NEXT: v224: string = Add v222, v223
-# CHECK-NEXT: v225: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
-# CHECK-NEXT: Branch v225 -> taken b91(), notTaken b92()
-# CHECK-NEXT: b91() frequency=Unlikely:
-# CHECK-NEXT: v226: int[-2147483643, 2147483647] = CallDirect v47 function=f18 accessSite=34
-# CHECK-NEXT: Jump -> next b97(v226, v224)
+# CHECK-NEXT: v224: int[-2147483643, 2147483647] = CallDirect v46 function=f18 accessSite=34
+# CHECK-NEXT: Jump -> next b94(v224, v222)
+# CHECK-NEXT: b89() frequency=Rare:
+# CHECK-NEXT: Jump -> next b90(v222)
+# CHECK-NEXT: b90(v225: string) frequency=Rare:
+# CHECK-NEXT: v226: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
+# CHECK-NEXT: Branch v226 -> taken b91(), notTaken b92()
+# CHECK-NEXT: b91() frequency=Rare:
+# CHECK-NEXT: v227: int[-2147483643, 2147483647] = CallDirect v46 function=f18 accessSite=34
+# CHECK-NEXT: Jump -> next b93(v227)
 # CHECK-NEXT: b92() frequency=Rare:
-# CHECK-NEXT: Jump -> next b93(v224)
-# CHECK-NEXT: b93(v227: string) frequency=Rare:
-# CHECK-NEXT: v228: boolean = AreMembersUnchanged conditions=[{layout=L3 key="height"}, {kind=MemberNotHidden layout=L3 key="height"}]
-# CHECK-NEXT: Branch v228 -> taken b94(), notTaken b95()
-# CHECK-NEXT: b94() frequency=Rare:
-# CHECK-NEXT: v229: int[-2147483643, 2147483647] = CallDirect v47 function=f18 accessSite=34
-# CHECK-NEXT: Jump -> next b96(v229)
-# CHECK-NEXT: b95() frequency=Rare:
-# CHECK-NEXT: v230: anything = PropGet v47 key="height" accessSite=34 receivers=[L3]
-# CHECK-NEXT: v231: undefined|int = AssumeType v230 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b96(v231)
-# CHECK-NEXT: b96(v232: undefined|int) frequency=Rare:
-# CHECK-NEXT: Jump -> next b97(v232, v227)
-# CHECK-NEXT: b97(v233: undefined|int, v234: string) frequency=Unlikely:
-# CHECK-NEXT: v235: string = Add v234, v233
-# CHECK-NEXT: Jump -> next b106(v235)
-# CHECK-NEXT: b98() frequency=Unlikely:
-# CHECK-NEXT: v236: boolean = HasLayoutPrototype v47
-# CHECK-NEXT: Branch v236 -> taken b99(), notTaken b101()
-# CHECK-NEXT: b99() frequency=Unlikely:
-# CHECK-NEXT: v237: boolean = AreMembersUnchanged conditions=[{layout=L3 key="describe"}]
-# CHECK-NEXT: Branch v237 -> taken b100(), notTaken b101()
-# CHECK-NEXT: b100() frequency=Unlikely:
-# CHECK-NEXT: v238: string = CallDirect v47 function=f5 accessSite=18
-# CHECK-NEXT: Jump -> next b106(v238)
+# CHECK-NEXT: v228: anything = PropGet v46 key="height" accessSite=34 receivers=[L3]
+# CHECK-NEXT: v229: undefined|int = AssumeType v228 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b93(v229)
+# CHECK-NEXT: b93(v230: undefined|int) frequency=Rare:
+# CHECK-NEXT: Jump -> next b94(v230, v225)
+# CHECK-NEXT: b94(v231: undefined|int, v232: string) frequency=Unlikely:
+# CHECK-NEXT: v233: string = Add v232, v231
+# CHECK-NEXT: Jump -> next b103(v233)
+# CHECK-NEXT: b95() frequency=Unlikely:
+# CHECK-NEXT: v234: boolean = HasLayoutPrototype v46
+# CHECK-NEXT: Branch v234 -> taken b96(), notTaken b98()
+# CHECK-NEXT: b96() frequency=Unlikely:
+# CHECK-NEXT: v235: boolean = AreMembersUnchanged conditions=[{layout=L3 key="describe"}]
+# CHECK-NEXT: Branch v235 -> taken b97(), notTaken b98()
+# CHECK-NEXT: b97() frequency=Unlikely:
+# CHECK-NEXT: v236: string = CallDirect v46 function=f5 accessSite=18
+# CHECK-NEXT: Jump -> next b103(v236)
+# CHECK-NEXT: b98() frequency=Rare:
+# CHECK-NEXT: v237: boolean = AreMembersUnchanged conditions=[{layout=L3 key="describe"}, {kind=MemberNotHidden layout=L3 key="describe"}]
+# CHECK-NEXT: Branch v237 -> taken b99(), notTaken b100()
+# CHECK-NEXT: b99() frequency=Rare:
+# CHECK-NEXT: v238: string = CallDirect v46 function=f5 accessSite=18
+# CHECK-NEXT: Jump -> next b102(v238)
+# CHECK-NEXT: b100() frequency=Rare:
+# CHECK-NEXT: v239: anything = PropGet v46 key="describe" accessSite=17 receivers=[L3]
+# CHECK-NEXT: v240: undefined|f5 = AssumeType v239 provenType=undefined|f5
+# CHECK-NEXT: v241: boolean = TypeTest v240 testedType=f5
+# CHECK-NEXT: Branch v241 -> taken b101(), notTaken b104()
 # CHECK-NEXT: b101() frequency=Rare:
-# CHECK-NEXT: v239: boolean = AreMembersUnchanged conditions=[{layout=L3 key="describe"}, {kind=MemberNotHidden layout=L3 key="describe"}]
-# CHECK-NEXT: Branch v239 -> taken b102(), notTaken b103()
-# CHECK-NEXT: b102() frequency=Rare:
-# CHECK-NEXT: v240: string = CallDirect v47 function=f5 accessSite=18
-# CHECK-NEXT: Jump -> next b105(v240)
-# CHECK-NEXT: b103() frequency=Rare:
-# CHECK-NEXT: v241: anything = PropGet v47 key="describe" accessSite=17 receivers=[L3]
-# CHECK-NEXT: v242: undefined|f5 = AssumeType v241 provenType=undefined|f5
-# CHECK-NEXT: v243: boolean = TypeTest v242 testedType=f5
-# CHECK-NEXT: Branch v243 -> taken b104(), notTaken b107()
+# CHECK-NEXT: v242: string = CallDirect v46 function=f5 accessSite=18
+# CHECK-NEXT: Jump -> next b102(v242)
+# CHECK-NEXT: b102(v243: string) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b103(v243)
+# CHECK-NEXT: b103(v244: string):
+# CHECK-NEXT: v245: string = Add v185, v244
+# CHECK-NEXT: v246: int[1, 1000] = Increment v32
+# CHECK-NEXT: Jump -> next b1(v186, v245, v246)
 # CHECK-NEXT: b104() frequency=Rare:
-# CHECK-NEXT: v244: string = CallDirect v47 function=f5 accessSite=18
-# CHECK-NEXT: Jump -> next b105(v244)
-# CHECK-NEXT: b105(v245: string) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b106(v245)
-# CHECK-NEXT: b106(v246: string):
-# CHECK-NEXT: v247: string = Add v187, v246
-# CHECK-NEXT: v248: int[1, 1000] = Increment v32
-# CHECK-NEXT: Jump -> next b1(v188, v247, v248)
-# CHECK-NEXT: b107() frequency=Rare:
+# CHECK-NEXT: v247: undefined = Undefined
+# CHECK-NEXT: v248: never = Call v247, v46 calleeKey="describe" calleeName="made.describe" accessSite=18 callees=[f5]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b105() frequency=Rare:
 # CHECK-NEXT: v249: undefined = Undefined
-# CHECK-NEXT: v250: never = Call v249, v47 calleeKey="describe" calleeName="made.describe" accessSite=18 callees=[f5]
+# CHECK-NEXT: v250: never = Call v249, v46, v174 calleeKey="shout" calleeName="made.shout" accessSite=16 callees=[f24]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b108() frequency=Rare:
+# CHECK-NEXT: b106() frequency=Rare:
 # CHECK-NEXT: v251: undefined = Undefined
-# CHECK-NEXT: v252: never = Call v251, v47, v176 calleeKey="shout" calleeName="made.shout" accessSite=16 callees=[f24]
+# CHECK-NEXT: v252: never = Call v251, v46 calleeKey="area" calleeName="made.area" accessSite=11 callees=[f20]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b109() frequency=Rare:
-# CHECK-NEXT: v253: undefined = Undefined
-# CHECK-NEXT: v254: never = Call v253, v47 calleeKey="area" calleeName="made.area" accessSite=11 callees=[f20]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b110():
-# CHECK-NEXT: v255: undefined = CallBuiltin -, v26, v27 overload=ConsoleLog/0 accessSite=21
-# CHECK-NEXT: v256: undefined = Undefined
-# CHECK-NEXT: Return v256
+# CHECK-NEXT: b107():
+# CHECK-NEXT: v253: undefined = CallBuiltin -, v26, v27 overload=ConsoleLog/0 accessSite=21
+# CHECK-NEXT: v254: undefined = Undefined
+# CHECK-NEXT: Return v254
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forwardSetter"
 # CHECK: module=m0 position=501 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Object}, {type="box"}, {type="width"}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

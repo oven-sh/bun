@@ -25,7 +25,6 @@ pub fn bundle_pages<'s>(
     sources: &Sources,
     provider: &dyn SourceProvider,
     is_loaded: &dyn Fn(FileId) -> bool,
-    named_at_run_time: &[(FileId, &[u8])],
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &mut Log,
@@ -37,11 +36,6 @@ pub fn bundle_pages<'s>(
     let paths: Vec<&[u8]> = pages.iter().map(|page| &*page.1).collect();
     let manifests = provider.bundle_pages(&paths, arena, atoms, log)?;
     assert_eq!(manifests.len(), pages.len(), "one manifest for each page");
-    for &(file, path) in named_at_run_time {
-        if !sources.loader(file).is_javascript_like() {
-            provider.embed_file_at_its_path(path, log);
-        }
-    }
     provider.check_embedded_files(log)?;
     let files = pages.iter().map(|page| page.0);
     Ok(DeferredData {

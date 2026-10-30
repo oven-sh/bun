@@ -110,6 +110,9 @@ new!(pub BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: string, "BUN_DEBUG_TEST_UNTRIMMED_OUT
 // Testing hook for `bun test --aot`, which takes no developer flags: words of the compiler, split at commas, as `bun build` takes them.
 // `disable=flow-results` builds tests as a program that is too large to analyze is built.
 new!(pub BUN_DEBUG_TEST_AOT_WORDS: string, "BUN_DEBUG_TEST_AOT_WORDS", {});
+// Testing hook for `bun run --aot` and `bun test --aot`: `shared-memory` or `deleted` is the first kind of file they try for the
+// compiled program, as where the kinds before it do not work.
+new!(pub BUN_DEBUG_TEST_AOT_PROGRAM_FILE: string, "BUN_DEBUG_TEST_AOT_PROGRAM_FILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});

@@ -281,6 +281,8 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
   // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that were loaded from outside of the executable, as in a bundled executable.
   const hidesFiles = $isHiddenFromRequireCache();
   const isHidden = (key: string | symbol) => hidesFiles && $isHiddenFromRequireCache(key);
+  // A test run that is compiled in place shows its files, as plain does.
+  const listsCompiledFiles = $requireCacheCompiledEntry() === true;
   const hasKey = (key: string) =>
     !isHidden(key) && (requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key, owner)));
   var proxy = new Proxy(inner, {
@@ -288,6 +290,10 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
       if (isHidden(key)) return undefined;
       const entry = requireMap.$get(key);
       if (entry) return entry;
+      if (listsCompiledFiles) {
+        const compiled = $requireCacheCompiledEntry(key);
+        if (compiled) return compiled;
+      }
 
       if (!isBuiltinKey(key)) {
         const namespace = $esmNamespaceForCjs(key, owner);
@@ -312,6 +318,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
 
     deleteProperty(_target, key: string) {
       if (isHidden(key)) return true;
+      $requireCacheDidDelete(key);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);

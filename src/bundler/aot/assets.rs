@@ -32,29 +32,6 @@ impl EmbeddedFiles {
         Ok(path)
     }
 
-    pub(crate) fn embed_at_path_under_root(
-        &self,
-        context: &BuildContext,
-        path: &[u8],
-        contents: &[u8],
-        log: &mut Log,
-    ) {
-        let file = SourceFile {
-            path,
-            contents,
-            loader: Loader::File,
-        };
-        let Ok((mut output, _)) = create_embedded_file(context, &file, log) else {
-            return;
-        };
-        let working_directory = Fs::FileSystem::get().top_level_dir();
-        let relative = relative_path(working_directory, &context.options().root_dir, path);
-        if let Some(relative) = relative.filter(|relative| !relative.starts_with(b"..")) {
-            output.dest_path = posix_path(&relative).into_boxed_slice();
-            self.files.lock().push(output);
-        }
-    }
-
     pub(crate) fn set_contents(
         &self,
         context: &BuildContext,

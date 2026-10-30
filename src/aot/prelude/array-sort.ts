@@ -149,8 +149,8 @@ function computeRunPower(previousBegin: number, begin: number, end: number, coun
 }
 
 function extendValueRun<T>(from: T[], end: number, count: number, comparator: unknown): number {
-  for (; end + 1 < count; end = (end + 1) | 0) {
-    const next: T = $getOwnContiguousIndex<T>(from, end + 1);
+  for (end = end | 0, count = count | 0; ((end + 1) | 0) < count; end = (end + 1) | 0) {
+    const next: T = $getOwnContiguousIndex<T>(from, (end + 1) | 0);
     const last: T = $getOwnContiguousIndex<T>(from, end);
     if (isLess($call<unknown>(comparator, undefined, next, last))) break;
   }
@@ -285,8 +285,8 @@ function sortValues<T>(from: T[], count: number, comparator: unknown): void {
     return;
   }
   // A short array is one run once its first run is found.
-  const end = findValueRun<T>(from, 0, count, comparator);
-  if (end + 1 < count) mergeFurtherValueRuns<T>(from, count, end, comparator);
+  const end = findValueRun<T>(from, 0, count, comparator) | 0;
+  if (((end + 1) | 0) < count) mergeFurtherValueRuns<T>(from, count, end, comparator);
 }
 
 function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: number, comparator: unknown): void {
@@ -296,7 +296,7 @@ function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: numbe
   let depth = 0;
   let previousBegin = 0;
   let previousEnd = endOfFirstRun;
-  for (let begin = (endOfFirstRun + 1) | 0; ;) {
+  for (let begin = (endOfFirstRun + 1) | 0; ; ) {
     let end = begin;
     let power = -1;
     if (begin < count) {
@@ -327,8 +327,8 @@ function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: numbe
 }
 
 function extendDoubleRun(from: number[], end: number, count: number, comparator: unknown): number {
-  for (; end + 1 < count; end = (end + 1) | 0) {
-    const next: number = $getOwnDoubleIndex(from, end + 1);
+  for (end = end | 0, count = count | 0; ((end + 1) | 0) < count; end = (end + 1) | 0) {
+    const next: number = $getOwnDoubleIndex(from, (end + 1) | 0);
     const last: number = $getOwnDoubleIndex(from, end);
     if (isLess($call<unknown>(comparator, undefined, next, last))) break;
   }
@@ -466,8 +466,8 @@ function sortDoubles(from: number[], count: number, comparator: unknown): void {
     insertionSortDoubles(from, 0, 0, count, comparator);
     return;
   }
-  const end = findDoubleRun(from, 0, count, comparator);
-  if (end + 1 < count) mergeFurtherDoubleRuns(from, count, end, comparator);
+  const end = findDoubleRun(from, 0, count, comparator) | 0;
+  if (((end + 1) | 0) < count) mergeFurtherDoubleRuns(from, count, end, comparator);
 }
 
 function mergeFurtherDoubleRuns(from: number[], count: number, endOfFirstRun: number, comparator: unknown): void {
@@ -477,7 +477,7 @@ function mergeFurtherDoubleRuns(from: number[], count: number, endOfFirstRun: nu
   let depth = 0;
   let previousBegin = 0;
   let previousEnd = endOfFirstRun;
-  for (let begin = (endOfFirstRun + 1) | 0; ;) {
+  for (let begin = (endOfFirstRun + 1) | 0; ; ) {
     let end = begin;
     let power = -1;
     if (begin < count) {
@@ -523,19 +523,19 @@ function sortDoubleArray<T>(array: T[], length: number, comparator: unknown): vo
   for (let index = 0; index < length; index++) {
     const value: number = $getDoubleIndex(array, index);
     if (value !== value) continue;
-    $putDoubleIndex(from, count, value);
+    $putOwnDoubleIndex(from, count, value);
     count = (count + 1) | 0;
   }
   sortDoubles(from, count, comparator);
   let index = 0;
   if (count > 0) {
     // This store copies shared storage and throws on a frozen array, so the loop below finds writable storage.
-    const first: number = $getDoubleIndex(from, 0);
+    const first: number = $getOwnDoubleIndex(from, 0);
     const isFirstStored: boolean = $tryPutIndex(array, 0, first);
     if (!isFirstStored) array[0] = first as unknown as T;
     // $putDoubleIndex is for arrays that this file made. The program's array may refuse a store.
     for (index = 1; index < count; index++) {
-      const isStored: boolean = $tryPutDoubleIndex(array, index, $getDoubleIndex(from, index));
+      const isStored: boolean = $tryPutDoubleIndex(array, index, $getOwnDoubleIndex(from, index));
       if (!isStored) break;
     }
   }
@@ -602,7 +602,7 @@ export function sort<T>(this: T[], comparator: unknown): T[] {
         if (has) undefinedCount++;
         continue;
       }
-      $putContiguousIndex(from, count, value);
+      $putOwnContiguousIndex(from, count, value);
       count = (count + 1) | 0;
     }
   } else {
@@ -612,9 +612,16 @@ export function sort<T>(this: T[], comparator: unknown): T[] {
   }
   sortValues<T>(from, count, comparator);
   let index = 0;
-  for (; index < count; index++) {
-    const isStored: boolean = $tryPutIndex(this, index, $getContiguousIndex<T>(from, index));
-    if (!isStored) break;
+  if (count > 0) {
+    // A store that is taken says that the storage is writable. No call stands between it and the loop, so one look at the kind and the length does for every store.
+    const isFirstStored: boolean = $tryPutIndex(this, 0, $getOwnContiguousIndex<T>(from, 0));
+    if (isFirstStored) {
+      index = 1;
+      // Storage for integers has been that since before the values were taken out of it.
+      if (isContiguousArray(this) && count <= this.length)
+        for (; index < count; index = (index + 1) | 0)
+          $putOwnContiguousIndex(this, index, $getOwnContiguousIndex<T>(from, index));
+    }
   }
   if (index < length) putRestOfSortedValues<T>(this, length, from, count, index, undefinedCount);
   return this;
@@ -717,7 +724,7 @@ export function toSorted<T>(this: T[], comparator: unknown): T[] {
     for (; index < length; index++) {
       const value: number = $getDoubleIndex(this, index);
       if (value !== value) break;
-      $putDoubleIndex(doubles, index, value);
+      $putOwnDoubleIndex(doubles, index, value);
     }
     if (index === length) {
       sortDoubles(doubles, length, comparator);
@@ -729,7 +736,7 @@ export function toSorted<T>(this: T[], comparator: unknown): T[] {
     for (; index < length; index++) {
       const value = $getContiguousIndex<number | undefined>(this, index);
       if (value === undefined) break;
-      $putDoubleIndex(doubles, index, value);
+      $putOwnDoubleIndex(doubles, index, value);
     }
     if (index === length) {
       sortDoubles(doubles, length, comparator);
@@ -742,18 +749,18 @@ export function toSorted<T>(this: T[], comparator: unknown): T[] {
     for (let index = 0; index < length; index++) {
       const value = $getContiguousIndex<T>(this, index);
       if (value === undefined) continue;
-      $putContiguousIndex(from, count, value);
+      $putOwnContiguousIndex(from, count, value);
       count = (count + 1) | 0;
     }
   } else {
     for (let index = 0; index < length; index++) {
       const value = this[index];
       if (value === undefined) continue;
-      $putContiguousIndex(from, count, value);
+      $putOwnContiguousIndex(from, count, value);
       count = (count + 1) | 0;
     }
   }
   sortValues<T>(from, count, comparator);
-  for (let index = count; index < length; index++) $putContiguousIndex(from, index, undefined);
+  for (let index = count; index < length; index++) $putOwnContiguousIndex(from, index, undefined);
   return $truncateNewArray<T>(from, length);
 }

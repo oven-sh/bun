@@ -21,13 +21,12 @@ const brokenPage = `<!doctype html><html><head><script type="module" src="/asset
 <link rel="stylesheet" href="/assets/no-such.css"></head><body><img src="/no-such.svg"></body></html>`;
 const goodPage = `<!doctype html><html><body><h1>good</h1></body></html>`;
 
-test("a page that only require.resolve names is not bundled, whatever it holds", async () => {
+test("a file that only require.resolve names is neither bundled nor embedded, whatever it holds", async () => {
   using dir = tempDir("aot-resolve-only-page", {
     "main.ts": `
       const name = process.argv[2];
       const path = require.resolve("./pages/" + name);
-      console.log(path.endsWith(name));
-      console.log((await Bun.file(path).text()).length > 0);
+      console.log(path.endsWith(name), await Bun.file(path).exists());
     `,
     "tsconfig.json": "{}",
     "pages/index.html": brokenPage,
@@ -37,7 +36,7 @@ test("a page that only require.resolve names is not bundled, whatever it holds",
   expect(stderr).not.toContain("no-such");
   for (const name of ["index.html", "logo.svg"]) {
     const { stdout, exitCode } = await spawned([executable, name], String(dir), bunEnv);
-    expect(stdout).toBe("true\ntrue\n");
+    expect(stdout).toBe("true false\n");
     expect(exitCode).toBe(0);
   }
 }, 60_000);
@@ -46,7 +45,6 @@ test("a page that only require.resolve names is not bundled beside a require of 
   using dir = tempDir("aot-resolve-only-page-beside-unknown-require", {
     "main.ts": `
       const path = require.resolve("./pages/" + process.argv[2]);
-      console.log((await Bun.file(path).text()).length > 0);
       try {
         console.log(typeof require(process.argv[3] ?? path));
       } catch (error) {
@@ -60,7 +58,7 @@ test("a page that only require.resolve names is not bundled beside a require of 
   expect(stderr).not.toContain("no-such");
   const { stdout, exitCode } = await spawned([executable, "index.html"], String(dir), bunEnv);
   expect(stdout).toBe(
-    "true\nError: Cannot load 'index.html': the page isn't bundled into this executable, because no import or require() names it\n",
+    "Error: Cannot load 'index.html': the page isn't bundled into this executable, because no import or require() names it\n",
   );
   expect(exitCode).toBe(0);
 }, 60_000);

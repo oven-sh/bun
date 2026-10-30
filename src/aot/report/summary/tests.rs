@@ -376,7 +376,7 @@ fn five_untyped_files_are_all_listed() {
 #[test]
 fn details_need_counted_access() {
     let mut statistics = Statistics::default();
-    statistics.gave_up(LimitId::MaxValueFlowEdgesLogged, None);
+    statistics.gave_up(LimitId::MaxValueFlowSetMembers, None);
     assert_eq!(Modules::new(&[]).details(&statistics), None);
     assert_eq!(
         Modules::new(&[(RUNTIME, [1, 2, 3])]).details(&statistics),
@@ -387,7 +387,7 @@ fn details_need_counted_access() {
 #[test]
 fn details_end_with_reached_limits() {
     let mut statistics = Statistics::default();
-    statistics.gave_up(LimitId::MaxValueFlowEdgesLogged, None);
+    statistics.gave_up(LimitId::MaxValueFlowSetMembers, None);
     for _ in 0..3 {
         statistics.gave_up(LimitId::MaxTypeNodes, None);
     }
@@ -396,8 +396,8 @@ fn details_end_with_reached_limits() {
         LimitId::MaxTypeNodes.purpose()
     );
     let flow_edges = format!(
-        "  MaxValueFlowEdgesLogged = 2, hit 1 time, left nothing untyped (limits {})",
-        LimitId::MaxValueFlowEdgesLogged.purpose()
+        "  MaxValueFlowSetMembers = 2, hit 1 time, left nothing untyped (limits {})",
+        LimitId::MaxValueFlowSetMembers.purpose()
     );
     let expected = [
         "All property accesses, including dependencies:",
@@ -435,14 +435,14 @@ fn trim_causes_have_sentence_and_position() {
         unseen(UnseenCodeCause::RunsUnseenCode, Some(1)),
         unseen(UnseenCodeCause::ImportsUncompiledCode, Some(2)),
         unseen(UnseenCodeCause::LoadsModuleByName, Some(3)),
-        unseen(UnseenCodeCause::FlowGaveUp, None),
+        unseen(UnseenCodeCause::FlowResultDisabled, None),
     ];
     let sentences = [
         "the program calls eval() or new Function() (src/a.ts:2:14)",
         "the program can run code that isn't in the executable",
         "the program imports a module that isn't in the executable",
         "the program calls import() or require() with a dynamic path",
-        "the analysis hit a compiler limit",
+        "a developer option turned the analysis off",
     ];
     let lines = sentences
         .map(|sentence| format!("--trim kept APIs your code doesn't call because {sentence}\n"));
@@ -480,9 +480,9 @@ fn summary_starts_with_trim_causes() {
     });
     fixture.options.trim.removes_unused = true;
     fixture.options.option_words = vec![Box::from(&b"validate"[..])];
-    fixture.used_features.causes = vec![unseen(UnseenCodeCause::FlowGaveUp, None)];
+    fixture.used_features.causes = vec![unseen(UnseenCodeCause::FlowResultDisabled, None)];
     let start = [
-        "--trim kept APIs your code doesn't call because the analysis hit a compiler limit\n",
+        "--trim kept APIs your code doesn't call because a developer option turned the analysis off\n",
         "Built with developer options: --aot-validate\n",
     ];
     let levels = [

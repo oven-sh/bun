@@ -820,6 +820,29 @@ fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
     }
 }
 
+// The file may be imported while it runs, so whoever imports it asks for `default` when it is linked.
+#[test]
+fn commonjs_file_that_is_left_out_of_a_cycle_is_asked_for_nothing() {
+    let linked = link_successfully(&[
+        ("main.mjs", "import b from \"./b.mjs\";\nconsole.log(b);\n"),
+        ("a.cjs", "module.exports = require(\"./b.mjs\");\n"),
+        ("b.mjs", "import a from \"./a.cjs\";\nexport default 7;\n"),
+        (
+            "package.json",
+            r#"{ "name": "program", "sideEffects": false }"#,
+        ),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let find = |name: &str| {
+        let mut modules = program.modules.iter();
+        modules.find(|module| program.strings.get(module.path).ends_with_str(name))
+    };
+    assert!(find("a.cjs").is_none());
+    let importer = find("b.mjs").expect("b.mjs has a record");
+    assert!(importer.required_names.is_empty());
+}
+
 #[test]
 fn link_error_names_the_files_and_the_import() {
     use super::link_stage::describe_link_error;
@@ -865,6 +888,14 @@ fn link_error_names_the_files_and_the_import() {
         assert_eq!(
             describe_link_error(loaded, &missing),
             b"MissingUnit: /project/main.js"
+        );
+        let missing = LinkError::MissingRecord {
+            module: ProgramModule::Face(file(b"/project/tools.cjs")),
+            named_by: Some(ProgramModule::File(main)),
+        };
+        assert_eq!(
+            describe_link_error(loaded, &missing),
+            b"MissingRecord: the face of /project/tools.cjs, named by /project/main.js"
         );
     });
 }
@@ -1233,10 +1264,7 @@ fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
         children: true,
         parent: true,
     };
-    for cause in [
-        UnseenCodeCause::FlowResultDisabled,
-        UnseenCodeCause::LimitReached,
-    ] {
+    for cause in [UnseenCodeCause::FlowResultDisabled] {
         let unseen_code = [UnseenCodeRecord {
             cause,
             builtin: ABSENT_WORD,

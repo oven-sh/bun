@@ -499,9 +499,10 @@ const compared = ({ exitCode, signal, stdout, stderr }: Output) => ({
 });
 // A Bun built with assertions keeps the line breaks of the built-ins written in JavaScript, so plain Bun prints `map (native:17:41)` there.
 // An executable has the positions of a release build, `map (native:1:11)`, and so has a stored output.
+// A program may print the line alone: `iter (native:4)` there, `iter (native:3)` in an executable.
 const comparedWithPlain = (output: Output) => {
   const { stdout, ...rest } = compared(output);
-  return { ...rest, stdout: isASAN ? stdout.replace(/\b(native|unknown):\d+:\d+/g, "$1") : stdout };
+  return { ...rest, stdout: isASAN ? stdout.replace(/\b(native|unknown):\d+(?::\d+)?/g, "$1") : stdout };
 };
 /** The lines of `text` that are not the same in `other`, each with the line before and the line after it. */
 function differingLines(text: string, other: string) {
@@ -716,6 +717,8 @@ function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string)
     .filter(({ name, relation, bound }) => {
       // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
       if (isASAN && name === "operations") return false;
+      // A Bun built with AddressSanitizer folds no null check into an access: it counts 0.
+      if (isASAN && name === "NullChecksFoldedIntoAccesses") return false;
       // A function of the run time that nothing called has no line. The same shorter free lists make a function that also refills one count more: those entries are not the ones asked about.
       const refills =
         isASAN && name.startsWith("operation:") ? (counted.get("refilled:" + name.slice("operation:".length)) ?? 0) : 0;

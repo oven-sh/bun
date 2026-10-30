@@ -593,25 +593,81 @@ fn create_deleted_file(directory: &[u8]) -> Maybe<Fd> {
     Ok(file.into_raw())
 }
 
+/// Where the compiled program waits for the process that runs it, best first.
 #[cfg(unix)]
-fn create_unnamed_file() -> Maybe<Fd> {
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ProgramFile {
+    Memfd,
+    /// Not on macOS, which maps shared memory neither executable nor private.
+    SharedMemory,
+    Deleted,
+}
+
+/// `/dev/shm` is mounted `noexec` in most containers, and the engine maps the code from the file.
+#[cfg(target_os = "linux")]
+fn can_map_code(descriptor: Fd) -> bool {
+    let size = bun_sys::page_size();
+    let (access, flags) = (libc::PROT_READ | libc::PROT_EXEC, libc::MAP_PRIVATE);
+    bun_sys::mmap(core::ptr::null_mut(), size, access, flags, descriptor, 0)
+        .is_ok_and(|page| bun_sys::munmap(page, size).is_ok())
+}
+
+#[cfg(target_os = "linux")]
+fn create_shared_memory() -> Option<Fd> {
+    // What `shm_open` and `shm_unlink` do. Before glibc 2.34 they are in librt, which Bun does not link.
+    let file = File::from_fd(create_deleted_file(b"/dev/shm").ok()?);
+    can_map_code(file.handle()).then(|| file.into_raw())
+}
+
+#[cfg(target_os = "freebsd")]
+fn create_shared_memory() -> Option<Fd> {
+    // SAFETY: `SHM_ANON` stands in for a name and is not read.
+    let descriptor =
+        unsafe { libc::shm_open(libc::SHM_ANON, libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
+    (descriptor >= 0).then(|| Fd::from_native(descriptor))
+}
+
+#[cfg(unix)]
+fn create_unnamed_file(first: ProgramFile) -> Maybe<(Fd, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    if bun_sys::can_use_memfd() {
+    if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
         if let Ok(descriptor) =
             bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
         {
-            return Ok(descriptor);
+            return Ok((descriptor, ProgramFile::Memfd));
         }
     }
-    create_deleted_file(bun_resolver::fs::RealFS::tmpdir_path())
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if first <= ProgramFile::SharedMemory {
+        if let Some(descriptor) = create_shared_memory() {
+            return Ok((descriptor, ProgramFile::SharedMemory));
+        }
+    }
+    let _ = first;
+    let descriptor = create_deleted_file(bun_resolver::fs::RealFS::tmpdir_path())?;
+    Ok((descriptor, ProgramFile::Deleted))
 }
 
 #[cfg(unix)]
 fn write_to_unnamed_file(bytes: &[u8], bytes_after: &[u8]) -> Maybe<Fd> {
-    let file = File::from_fd(create_unnamed_file()?);
-    file.write_all(bytes)?;
-    file.write_all(bytes_after)?;
-    Ok(file.into_raw())
+    let mut first = match env_var::BUN_DEBUG_TEST_AOT_PROGRAM_FILE.get() {
+        Some(b"shared-memory") => ProgramFile::SharedMemory,
+        Some(b"deleted") => ProgramFile::Deleted,
+        _ => ProgramFile::Memfd,
+    };
+    loop {
+        let (descriptor, kind) = create_unnamed_file(first)?;
+        let file = File::from_fd(descriptor);
+        match file
+            .write_all(bytes)
+            .and_then(|()| file.write_all(bytes_after))
+        {
+            Ok(()) => return Ok(file.into_raw()),
+            // Memory can be full where the disk is not.
+            Err(_) if kind < ProgramFile::Deleted => first = ProgramFile::Deleted,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cold]

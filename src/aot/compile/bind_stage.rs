@@ -209,25 +209,7 @@ impl Build<'_> {
                 || entry_points.any(|entry_point| entry_point.file == file)
         };
         let bundled = loaded.messages.with_log(|log| {
-            let files = loaded.project(ProjectId::Application).loaded.files();
-            let named = graph.find_files_named_by_resolve_sites();
-            let paths_of_named = named.iter().map(|&file| {
-                (
-                    file,
-                    bun_sema_driver::host::to_native(files.module(file).file_name()),
-                )
-            });
-            let named_at_run_time: Vec<(bun_sema::program::FileId, &[u8])> =
-                paths_of_named.collect();
-            modules::bundle_pages(
-                sources,
-                provider,
-                &is_loaded,
-                &named_at_run_time,
-                arena,
-                &loaded.atoms,
-                log,
-            )
+            modules::bundle_pages(sources, provider, &is_loaded, arena, &loaded.atoms, log)
         });
         self.diagnostics.add_load_messages(loaded.messages);
         bundled.unwrap_or_default()

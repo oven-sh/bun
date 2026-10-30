@@ -81,6 +81,8 @@ pub(super) struct Folder<'a, 's> {
     pub(super) has_followed_path_call: Cell<bool>,
     pub(super) excluded_operands: Vec<ExcludedOperand>,
     pub(super) folded_by_build_alone: PositionSet,
+    pub(super) conditions_told_by_shape: PositionSet,
+    pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: FxHashMap<ExprId, bool>,
     pub(super) short_circuited_links: PositionSet,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
@@ -123,6 +125,8 @@ pub(super) fn run<'s>(
         has_followed_path_call: Cell::new(false),
         excluded_operands: Vec::new(),
         folded_by_build_alone: PositionSet::new(hir.exprs.len()),
+        conditions_told_by_shape: PositionSet::new(hir.exprs.len()),
+        nullish_logical_results: FxHashMap::default(),
         conditions: FxHashMap::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         call_errors: Vec::new(),
@@ -156,6 +160,9 @@ impl<'s> Folder<'_, 's> {
                 || (is_nan && self.converts_an_operand_to_a_number(e));
             if is_folded_by_build_alone {
                 self.folded_by_build_alone.insert(index);
+                if self.tells_condition_by_shape(e) {
+                    self.conditions_told_by_shape.insert(index);
+                }
             }
             // `bun run` writes `NaN` for what it folds. Any other NaN has the sign that its operation gives where it runs.
             if is_nan && is_folded_by_build_alone {

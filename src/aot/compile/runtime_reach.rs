@@ -1244,7 +1244,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else.
+    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else. So does `export { a, b } from "node:x"`.
     fn reach_named_imports(
         &mut self,
         application: &Files<'_>,
@@ -1274,6 +1274,14 @@ impl<'a, 's> Walk<'a, 's> {
                         core::str::from_utf8(application.atoms.bytes(hir[it].imported)).ok()
                     })
                     .collect()
+                }
+                ImportSiteKind::ExportFrom(export)
+                    if !hir[export].type_only
+                        && hir[export].items.iter().any(|it| !hir[it].type_only) =>
+                {
+                    let read = hir[export].items.iter().filter(|&it| !hir[it].type_only);
+                    read.map(|it| core::str::from_utf8(application.atoms.bytes(hir[it].local)).ok())
+                        .collect()
                 }
                 _ => None,
             };

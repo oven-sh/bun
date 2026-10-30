@@ -407,9 +407,13 @@ impl SourceProvider for BundlerServices {
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
         match file.can_import_macros {
             true => (self.macros).compile_components(&self.context, file, observer),
-            false => {
-                components::compile_components(&self.context, file, observer, &mut Log::init())
-            }
+            false => components::compile_components(
+                &self.context,
+                file,
+                observer,
+                None,
+                &mut Log::init(),
+            ),
         }
     }
 
@@ -421,16 +425,6 @@ impl SourceProvider for BundlerServices {
         log: &mut Log,
     ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
         page_bundles::bundle_pages(&self.context, &self.embedded, pages, arena, atoms, log)
-    }
-
-    fn embed_file_at_its_path(&self, path: &[u8], log: &mut Log) {
-        if self.context.module_prefix.is_empty() {
-            return;
-        }
-        if let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-            self.embedded
-                .embed_at_path_under_root(&self.context, path, &contents, log);
-        }
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {

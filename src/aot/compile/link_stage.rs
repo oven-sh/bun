@@ -90,6 +90,14 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
             )
         }
         LinkError::MissingUnit { file } => format!("MissingUnit: {}", path(file)),
+        LinkError::MissingRecord { module, named_by } => match named_by {
+            Some(named_by) => format!(
+                "MissingRecord: {}, named by {}",
+                module_of(module),
+                module_of(named_by)
+            ),
+            None => format!("MissingRecord: {}", module_of(module)),
+        },
         LinkError::TypeHashCollision { files } => format!("TypeHashCollision: {}", both(files)),
         LinkError::LimitExceeded { .. } => format!("{error:?}"),
     };
@@ -198,8 +206,6 @@ impl Build<'_> {
             ways_not_followed_out_of_sight: application_graph.ways_not_followed_out_of_sight(),
             ways_followed_for_their_names: application_graph.ways_followed_for_their_names(),
             lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
-            holds_whole_library_as_guess: self.holds_whole_library_as_guess,
-            skips_analysis_of_tests: self.skips_analysis_of_tests(),
             expects_exports_to_be_replaced: self.expects_exports_to_be_replaced,
             exported_variables: ExportedVariables::collect(&program, &files_of_modules),
             writes_preload,

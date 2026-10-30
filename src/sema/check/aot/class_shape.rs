@@ -8,10 +8,10 @@ use super::class_stores::{
 };
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{Bound, Decl, FnOwner, Parent, SymbolId};
+use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
 use crate::hir::{
     self, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, MemberKind, ModifierKind,
-    PatKind, PropKey, TypeNodeId, has_body,
+    PatKind, PropKey, StmtKind, TypeNodeId, has_body,
 };
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
@@ -116,23 +116,32 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
-        if !candidates
+        // `K.n = 0` among the statements of the file, beside the declaration: the function has a static side, as a class has.
+        let has_static_side = candidates
             .stores
             .iter()
-            .any(StoreCandidate::is_of_constructor_function)
+            .any(|store| store.place == StorePlace::Class && is_statement_of_file(hir, store.store))
+            && hir.ids(hir.body).any(|statement| matches!(hir[statement].kind, StmtKind::Fn(declared) if declared == function))
+            && can_have_static_side(hir, bound, function);
+        if !has_static_side
+            && !candidates
+                .stores
+                .iter()
+                .any(StoreCandidate::is_of_constructor_function)
         {
             return None;
         }
         let mut members = Vec::new();
         let names_stored_in_prototype = self.names_stored_in_prototype(&candidates);
         self.add_stores(file, &mut members, candidates);
+        // `K.n = 0` beside the declaration: the function has a static side as a class does.
         let is_constructor = members.iter().any(|member| {
             matches!(
                 member.source,
                 ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_)
             )
         });
-        if !is_constructor {
+        if !is_constructor && !has_static_side {
             return None;
         }
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {
@@ -498,6 +507,52 @@ fn store_candidates(
         stores,
         prototype_accessor_names,
     }
+}
+
+// A name that is written to may stop naming the function, and one that a namespace merges with is not typed as a function.
+// A function handed on as a value is read by name, and reads by name of a static field go through the run time, so it stays as it is.
+pub fn can_have_static_side(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+    let symbol = bound.declared_symbol(Decl::Fn(function));
+    bound.is_stable_binding(symbol)
+        && !hir.ids(hir.body).any(|statement| matches!(hir[statement].kind, StmtKind::Module(module) if bound.declared_symbol(Decl::Module(module)) == symbol))
+        && !hir[function].flags.contains(Flags::EXPORT)
+        && symbol.some().is_some_and(|symbol| name_is_only_read_through_and_called(hir, bound, symbol))
+}
+
+// `K.x` and `K()` and `new K`. `K.x()` hands `K` on as `this`.
+fn name_is_only_read_through_and_called(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    symbol: SymbolId,
+) -> bool {
+    let name = bound.symbol(symbol).name;
+    if hir.export_specs.iter().any(|spec| spec.local == name) {
+        return false;
+    }
+    (0..hir.exprs.len() as u32).map(ExprId).all(|expression| {
+        if !matches!(hir[expression].kind, ExprKind::Ident(_)) || bound.binding(expression) != Binding::Symbol(symbol) {
+            return true;
+        }
+        let Parent::Expr(parent) = bound.parent_of_expr(expression) else {
+            return false;
+        };
+        let Some(parent) = parent.some() else {
+            return false;
+        };
+        match hir[parent].kind {
+            ExprKind::Dot { obj, .. } if obj == expression => {
+                !matches!(bound.parent_of_expr(parent), Parent::Expr(above) if above.some().is_some_and(|above| matches!(hir[above].kind, ExprKind::Call(call) if hir[call].callee == parent)))
+            }
+            ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee == expression,
+            _ => false,
+        }
+    })
+}
+
+fn is_statement_of_file(hir: &hir::File<'_>, expression: ExprId) -> bool {
+    hir.ids(hir.body).any(
+        |statement| matches!(hir[statement].kind, StmtKind::Expr(written) if written == expression),
+    )
 }
 
 fn binding_candidate(store: &BindingStore) -> StoreCandidate {

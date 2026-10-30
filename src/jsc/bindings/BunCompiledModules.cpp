@@ -158,6 +158,12 @@ extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
+extern "C" bool isBunTest;
+
+static bool reloadsFilesFromDisk()
+{
+    return isBunTest && Bun__AOT__allowsCodeFromDisk();
+}
 extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
 
@@ -358,7 +364,7 @@ JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
 {
     auto module = moduleForRequest(globalObject, path);
-    if (!module)
+    if (!module || AOT::leavesModuleToHost(globalObject, *module))
         return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     AOT::evaluateModuleSynchronously(globalObject, *module);
@@ -383,6 +389,46 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     RETURN_IF_EXCEPTION(scope, false);
     target->hasEvaluated = true;
     return true;
+}
+
+void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (!reloadsFilesFromDisk())
+        return;
+    if (auto module = compiledModuleForPath(key))
+        AOT::didDeleteRequireCacheEntry(globalObject, *module);
+}
+
+bool requireCacheListsCompiledFiles(Zig::GlobalObject*)
+{
+    return reloadsFilesFromDisk();
+}
+
+bool isEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (!reloadsFilesFromDisk())
+        return false;
+    auto module = compiledModuleForPath(key);
+    return module && AOT::isEvaluatedFile(globalObject, *module);
+}
+
+JSValue compiledRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (!isEvaluatedCompiledFile(globalObject, key))
+        return {};
+    return AOT::requireCacheEntry(globalObject, *compiledModuleForPath(key));
+}
+
+bool isRecordOfCompiledModule(AbstractModuleRecord* record)
+{
+    return AOT::isCompiledModuleRecord(record);
+}
+
+void forEachEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const WTF::Function<void(const String&)>& functor)
+{
+    if (!hasCompiledModules() || !reloadsFilesFromDisk())
+        return;
+    AOT::forEachEvaluatedFile(globalObject, functor);
 }
 
 void willSetRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key, JSValue entry)
@@ -927,6 +973,12 @@ bool isAskingWhyFileFailsToLoad() { return false; }
 bool isDebuggerAdmitted() { return true; }
 JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
+void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
+bool requireCacheListsCompiledFiles(Zig::GlobalObject*) { return false; }
+bool isEvaluatedCompiledFile(Zig::GlobalObject*, const String&) { return false; }
+JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const String&) { return {}; }
+bool isRecordOfCompiledModule(AbstractModuleRecord*) { return false; }
+void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(const String&)>&) {}
 
 }
 

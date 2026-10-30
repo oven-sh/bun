@@ -706,59 +706,60 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: v5: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v6: flatstring @Cell = FlattenString v3
 # CHECK-NEXT: v7: int[0, 2147483647] @Int32 = GetStringLength v6
-# CHECK-NEXT: v8: undefined @Void = StringRange v7, v4, v5
-# CHECK-NEXT: v9: int[0, 2147483647] @Int32 = ResultAt v8
-# CHECK-NEXT: v10: int[0, 2147483647] @Int32 = ResultAt v8 index=1
-# CHECK-NEXT: v11: string @Cell = Substring v6, v9, v10
-# CHECK-NEXT: v12: 0 @Int32 = Integer
-# CHECK-NEXT: v13: boolean @Boolean = TypeTest v2 testedType=i32
-# CHECK-NEXT: TestAndBranch v13 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v14: i32 @Int32):
-# CHECK-NEXT: v15: i32 @Int32 = BitOr v14, v12 form=Integers
-# CHECK-NEXT: v16: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v15
-# CHECK-NEXT: v17: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v18: boolean @Boolean = StrictEq v16, v17 form=Integers
-# CHECK-NEXT: v19: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v14
-# CHECK-NEXT: v20: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v21: boolean @Boolean = Less v19, v20 form=Integers
-# CHECK-NEXT: v22: int[-2147483647, 2147483647] @Int32 = Sub v10, v9 form=Integers
-# CHECK-NEXT: v23: undefined @Void = StringRange v22, v14 method=SingleRelativeIndex
-# CHECK-NEXT: v24: int[0, 2147483647] @Int32 = ResultAt v23
-# CHECK-NEXT: v25: int[0, 2147483647] @Int32 = ResultAt v23 index=1
-# CHECK-NEXT: v26: int[0, 4294967294] @Int64 = Add v9, v24 form=Integers
-# CHECK-NEXT: v27: int[0, 4294967294] @Int64 = Add v9, v25 form=Integers
-# CHECK-NEXT: v28: 0 @Int32 = Integer
-# CHECK-NEXT: v29: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v26, v27, v28
-# CHECK-NEXT: v30: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v31: boolean @Boolean = GreaterEq v29, v30 form=Integers
-# CHECK-NEXT: v32: 0 @Int32 = Integer
-# CHECK-NEXT: v33: i32 @Int32 = BitOr v14, v32 form=Integers
-# CHECK-NEXT: Jump -> next b2(v18, v21, v31, v33)
-# CHECK-NEXT: b2(v34: boolean @Boolean, v35: boolean @Boolean, v36: boolean @Boolean, v37: i32 @Int32):
-# CHECK-NEXT: v38: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v37
-# CHECK-NEXT: v39: 109 @Int64 = Integer integer=109
-# CHECK-NEXT: v40: int[0, 4294967295] @Int64 = ToUint32 v38
-# CHECK-NEXT: v41: boolean @Boolean = LessEq v40, v39 form=Integers
-# CHECK-NEXT: v42: "," @Cell = String string="," @0 tail
+# CHECK-NEXT: v8: int[0, 5] @Int32 = AssumeType v7 provenType=int[0, 5]
+# CHECK-NEXT: v9: undefined @Void = StringRange v8, v4, v5
+# CHECK-NEXT: v10: int[0, 2147483647] @Int32 = ResultAt v9
+# CHECK-NEXT: v11: int[0, 2147483647] @Int32 = ResultAt v9 index=1
+# CHECK-NEXT: v12: string @Cell = Substring v6, v10, v11
+# CHECK-NEXT: v13: 0 @Int32 = Integer
+# CHECK-NEXT: v14: boolean @Boolean = TypeTest v2 testedType=i32
+# CHECK-NEXT: TestAndBranch v14 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v15: i32 @Int32):
+# CHECK-NEXT: v16: i32 @Int32 = BitOr v15, v13 form=Integers
+# CHECK-NEXT: v17: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v10, v11, v16
+# CHECK-NEXT: v18: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v19: boolean @Boolean = StrictEq v17, v18 form=Integers
+# CHECK-NEXT: v20: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v10, v11, v15
+# CHECK-NEXT: v21: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v22: boolean @Boolean = Less v20, v21 form=Integers
+# CHECK-NEXT: v23: int[-2147483647, 2147483647] @Int32 = Sub v11, v10 form=Integers
+# CHECK-NEXT: v24: undefined @Void = StringRange v23, v15 method=SingleRelativeIndex
+# CHECK-NEXT: v25: int[0, 2147483647] @Int32 = ResultAt v24
+# CHECK-NEXT: v26: int[0, 2147483647] @Int32 = ResultAt v24 index=1
+# CHECK-NEXT: v27: int[0, 4294967294] @Int64 = Add v10, v25 form=Integers
+# CHECK-NEXT: v28: int[0, 4294967294] @Int64 = Add v10, v26 form=Integers
+# CHECK-NEXT: v29: 0 @Int32 = Integer
+# CHECK-NEXT: v30: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v27, v28, v29
+# CHECK-NEXT: v31: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v32: boolean @Boolean = GreaterEq v30, v31 form=Integers
+# CHECK-NEXT: v33: 0 @Int32 = Integer
+# CHECK-NEXT: v34: i32 @Int32 = BitOr v15, v33 form=Integers
+# CHECK-NEXT: Jump -> next b2(v19, v22, v32, v34)
+# CHECK-NEXT: b2(v35: boolean @Boolean, v36: boolean @Boolean, v37: boolean @Boolean, v38: i32 @Int32):
+# CHECK-NEXT: v39: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v10, v11, v38
+# CHECK-NEXT: v40: 109 @Int64 = Integer integer=109
+# CHECK-NEXT: v41: int[0, 4294967295] @Int64 = ToUint32 v39
+# CHECK-NEXT: v42: boolean @Boolean = LessEq v41, v40 form=Integers
 # CHECK-NEXT: v43: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v44: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v45: string @Cell = Strcat v34, v42, v35, v43, v36, v44, v41 @0 tail
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v45: "," @Cell = String string="," @0 tail
+# CHECK-NEXT: v46: string @Cell = Strcat v35, v43, v36, v44, v37, v45, v42 @0 tail
+# CHECK-NEXT: Return v46
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v46: i32 @Int32 = BitOr v2, v12 form=Numbers
-# CHECK-NEXT: v47: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v46
-# CHECK-NEXT: v48: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v49: boolean @Boolean = StrictEq v47, v48 form=Integers
-# CHECK-NEXT: v50: string @Cell = CallInline v11, v2 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=22
-# CHECK-NEXT: v51: int[-1, 1] @Int32 = StringOrderToCharacter v50 codeUnit=109
-# CHECK-NEXT: v52: 0 @Int32 = Integer
-# CHECK-NEXT: v53: boolean @Boolean = Less v51, v52 form=Integers
-# CHECK-NEXT: v54: undefined|string @JSValue = CallInline v11, v2 inlineBuiltin=StringAt overload=StringPrototypeAt/0 accessSite=24
-# CHECK-NEXT: v55: "m" @JSValue = String string="m"
-# CHECK-NEXT: v56: boolean @Boolean = GreaterEq v54, v55 form=NullableStrings
-# CHECK-NEXT: v57: 0 @Int32 = Integer
-# CHECK-NEXT: v58: i32 @Int32 = BitOr v2, v57 form=Numbers
-# CHECK-NEXT: Jump -> next b2(v49, v53, v56, v58)
+# CHECK-NEXT: v47: i32 @Int32 = BitOr v2, v13 form=Numbers
+# CHECK-NEXT: v48: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v10, v11, v47
+# CHECK-NEXT: v49: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v50: boolean @Boolean = StrictEq v48, v49 form=Integers
+# CHECK-NEXT: v51: string @Cell = CallInline v12, v2 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=22
+# CHECK-NEXT: v52: int[-1, 1] @Int32 = StringOrderToCharacter v51 codeUnit=109
+# CHECK-NEXT: v53: 0 @Int32 = Integer
+# CHECK-NEXT: v54: boolean @Boolean = Less v52, v53 form=Integers
+# CHECK-NEXT: v55: undefined|string @JSValue = CallInline v12, v2 inlineBuiltin=StringAt overload=StringPrototypeAt/0 accessSite=24
+# CHECK-NEXT: v56: "m" @JSValue = String string="m"
+# CHECK-NEXT: v57: boolean @Boolean = GreaterEq v55, v56 form=NullableStrings
+# CHECK-NEXT: v58: 0 @Int32 = Integer
+# CHECK-NEXT: v59: i32 @Int32 = BitOr v2, v58 form=Numbers
+# CHECK-NEXT: Jump -> next b2(v50, v54, v57, v59)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="answers"
 # CHECK: module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f28 callPosition=4294967295 module=m0}] {

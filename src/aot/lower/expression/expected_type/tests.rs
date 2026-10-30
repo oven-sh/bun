@@ -1,6 +1,6 @@
 use crate::builtins::id::BuiltinClass;
 use crate::compile::testing::lower_program;
-use crate::ir::{DeclaredType, Opcode, Primitives, Type};
+use crate::ir::{DeclaredType, Opcode, Primitives, Type, TypeTable};
 use crate::load::host_platform;
 use crate::lower::LoweringOptions;
 
@@ -99,4 +99,34 @@ console.log(probe({ other: 1 }));
 ";
     let expected = expected_types("main.js", source, "probe");
     assert!(!expected.is_empty());
+}
+
+#[test]
+fn what_a_callback_does_with_its_parameter_says_what_the_list_holds() {
+    let source = "export function probe(text) {
+  const list = JSON.parse(text);
+  const kept = list.filter(x => x > 2);
+  return [list, kept];
+}
+";
+    let expected = expected_types("main.js", source, "probe");
+    let numbers = Type::class(BuiltinClass::Array, &[TypeTable::NUMBER]);
+    let lists = expected.iter().filter(|&ty| *ty == numbers);
+    assert_eq!(lists.count(), 2, "{expected:?}");
+}
+
+#[test]
+fn a_callback_that_says_nothing_of_its_parameter_says_nothing_of_the_list() {
+    let source = "export function probe(text, seen) {
+  const list = JSON.parse(text);
+  seen(list);
+  return list.filter(x => seen(x));
+}
+";
+    let expected = expected_types("main.js", source, "probe");
+    let is_array = |ty: &Type| {
+        let mut classes = ty.classes.iter();
+        classes.any(|part| part.builtin_class == BuiltinClass::Array)
+    };
+    assert!(!expected.iter().any(is_array), "{expected:?}");
 }

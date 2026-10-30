@@ -7,26 +7,42 @@ use crate::parse_task::{ContentsOrFd, Step};
 use crate::{ParseTask, Worker};
 use bun_aot::load::source_provider::{ComponentFile, apply_jsx_settings};
 use bun_ast::{Index, Log};
+use bun_js_parser::Macro::KnownAnswers;
 use bun_ptr::{BackRef, ParentRef, detach_lifetime};
 use bun_react_compiler::{Observer, observe};
 use bun_sys::Fd;
+use core::ptr::NonNull;
 
 /// Index 0 is the runtime, and the hashbang of index 1 picks the target. Nothing looks this index up in the graph.
 const SOURCE_INDEX: u32 = 2;
+const TARGET: Target = Target::Bun;
 
 /// Parses `file` through `ParseTask`, so the parser gets exactly the options a bundle gives it. Returns false if the
 /// file has an error.
+///
+/// `known_answers`: the load runs the macros of the file too.
 pub(crate) fn compile_components(
     context: &BuildContext,
     file: &ComponentFile<'_>,
     observer: &mut dyn Observer,
+    known_answers: Option<&mut dyn KnownAnswers>,
     log: &mut Log,
 ) -> bool {
+    // SAFETY: the guard below takes it out of the macro context before the borrow ends.
+    let known_answers = known_answers.map(|known| unsafe {
+        core::mem::transmute::<NonNull<dyn KnownAnswers + '_>, NonNull<dyn KnownAnswers>>(
+            NonNull::from(known),
+        )
+    });
     let mut worker = scopeguard::guard(Worker::get(context.bundle()), |worker| worker.unget());
     with_ast_scope(|arena| {
         // A bundle keeps every AST until it finishes. This one is dead once `observer` has seen it.
         let arena_of_bundle = std::mem::replace(&mut worker.arena, BackRef::new(arena));
-        let mut worker = scopeguard::guard(&mut **worker, |worker| worker.arena = arena_of_bundle);
+        let mut worker = scopeguard::guard(&mut **worker, |worker| {
+            worker.arena = arena_of_bundle;
+            set_known_answers(worker, None);
+        });
+        set_known_answers(&mut worker, known_answers);
         let mut task = create_task(context, file);
         let mut entry = Entry {
             contents: Contents::SharedBuffer {
@@ -42,6 +58,11 @@ pub(crate) fn compile_components(
         });
         parsed.is_ok_and(|success| !success.log.has_errors())
     })
+}
+
+fn set_known_answers(worker: &mut Worker, known_answers: Option<NonNull<dyn KnownAnswers>>) {
+    let macros = worker.transpiler_for_target(TARGET).macro_context.as_mut();
+    macros.expect("Worker::create wires it").known_answers = known_answers;
 }
 
 fn create_task(context: &BuildContext, file: &ComponentFile<'_>) -> ParseTask<'static> {
@@ -60,7 +81,7 @@ fn create_task(context: &BuildContext, file: &ComponentFile<'_>) -> ParseTask<'s
     ParseTask {
         path: Fs::Path::init_with_namespace(path, namespace),
         ctx: Some(carrier),
-        known_target: Target::Bun,
+        known_target: TARGET,
         contents_or_fd: ContentsOrFd::Contents(contents),
         loader: Some(file.loader),
         jsx,

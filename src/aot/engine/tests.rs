@@ -8,7 +8,7 @@ use super::ResultSection as Section;
 use super::testing::{Sections, bytes_of, with_result};
 use super::*;
 use crate::ir::generated::{Architecture, CheckSet, StatisticId};
-use crate::statistics::can_be_lowered;
+use crate::statistics::is_lowered_by_all;
 
 const IDENTITY: ExecutableIdentity = ExecutableIdentity(*b"0123456789abcdef");
 const THREAD_COUNT: NonZeroUsize = NonZeroUsize::new(7).unwrap();
@@ -383,7 +383,7 @@ fn all_lowers_each_limit_to_no_less_than_its_smallest() {
     let limits = with_record(record).limit_values();
     for limit in LimitId::ALL {
         let usual = limit.value(Architecture::X86_64);
-        let expected = if can_be_lowered(limit) {
+        let expected = if is_lowered_by_all(limit) {
             usual.min(limit.smallest().max(2))
         } else {
             usual

@@ -31,6 +31,8 @@ Compiled code calls `push` directly. It doesn't check first whether something re
 
 What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
 
+The build has to see the code that replaces them. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws the same `TypeError` unless compiled code assigns to `Date.now` too.
+
 The build reports the assignments it can see as `TS100014`. The others throw when they run, and the stack trace points at the line. If that line is in a package, look it up in [Packages that don't work](/compiler/libraries#packages-that-dont-work).
 
 ## Code from strings
@@ -82,6 +84,8 @@ A file that the build compiled is also found by a relative path that's written o
 const folder = path.join(import.meta.dir, "commands");
 for (const file of fs.readdirSync(folder)) require(path.join(folder, file));
 ```
+
+`require.resolve()` and `import.meta.resolve()` return a path and nothing more. A file that's only named that way isn't embedded, and an HTML page isn't bundled, so reading the path fails with `ENOENT`. To embed a file, import it: `import icon from "./icon.png" with { type: "file" }`.
 
 Anything else isn't in the executable:
 

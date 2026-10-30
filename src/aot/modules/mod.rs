@@ -401,6 +401,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     if mocks_any_module {
         plan.set_every_module_may_be_mocked();
     }
+    if input.runs_tests {
+        plan.set_may_be_evicted();
+    }
     let inner_requests = requests.inner_modules.into_iter();
     plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
     let graph = ModuleGraph {

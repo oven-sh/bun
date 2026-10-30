@@ -273,8 +273,6 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         ways_named_that_nobody_reads: Default::default(),
         replaced_exports: Vec::new(),
         mocks_any_module: false,
-        is_too_large_to_analyze: false,
-        is_known_to_be_analyzed: false,
     }
 }
 

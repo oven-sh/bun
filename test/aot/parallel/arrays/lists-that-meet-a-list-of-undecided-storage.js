@@ -1,7 +1,9 @@
 // A list given a NaN is read where a slice of it also arrives: a reader may change how such a list is stored.
 function around(list) {
   let most = -Infinity;
-  [list, list.slice()].forEach(row => { row.forEach(each => {}); });
+  [list, list.slice()].forEach(row => {
+    row.forEach(each => {});
+  });
   list.flatMap((each, at) => {
     most = each > most ? each : most;
     if (at === 1) list.push(NaN);
@@ -15,7 +17,9 @@ console.log(around([1.5, 7, 2]));
 
 function total(list) {
   let sum = 0;
-  [list, list.concat([4])].forEach(row => { row.forEach(each => {}); });
+  [list, list.concat([4])].forEach(row => {
+    row.forEach(each => {});
+  });
   list.map((each, at) => {
     sum += each;
     if (at === 0) list.push(Infinity);
@@ -26,7 +30,9 @@ console.log(total([1, 2, 3]));
 console.log(total([6, 5]));
 
 function read(list) {
-  for (const row of [list, list.slice()]) for (const each of row) {}
+  for (const row of [list, list.slice()])
+    for (const each of row) {
+    }
   list.forEach((each, at) => {
     if (at === 0) list[1] = "text";
   });
@@ -37,7 +43,9 @@ console.log(read([4, 5]));
 
 function withUndefined(list) {
   let most = -Infinity;
-  [list, list.slice()].forEach(row => { row.forEach(each => {}); });
+  [list, list.slice()].forEach(row => {
+    row.forEach(each => {});
+  });
   list.flatMap((each, at) => {
     most = each > most ? each : most;
     if (at === 1) list.push(undefined);

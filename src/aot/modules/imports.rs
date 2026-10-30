@@ -260,6 +260,7 @@ fn find_mocked_modules(
             match (site.kind, answer) {
                 (ImportSiteKind::MockModule(_), &ScannedSite::Module(module)) => {
                     mocked.modules.insert(module);
+                    mocked.modules.extend(modules.forms_of(module));
                 }
                 (
                     ImportSiteKind::MockModule(_),

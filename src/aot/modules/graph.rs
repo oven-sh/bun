@@ -642,25 +642,16 @@ impl ModuleGraph {
         self
     }
 
-    /// The files that a site which loads a module names. A load of an unknown path names none.
+    /// The files that a site which loads a module names. A load of an unknown path names none, and `require.resolve` and
+    /// `import.meta.resolve` load nothing.
     pub fn find_files_named_by_load_sites(&self) -> Vec<FileId> {
-        self.find_files_named_by_sites(false)
-    }
-
-    /// The files that a `require.resolve` or an `import.meta.resolve` may answer with. Those name a file and load nothing.
-    pub fn find_files_named_by_resolve_sites(&self) -> Vec<FileId> {
-        self.find_files_named_by_sites(true)
-    }
-
-    fn find_files_named_by_sites(&self, resolve_sites: bool) -> Vec<FileId> {
         let mut found = Vec::new();
         for row in &self.rows {
             for (site, answer) in &row.sites {
-                let is_resolve_site = matches!(
+                if matches!(
                     site,
                     ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_)
-                );
-                if is_resolve_site != resolve_sites {
+                ) {
                     continue;
                 }
                 match answer {

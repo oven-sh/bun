@@ -2,8 +2,8 @@ use super::import_graph::ImportGraph;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad,
-    begins_program_at_each_entry_point, chooses_library_code_by_names, find_further_worker_files,
-    joins_workers, library_code_of, mentions_worker_constructor, preload_of,
+    begins_program_at_each_entry_point, find_further_worker_files, joins_workers, library_code_of,
+    mentions_worker_constructor, preload_of,
 };
 use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostic_codes::Code;
@@ -28,7 +28,7 @@ use crate::load::worker_files::{
     source_path_of,
 };
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
-use crate::options::{LibraryCode, LoadOptions};
+use crate::options::LoadOptions;
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
@@ -541,10 +541,7 @@ impl<'a> Build<'a> {
 
     /// What of Bun's own code the load holds beside what the files name.
     pub(super) fn library_code_asked_for(&self, load: &LoadOptions) -> RuntimeUses {
-        match self.holds_whole_library_as_guess {
-            true => RuntimeUses::of_whole_library(self.platform),
-            false => library_code_of(&load.library_code_lacked),
-        }
+        library_code_of(&load.library_code_lacked)
     }
 
     /// `kept_runtime`: Bun's own code as an earlier program of the build has loaded it. The placeholder of `Preload` leaves it there.
@@ -717,12 +714,18 @@ impl<'a> Build<'a> {
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
         if self.programs.is_none() {
+            let size: usize = texts_of_program_files(files).map(|(_, size)| size).sum();
             if let Some(listener) = &options.aot.on_source_size {
-                (listener.0)(texts_of_program_files(files).map(|(_, size)| size).sum());
+                (listener.0)(size);
+            }
+            if crate::statistics::logs_stages() {
+                bun_core::print_errorln!(
+                    "AOT first look | source bytes {} | runs tests {}",
+                    size,
+                    options.load.runs_tests
+                );
             }
         }
-        self.holds_whole_library_as_guess =
-            self.programs.is_none() && looks_too_large_to_analyze(files, options, &self.limits);
         self.expects_exports_to_be_replaced = is_test_run(options);
         let mut roots: Vec<RuntimeRoots> = programs
             .iter()
@@ -1306,42 +1309,10 @@ fn texts_of_program_files<'f, 's>(
     })
 }
 
-pub(super) fn names_limit_of_analysis(options: &Options<'_>) -> bool {
-    options.aot.option_words.iter().any(|word| {
-        word.starts_with(b"limit=")
-            && bun_core::strings::contains(word, b"MaxSourceBytesExpectedToBeAnalyzed")
-    })
-}
-
 // A suite spies on some exports of what it tests. Finding out which would take a whole run of flow, and a second load and a
 // second run with the answer. So a test run treats every export as one that may be replaced from the start.
 fn is_test_run(options: &Options<'_>) -> bool {
     options.load.runs_tests && !options.aot.checks_only
-}
-
-// Whole-program analysis of so much text stops at its budget, and the program then holds all of Bun's own code. A load that holds it
-// from the start is not thrown away for lacking it. Where the analysis comes to an end after all, the program is loaded again without it.
-fn looks_too_large_to_analyze(
-    files: &Files<'_>,
-    options: &Options<'_>,
-    limits: &LimitValues,
-) -> bool {
-    let load = &options.load;
-    if !chooses_library_code_by_names(options)
-        || load.is_known_to_be_analyzed
-        || load.library_code_lacked != LibraryCode::default()
-    {
-        return false;
-    }
-    let size: usize = texts_of_program_files(files).map(|(_, size)| size).sum();
-    if crate::statistics::logs_stages() {
-        bun_core::print_errorln!(
-            "AOT first look | source bytes {} | runs tests {}",
-            size,
-            load.runs_tests
-        );
-    }
-    size as u64 > limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed)
 }
 
 // The rule of `are_one_program` for Bun's own modules. Each of `loaded` is what the programs of one group hold of them.

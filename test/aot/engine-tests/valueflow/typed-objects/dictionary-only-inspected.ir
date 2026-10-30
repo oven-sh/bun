@@ -2527,95 +2527,94 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=1829 module=m0}, {callee=f5 callPosition=1807 module=m0}, {callee=f2 callPosition=1732 module=m0}, {callee=f2 callPosition=1708 module=m0}, {callee=f1 callPosition=1679 module=m0}, {callee=f1 callPosition=1650 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 10 = Integer integer=10
-# CHECK-NEXT: v1: Array = NewArrayLike v0 allocationSite=9 arrayStorage=Contiguous
+# CHECK-NEXT: v1: Array<L0, Contiguous> = NewArray contents=L0 capacity=v0 allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: Array<L0, proven, Contiguous, pristine[Storage, Names]> = AssumeType v1 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names]>
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v4)
-# CHECK-NEXT: b1(v5: int[0, 10]):
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v3)
+# CHECK-NEXT: b1(v4: int[0, 10]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: 10 = Integer integer=10
-# CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v9: int[0, 9]):
-# CHECK-NEXT: v10: 2 = Integer integer=2
-# CHECK-NEXT: v11: int[0, 18] = Mul v9, v10
-# CHECK-NEXT: v12: L0 = NewObject -, v9, v11 layout=L0 fields=[0, 1] allocationSite=10 allocationClass=0
-# CHECK-NEXT: v13: L0 = FinishObject v12
-# CHECK-NEXT: PutArrayElement v3, v5, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, fillsNewList]
-# CHECK-NEXT: v15: int[1, 10] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v15)
+# CHECK-NEXT: v6: 10 = Integer integer=10
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v8: int[0, 9]):
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: v10: int[0, 18] = Mul v8, v9
+# CHECK-NEXT: v11: L0 = NewObject -, v8, v10 layout=L0 fields=[0, 1] allocationSite=10 allocationClass=0
+# CHECK-NEXT: v12: L0 = FinishObject v11
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v2, v12 overload=ArrayPrototypePush/0 accessSite=1
+# CHECK-NEXT: v14: int[1, 10] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v14)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: undefined|L0 = GetArrayElement v2, v16 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
-# CHECK-NEXT: v18: L0 = ToObject v17 calledBuiltin=ObjectPrototypeHasOwnProperty @604:6 tail
-# CHECK-NEXT: v19: true = Boolean boolean=true @604:6 tail
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: undefined|L0 = GetArrayElement v2, v20 arrayStorage=Contiguous level=Proven accessSite=6 [keyIsIntegral]
-# CHECK-NEXT: v22: L0 = ToObject v21 calledBuiltin=ObjectPrototypeHasOwnProperty @604:5 tail
-# CHECK-NEXT: v23: false = Boolean @604:5 tail
-# CHECK-NEXT: v24: 2 = Integer integer=2
-# CHECK-NEXT: v25: undefined|L0 = GetArrayElement v2, v24 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v26: boolean = PropHas v25 key="y" accessSite=47 receivers=[L0]
-# CHECK-NEXT: v27: 2 = Integer integer=2
-# CHECK-NEXT: v28: undefined|L0 = GetArrayElement v2, v27 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v29: boolean = PropHas v28 key="w" accessSite=47 receivers=[L0]
-# CHECK-NEXT: v30: undefined = CallBuiltin -, v19, v23, v26, v29 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: v31: 3 = Integer integer=3
-# CHECK-NEXT: v32: undefined|L0 = GetArrayElement v2, v31 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: v33: string = CallDirect v32 function=f3 accessSite=16
-# CHECK-NEXT: v34: 4 = Integer integer=4
-# CHECK-NEXT: v35: undefined|L0 = GetArrayElement v2, v34 arrayStorage=Contiguous level=Proven accessSite=17 [keyIsIntegral]
-# CHECK-NEXT: v36: string = CallDirect v35 function=f4 accessSite=18
-# CHECK-NEXT: v37: 5 = Integer integer=5
-# CHECK-NEXT: v38: undefined|L0 = GetArrayElement v2, v37 arrayStorage=Contiguous level=Proven accessSite=19 [keyIsIntegral]
-# CHECK-NEXT: v39: L0 = RequireObjectCoercible v38
-# CHECK-NEXT: v40: int[-2147483643, 2147483647] = GetSlot v39 key="y" receivers=[L0] level=Proven accessSite=55
-# CHECK-NEXT: v41: 5 = Integer integer=5
-# CHECK-NEXT: v42: undefined|L0 = GetArrayElement v2, v41 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: v43: L0 = RequireObjectCoercible v42
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: v45: 6 = Integer integer=6
-# CHECK-NEXT: v46: undefined|L0 = GetArrayElement v2, v45 arrayStorage=Contiguous level=Proven accessSite=23 [keyIsIntegral]
-# CHECK-NEXT: v47: "x" = String string="x"
-# CHECK-NEXT: v48: boolean = CallDirect v46, v47 function=f6 accessSite=24
-# CHECK-NEXT: v49: 6 = Integer integer=6
-# CHECK-NEXT: v50: undefined|L0 = GetArrayElement v2, v49 arrayStorage=Contiguous level=Proven accessSite=25 [keyIsIntegral]
-# CHECK-NEXT: v51: "toString" = String string="toString"
-# CHECK-NEXT: v52: boolean = CallDirect v50, v51 function=f6 accessSite=26
-# CHECK-NEXT: v53: undefined = CallBuiltin -, v33, v36, v40, v44, v48, v52 overload=ConsoleLog/0 accessSite=27
-# CHECK-NEXT: v54: 7 = Integer integer=7
-# CHECK-NEXT: v55: undefined|L0 = GetArrayElement v2, v54 arrayStorage=Contiguous level=Proven accessSite=30 [keyIsIntegral]
-# CHECK-NEXT: v56: "y" = String string="y"
-# CHECK-NEXT: v57: boolean = CallDirect v55, v56 function=f7 accessSite=31
-# CHECK-NEXT: v58: 7 = Integer integer=7
-# CHECK-NEXT: v59: undefined|L0 = GetArrayElement v2, v58 arrayStorage=Contiguous level=Proven accessSite=32 [keyIsIntegral]
-# CHECK-NEXT: v60: "z" = String string="z"
-# CHECK-NEXT: v61: boolean = CallDirect v59, v60 function=f7 accessSite=33
-# CHECK-NEXT: v62: 8 = Integer integer=8
-# CHECK-NEXT: v63: undefined|L0 = GetArrayElement v2, v62 arrayStorage=Contiguous level=Proven accessSite=34 [keyIsIntegral]
-# CHECK-NEXT: v64: string = CallDirect v63 function=f8 accessSite=35
-# CHECK-NEXT: v65: undefined = CallBuiltin -, v57, v61, v64 overload=ConsoleLog/0 accessSite=36
-# CHECK-NEXT: v66: int|whole = CallDirect v2 function=f9 accessSite=39
-# CHECK-NEXT: v67: f1 = NewClosure function=f1 allocationSite=0
-# CHECK-NEXT: v68: f2 = NewClosure function=f2 allocationSite=1
-# CHECK-NEXT: v69: f3 = NewClosure function=f3 allocationSite=2
-# CHECK-NEXT: v70: f4 = NewClosure function=f4 allocationSite=3
-# CHECK-NEXT: v71: f5 = NewClosure function=f5 allocationSite=4
-# CHECK-NEXT: v72: f6 = NewClosure function=f6 allocationSite=5
-# CHECK-NEXT: v73: f7 = NewClosure function=f7 allocationSite=6
-# CHECK-NEXT: v74: f8 = NewClosure function=f8 allocationSite=7
-# CHECK-NEXT: v75: f9 = NewClosure function=f9 allocationSite=8
-# CHECK-NEXT: v76: Array<f1|f2|f3|f4|f5|f6|f7|f8|f9, Contiguous> = NewArray v67, v68, v69, v70, v71, v72, v73, v74, v75 contents=f1|f2|f3|f4|f5|f6|f7|f8|f9 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v77: Array<f1|f2|f3|f4|f5|f6|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v76 provenType=Array<f1|f2|f3|f4|f5|f6|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v78: f10 = NewClosure function=f10 allocationSite=12 storage=Frame
-# CHECK-NEXT: v79: undefined = Undefined
-# CHECK-NEXT: v80: anything = CallDirect v77, v78, v79 function=f57 accessSite=41
-# CHECK-NEXT: v81: Array<undefined|string, proven, pristine[Storage, Names, Dense]> = AssumeType v80 provenType=Array<undefined|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v82: string = CallBuiltin v81 overload=ArrayPrototypeJoin/0 accessSite=43
-# CHECK-NEXT: v83: undefined = CallBuiltin -, v66, v82 overload=ConsoleLog/0 accessSite=44
-# CHECK-NEXT: v84: undefined = Undefined
-# CHECK-NEXT: Return v84
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: undefined|L0 = GetArrayElement v2, v15 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v17: L0 = ToObject v16 calledBuiltin=ObjectPrototypeHasOwnProperty @604:6 tail
+# CHECK-NEXT: v18: true = Boolean boolean=true @604:6 tail
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: undefined|L0 = GetArrayElement v2, v19 arrayStorage=Contiguous level=Proven accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v21: L0 = ToObject v20 calledBuiltin=ObjectPrototypeHasOwnProperty @604:5 tail
+# CHECK-NEXT: v22: false = Boolean @604:5 tail
+# CHECK-NEXT: v23: 2 = Integer integer=2
+# CHECK-NEXT: v24: undefined|L0 = GetArrayElement v2, v23 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v25: boolean = PropHas v24 key="y" accessSite=47 receivers=[L0]
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: v27: undefined|L0 = GetArrayElement v2, v26 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v28: boolean = PropHas v27 key="w" accessSite=47 receivers=[L0]
+# CHECK-NEXT: v29: undefined = CallBuiltin -, v18, v22, v25, v28 overload=ConsoleLog/0 accessSite=12
+# CHECK-NEXT: v30: 3 = Integer integer=3
+# CHECK-NEXT: v31: undefined|L0 = GetArrayElement v2, v30 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v32: string = CallDirect v31 function=f3 accessSite=16
+# CHECK-NEXT: v33: 4 = Integer integer=4
+# CHECK-NEXT: v34: undefined|L0 = GetArrayElement v2, v33 arrayStorage=Contiguous level=Proven accessSite=17 [keyIsIntegral]
+# CHECK-NEXT: v35: string = CallDirect v34 function=f4 accessSite=18
+# CHECK-NEXT: v36: 5 = Integer integer=5
+# CHECK-NEXT: v37: undefined|L0 = GetArrayElement v2, v36 arrayStorage=Contiguous level=Proven accessSite=19 [keyIsIntegral]
+# CHECK-NEXT: v38: L0 = RequireObjectCoercible v37
+# CHECK-NEXT: v39: int[-2147483643, 2147483647] = GetSlot v38 key="y" receivers=[L0] level=Proven accessSite=55
+# CHECK-NEXT: v40: 5 = Integer integer=5
+# CHECK-NEXT: v41: undefined|L0 = GetArrayElement v2, v40 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: v42: L0 = RequireObjectCoercible v41
+# CHECK-NEXT: v43: undefined = Undefined
+# CHECK-NEXT: v44: 6 = Integer integer=6
+# CHECK-NEXT: v45: undefined|L0 = GetArrayElement v2, v44 arrayStorage=Contiguous level=Proven accessSite=23 [keyIsIntegral]
+# CHECK-NEXT: v46: "x" = String string="x"
+# CHECK-NEXT: v47: boolean = CallDirect v45, v46 function=f6 accessSite=24
+# CHECK-NEXT: v48: 6 = Integer integer=6
+# CHECK-NEXT: v49: undefined|L0 = GetArrayElement v2, v48 arrayStorage=Contiguous level=Proven accessSite=25 [keyIsIntegral]
+# CHECK-NEXT: v50: "toString" = String string="toString"
+# CHECK-NEXT: v51: boolean = CallDirect v49, v50 function=f6 accessSite=26
+# CHECK-NEXT: v52: undefined = CallBuiltin -, v32, v35, v39, v43, v47, v51 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v53: 7 = Integer integer=7
+# CHECK-NEXT: v54: undefined|L0 = GetArrayElement v2, v53 arrayStorage=Contiguous level=Proven accessSite=30 [keyIsIntegral]
+# CHECK-NEXT: v55: "y" = String string="y"
+# CHECK-NEXT: v56: boolean = CallDirect v54, v55 function=f7 accessSite=31
+# CHECK-NEXT: v57: 7 = Integer integer=7
+# CHECK-NEXT: v58: undefined|L0 = GetArrayElement v2, v57 arrayStorage=Contiguous level=Proven accessSite=32 [keyIsIntegral]
+# CHECK-NEXT: v59: "z" = String string="z"
+# CHECK-NEXT: v60: boolean = CallDirect v58, v59 function=f7 accessSite=33
+# CHECK-NEXT: v61: 8 = Integer integer=8
+# CHECK-NEXT: v62: undefined|L0 = GetArrayElement v2, v61 arrayStorage=Contiguous level=Proven accessSite=34 [keyIsIntegral]
+# CHECK-NEXT: v63: string = CallDirect v62 function=f8 accessSite=35
+# CHECK-NEXT: v64: undefined = CallBuiltin -, v56, v60, v63 overload=ConsoleLog/0 accessSite=36
+# CHECK-NEXT: v65: int|whole = CallDirect v2 function=f9 accessSite=39
+# CHECK-NEXT: v66: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v67: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v68: f3 = NewClosure function=f3 allocationSite=2
+# CHECK-NEXT: v69: f4 = NewClosure function=f4 allocationSite=3
+# CHECK-NEXT: v70: f5 = NewClosure function=f5 allocationSite=4
+# CHECK-NEXT: v71: f6 = NewClosure function=f6 allocationSite=5
+# CHECK-NEXT: v72: f7 = NewClosure function=f7 allocationSite=6
+# CHECK-NEXT: v73: f8 = NewClosure function=f8 allocationSite=7
+# CHECK-NEXT: v74: f9 = NewClosure function=f9 allocationSite=8
+# CHECK-NEXT: v75: Array<f1|f2|f3|f4|f5|f6|f7|f8|f9, Contiguous> = NewArray v66, v67, v68, v69, v70, v71, v72, v73, v74 contents=f1|f2|f3|f4|f5|f6|f7|f8|f9 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v76: Array<f1|f2|f3|f4|f5|f6|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v75 provenType=Array<f1|f2|f3|f4|f5|f6|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v77: f10 = NewClosure function=f10 allocationSite=12 storage=Frame
+# CHECK-NEXT: v78: undefined = Undefined
+# CHECK-NEXT: v79: anything = CallDirect v76, v77, v78 function=f57 accessSite=41
+# CHECK-NEXT: v80: Array<undefined|string, proven, pristine[Storage, Names, Dense]> = AssumeType v79 provenType=Array<undefined|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v81: string = CallBuiltin v80 overload=ArrayPrototypeJoin/0 accessSite=43
+# CHECK-NEXT: v82: undefined = CallBuiltin -, v65, v81 overload=ConsoleLog/0 accessSite=44
+# CHECK-NEXT: v83: undefined = Undefined
+# CHECK-NEXT: Return v83
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="keysOf"
 # CHECK: module=m0 position=696 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0 site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w8 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

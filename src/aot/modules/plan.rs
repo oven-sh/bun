@@ -143,6 +143,8 @@ pub(super) struct Plan {
     /// The order numbers no module of the library.
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
+    /// A test run: `delete require.cache[path]` loads the file anew.
+    may_be_evicted: bool,
     /// Ascending. The test runner stores into them.
     replaced_variables: Vec<Sym>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
@@ -175,6 +177,7 @@ impl Plan {
             may_be_mocked: vec![false; order.numbers.len()],
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
+            may_be_evicted: false,
             replaced_variables: Vec::new(),
             order,
             erased_statements,
@@ -211,6 +214,10 @@ impl Plan {
             ModuleRef::Runtime(module) => self.mocked_runtime_modules.push(module),
             _ => self.add(|plan| &mut plan.may_be_mocked, module),
         }
+    }
+
+    pub(super) fn set_may_be_evicted(&mut self) {
+        self.may_be_evicted = true;
     }
 
     pub(super) fn set_every_module_may_be_mocked(&mut self) {
@@ -552,6 +559,10 @@ impl ModuleGraph {
     /// A file has `import * as` of the module.
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
+    }
+
+    pub fn may_be_evicted(&self) -> bool {
+        self.plan.may_be_evicted
     }
 
     pub fn may_be_mocked(&self, module: ModuleRef) -> bool {

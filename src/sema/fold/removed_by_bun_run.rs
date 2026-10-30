@@ -146,9 +146,7 @@ impl Folder<'_, '_> {
                 let is_decided_by_left = match op {
                     BinOp::And => self.is_truthy_in_bun_run(left) == Some(false),
                     BinOp::Or => self.is_truthy_in_bun_run(left) == Some(true),
-                    BinOp::Nullish => {
-                        self.is_nullish(left) == Some(false) && self.is_folded_by_bun_run(left)
-                    }
+                    BinOp::Nullish => self.is_nullish_in_bun_run(left) == Some(false),
                     _ => false,
                 };
                 push(&[left]);

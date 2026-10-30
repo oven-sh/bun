@@ -128,23 +128,25 @@ function whyMore(now: Count, pin: Count, slack: number) {
 
 const rounded = (count: number) => Math.round(count * 1000) / 1000;
 
-// A line of a file of pins: the program's name, a tab, the pin as JSON. The parts of a unit that run in one process share the pins, and each writes all of them.
+// A line of a file of pins: the program's name, a tab, the pin as JSON. A pin that was raised by hand has another tab and why. The parts of a unit that run in one
+// process share the pins, and each writes all of them.
 const pinsByFile = new Map<string, Record<string, unknown>>();
+const whyRaisedByFile = new Map<string, Record<string, string>>();
 function readPins<T>(name: string) {
   const path = join(import.meta.dir, `${name}.${platform}.txt`);
   if (!pinsByFile.has(path)) {
     const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : [];
-    pinsByFile.set(
-      path,
-      Object.fromEntries(lines.map(line => line.split("\t")).map(([key, pin]) => [key, JSON.parse(pin)])),
-    );
+    const fields = lines.map(line => line.split("\t"));
+    pinsByFile.set(path, Object.fromEntries(fields.map(([key, pin]) => [key, JSON.parse(pin)])));
+    whyRaisedByFile.set(path, Object.fromEntries(fields.flatMap(([key, , why]) => (why ? [[key, why]] : []))));
   }
   const pins = pinsByFile.get(path) as Record<string, T>;
+  const whyRaised = whyRaisedByFile.get(path)!;
   const write = () => {
     if (mode !== "lower" && mode !== "update") return;
     const lines = Object.entries(pins)
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([key, pin]) => `${key}\t${JSON.stringify(pin)}\n`);
+      .map(([key, pin]) => `${key}\t${JSON.stringify(pin)}${whyRaised[key] ? `\t${whyRaised[key]}` : ""}\n`);
     writeFileSync(path, lines.join(""));
   };
   return { pins, write };

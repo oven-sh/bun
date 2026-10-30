@@ -489,6 +489,29 @@ fn find_mocked_files(exports: &Exports<'_, '_, '_>, files: &[u32]) -> Vec<u32> {
     mocked
 }
 
+/// `import text from "./a.txt" with { type: "text" }` loads a form of the file. The loader of `bun run` keeps it under the path of the file, where a mock finds it.
+fn find_forms_of_mocked_files(
+    files: &[WalkedFile<'_, '_>],
+    mocked_before: &FxHashSet<u32>,
+    mocked: &[u32],
+    parsed: &[u32],
+) -> Vec<u32> {
+    let path_of = |file: u32| files[file as usize].target.key.path;
+    let is_form = |&file: &u32| files[file as usize].target.has_loader_attribute;
+    let mut forms = Vec::new();
+    if !mocked.is_empty() {
+        let all_forms = (0..files.len() as u32).filter(is_form);
+        forms.extend(
+            all_forms.filter(|&form| mocked.iter().any(|&it| path_of(it) == path_of(form))),
+        );
+    }
+    let parsed_forms = parsed.iter().copied().filter(is_form);
+    forms.extend(
+        parsed_forms.filter(|&form| mocked_before.iter().any(|&it| path_of(it) == path_of(form))),
+    );
+    forms
+}
+
 /// Each folding knows more than the one before, so there are few. Behind this many a file is folded as if it stood alone.
 const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
@@ -512,7 +535,9 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     let stars: Vec<OnceLock<Arc<Stars>>> = state.files.iter().map(|_| OnceLock::new()).collect();
     // The files that read a constant of a file are asked again when a mock of it turns up.
     let mocked = find_mocked_files(&Exports::new(&state.files, &looked_up, &stars), &parsed);
-    parsed.extend(mocked.into_iter().filter(|&it| looked_up.mocked.insert(it)));
+    let forms = find_forms_of_mocked_files(&state.files, &looked_up.mocked, &mocked, &parsed);
+    let mocked = mocked.into_iter().chain(forms);
+    parsed.extend(mocked.filter(|&it| looked_up.mocked.insert(it)));
     // What a mocked file exports again shows as the files behind it are parsed.
     let mut exports = Exports::new(&state.files, &looked_up, &stars);
     let mut mocked: Vec<u32> = looked_up.mocked.iter().copied().collect();

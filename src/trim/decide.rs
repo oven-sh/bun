@@ -203,8 +203,6 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
         }
         UnseenCodeCause::ReportMissing => program_features,
         UnseenCodeCause::FlowResultDisabled => program_features,
-        // The analysis stops as a whole, so it has followed nothing.
-        UnseenCodeCause::FlowGaveUp => program_features,
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
         UnseenCodeCause::LoadsModuleByName => FeatureSet::from_features(&[LOADS_FILES_FROM_DISK]),
@@ -405,11 +403,10 @@ mod tests {
         assert_eq!(retained.reasons.len(), 2);
     }
 
-    const CAUSES_OPENING_WHOLE_RUNTIME: [UnseenCodeCause; 6] = [
+    const CAUSES_OPENING_WHOLE_RUNTIME: [UnseenCodeCause; 5] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
         UnseenCodeCause::FlowResultDisabled,
-        UnseenCodeCause::FlowGaveUp,
         UnseenCodeCause::ImportsUncompiledCode,
         UnseenCodeCause::OptionAdmitsCode,
     ];
@@ -457,10 +454,10 @@ mod tests {
     }
 
     #[test]
-    fn analysis_that_gave_up_retains_whole_language() {
+    fn analysis_that_is_disabled_retains_whole_language() {
         let text = UsedFeatures::with_cause(UnseenCodeCause::EvaluatesText);
         let text = decide_request(&text, &removing_unused()).unused;
-        let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowGaveUp);
+        let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowResultDisabled);
         let gave_up = decide_request(&gave_up, &removing_unused()).unused;
         assert!(gave_up.is_subset_of(&text));
         for feature in [Feature::IntlCollation, Feature::Temporal] {

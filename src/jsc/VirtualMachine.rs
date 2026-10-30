@@ -5154,9 +5154,13 @@ impl VirtualMachine {
     }
 
     /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
-    /// stored in itself, so to it a file on disk is not part of the program.
+    /// stored in itself, so to it a file on disk is not part of the program. A test run is compiled in place from such files.
     pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
-        !in_standalone_executable && !path.starts_with(b"data:")
+        let runs_tests_in_place = isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+            && crate::compiled_program::Bun__AOT__allowsCodeFromDisk()
+            && bun_core::code_generation_from_strings_by_flags()
+                != bun_core::CodeGenerationFromStrings::Strict;
+        (!in_standalone_executable || runs_tests_in_place) && !path.starts_with(b"data:")
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.

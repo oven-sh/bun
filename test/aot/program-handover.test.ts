@@ -1,0 +1,143 @@
+// `bun test --aot` and `bun run --debug-aot` build the program in one process and run it in others. It gets there in an unnamed
+// file: a memfd, else shared memory, else a deleted file of the temporary directory. Only Linux has all three.
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { run } from "./harness/run";
+import { describe, test } from "./supported";
+
+const files = {
+  "tmp/.keep": "",
+  "seen.ts": `
+    import { readdirSync, readFileSync } from "node:fs";
+    function fileOfCode() {
+      if (process.platform !== "linux") return "default";
+      const path = / r-xp .* (\\S+) \\(deleted\\)$/m.exec(readFileSync("/proc/self/maps", "utf8"))?.[1] ?? "none";
+      if (path.startsWith("/memfd:")) return "memfd";
+      if (path.startsWith("/dev/shm/")) return "shared-memory";
+      return path.endsWith(".bun-program") ? "deleted" : path;
+    }
+    export const seen = () => "code in " + fileOfCode() + ", temporary files: " + readdirSync(process.env.BUN_TMPDIR!).join(" ");
+  `,
+  "a.test.ts": `
+    import { expect, test } from "bun:test";
+    import { seen } from "./seen";
+    test("a", () => { console.log("a: " + seen()); expect(1).toBe(1); });
+  `,
+  "b.test.ts": `
+    import { expect, test } from "bun:test";
+    import { seen } from "./seen";
+    test("b", () => { console.log("b: " + seen()); expect(1).toBe(1); });
+  `,
+  "waits.ts": `
+    import { seen } from "./seen";
+    console.log(seen());
+    setInterval(() => {}, 1 << 30);
+  `,
+};
+
+const namesInSharedMemory = () =>
+  existsSync("/dev/shm") ? readdirSync("/dev/shm").filter(name => name.endsWith(".bun-program")) : [];
+
+// Alpine mounts it `noexec`.
+const sharedMemoryHoldsCode =
+  isLinux && /^\S+ \/dev\/shm \S+ (?!\S*\bnoexec\b)/m.test(readFileSync("/proc/mounts", "utf8"));
+const kinds = isLinux ? ["memfd", ...(sharedMemoryHoldsCode ? ["shared-memory"] : []), "deleted"] : ["default"];
+
+describe.skipIf(isWindows).each(kinds)("in %s", kind => {
+  const envOf = (dir: string, words?: string) => ({
+    ...bunEnv,
+    BUN_TMPDIR: join(dir, "tmp"),
+    BUN_DEBUG_TEST_AOT_PROGRAM_FILE: kind,
+    BUN_DEBUG_TEST_AOT_WORDS: words,
+  });
+  // Under --parallel what a test prints comes out on stderr.
+  const whatEachTestSees = (output: string) =>
+    output
+      .split("\n")
+      .filter(line => line.includes("code in "))
+      .sort();
+
+  test.concurrent.each([[[]], [["--parallel=2"]]])("bun test --aot %j", async flags => {
+    using dir = tempDir("aot-program-handover", files);
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), "test", "--aot", ...flags],
+      String(dir),
+      envOf(String(dir)),
+    );
+    expect(whatEachTestSees(stdout + stderr)).toEqual(
+      ["a", "b"].map(name => `${name}: code in ${kind}, temporary files: .keep`),
+    );
+    expect(stderr).toMatch(/^ *2 pass$/m);
+    expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bun test --aot in parts", async () => {
+    using dir = tempDir("aot-program-handover", files);
+    const env = envOf(String(dir), "TestRunPartFiles:1");
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
+    expect(whatEachTestSees(stdout + stderr).map(line => line.replace(/,.*/, ""))).toEqual([
+      `a: code in ${kind}`,
+      `b: code in ${kind}`,
+    ]);
+    expect(stderr).toMatch(/^ *2 pass$/m);
+    expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a run that is killed leaves nothing", async () => {
+    using dir = tempDir("aot-program-handover", files);
+    const before = new Set(namesInSharedMemory());
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--debug-aot", "waits.ts"],
+      cwd: String(dir),
+      env: envOf(String(dir)),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { value } = await proc.stdout.getReader().read();
+    expect(new TextDecoder().decode(value)).toBe(`code in ${kind}, temporary files: .keep\n`);
+    proc.kill("SIGKILL");
+    await proc.exited;
+    expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
+    // Another run's name is there between two of its system calls.
+    let left = namesInSharedMemory().filter(name => !before.has(name));
+    if (left.length) {
+      await Bun.sleep(100);
+      left = namesInSharedMemory().filter(name => left.includes(name));
+    }
+    expect(left).toEqual([]);
+  });
+});
+
+const inOwnMounts = ["unshare", "-Urm"];
+const canMount =
+  isLinux &&
+  !!Bun.which("unshare") &&
+  Bun.spawnSync({ cmd: [...inOwnMounts, "mount", "-t", "tmpfs", "tmpfs", "/dev/shm"] }).exitCode === 0;
+
+test.concurrent.skipIf(!canMount).each(["noexec", "size=64k"])(
+  "shared memory that is mounted with %s is passed over",
+  async option => {
+    using dir = tempDir("aot-program-handover", files);
+    const { stdout, stderr, exitCode } = await run(
+      [
+        ...inOwnMounts,
+        "sh",
+        "-c",
+        `mount -t tmpfs -o ${option} tmpfs /dev/shm && exec "$@"`,
+        "sh",
+        bunExe(),
+        "test",
+        "--aot",
+      ],
+      String(dir),
+      { ...bunEnv, BUN_TMPDIR: join(String(dir), "tmp"), BUN_DEBUG_TEST_AOT_PROGRAM_FILE: "shared-memory" },
+    );
+    expect(stdout).toContain("a: code in deleted, temporary files: .keep\n");
+    expect(stderr).toMatch(/^ *2 pass$/m);
+    expect(exitCode).toBe(0);
+  },
+);

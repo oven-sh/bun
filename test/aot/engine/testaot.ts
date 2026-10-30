@@ -99,7 +99,10 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
   expect(failed.length ? lines.filter(line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line)).slice(-60) : []).toEqual(
     [],
   );
-  const listed = lines.filter(line => line.startsWith("FAIL ")).length;
+  // A file of IR tests has a FAIL line for each of its commands that fails, and counts once in the last line.
+  const listed = new Set(
+    lines.filter(line => line.startsWith("FAIL ")).map(line => /^FAIL (.+?\.ir):\d+: /.exec(line)?.[1] ?? line),
+  ).size;
   expect({ lastLine: lines.at(-1), stderr, exitCode }).toEqual({
     lastLine: expect.stringMatching(new RegExp(`^[1-9][0-9]* passed, ${listed} failed, [0-9]+ todo$`)),
     stderr: expect.any(String),

@@ -15,13 +15,9 @@ void DsaKeyPairJobCtx::deinit()
     delete this;
 }
 
-extern "C" void Bun__DsaKeyPairJobCtx__runTask(DsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
+extern "C" void Bun__DsaKeyPairJobCtx__runTask(DsaKeyPairJobCtx* ctx, JSGlobalObject*)
 {
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
+    KeyPairJobCtx::generate(*ctx);
 }
 
 extern "C" void Bun__DsaKeyPairJobCtx__runFromJS(DsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
@@ -41,19 +37,16 @@ ncrypto::EVPKeyCtxPointer DsaKeyPairJobCtx::setup()
     ncrypto::EVPKeyCtxPointer paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_DSA);
 
     if (!paramCtx || paramCtx.initForParamgen() || !paramCtx.setDsaParameters(m_modulusLength, m_divisorLength)) {
-        m_opensslError = ERR_get_error();
         return {};
     }
 
     auto keyParams = paramCtx.paramgen();
     if (!keyParams) {
-        m_opensslError = ERR_get_error();
         return {};
     }
 
     ncrypto::EVPKeyCtxPointer keyCtx = keyParams.newCtx();
     if (!keyCtx.initForKeygen()) {
-        m_opensslError = ERR_get_error();
         return {};
     }
 

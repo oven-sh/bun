@@ -592,6 +592,8 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     }
 
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
+    // writePrivateKey() reports this thread's oldest queued error, so the queue must be empty before it.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto res = pkey.writePrivateKey(config);
     if (!res) {
         throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to encode private key");

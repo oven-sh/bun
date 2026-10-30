@@ -16,13 +16,9 @@ void NidKeyPairJobCtx::deinit()
     delete this;
 }
 
-extern "C" void Bun__NidKeyPairJobCtx__runTask(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
+extern "C" void Bun__NidKeyPairJobCtx__runTask(NidKeyPairJobCtx* ctx, JSGlobalObject*)
 {
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
+    KeyPairJobCtx::generate(*ctx);
 }
 
 extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
@@ -41,7 +37,6 @@ ncrypto::EVPKeyCtxPointer NidKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_id);
     if (!ctx.initForKeygen()) {
-        m_opensslError = ERR_get_error();
         return {};
     }
     return ctx;

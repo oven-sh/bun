@@ -16,13 +16,9 @@ void EcKeyPairJobCtx::deinit()
     delete this;
 }
 
-extern "C" void Bun__EcKeyPairJobCtx__runTask(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
+extern "C" void Bun__EcKeyPairJobCtx__runTask(EcKeyPairJobCtx* ctx, JSGlobalObject*)
 {
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
+    KeyPairJobCtx::generate(*ctx);
 }
 
 extern "C" void Bun__EcKeyPairJobCtx__runFromJS(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
@@ -50,13 +46,11 @@ ncrypto::EVPKeyCtxPointer EcKeyPairJobCtx::setup()
     default: {
         auto paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_EC);
         if (!paramCtx.initForParamgen() || !paramCtx.setEcParameters(m_curveNid, m_paramEncoding)) {
-            m_opensslError = ERR_get_error();
             return {};
         }
 
         auto keyParams = paramCtx.paramgen();
         if (!keyParams) {
-            m_opensslError = ERR_get_error();
             return {};
         }
 
@@ -65,7 +59,6 @@ ncrypto::EVPKeyCtxPointer EcKeyPairJobCtx::setup()
     }
 
     if (!keyCtx.initForKeygen()) {
-        m_opensslError = ERR_get_error();
         return {};
     }
 

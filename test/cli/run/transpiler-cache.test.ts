@@ -136,7 +136,7 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
   });
-  test("an entry does not name the file that wrote it", async () => {
+  test("the entry of an anonymous default function does not name the file that wrote it", async () => {
     // Two files with the same text share one entry, so what the parser prints for one has to fit the other.
     const source =
       "export default function () {}\n" +

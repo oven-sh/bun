@@ -63,6 +63,26 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     expect(exitCode).toBe(0);
   });
 
+  test("transpile-only output uses a valid identifier for a decorated anonymous default class", async () => {
+    // A class with a decorator keeps the generated name of its default export without a bundle.
+    using dir = tempDir("issue-31401-class", {
+      "1.ts": `function dec(value: unknown) {}\n@dec export default class {}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", join(String(dir), "1.ts")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
+    expect(stdout).toContain("export default class _1_default {");
+    expect(exitCode).toBe(0);
+  });
+
   test("bundled output uses a valid identifier for the generated default name", async () => {
     using dir = tempDir("issue-31401-bundle", {
       "1.ts": `export default function () {}\n`,

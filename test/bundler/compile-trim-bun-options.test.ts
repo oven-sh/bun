@@ -58,7 +58,7 @@ test("every option that a compiled executable reads is in one of the lists: it w
     const withoutFunctionSource = bothSides(join(root, "without-function-source"));
     type Build = Awaited<ReturnType<typeof built>>;
     // The forms of an option start the same executables: a pair for each program that uses a client, and one for each feature that compile.trim.allow lists.
-    const thatUse = new Map<string, { whole: string; trimmed: string; builds: Build[] }>();
+    const thatUse = new Map<string, { whole: string; trimmed: string; builds: PromiseSettledResult<Build>[] }>();
     for (const [, , program] of formsByUse)
       thatUse.getOrInsertComputed(program, () => ({
         ...bothSides(join(root, `uses-a-client-${thatUse.size}`)),
@@ -94,10 +94,10 @@ test("every option that a compiled executable reads is in one of the lists: it w
         built(withoutFunctionSource.whole, "whole", ["--no-compile-function-source"]),
         built(withoutFunctionSource.trimmed, "trimmed", ["--no-compile-function-source"]),
       ];
-      // A test that starts one of these says what became of its build. The other tests run without them.
+      // These are only waited for, whatever becomes of them. A test that starts one says so, and the other tests run without it.
       const ofFewTests = [
         ...Array.from(thatUse, async ([program, pair]) => {
-          pair.builds = await Promise.all([
+          pair.builds = await Promise.allSettled([
             built(pair.whole, "whole", [], program),
             built(pair.trimmed, "trimmed", [], program),
           ]);
@@ -209,12 +209,20 @@ test("every option that a compiled executable reads is in one of the lists: it w
 
     test.each(formsByUse)("%s works where the program uses that client: %s, %s", async (name, form, program) => {
       const pair = thatUse.get(program)!;
-      expect(pair.builds).toEqual([wrote("whole"), wrote("trimmed")]);
+      expect(pair.builds).toEqual([
+        { status: "fulfilled", value: wrote("whole") },
+        { status: "fulfilled", value: wrote("trimmed") },
+      ]);
       const [inTrimmed, inWhole] = await startedIn([pair.trimmed, pair.whole], name, form);
       expect(inTrimmed).toEqual(inWhole);
-      // The program runs. One that waits for a server never ends where there is none, and `started` ends it.
-      const ran = { stdout: "hello world function\n" };
-      expect(inWhole).toMatchObject(neverEnd.includes(name) ? ran : { ...ran, stderr: "", exitCode: 0 });
+      const ran = { stdout: "hello world function\n", stderr: "", exitCode: 0 };
+      // One that waits for a server never ends where there is none, and `started` ends it with SIGKILL. Another signal is a crash.
+      const orWaited = {
+        ...inWhole,
+        stdout: ran.stdout,
+        exitCode: inWhole.exitCode === "SIGKILL" ? "SIGKILL" : expect.any(Number),
+      };
+      expect(inWhole).toEqual(neverEnd.includes(name) ? orWaited : ran);
     });
 
     test.each(formsByAllowing)(
@@ -234,7 +242,7 @@ test("every option that a compiled executable reads is in one of the lists: it w
         if (form.endsWith("=nonsense"))
           expect(ran).toEqual({
             stdout: "",
-            stderr: expect.stringMatching(new RegExp(`^error: Invalid value for ${name}: "nonsense"\\. [^\\n]+\\n$`)),
+            stderr: `error: Invalid value for ${name}: "nonsense". Must be either "auto", "fallback", "force", or "disable"\n`,
             exitCode: 1,
           });
         else expect(ran).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });

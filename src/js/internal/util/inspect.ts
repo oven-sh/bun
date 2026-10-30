@@ -1833,7 +1833,7 @@ function getStackFrames(ctx: Context, err: Error, stack: string) {
       if (len > 0) {
         const skipped = len - 2;
         const msg = `    ... ${skipped} lines matching cause stack trace ...`;
-        frames.splice(offset + 1, skipped, ctx.stylize(msg, "undefined"));
+        ArrayPrototypeSplice.$call(frames, offset + 1, skipped, ctx.stylize(msg, "undefined"));
       }
     }
   }

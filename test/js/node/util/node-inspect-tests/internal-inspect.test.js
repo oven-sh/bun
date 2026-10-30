@@ -196,8 +196,27 @@ test("util.format and Console.prototype.log collapse the frames that an error sh
       written += chunk;
     },
   };
+  // With ignoreErrors: false, the only method of stdout that Console calls is write.
   new console.Console({ stdout, colorMode: false, ignoreErrors: false }).log(error);
   expect(written).toBe(fourSharedFrames + "\n");
+});
+
+test("util.inspect collapses the frames without a call of a replaced Array.prototype.splice", () => {
+  const error = withFrames(new Error("outer", { cause: withFrames(new Error("cause"), "x b c d e") }), "a b c d e");
+  // The formatter captures Array.prototype.splice when it loads. The first call loads it.
+  expect(util.inspect(error)).toBe(fourSharedFrames);
+
+  const splice = Array.prototype.splice;
+  let text;
+  Array.prototype.splice = () => {
+    throw new Error("the replaced splice was called");
+  };
+  try {
+    text = util.inspect(error);
+  } finally {
+    Array.prototype.splice = splice;
+  }
+  expect(text).toBe(fourSharedFrames);
 });
 
 test("util.inspect collapses the frames that a thrown error shares with its cause", () => {

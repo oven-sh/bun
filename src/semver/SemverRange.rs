@@ -145,8 +145,7 @@ impl Range {
                 && version.minor == self.right.version.minor
                 && version.major == self.right.version.major);
 
-        // node-semver drops a `>=0.0.0` comparator, so a prerelease of 0.0.0 passes it. With
-        // `includePrerelease` (`Range::satisfies`) it drops `>=0.0.0-0` instead and keeps `>=0.0.0`.
+        // node-semver drops `>=0.0.0` without `includePrerelease`, so a prerelease of 0.0.0 passes it.
         let passes = |comparator: Comparator| {
             comparator.is_gte_zero() || comparator.satisfies(version, range_buf, version_buf)
         };

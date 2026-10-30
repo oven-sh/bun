@@ -51,8 +51,6 @@ pub(crate) fn satisfies<'a>(
         return Ok(false);
     };
 
-    // Both halves of node-semver's `includePrerelease`: the range parses with a `-0` floor
-    // (`1.x` is `>=1.0.0-0 <2.0.0-0`), and a prerelease only has to satisfy the comparators.
     let sliced = SlicedString::init(range, range);
     let group = if options.include_prerelease {
         query::parse_including_prerelease(range, sliced)?

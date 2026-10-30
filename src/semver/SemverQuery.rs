@@ -549,8 +549,7 @@ impl Group {
         self.flags.is_set(Flags::SKIPPED)
     }
 
-    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators. Pair with
-    /// `parse_including_prerelease`, which floors the derived bounds with `-0`.
+    /// npm's `includePrerelease`, on a `parse_including_prerelease` group: a prerelease only has to satisfy the comparators.
     #[inline]
     pub fn satisfies_including_prerelease(
         &self,

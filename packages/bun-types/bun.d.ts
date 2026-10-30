@@ -9767,10 +9767,13 @@ declare module "bun" {
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back flat grey.
+     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
+     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
+     *   before its last row, or inside the data of the `IDAT` chunk that holds
+     *   it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
-     * - `ERR_OUT_OF_MEMORY` — there is no memory for a buffer the size of the
-     *   image.
+     * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
+     *   that its decode or encode needs.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9809,6 +9812,10 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * A decoded image takes 4 bytes per pixel, which is 1 GiB at the default.
+       * A PNG of 32 KiB can decode to that size. Decoding a PNG that is one very
+       * wide row needs up to 20 bytes of memory per pixel, 5 GiB at the default.
+       * For untrusted input, set this to the largest image you accept.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;

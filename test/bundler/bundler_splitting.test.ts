@@ -4821,6 +4821,223 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "first\nsecond\na 2 other" },
   });
 
+  // The tail of an ES module entry point declares a copy of each export that is
+  // a property of a CommonJS module: `var export_foo = import_c.foo`. a.js
+  // imports b.js, so the file b.js is in a shared chunk, and the chunk of the
+  // entry point b.js is only imports and that tail. Its renamer has no row for
+  // b.js, and the copy still needs a name that nothing else in the chunk has:
+  // the chunk also imports the `export_foo` that b.js declares.
+  const importsB = `import { b } from "./b.js";\nconsole.log("a", b);`;
+  const printsB = `import * as b from "./out/b.js";\nconsole.log(JSON.stringify(b));`;
+  for (const minifyIdentifiers of [false, true]) {
+    itBundled(`splitting/TailCopyOfEntryPointInAnotherChunk${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/a.js": importsB,
+        "/b.js": `export { foo } from "./c.cjs";\nconst export_foo = "user";\nexport { export_foo as other };\nexport const b = "b";`,
+        "/c.cjs": `module.exports = { foo: 1 };`,
+      },
+      runtimeFiles: { "/test.js": printsB },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      minifyIdentifiers,
+      outdir: "/out",
+      run: { file: "/test.js", stdout: '{"b":"b","foo":1,"other":"user"}' },
+    });
+  }
+
+  // The copies of "x-y" and "x.y" are both `export_x_y`. With one name for the
+  // two, the chunk loads and "x-y" is 2.
+  itBundled("splitting/TailCopiesOfEntryPointInAnotherChunkWithOneName", {
+    files: {
+      "/a.js": importsB,
+      "/b.js": `export { "x-y" as "x-y", "x.y" as "x.y" } from "./c.cjs";\nexport const b = "b";`,
+      "/c.cjs": `module.exports = { "x-y": 1, "x.y": 2 };`,
+    },
+    runtimeFiles: { "/test.js": printsB },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/b.js").toContain('var export_x_y = import_c["x-y"]');
+      api.expectFile("/out/b.js").toContain('var export_x_y2 = import_c["x.y"]');
+    },
+    run: { file: "/test.js", stdout: '{"b":"b","x-y":1,"x.y":2}' },
+  });
+
+  // No name in these sources starts with `export_`: the default export of
+  // export.js is named after its file, and so is the copy of `default`.
+  itBundled("splitting/TailCopyNextToDefaultExportOfExportJs", {
+    files: {
+      "/a.js": importsB,
+      "/b.js": `export { default } from "./c.cjs";\nexport { default as data } from "./export.js";\nexport const b = "b";`,
+      "/export.js": `export default { rows: 1 };`,
+      "/c.cjs": `module.exports = "cjs";`,
+    },
+    runtimeFiles: { "/test.js": printsB },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/test.js", stdout: '{"b":"b","data":{"rows":1},"default":"cjs"}' },
+  });
+
+  // A copy stays in its chunk. The name of one does not depend on what another
+  // entry point exports, so the chunks of b.js and e.js both have `export_foo`.
+  itBundled("splitting/TailCopiesOfTwoEntryPointsKeepOneName", {
+    files: {
+      "/a.js": `import { b } from "./b.js";\nimport { e } from "./e.js";\nconsole.log("a", b, e);`,
+      "/b.js": `export { foo } from "./c.cjs";\nexport const b = "b";`,
+      "/e.js": `export { foo } from "./c2.cjs";\nexport const e = "e";`,
+      "/c.cjs": `module.exports = { foo: 1 };`,
+      "/c2.cjs": `module.exports = { foo: 2 };`,
+    },
+    runtimeFiles: {
+      "/test.js": `import * as b from "./out/b.js";\nimport * as e from "./out/e.js";\nconsole.log(JSON.stringify([b, e]));`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/e.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/b.js").toContain("var export_foo = import_c.foo");
+      api.expectFile("/out/e.js").toContain("var export_foo = import_c2.foo");
+    },
+    run: { file: "/test.js", stdout: '[{"b":"b","foo":1},{"e":"e","foo":2}]' },
+  });
+
+  // Other ways to the same chunk. This b.js has both collisions.
+  const tailCopyFiles = {
+    "/b.js": `export { foo, "x-y" as "x-y", "x.y" as "x.y" } from "./c.cjs";\nconst export_foo = "user";\nexport { export_foo as other };\nexport const b = "b";`,
+    "/c.cjs": `module.exports = { foo: 1, "x-y": 2, "x.y": 3 };`,
+  };
+  const tailCopyExports = '{"b":"b","foo":1,"other":"user","x-y":2,"x.y":3}';
+
+  // a.js also loads b.js with import(), which makes b.js an entry point.
+  itBundled("splitting/TailCopyOfStaticAndDynamicImport", {
+    files: {
+      "/a.js": `${importsB}\nexport const load = () => import("./b.js");`,
+      ...tailCopyFiles,
+    },
+    runtimeFiles: {
+      "/test.js": `import { load } from "./out/a.js";\nconsole.log(JSON.stringify(await load()));`,
+    },
+    entryPoints: ["/a.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/test.js", stdout: "a b\n" + tailCopyExports },
+  });
+
+  // With `--target=bun`, require() of an ES module splits like import().
+  itBundled("splitting/TailCopyOfStaticImportAndSplitRequire", {
+    files: {
+      "/a.js": `${importsB}\nexport const load = () => require("./b.js");`,
+      ...tailCopyFiles,
+    },
+    runtimeFiles: {
+      "/test.js": `import { load } from "./out/a.js";\nconsole.log(JSON.stringify(load()));`,
+    },
+    entryPoints: ["/a.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    run: { file: "/test.js", stdout: "a b\n" + tailCopyExports },
+  });
+
+  // A require() that does not split wraps b.js in `__esm`, and the tail of the
+  // entry point b.js calls the wrapper before it reads the copies.
+  itBundled("splitting/TailCopyOfRequiredEntryPoint", {
+    files: {
+      "/a.js": `const b = require("./b.js");\nconsole.log("a", b.b);`,
+      ...tailCopyFiles,
+    },
+    runtimeFiles: { "/test.js": printsB },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "node",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/b.js").toContain("init_b();");
+    },
+    run: { file: "/test.js", stdout: tailCopyExports },
+  });
+
+  // The exports of b.js come through `export *`, so they resolve to the imports
+  // of another file.
+  itBundled("splitting/TailCopyOfExportStar", {
+    files: {
+      "/a.js": importsB,
+      "/b.js": `export * from "./d.js";\nexport const b = "b";`,
+      "/d.js": `export { foo, "x-y" as "x-y", "x.y" as "x.y" } from "./e.js";\nconst export_foo = "user";\nexport { export_foo as other };`,
+      "/e.js": `export { foo, "x-y" as "x-y", "x.y" as "x.y" } from "./c.cjs";`,
+      "/c.cjs": tailCopyFiles["/c.cjs"],
+    },
+    runtimeFiles: { "/test.js": printsB },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/test.js", stdout: tailCopyExports },
+  });
+
+  // lifted.js has no `missing`, so the copy is `undefined` and the chunk of
+  // b.js imports no CommonJS namespace for it. The tail still declares it.
+  itBundled("splitting/TailCopyOfMissingExportThroughExportStar", {
+    files: {
+      "/a.js": importsB,
+      "/b.js": `export * from "./d.js";\nconst export_missing = "user";\nexport { export_missing as other };\nexport const b = "b";`,
+      "/d.js": `export { missing } from "./lifted.js";`,
+      "/lifted.js": `exports.foo = 1;`,
+    },
+    runtimeFiles: {
+      "/test.js": `import * as b from "./out/b.js";\nconsole.log(JSON.stringify(Object.keys(b)), JSON.stringify(b));`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/test.js", stdout: '["b","missing","other"] {"b":"b","other":"user"}' },
+  });
+
+  // The names come from the linker, next to the names of the bindings the
+  // chunk imports: the renamer of that chunk stays without a row for b.js. The
+  // copies are the last symbols of b.js, so a row for it would be as long as
+  // the symbol table of b.js. The tables are reported by a debug log, which
+  // release builds do not have.
+  test.skipIf(!isDebug)("splitting/TailCopyAddsNoRowToTheChunkRenamer", async () => {
+    using dir = tempDir("splitting-tail-copy-renamer-table", {
+      "a.js": importsB,
+      "test.js": printsB,
+      ...Object.fromEntries(Object.entries(tailCopyFiles).map(([path, contents]) => [path.slice(1), contents])),
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--outdir", "out", "./a.js", "./b.js"],
+      env: { ...bunEnv, BUN_DEBUG_ChunkRenamer: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const tables = [...(buildOut + buildErr).matchAll(/(\d+) files, (\d+) rows, (\d+) name slots/g)].map(m => ({
+      files: Number(m[1]),
+      rows: Number(m[2]),
+      nameSlots: Number(m[3]),
+    }));
+    // The chunk of a.js, the shared chunk (b.js, c.cjs, the runtime) and the chunk of b.js.
+    expect(tables.map(t => t.files).sort()).toEqual([0, 1, 3]);
+    expect(tables.find(t => t.files === 0)).toEqual({ files: 0, rows: 0, nameSlots: 0 });
+    expect(buildExit).toBe(0);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "test.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout: runOut, stderr: runErr, exitCode: runExit }).toEqual({
+      stdout: tailCopyExports + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.
   // These pin the two per-chunk decisions of that step: what the written paths

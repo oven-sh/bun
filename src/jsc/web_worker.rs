@@ -458,18 +458,10 @@ impl WebWorker {
             false => crate::compiled_program::runs_worker_from_disk_apart(),
         };
         let runs_apart_from_compiled_program = runs_apart && {
-            let mut ignored_message = BunString::EMPTY;
             let dot_slash = OnceCell::new();
             // SAFETY: as for the preloads.
-            let path = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    specifier,
-                    &dot_slash,
-                    &mut ignored_message,
-                    temp_log,
-                )
-            };
+            let path =
+                unsafe { resolve_entry_point_specifier_quietly(parent, specifier, &dot_slash) };
             // A text that the build knew is compiled, and so is a file of the executable.
             path.is_none_or(|path| {
                 crate::compiled_program::find_entry_point_by_source_path(path).is_none()
@@ -478,17 +470,10 @@ impl WebWorker {
             })
         };
         let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
-            let mut ignored_message = BunString::EMPTY;
             let dot_slash = OnceCell::new();
             // SAFETY: as for the preloads.
             let path = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    spec_slice.slice(),
-                    &dot_slash,
-                    &mut ignored_message,
-                    temp_log,
-                )
+                resolve_entry_point_specifier_quietly(parent, spec_slice.slice(), &dot_slash)
             };
             crate::compiled_program::image_of_worker(path)
         });
@@ -1617,6 +1602,29 @@ fn on_unhandled_rejection(
     //
     // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
     vm.handle_ref().request_termination();
+}
+
+/// What a program compiled ahead of time asks where a Worker is created, ahead of the Worker's own resolve, which reports what is wrong
+/// with the name. What the resolver says to this question is nobody's: it goes into a log that ends with the question.
+///
+/// # Safety
+/// As for `resolve_entry_point_specifier`.
+unsafe fn resolve_entry_point_specifier_quietly<'s>(
+    parent: *mut VirtualMachine,
+    str: &'s [u8],
+    dot_slash: &'s OnceCell<Vec<u8>>,
+) -> Option<&'s [u8]> {
+    let mut ignored_message = BunString::EMPTY;
+    let mut log = bun_ast::Log::default();
+    // SAFETY: per fn contract; `log` stays where it is until the pointer is put back.
+    unsafe {
+        let log_before = (*parent).transpiler.log;
+        (*parent).transpiler.set_log(&raw mut log);
+        let path =
+            resolve_entry_point_specifier(parent, str, dot_slash, &mut ignored_message, &mut log);
+        (*parent).transpiler.set_log(log_before);
+        path
+    }
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

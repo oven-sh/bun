@@ -378,6 +378,8 @@ struct Walk<'a, 's> {
     is_evaluated: bool,
     /// `find_own_path` answers where the source lies, not where the executable holds the module.
     reads_source_paths: bool,
+    /// The text that was last looked for holds the path of the file it is written in.
+    names_own_path: core::cell::Cell<bool>,
     /// The `new Worker()` whose argument is followed.
     start: (FileId, ExprId),
     /// Of the file of the last `start` that was shown. A file that starts many Workers has its lines counted once.
@@ -638,6 +640,7 @@ pub(crate) fn find_code_that_starts_workers(
         has_options: false,
         is_evaluated: false,
         reads_source_paths: false,
+        names_own_path: core::cell::Cell::new(false),
         start: (FileId(0), ExprId(0)),
         locator: None,
         copies: Vec::new(),
@@ -1655,15 +1658,43 @@ impl Walk<'_, '_> {
     // What the constructor of a Worker makes of the value that the expression always evaluates to, if that is a text or a URL: a constant, or constants and the path of the file itself that `+`, a template, `encodeURIComponent()`, `btoa()`, `new URL()` and the functions of node:path and node:url put together. A path is what the program sees when it runs, with its separators.
     fn find_text(&mut self, file: FileId, expression: ExprId) -> Option<Vec<u8>> {
         let files = self.files;
-        let (hir, bound) = (files.hir(file), files.bound(file));
+        let hir = files.hir(file);
         let expression = hir.skip_type_assertions(expression);
-        match (files.analysis(file).decisions).constant(hir, expression) {
+        let folded = match (files.analysis(file).decisions).constant(hir, expression) {
             FoldedValue::Constant(Constant::String(text))
-            | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => {
-                return Some(files.atoms().bytes(text).to_vec());
-            }
+            | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => text,
             FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_) => return None,
-            FoldedValue::Unknown => {}
+            FoldedValue::Unknown => return self.find_text_of_parts(file, expression),
+        };
+        // `__dirname + "/job.js"` folds to the path of the source. Its parts say that the path comes from the file's own, which a text does not.
+        // The value is known either way, so whatever the walk through the parts could not see is no code out of sight.
+        let (has_unseen_start, variables_left) = (self.has_unseen_start, self.variables_left);
+        let has_parts = matches!(
+            hir[expression].kind,
+            ExprKind::Binary { op: BinOp::Add, .. }
+                | ExprKind::Template { .. }
+                | ExprKind::Ident(_)
+        );
+        let of_parts = match has_parts {
+            true => self.find_text_of_parts(file, expression),
+            false => None,
+        };
+        self.has_unseen_start = has_unseen_start;
+        if of_parts.is_none() {
+            self.variables_left = variables_left;
+        }
+        Some(of_parts.unwrap_or_else(|| files.atoms().bytes(folded).to_vec()))
+    }
+
+    fn find_text_of_parts(&mut self, file: FileId, expression: ExprId) -> Option<Vec<u8>> {
+        let files = self.files;
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        // `sep` of node:path, also under a name of its own.
+        if let Some((module, name)) = self.find_member_of_module(file, expression)
+            && self.modules[1] == Some(module)
+            && files.atoms().bytes(name) == b"sep"
+        {
+            return Some(self.as_seen(b"/"));
         }
         match hir[expression].kind {
             ExprKind::Binary {
@@ -1764,6 +1795,7 @@ impl Walk<'_, '_> {
 
     /// What `__filename` holds in the file and `require.resolve` answers for it, or the folder of that: in an executable, where the file lies on the machine that builds.
     fn find_source_path(&self, file: FileId, is_folder: bool) -> Option<Vec<u8>> {
+        self.names_own_path.set(true);
         let folder_or_file = |path: &[u8]| match is_folder {
             true => dirname::<Posix>(path).to_vec(),
             false => path.to_vec(),
@@ -2210,10 +2242,11 @@ impl Walk<'_, '_> {
             return false;
         }
         self.reads_source_paths = true;
+        self.names_own_path.set(false);
         let on_disk = self.find_text(file, expression);
         self.reads_source_paths = false;
         // A path that does not come from the file's own names a file of the machine that the program runs on.
-        let on_disk = on_disk.filter(|on_disk| on_disk != text);
+        let on_disk = on_disk.filter(|on_disk| on_disk != text || self.names_own_path.get());
         let found = on_disk.and_then(|on_disk| resolve_entry_point(&read_path(self, &on_disk)?));
         found.is_some_and(|path| self.add_file(&path, Some(&named)))
     }

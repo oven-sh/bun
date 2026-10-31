@@ -2477,6 +2477,11 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_define_own_property",
                   test_v8_define_own_property);
   NODE_SET_METHOD(exports, "test_v8_bigint", test_v8_bigint);
+  NODE_SET_METHOD(exports, "create_bigints_from_unsigned",
+                  create_bigints_from_unsigned);
+  NODE_SET_METHOD(exports,
+                  "create_bigints_from_unsigned_with_pending_exception",
+                  create_bigints_from_unsigned_with_pending_exception);
   NODE_SET_METHOD(exports, "test_v8_string_from_utf8_literal",
                   test_v8_string_from_utf8_literal);
   NODE_SET_METHOD(exports, "test_v8_prototype_template",

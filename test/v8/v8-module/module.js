@@ -144,6 +144,22 @@ module.exports = debugMode => {
       console.log("is expected =", big === 123456789012345n);
     },
 
+    test_v8_bigint_new_from_unsigned() {
+      const print = bigints => {
+        for (const big of bigints) console.log("typeof =", typeof big, "value =", big.toString());
+      };
+      print(nativeModule.create_bigints_from_unsigned());
+      // Again as a constructor, which returns the array too. Bun calls a constructor callback under an exception
+      // scope, and there JSC's exception check validation (on in ASAN CI) aborts if the shim skips a check.
+      print(new nativeModule.create_bigints_from_unsigned());
+      try {
+        nativeModule.create_bigints_from_unsigned_with_pending_exception();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+    },
+
     test_v8_prototype_template() {
       const inst = nativeModule.test_v8_prototype_template();
       console.log("protoMethod() =", inst.protoMethod());

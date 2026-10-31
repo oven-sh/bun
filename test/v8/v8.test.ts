@@ -394,6 +394,14 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("BigInt::New creates a JS bigint with the given int64 value", async () => {
       await checkSameOutput("test_v8_bigint");
     });
+    it("BigInt::NewFromUnsigned creates a JS bigint with the given uint64 value", async () => {
+      const output = await checkSameOutput("test_v8_bigint_new_from_unsigned");
+      const values = [0n, 1n, 2n ** 32n, 2n ** 53n + 1n, 2n ** 63n, 2n ** 64n - 1n];
+      const native = values.map(value => `NewFromUnsigned(${value}): IsBigInt() = 1, IsNumber() = 0`);
+      const js = values.map(value => `typeof = bigint value = ${value}`);
+      // Called as a function, as a constructor, and with an exception pending.
+      expect(output.split(/\r?\n/)).toEqual([...native, ...js, ...native, ...js, ...native, "caught pending"]);
+    });
   });
 
   describe("String::NewFromUtf8Literal", () => {

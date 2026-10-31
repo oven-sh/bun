@@ -229,3 +229,84 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
   expect(stdout + stderr).toMatch(/3 pass/);
   expect(exitCode).toBe(0);
 });
+
+// Two files, so that --parallel=2 runs them in worker processes. A .js file that uses require() and module is CommonJS too.
+async function rerunCommonJSTestFiles(flags: string[]) {
+  const source = (file: string) => `
+    const { test, expect } = require("bun:test");
+    console.log(JSON.stringify({ file: "${file}", evaluation: require("./dep.cjs").countEvaluation("${file}") }));
+    test("is the main module", () => {
+      expect(require.main).toBe(module);
+    });
+  `;
+  using dir = tempDir("test-rerun-each-cjs", {
+    "dep.cjs": `
+      const evaluations = {};
+      exports.countEvaluation = file => (evaluations[file] = (evaluations[file] ?? 0) + 1);
+    `,
+    "a.test.cjs": source("a"),
+    "b.test.js": source("b"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--rerun-each=3", ...flags, "./a.test.cjs", "./b.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // A --parallel worker's console.log arrives on the coordinator's stderr.
+  const evaluations: { file: string; evaluation: number }[] = (stdout + stderr)
+    .split("\n")
+    .filter(line => line.startsWith('{"file"'))
+    .map(line => JSON.parse(line))
+    .sort((a, b) => a.file.localeCompare(b.file));
+  const summary = stderr
+    .split("\n")
+    .map(line => line.trim().replace(/ \[[\d.]+m?s\]$/, ""))
+    .filter(line => /^\d+ (pass|fail)$|^Ran /.test(line));
+  return { evaluations, summary, exitCode };
+}
+
+const sharedGlobalModes: [string, string[]][] = [
+  ["by default", []],
+  ["with --parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
+];
+const isolatedModes: [string, string[]][] = [
+  ["with --isolate", ["--isolate"]],
+  ["with --parallel", ["--parallel=2"]],
+];
+
+// Without --isolate the reruns of a file share one module cache, so dep.cjs stays cached and counts every evaluation.
+test.concurrent.each(sharedGlobalModes)(
+  "--rerun-each evaluates a CommonJS test file again for every rerun %s",
+  async (_, flags) => {
+    expect(await rerunCommonJSTestFiles(flags)).toEqual({
+      evaluations: [
+        { file: "a", evaluation: 1 },
+        { file: "a", evaluation: 2 },
+        { file: "a", evaluation: 3 },
+        { file: "b", evaluation: 1 },
+        { file: "b", evaluation: 2 },
+        { file: "b", evaluation: 3 },
+      ],
+      summary: ["6 pass", "0 fail", "Ran 6 tests across 2 files."],
+      exitCode: 0,
+    });
+  },
+);
+
+// --isolate and --parallel decide what a rerun shares with the run before it, so this pins only the number of evaluations.
+test.concurrent.each(isolatedModes)(
+  "--rerun-each evaluates a CommonJS test file again for every rerun %s",
+  async (_, flags) => {
+    const { evaluations, summary, exitCode } = await rerunCommonJSTestFiles(flags);
+    expect({ files: evaluations.map(({ file }) => file), summary, exitCode }).toEqual({
+      files: ["a", "a", "a", "b", "b", "b"],
+      summary: ["6 pass", "0 fail", "Ran 6 tests across 2 files."],
+      exitCode: 0,
+    });
+  },
+);

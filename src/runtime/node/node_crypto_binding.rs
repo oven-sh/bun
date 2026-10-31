@@ -1294,3 +1294,56 @@ pub(crate) fn argon2_sync<'a>(
     }
     heap.create_buffer_from_box(ctx.output.into_boxed_slice())
 }
+
+/// WebCrypto Argon2 (`CryptoAlgorithmArgon2.cpp`). `variant` is a `kArgon2Types` value.
+///
+/// # Safety
+/// Each (ptr, len) pair is a readable byte slice; `out` has `tag_length` writable bytes.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__Argon2__deriveBits(
+    variant: u8,
+    message: *const u8,
+    message_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    secret: *const u8,
+    secret_len: usize,
+    associated_data: *const u8,
+    associated_data_len: usize,
+    parallelism: u32,
+    memory: u32,
+    passes: u32,
+    tag_length: u32,
+    out: *mut u8,
+) -> bool {
+    if variant > 2 {
+        return false;
+    }
+    // SAFETY: caller contract above.
+    let (message, nonce, secret, associated_data, out) = unsafe {
+        (
+            bun_core::ffi::slice(message, message_len),
+            bun_core::ffi::slice(nonce, nonce_len),
+            bun_core::ffi::slice(secret, secret_len),
+            bun_core::ffi::slice(associated_data, associated_data_len),
+            bun_core::ffi::slice_mut(out, tag_length as usize),
+        )
+    };
+    let mut ctx = Argon2::new(
+        message,
+        nonce,
+        parallelism,
+        tag_length,
+        memory,
+        passes,
+        secret,
+        associated_data,
+        variant,
+    );
+    ctx.run();
+    if ctx.failed || ctx.output.len() != out.len() {
+        return false;
+    }
+    out.copy_from_slice(&ctx.output);
+    true
+}

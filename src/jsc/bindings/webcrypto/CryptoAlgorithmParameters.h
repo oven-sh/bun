@@ -44,6 +44,7 @@ public:
         AesCtrParams,
         AesGcmParams,
         AesKeyParams,
+        Argon2Params,
         EcKeyParams,
         EcdhKeyDeriveParams,
         EcdsaParams,

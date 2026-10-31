@@ -123,6 +123,23 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("restores a CommonJS module that uses JSX", async () => {
+    // The parser binds the JSX runtime itself, and in a CommonJS module the
+    // binding is a require(). The second run loads the entry of the first run.
+    const react = join(temp_dir, "node_modules", "react");
+    mkdirSync(react, { recursive: true });
+    writeFileSync(join(react, "package.json"), `{ "name": "react", "version": "0.0.0" }`);
+    writeFileSync(join(react, "jsx-dev-runtime.js"), `exports.jsxDEV = (type, props) => ({ type, props });`);
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(
+      join(temp_dir, "a.jsx"),
+      `module.exports = <div />;\nconsole.log(JSON.stringify(module.exports));` + filler,
+    );
+    expect(await bunRun(join(temp_dir, "a.jsx"), env)).toSpawn(`{"type":"div","props":{}}`);
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "a.jsx"), env)).toSpawn(`{"type":"div","props":{}}`);
+    expect(newCacheCount()).toBe(0);
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

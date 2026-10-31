@@ -5,7 +5,7 @@
 //  }
 import { createStatsForIno } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { Stats, statSync } from "node:fs";
+import { closeSync, openSync, Stats, statSync } from "node:fs";
 
 test("fs.stats truncate", async () => {
   const stats = new (Stats as any)(...Array.from({ length: 14 }, () => Number.MAX_VALUE));
@@ -53,4 +53,77 @@ test("fs.Stats does not clamp u64 ino to INT64_MAX", () => {
 
   // BigInt path: static_cast<int64_t>(uint64_t)
   expect(cases.map(ino => createStatsForIno(ino, true).ino)).toEqual(cases.map(ino => BigInt.asIntN(64, ino)));
+});
+
+// Node.js assigns the own keys in this order: StatsBase the first ten, then the constructor its times.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L386-L398
+// fs-stats-key-order.test.ts checks the order of every stat function, under Node.js too. These two need Bun.
+const statsKeys = [
+  "dev",
+  "mode",
+  "nlink",
+  "uid",
+  "gid",
+  "rdev",
+  "blksize",
+  "ino",
+  "size",
+  "blocks",
+  "atimeMs",
+  "mtimeMs",
+  "ctimeMs",
+  "birthtimeMs",
+];
+
+// createStatsForIno fills the stat buffer with 1 to 10 in the order of its fields (`ino` is the second one),
+// and gives every time but atime a number of seconds of its own.
+test("the native creators put each field of the stat buffer under its own key, in Node's order", () => {
+  expect(Object.entries(createStatsForIno(2n, false))).toEqual([
+    ["dev", 1],
+    ["mode", 3],
+    ["nlink", 4],
+    ["uid", 5],
+    ["gid", 6],
+    ["rdev", 7],
+    ["blksize", 9],
+    ["ino", 2],
+    ["size", 8],
+    ["blocks", 10],
+    ["atimeMs", 0],
+    ["mtimeMs", 12_000],
+    ["ctimeMs", 13_000],
+    ["birthtimeMs", 14_000],
+  ]);
+  expect(Object.entries(createStatsForIno(2n, true))).toEqual([
+    ["dev", 1n],
+    ["mode", 3n],
+    ["nlink", 4n],
+    ["uid", 5n],
+    ["gid", 6n],
+    ["rdev", 7n],
+    ["blksize", 9n],
+    ["ino", 2n],
+    ["size", 8n],
+    ["blocks", 10n],
+    ["atimeMs", 0n],
+    ["mtimeMs", 12_000n],
+    ["ctimeMs", 13_000n],
+    ["birthtimeMs", 14_000n],
+    ["atimeNs", 0n],
+    ["mtimeNs", 12_000_000_000n],
+    ["ctimeNs", 13_000_000_000n],
+    ["birthtimeNs", 14_000_000_000n],
+  ]);
+});
+
+test("Bun.file().stat() gives the own keys in Node's order", async () => {
+  const fd = openSync(import.meta.path, "r");
+  try {
+    expect({
+      path: Object.keys(await Bun.file(import.meta.path).stat()),
+      fd: Object.keys(await Bun.file(fd).stat()),
+    }).toEqual({ path: statsKeys, fd: statsKeys });
+  } finally {
+    closeSync(fd);
+  }
 });

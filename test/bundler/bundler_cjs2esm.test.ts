@@ -282,6 +282,193 @@ describe("bundler", () => {
       stdout: "development",
     },
   });
+  // https://github.com/oven-sh/bun/issues/12726
+  itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProductionNoMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        'use strict';
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./library.prod.js')
+        } else {
+          module.exports = require('./library.dev.js')
+        }
+      `,
+      "/node_modules/lib/library.prod.js": /* js */ `
+        module.exports.foo = 'production';
+      `,
+      "/node_modules/lib/library.dev.js": /* js */ `
+        module.exports.foo = 'FAILED';
+      `,
+    },
+    cjs2esm: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    run: {
+      stdout: "production",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvDevelopmentNoMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        'use strict';
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./library.prod.js')
+        } else {
+          module.exports = require('./library.dev.js')
+        }
+      `,
+      "/node_modules/lib/library.prod.js": /* js */ `
+        module.exports.foo = 'FAILED';
+      `,
+      "/node_modules/lib/library.dev.js": /* js */ `
+        module.exports.foo = 'development';
+      `,
+    },
+    cjs2esm: true,
+    env: {
+      NODE_ENV: "development",
+    },
+    run: {
+      stdout: "development",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvNoBracesNoMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        if (process.env.NODE_ENV === 'production')
+          module.exports = require('./library.prod.js')
+        else
+          module.exports = require('./library.dev.js')
+      `,
+      "/node_modules/lib/library.prod.js": /* js */ `
+        module.exports.foo = 'FAILED';
+      `,
+      "/node_modules/lib/library.dev.js": /* js */ `
+        module.exports.foo = 'development';
+      `,
+    },
+    cjs2esm: true,
+    env: {
+      NODE_ENV: "development",
+    },
+    run: {
+      stdout: "development",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsBasedOnDefineNumberNoMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        if (__DEV__) {
+          module.exports = require('./library.dev.js')
+        } else {
+          module.exports = require('./library.prod.js')
+        }
+      `,
+      "/node_modules/lib/library.prod.js": /* js */ `
+        module.exports.foo = 'production';
+      `,
+      "/node_modules/lib/library.dev.js": /* js */ `
+        module.exports.foo = 'FAILED';
+      `,
+    },
+    cjs2esm: true,
+    define: {
+      __DEV__: "0",
+    },
+    run: {
+      stdout: "production",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvElseIfChainNoMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from 'lib';
+        console.log(foo);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./library.prod.js')
+        } else if (process.env.NODE_ENV === 'test') {
+          module.exports = require('./library.test.js')
+        } else {
+          module.exports = require('./library.dev.js')
+        }
+      `,
+      "/node_modules/lib/library.prod.js": /* js */ `
+        module.exports.foo = 'FAILED';
+      `,
+      "/node_modules/lib/library.test.js": /* js */ `
+        module.exports.foo = 'FAILED';
+      `,
+      "/node_modules/lib/library.dev.js": /* js */ `
+        module.exports.foo = 'development';
+      `,
+    },
+    cjs2esm: true,
+    env: {
+      NODE_ENV: "development",
+    },
+    run: {
+      stdout: "development",
+    },
+  });
+  itBundled("cjs2esm/ReactIndexNodeEnvRedirectNoMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        const react = require("react");
+        console.log(react.version);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "18.3.1", "main": "./index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        'use strict';
+
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./cjs/react.production.min.js');
+        } else {
+          module.exports = require('./cjs/react.development.js');
+        }
+      `,
+      "/node_modules/react/cjs/react.production.min.js": /* js */ `
+        exports.version = 'FAILED';
+      `,
+      "/node_modules/react/cjs/react.development.js": /* js */ `
+        exports.version = '18.3.1-dev';
+      `,
+    },
+    target: "bun",
+    env: {
+      NODE_ENV: "development",
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).not.toContain("react/index.js");
+      expect(code).not.toContain("require_react ");
+      expect(code).not.toContain("require_react(");
+      expect(code).not.toContain("react.production.min.js");
+    },
+    run: {
+      stdout: "18.3.1-dev",
+    },
+  });
   itBundled("cjs2esm/ModuleExportsEqualsRuntimeCondition", {
     files: {
       "/entry.js": /* js */ `

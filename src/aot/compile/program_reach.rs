@@ -2466,6 +2466,12 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    fn note_named_by_export(&mut self, exporter: FileId, binding: ExportBinding) {
+        if let ExportBinding::Variable(defined) = binding {
+            self.is_named_by_import[defined.file.idx()] |= defined.file != exporter;
+        }
+    }
+
     fn reach_new_binding(&mut self, defined: Sym) -> bool {
         let Sym { file, id } = defined;
         match self.input.graph.import_binding(file, id) {
@@ -2613,6 +2619,9 @@ impl<'a, 's> Walk<'a, 's> {
             .find_export(module, name, &self.input.files.atoms)
         {
             ExportLookup::Found(binding) => {
+                if let ModuleRef::File(file) = module {
+                    self.note_named_by_export(file, binding);
+                }
                 self.reach_exporter(module, binding);
                 self.reach_export_binding(binding)
             }
@@ -2680,6 +2689,7 @@ impl<'a, 's> Walk<'a, 's> {
             return;
         }
         for export in graph.exports(file) {
+            self.note_named_by_export(file, export.binding);
             if let Some(handed_on) = HandedOn::of(export.binding) {
                 self.reach_files_between(file, handed_on);
             }

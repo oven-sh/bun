@@ -67,6 +67,12 @@ case $platform in
 'Darwin arm64')
     target=darwin-aarch64
     ;;
+'FreeBSD amd64')
+    target=freebsd-x64
+    ;;
+'FreeBSD aarch64')
+    target=freebsd-aarch64
+    ;;
 'Linux aarch64' | 'Linux arm64')
     target=linux-aarch64
     ;;
@@ -110,6 +116,11 @@ github_repo="$GITHUB/oven-sh/bun"
 case "$target" in
 'darwin-x64'*)
     if [[ $(sysctl -a | grep machdep.cpu | grep AVX2) == '' ]]; then
+        target="$target-baseline"
+    fi
+    ;;
+'freebsd-x64'*)
+    if [[ $(dmesg 2>/dev/null | grep -qi 'AVX2') == '' ]]; then
         target="$target-baseline"
     fi
     ;;

@@ -7,7 +7,7 @@
 //!
 //! Three dispatchers are defined:
 //!   1. [`run_task`] — `bun_event_loop::Task` (~96 variants).
-//!   2. [`run_file_poll`] — `bun_io::FilePoll::Owner` (~13 variants).
+//!   2. [`run_file_poll`] — `bun_io::FilePoll::Owner` (~14 variants).
 //!
 //! Low-tier crates declare these as `extern "Rust"`; this crate defines them
 //! `#[no_mangle]` so the linker resolves the call directly — no runtime
@@ -1097,6 +1097,25 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
                 // set at `FilePoll::init`. Passed raw (see BUFFERED_READER above).
                 unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
             })
+        }
+        poll_tag::UV_POLL => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvPoll;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        handle: *mut UvPoll = owner.ptr.cast::<UvPoll>(),
+                        poll: *mut FilePoll = poll,
+                    ) {
+                        // SAFETY: tag matched, so `owner.ptr` is the `uv_poll_t` that owns `poll`.
+                        // `uv_close` frees the poll before the addon may free the handle.
+                        unsafe { UvPoll::on_poll(handle, poll) };
+                    }
+                )
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
         }
 
         poll_tag::NULL => {

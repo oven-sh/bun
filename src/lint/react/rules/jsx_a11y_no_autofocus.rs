@@ -14,11 +14,11 @@ pub struct NoAutofocus {
     ignore_non_dom: bool,
 }
 
-const NO_AUTOFOCUS: Message = Message::new(
+const NO_AUTOFOCUS: &Message = &Message::new(
     "",
     "The `autoFocus` attribute is found here, which can cause usability issues for sighted and non-sighted users.",
 );
-const REMOVE: Message = Message::new("", "Remove the `autoFocus` attribute.");
+const REMOVE: &Message = &Message::new("", "Remove the `autoFocus` attribute.");
 
 impl Rule for NoAutofocus {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-autofocus", Kind::Problem).has_suggestions();

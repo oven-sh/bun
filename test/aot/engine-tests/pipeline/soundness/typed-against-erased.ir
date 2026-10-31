@@ -2162,7 +2162,7 @@ function f52 module=m1 role=Signature thisType={type=anything} results=[{type=an
 function f53 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f54 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f55 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f56 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f56 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2940,7 +2940,7 @@ function f97 module=m7 kind=Module role=Library flags=[IsChecked] thisType={type
     Return v39
 }
 function f98 name="matchesGlob" module=m7 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w224}, {type=undefined|null|string site=w225 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w226 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w227}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f56
+runtimefunction id=68 function=f56
 runtimefunction id=65574 function=f38
 runtimefunction id=65580 function=f37
 # -- generated: f0 load run awaits sumOf maxOf countOf isId isIdOrNothing guardBehindTest guardThatTests optionalChain kindInVariable throughAny fieldOfHolder createdTail createdLocal accessors f23 f24 f25 get f38 main

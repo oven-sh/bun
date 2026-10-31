@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Disallow return statements in a `finally()` callback of a promise.
 pub struct NoReturnInFinally;
 
-const NO_RETURN_IN_FINALLY: Message = Message::new("", "Don't return in a finally callback");
+const NO_RETURN_IN_FINALLY: &Message = &Message::new("", "Don't return in a finally callback");
 
 impl Rule for NoReturnInFinally {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-return-in-finally", Kind::Problem);

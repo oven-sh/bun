@@ -2860,7 +2860,7 @@ function f175 module=m0 role=Signature thisType={type=anything} results=[{type=a
 function f176 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f111]
 function f177 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f178 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f177]
-function f179 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f179 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2999,7 +2999,7 @@ function f181 name="apply" module=m2 position=1161 kind=Method role=Library flag
 }
 runtimefunction id=4 function=f181
 runtimefunction id=12 function=f180
-runtimefunction id=69 function=f179
+runtimefunction id=68 function=f179
 # -- generated: selfAnd doubles objects voids many nested inCatch inFinally inSwitch C s f44 g arrow f54 f55 f56 f57 f58 f59 f60 f61 f62 f63 f64 f65 f67 f68 f69 f70 f71 f72 f73 f74 f75 f76 f77 f81 f82 f83 f84 f85 f86 f87 f88 f89 byValue f92 f93 f94 f95 f96 f97 f98 f99 f100 f101 f102 f105 anyValue t p m loop fresh
 # CHECK-LABEL: function {{*}}name="selfAnd"
 # CHECK: module=m0 position=767 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w6}] results=[{type=true site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

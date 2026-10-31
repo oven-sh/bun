@@ -1221,6 +1221,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // TODO: Silently remove unsupported top-level "await" in dead code branches
         // (this was from 'await using' syntax)
+        if data.kind == S::Kind::KAwaitUsing {
+            p.note_await();
+        }
 
         // Local statements do not end the const local prefix
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
@@ -2100,6 +2103,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::ForOf,
     ) -> Result<(), Error> {
+        if data.is_await {
+            p.note_await();
+        }
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
         let _ = p.visit_for_loop_init(data.init, true);

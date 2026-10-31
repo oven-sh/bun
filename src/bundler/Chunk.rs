@@ -1308,6 +1308,7 @@ impl EntryPoint {
 pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
+    pub(crate) tla_plan: crate::linker_context::tla_plan::TlaPlan,
 
     // for code splitting
     /// The other chunks with top-level side effects that the walk ordering

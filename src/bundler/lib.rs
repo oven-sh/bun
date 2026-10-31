@@ -217,6 +217,9 @@ pub mod linker_context {
     #[path = "generateCompileResultForJSChunk.rs"]
     pub(crate) mod generate_compile_result_for_js_chunk;
 
+    #[path = "tlaPlan.rs"]
+    pub(crate) mod tla_plan;
+
     #[path = "postProcessCSSChunk.rs"]
     pub(crate) mod post_process_css_chunk;
 

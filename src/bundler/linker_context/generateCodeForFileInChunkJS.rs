@@ -1,4 +1,5 @@
 use crate::bundled_ast::Flags as AstFlags;
+use crate::js_meta::TlaShape;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
@@ -40,11 +41,24 @@ pub fn generate_code_for_file_in_chunk_js(
     let source_ref = &c.parse_graph().input_files.items_source()[source_index];
     let parts: &[Part] = &c.graph.ast.items_parts()[source_index].as_slice()
         [part_range.part_index_begin as usize..part_range.part_index_end as usize];
-    let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
-    let wrapper_part_index = if flags.wrap != WrapKind::None {
+    let mut flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
+    let wrapper_part_index = if flags.wrap != WrapKind::None || flags.tla.is_unwrapped_with_a_part()
+    {
         c.graph.meta.items_wrapper_part_index()[source_index]
     } else {
         Index::INVALID
+    };
+    // What the `import` statements of a `__tlaNode` turn into runs where the file is entered, not in its body.
+    let has_wrapper_part = (part_range.part_index_begin..part_range.part_index_end)
+        .contains(&wrapper_part_index.get());
+    let is_tla_node_body = flags.tla == TlaShape::Node && has_wrapper_part;
+    if flags.tla == TlaShape::Node && !is_tla_node_body {
+        flags.wrap = WrapKind::None;
+    }
+    let tla_node = || {
+        chunk.content.javascript().tla_plan[source_index]
+            .as_deref()
+            .expect("compute_tla_plan has every __tlaNode of the chunk")
     };
 
     // referencing everything by array makes the code a lot more annoying :(
@@ -306,6 +320,7 @@ pub fn generate_code_for_file_in_chunk_js(
     }
 
     // Add all other parts in this chunk
+    let mut tla_hoisted_stmts: Vec<Stmt> = Vec::new();
     for (index_, part) in parts.iter().enumerate() {
         let index = part_range.part_index_begin + (index_ as u32);
         if !parts_live.is_set(index as usize) {
@@ -320,7 +335,7 @@ pub fn generate_code_for_file_in_chunk_js(
 
         if index == wrapper_part_index.get() {
             // Skip the wrapper part because we already handled it above
-            needs_wrapper = true;
+            needs_wrapper = flags.wrap != WrapKind::None;
             continue;
         }
 
@@ -470,6 +485,7 @@ pub fn generate_code_for_file_in_chunk_js(
             part_stmts = &single_stmts_list[..];
         }
 
+        let suffix_len = stmts.inside_wrapper_suffix.len();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -482,6 +498,13 @@ pub fn generate_code_for_file_in_chunk_js(
         ) {
             return PrintResult::Err(err.into());
         }
+        if is_tla_node_body
+            && c.tla_hoisted_parts[source_index]
+                .get(index as usize)
+                .is_some_and(|&is_hoisted| is_hoisted)
+        {
+            tla_hoisted_stmts.extend(stmts.inside_wrapper_suffix.drain(suffix_len..));
+        }
     }
 
     // Hoist all import statements before any normal statements. ES6 imports
@@ -493,16 +516,45 @@ pub fn generate_code_for_file_in_chunk_js(
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
-    stmts
-        .all_stmts
-        .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
+    // In a `__tlaModule`, what the `import` statements turn into and the body are two functions.
+    let tla_module_prefix_len = stmts.inside_wrapper_prefix.stmts.len();
+    if is_tla_node_body {
+        stmts
+            .outside_wrapper_prefix
+            .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
+        stmts
+            .outside_wrapper_prefix
+            .extend_from_slice(tla_hoisted_stmts.as_slice());
+    } else {
+        stmts
+            .all_stmts
+            .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
+    }
+    if flags.tla == TlaShape::Main && has_wrapper_part {
+        stmts
+            .all_stmts
+            .extend_from_slice(&super::tla_plan::main_stmts(c, tla_node()));
+    }
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
+    if is_tla_node_body && c.has_tla_main && !ast.top_level_await_keyword.is_empty() {
+        stmts
+            .all_stmts
+            .push(super::tla_plan::done_stmt(c, ast.wrapper_ref));
+    }
+    if flags.tla == TlaShape::Transparent && has_wrapper_part && tla_node().is_junction {
+        stmts.all_stmts.push(super::tla_plan::junction_stmt(
+            c,
+            temp_arena,
+            ast.wrapper_ref,
+            tla_node(),
+        ));
+    }
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
-    if c.options.minify_syntax {
+    if c.options.minify_syntax && flags.tla != TlaShape::Module {
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
@@ -619,7 +671,11 @@ pub fn generate_code_for_file_in_chunk_js(
                 // dependency. For correctness, we must not use "async" if the module
                 // isn't async because then calling "require()" on that module would
                 // swallow any exceptions thrown during module initialization.
-                let is_async = flags.is_async_or_has_async_dependency;
+                let is_async = if is_tla_node_body || flags.tla == TlaShape::Module {
+                    !ast.top_level_await_keyword.is_empty()
+                } else {
+                    flags.is_async_or_has_async_dependency
+                };
 
                 struct ExportHoist<'a> {
                     decls: Vec<G::Decl>,
@@ -697,6 +753,18 @@ pub fn generate_code_for_file_in_chunk_js(
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                let mut tla_module_prefix_end: usize = 0;
+                // Whoever looks at a `var` ahead of its statement finds `undefined`: another file of an import cycle,
+                // or a statement of this file. (At a `const` it would throw, which scope hoisting loses either way.)
+                // What nobody can look at has left a `__tlaNode` by now.
+                let value_stays_inside = |binding: &Binding| {
+                    flags.tla != TlaShape::None
+                        && matches!(binding.data, B::B::BIdentifier(id) if c
+                            .graph
+                            .symbols
+                            .get_const(id.r#ref)
+                            .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Hoisted))
+                };
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
@@ -704,6 +772,9 @@ pub fn generate_code_for_file_in_chunk_js(
                     // Iterate by index since we mutate
                     // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.
                     'hoist: for i in 0..stmts.all_stmts.len() {
+                        if i == tla_module_prefix_len {
+                            tla_module_prefix_end = end;
+                        }
                         let stmt = stmts.all_stmts[i];
                         let transformed = match stmt.data {
                             StmtData::SLocal(local) => 'stmt: {
@@ -722,6 +793,7 @@ pub fn generate_code_for_file_in_chunk_js(
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
                                         if initializer.can_be_moved()
                                             && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                            && !value_stays_inside(&decl.binding)
                                         {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {
@@ -785,6 +857,63 @@ pub fn generate_code_for_file_in_chunk_js(
                                     ),
                                 );
                             }
+                            // The parser lowers a top-level `using` to `try { var ... } catch ... finally ...`
+                            // around the rest of the file, exports included.
+                            StmtData::STry(try_)
+                                if try_.body.slice().iter().any(|inner| {
+                                    matches!(inner.data, StmtData::SLocal(local) if local.kind == S::Kind::KVar)
+                                }) =>
+                            {
+                                let mut body = bun_alloc::ArenaVec::with_capacity_in(
+                                    try_.body.slice().len(),
+                                    temp_arena,
+                                );
+                                for inner in try_.body.slice() {
+                                    let StmtData::SLocal(local) = inner.data else {
+                                        body.push(*inner);
+                                        continue;
+                                    };
+                                    if local.kind != S::Kind::KVar {
+                                        body.push(*inner);
+                                        continue;
+                                    }
+                                    let mut value = Expr::EMPTY;
+                                    for decl in local.decls.slice() {
+                                        let binding = Binding::to_expr(
+                                            &hoist.without_bound_items(decl.binding),
+                                            (&raw mut hoist).cast::<core::ffi::c_void>(),
+                                            hoist_wrapper,
+                                        );
+                                        if let Some(initializer) = decl.value {
+                                            value = value
+                                                .join_with_comma(Expr::assign(binding, initializer));
+                                        }
+                                    }
+                                    if !value.is_empty() {
+                                        body.push(Stmt::allocate_expr(temp_arena, value));
+                                    }
+                                }
+                                Stmt::alloc(
+                                    S::Try {
+                                        body_loc: try_.body_loc,
+                                        body: bun_ast::StoreSlice::new_mut(body.into_bump_slice_mut()),
+                                        catch: try_.catch.as_ref().map(|catch| bun_ast::Catch {
+                                            loc: catch.loc,
+                                            binding: catch.binding,
+                                            body: catch.body,
+                                            body_loc: catch.body_loc,
+                                        }),
+                                        finally: try_.finally.as_ref().map(|finally| {
+                                            bun_ast::Finally {
+                                                loc: finally.loc,
+                                                stmts: finally.stmts,
+                                                body_loc: finally.body_loc,
+                                            }
+                                        }),
+                                    },
+                                    stmt.loc,
+                                )
+                            }
                             _ => stmt,
                         };
 
@@ -794,6 +923,9 @@ pub fn generate_code_for_file_in_chunk_js(
                         end += 1;
                     }
                     inner_stmts.truncate(end);
+                    if tla_module_prefix_len >= stmts.all_stmts.len() {
+                        tla_module_prefix_end = end;
+                    }
                 }
 
                 if !hoist.decls.is_empty() {
@@ -813,7 +945,49 @@ pub fn generate_code_for_file_in_chunk_js(
                 }
 
                 let inner_len = inner_stmts.len();
-                if inner_len > 0 {
+                use super::tla_plan::{arrow, number};
+                let tla_wrapper: Option<(Ref, Vec<Expr>)> = if is_tla_node_body {
+                    // "var init_foo = __tlaNode(() => { ... }, hasTLA, [init_bar], isOpen, [init_baz]);"
+                    let list_of =
+                        |files: &[crate::IndexInt]| super::tla_plan::wrappers_of(c, files);
+                    let node = tla_node();
+                    let mut args = Vec::<Expr>::init_capacity(5);
+                    args.append_assume_capacity(arrow(is_async, inner_stmts));
+                    args.append_assume_capacity(number(is_async));
+                    args.append_assume_capacity(list_of(&node.waits_for));
+                    if node.is_open || !node.members.is_empty() {
+                        args.append_assume_capacity(number(node.is_open));
+                    }
+                    if !node.members.is_empty() {
+                        args.append_assume_capacity(list_of(&node.members));
+                    }
+                    Some((c.runtime_function(b"__tlaNode"), args))
+                } else if flags.tla == TlaShape::Module {
+                    // "var init_foo = __tlaModule(() => { body }, hasTLA, () => { imports });"
+                    let (imports, body) = stmts.all_stmts.as_mut_slice()[..inner_len]
+                        .split_at_mut(tla_module_prefix_end);
+                    Some((
+                        c.runtime_function(b"__tlaModule"),
+                        Vec::<Expr>::from_slice(&[
+                            arrow(is_async, bun_ast::StoreSlice::new_mut(body)),
+                            number(is_async),
+                            arrow(false, bun_ast::StoreSlice::new_mut(imports)),
+                        ]),
+                    ))
+                } else {
+                    None
+                };
+                if let Some((callee, args)) = tla_wrapper {
+                    stmts.append(
+                        StmtListWhich::OutsideWrapperPrefix,
+                        super::tla_plan::declare_wrapper_stmt(
+                            temp_arena,
+                            ast.wrapper_ref,
+                            callee,
+                            args,
+                        ),
+                    );
+                } else if inner_len > 0 {
                     // See the comment in needsWrapperRef for why the symbol
                     // is sometimes not generated.
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
@@ -918,6 +1092,9 @@ pub fn generate_code_for_file_in_chunk_js(
             _ => {}
         }
 
+        if c.options.minify_syntax && is_tla_node_body {
+            merge_adjacent_local_stmts(&mut stmts.outside_wrapper_prefix, temp_arena);
+        }
         out_stmts = bun_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
     }
 

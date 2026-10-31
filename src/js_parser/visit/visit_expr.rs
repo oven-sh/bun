@@ -122,6 +122,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
+            p.note_await();
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }

@@ -535,11 +535,10 @@ impl MachoFile {
         Ok(())
     }
 
-    /// What `macho_info_plist::write`, `write_section` and `add_symbols` leave as the template has it.
+    /// What `write_section` and `add_symbols` leave as the template has it.
     fn bytes_of_template(&self) -> core::ops::Range<usize> {
-        let commands_end = size_of::<macho::mach_header_64>() + self.header.sizeofcmds as usize;
-        let info_plist_end = macho_info_plist::find(&self.data).map_or(0, |range| range.end);
-        commands_end.max(info_plist_end)..self.section.offset as usize
+        size_of::<macho::mach_header_64>() + self.header.sizeofcmds as usize
+            ..self.section.offset as usize
     }
 
     fn validate_segments(&self) -> Result<(), MachoError> {

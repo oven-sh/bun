@@ -345,7 +345,7 @@ pub(crate) mod js_bundler {
         )))
     }
 
-    fn is_file(path: &[u8]) -> bool {
+    pub(crate) fn is_file(path: &[u8]) -> bool {
         let path = bun_core::ZBox::from_bytes(path);
         bun_sys::exists_at_type(bun_sys::Fd::cwd(), path.as_zstr())
             .is_ok_and(|kind| kind == bun_sys::ExistsAtType::File)
@@ -747,7 +747,15 @@ pub(crate) mod js_bundler {
                         )));
                     }
 
-                    this.macos_info_plist.append_slice_exact(slice.slice())?;
+                    // The build reads the file later, when the program may have changed its working directory.
+                    let mut cwd = bun_paths::path_buffer_pool::get();
+                    let path = match bun_sys::getcwd(&mut cwd) {
+                        Ok(len) => bun_paths::resolve_path::join_abs_string::<
+                            bun_paths::platform::Auto,
+                        >(&cwd[..len], &[slice.slice()]),
+                        Err(_) => slice.slice(),
+                    };
+                    this.macos_info_plist.append_slice_exact(path)?;
                 }
             }
 
@@ -2431,6 +2439,7 @@ pub(crate) use js_bundler::BunPluginTarget;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
+pub(crate) use js_bundler::is_file;
 
 /// Wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper

@@ -2605,7 +2605,8 @@ pub(crate) fn inject<'a>(
             }
 
             let file = bun_sys::File::borrow(&cloned_executable_fd);
-            let holds_template = !additions.has_code && !additions.trims();
+            let holds_template =
+                !additions.has_code && !additions.trims() && !additions.embeds_info_plist();
             let written = match macho_file.build_and_sign_into(file, holds_template) {
                 Ok(n) => n,
                 Err(e) => {
@@ -3193,28 +3194,30 @@ pub fn target_builtins(
 }
 
 fn read_info_plist(path: &[u8]) -> Result<Vec<u8>, CompileError> {
+    /// `macho_info_plist::write` says what fits. This only keeps a file that cannot fit out of memory.
+    const MAX_SIZE: i64 = 1 << 20;
+    let fail = |problem: core::fmt::Arguments<'_>| {
+        let path = bun_core::fmt::quote(path);
+        CompileError::fmt(format_args!("the Info.plist {path} {problem}"))
+    };
+    let stat = Syscall::stat(&bun_core::ZBox::from_bytes(path))
+        .map_err(|e| fail(format_args!("cannot be read: {e}")))?;
     // A device or a pipe has no end to read to.
-    let read = Syscall::stat(&bun_core::ZBox::from_bytes(path)).and_then(|stat| {
-        bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode)
-            .then(|| bun_sys::File::read_from(Fd::cwd(), path))
-            .transpose()
-    });
-    match read {
-        Ok(None) => Err(CompileError::fmt(format_args!(
-            "the Info.plist {} is not a regular file",
-            bun_core::fmt::quote(path)
-        ))),
-        Ok(Some(plist)) if plist.is_empty() => Err(CompileError::fmt(format_args!(
-            "the Info.plist {} is empty",
-            bun_core::fmt::quote(path)
-        ))),
-        Ok(Some(plist)) => Ok(plist),
-        Err(e) => Err(CompileError::fmt(format_args!(
-            "failed to read the Info.plist {}: {}",
-            bun_core::fmt::quote(path),
-            e
-        ))),
+    if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) {
+        return Err(fail(format_args!("is not a regular file")));
     }
+    if stat.st_size as i64 > MAX_SIZE {
+        let size = stat.st_size;
+        return Err(fail(format_args!(
+            "is {size} bytes, which is too large to embed"
+        )));
+    }
+    let plist = bun_sys::File::read_from(Fd::cwd(), path)
+        .map_err(|e| fail(format_args!("cannot be read: {e}")))?;
+    if plist.is_empty() {
+        return Err(fail(format_args!("is empty")));
+    }
+    Ok(plist)
 }
 
 pub fn to_executable(

@@ -158,6 +158,10 @@ impl InjectionAdditions<'_> {
         });
     }
 
+    pub(crate) fn embeds_info_plist(&self) -> bool {
+        self.info_plist.is_some()
+    }
+
     pub(crate) fn trims(&self) -> bool {
         self.trim.is_some()
     }

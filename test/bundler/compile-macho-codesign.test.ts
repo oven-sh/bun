@@ -23,13 +23,18 @@ const TEMPLATE_SIG_OFF = 0x8100;
 // Larger than the ad-hoc signature, so a missing truncate leaves a stale tail.
 const TEMPLATE_SIG_SIZE = 0x2000;
 
+type TextSection = { name: string; offset: number; size: number };
+
 // Minimal arm64 Mach-O: __TEXT, __BUN with one __bun section, __LINKEDIT ending in LC_CODE_SIGNATURE.
-function machoTemplate(): Buffer {
-  const fileSize = TEMPLATE_SIG_OFF + TEMPLATE_SIG_SIZE;
+function machoTemplate(textSize = 0x4000, textSections: TextSection[] = []): Buffer {
+  // What lies behind __TEXT, by how much it is further back than with the default size.
+  const moved = textSize - 0x4000;
+  const fileSize = TEMPLATE_SIG_OFF + TEMPLATE_SIG_SIZE + moved;
   const segCmdSize = 72; // sizeof(segment_command_64)
   const sectSize = 80; // sizeof(section_64)
   const sigCmdSize = 16; // sizeof(linkedit_data_command)
-  const sizeofcmds = segCmdSize + (segCmdSize + sectSize) + segCmdSize + sigCmdSize;
+  const textCmdSize = segCmdSize + sectSize * textSections.length;
+  const sizeofcmds = textCmdSize + (segCmdSize + sectSize) + segCmdSize + sigCmdSize;
 
   // Non-zero fill so pages (especially the partial last one) hash real content.
   const buf = Buffer.alloc(fileSize, 0xc3);
@@ -48,27 +53,37 @@ function machoTemplate(): Buffer {
   buf.writeUInt32LE(0, 24); // flags
   buf.writeUInt32LE(0, 28); // reserved
 
-  // LC_SEGMENT_64 __TEXT [0, 0x4000)
+  // LC_SEGMENT_64 __TEXT [0, textSize)
   let o = 32;
   buf.writeUInt32LE(LC_SEGMENT_64, o);
-  buf.writeUInt32LE(segCmdSize, o + 4);
+  buf.writeUInt32LE(textCmdSize, o + 4);
   writeName(o + 8, "__TEXT");
   buf.writeBigUInt64LE(0x1_0000_0000n, o + 24); // vmaddr
-  buf.writeBigUInt64LE(0x4000n, o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(textSize), o + 32); // vmsize
   buf.writeBigUInt64LE(0n, o + 40); // fileoff
-  buf.writeBigUInt64LE(0x4000n, o + 48); // filesize
+  buf.writeBigUInt64LE(BigInt(textSize), o + 48); // filesize
   buf.writeInt32LE(5, o + 56); // maxprot r-x
   buf.writeInt32LE(5, o + 60); // initprot
-  buf.writeUInt32LE(0, o + 64); // nsects
+  buf.writeUInt32LE(textSections.length, o + 64); // nsects
+
+  o += segCmdSize;
+  for (const { name, offset, size } of textSections) {
+    buf.fill(0, o, o + sectSize);
+    writeName(o, name);
+    writeName(o + 16, "__TEXT");
+    buf.writeBigUInt64LE(0x1_0000_0000n + BigInt(offset), o + 32); // addr
+    buf.writeBigUInt64LE(BigInt(size), o + 40); // size
+    buf.writeUInt32LE(offset, o + 48); // offset
+    o += sectSize;
+  }
 
   // LC_SEGMENT_64 __BUN [0x4000, 0x8000) with one __bun section
-  o += segCmdSize;
   buf.writeUInt32LE(LC_SEGMENT_64, o);
   buf.writeUInt32LE(segCmdSize + sectSize, o + 4);
   writeName(o + 8, "__BUN");
-  buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(0x1_0000_4000n + BigInt(moved), o + 24); // vmaddr
   buf.writeBigUInt64LE(0x4000n, o + 32); // vmsize
-  buf.writeBigUInt64LE(0x4000n, o + 40); // fileoff
+  buf.writeBigUInt64LE(0x4000n + BigInt(moved), o + 40); // fileoff
   buf.writeBigUInt64LE(0x4000n, o + 48); // filesize
   buf.writeInt32LE(3, o + 56); // maxprot rw-
   buf.writeInt32LE(3, o + 60); // initprot
@@ -78,9 +93,9 @@ function machoTemplate(): Buffer {
   o += segCmdSize;
   writeName(o, "__bun");
   writeName(o + 16, "__BUN");
-  buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
+  buf.writeBigUInt64LE(0x1_0000_4000n + BigInt(moved), o + 32); // addr
   buf.writeBigUInt64LE(0x4000n, o + 40); // size
-  buf.writeUInt32LE(0x4000, o + 48); // offset
+  buf.writeUInt32LE(0x4000 + moved, o + 48); // offset
   buf.writeUInt32LE(14, o + 52); // align = 2^14
 
   // LC_SEGMENT_64 __LINKEDIT [0x8000, fileSize)
@@ -88,10 +103,10 @@ function machoTemplate(): Buffer {
   buf.writeUInt32LE(LC_SEGMENT_64, o);
   buf.writeUInt32LE(segCmdSize, o + 4);
   writeName(o + 8, "__LINKEDIT");
-  buf.writeBigUInt64LE(0x1_0000_8000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(0x1_0000_8000n + BigInt(moved), o + 24); // vmaddr
   buf.writeBigUInt64LE(0x3000n, o + 32); // vmsize
-  buf.writeBigUInt64LE(0x8000n, o + 40); // fileoff
-  buf.writeBigUInt64LE(BigInt(fileSize - 0x8000), o + 48); // filesize
+  buf.writeBigUInt64LE(0x8000n + BigInt(moved), o + 40); // fileoff
+  buf.writeBigUInt64LE(BigInt(fileSize - 0x8000 - moved), o + 48); // filesize
   buf.writeInt32LE(1, o + 56); // maxprot r--
   buf.writeInt32LE(1, o + 60); // initprot
   buf.writeUInt32LE(0, o + 64); // nsects
@@ -100,7 +115,7 @@ function machoTemplate(): Buffer {
   o += segCmdSize;
   buf.writeUInt32LE(LC_CODE_SIGNATURE, o);
   buf.writeUInt32LE(sigCmdSize, o + 4);
-  buf.writeUInt32LE(TEMPLATE_SIG_OFF, o + 8); // dataoff
+  buf.writeUInt32LE(TEMPLATE_SIG_OFF + moved, o + 8); // dataoff
   buf.writeUInt32LE(TEMPLATE_SIG_SIZE, o + 12); // datasize
 
   return buf;
@@ -412,6 +427,27 @@ describe.concurrent("--macos-info-plist", () => {
     expect(readFileSync(join(cwd, "second/out")).equals(readFileSync(join(cwd, "expected/out")))).toBe(true);
   });
 
+  test("replaces an Info.plist that the executable was linked with", async () => {
+    // Far enough into __TEXT that the bytes around it are not written together with the load commands.
+    const linked = { name: "__info_plist", offset: 0x200000, size: 0x100 };
+    using dir = tempDir("compile-macho-info-plist-linked", {
+      "entry.ts": bundles.tiny,
+      "Info.plist": infoPlist,
+      "template": machoTemplate(0x400000, [{ name: "__text", offset: 0x2000, size: 0x1000 }, linked]),
+    });
+    const cwd = String(dir);
+
+    await build(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=out"), cwd);
+
+    const out = readFileSync(join(cwd, "out"));
+    expect(readInfoPlist(out)).toBe(infoPlist);
+    expect(readSections(out).map(section => section.name)).toEqual(["__text", "__info_plist", "__bun"]);
+    expect(out.subarray(linked.offset, linked.offset + linked.size)).toEqual(Buffer.alloc(linked.size));
+    const sig = parseAndVerifySignature(out);
+    expect(sig.specialSlots).toEqual([createHash("sha256").update(infoPlist).digest("hex")]);
+    expect(sig.mismatches).toEqual([]);
+  });
+
   test("Bun.build embeds compile.macos.infoPlist, for macOS only", async () => {
     using dir = tempDir("compile-macho-info-plist-api", {
       "entry.ts": bundles.tiny,
@@ -419,7 +455,9 @@ describe.concurrent("--macos-info-plist", () => {
       "Large.plist": Buffer.alloc(0x4000, "x"),
       "index.html": "<p>hi</p>",
       "template": machoTemplate(),
+      "elsewhere": {},
       "build.ts": `
+        import { resolve } from "node:path";
         const entrypoints = ["entry.ts"];
         const darwin = { target: "bun-darwin-arm64", executablePath: "template" };
         const macos = { infoPlist: "Info.plist" };
@@ -430,6 +468,13 @@ describe.concurrent("--macos-info-plist", () => {
           entrypoints,
           compile: { executablePath: process.execPath, outfile: "native", macos: process.platform === "darwin" ? macos : missing },
         });
+        const pending = Bun.build({
+          entrypoints: [resolve("entry.ts")],
+          compile: { ...darwin, executablePath: resolve("template"), outfile: resolve("moved"), macos },
+        });
+        process.chdir("elsewhere");
+        await pending;
+        process.chdir("..");
         for (const options of [
           { entrypoints, compile: { ...darwin, outfile: "never", macos: 1 } },
           { entrypoints, compile: { ...darwin, outfile: "never", macos: missing } },
@@ -460,6 +505,7 @@ describe.concurrent("--macos-info-plist", () => {
     });
     expect(readInfoPlist(readFileSync(join(cwd, "out")))).toBe(infoPlist);
     expect(readInfoPlist(readFileSync(join(cwd, "without")))).toBeUndefined();
+    expect(readInfoPlist(readFileSync(join(cwd, "moved")))).toBe(infoPlist);
 
     const native = await run([join(cwd, isWindows ? "native.exe" : "native")], cwd);
     expect(native).toEqual({ stdout: "hi\n", stderr: "", exitCode: 0 });
@@ -470,6 +516,7 @@ describe.concurrent("--macos-info-plist", () => {
       "entry.ts": bundles.tiny,
       "Info.plist": Buffer.alloc(0x4000, "x"),
       "Empty.plist": "",
+      "Huge.plist": Buffer.alloc((1 << 20) + 1, "x"),
       "template": machoTemplate(),
     });
     const cwd = String(dir);
@@ -478,6 +525,10 @@ describe.concurrent("--macos-info-plist", () => {
       `failed to embed the Info.plist: it is 16384 bytes, and this executable has room for ${templateRoom} bytes behind its load commands`,
     );
     expect(large.exitCode).toBe(1);
+
+    const huge = await run(crossCompile("template", "--macos-info-plist=Huge.plist", "--outfile=out"), cwd);
+    expect(huge.stderr).toContain('the Info.plist "Huge.plist" is 1048577 bytes, which is too large to embed');
+    expect(huge.exitCode).toBe(1);
 
     const empty = await run(crossCompile("template", "--macos-info-plist=Empty.plist", "--outfile=out"), cwd);
     expect(empty.stderr).toContain('the Info.plist "Empty.plist" is empty');
@@ -527,13 +578,11 @@ describe.concurrent("--macos-info-plist", () => {
     expect(html.exitCode).toBe(1);
   });
 
-  test.skipIf(!isMacOS)(
-    "CoreFoundation reads the Info.plist of a natively compiled executable",
-    async () => {
-      using dir = tempDir("compile-macho-info-plist-native", {
-        // Not Info.plist: CoreFoundation reads a file of that name beside an executable before the section.
-        "embedded.plist": infoPlist,
-        "entry.ts": `
+  test.skipIf(!isMacOS)("CoreFoundation reads the Info.plist of a natively compiled executable", async () => {
+    using dir = tempDir("compile-macho-info-plist-native", {
+      // Not Info.plist: CoreFoundation reads a file of that name beside an executable before the section.
+      "embedded.plist": infoPlist,
+      "entry.ts": `
           import { CString, dlopen, ptr } from "bun:ffi";
           const { symbols: cf } = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", {
             CFBundleGetMainBundle: { args: [], returns: "ptr" },
@@ -549,44 +598,42 @@ describe.concurrent("--macos-info-plist", () => {
             console.log("no identifier");
           }
         `,
-      });
-      const cwd = String(dir);
+    });
+    const cwd = String(dir);
 
-      await build(
-        [bunExe(), "build", "--compile", "--macos-info-plist=embedded.plist", "entry.ts", "--outfile=out"],
-        cwd,
-      );
-      expect(readInfoPlist(readFileSync(join(cwd, "out")))).toBe(infoPlist);
+    await build(
+      [bunExe(), "build", "--compile", "--macos-info-plist=embedded.plist", "entry.ts", "--outfile=out"],
+      cwd,
+    );
+    expect(readInfoPlist(readFileSync(join(cwd, "out")))).toBe(infoPlist);
 
-      expect(await run([join(cwd, "out")], cwd)).toEqual({
-        stdout: "sh.bun.test.info-plist\n",
+    expect(await run([join(cwd, "out")], cwd)).toEqual({
+      stdout: "sh.bun.test.info-plist\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    if (isArm64) {
+      expect(await run(["codesign", "--verify", "out"], cwd)).toEqual({
+        stdout: "",
         stderr: "",
         exitCode: 0,
       });
+      // "Info.plist=not bound" unless the signature has the hash of the section.
+      const described = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
+      expect(described.stderr).toContain("Info.plist entries=2");
+      expect(described.exitCode).toBe(0);
+    }
 
-      if (isArm64) {
-        expect(await run(["codesign", "--verify", "out"], cwd)).toEqual({
-          stdout: "",
-          stderr: "",
-          exitCode: 0,
-        });
-        // "Info.plist=not bound" unless the signature has the hash of the section.
-        const described = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
-        expect(described.stderr).toContain("Info.plist entries=2");
-        expect(described.exitCode).toBe(0);
-      }
-
-      // What a developer does to ship it: codesign takes the identifier from the embedded Info.plist.
-      await build(["codesign", "--force", "--sign", "-", "out"], cwd);
-      const resigned = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
-      expect(resigned.stderr).toContain("Identifier=sh.bun.test.info-plist");
-      expect(resigned.stderr).toContain("Info.plist entries=2");
-      expect(await run([join(cwd, "out")], cwd)).toEqual({
-        stdout: "sh.bun.test.info-plist\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    60_000,
-  );
+    // What a developer does to ship it: codesign takes the identifier from the embedded Info.plist.
+    await build(["codesign", "--force", "--sign", "-", "out"], cwd);
+    const resigned = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
+    expect(resigned.stderr).toContain("Identifier=sh.bun.test.info-plist");
+    expect(resigned.stderr).toContain("Info.plist entries=2");
+    expect(await run([join(cwd, "out")], cwd)).toEqual({
+      stdout: "sh.bun.test.info-plist\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

@@ -2765,10 +2765,7 @@ fn parse_build_command_options(
             Output::err_generic("--macos-info-plist requires a macOS compile target", ());
             Global::crash();
         }
-        let path_z = bun_core::ZBox::from_bytes(path);
-        if !bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
-            .is_ok_and(|kind| kind == bun_sys::ExistsAtType::File)
-        {
+        if !crate::api::js_bundler::is_file(path) {
             Output::err_generic(
                 "--macos-info-plist: {} is not a file",
                 format_args!("{}", bun_core::fmt::quote(path)),

@@ -256,7 +256,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     // The body starts on line 2 of the wrapped program. V8's CompileFunction reports body line 1 as lineOffset + 1.
     TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(std::max(position.m_line.zeroBasedInt() - 1, 0)), position.m_column);
 
-    SourceCode sourceCode(JSC::StringSourceProvider::create(program, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program));
+    SourceCode sourceCode(NodeVMSourceProvider::create(WebCore::clientData(vm)->nodeVMSourceBuffers, program, sourceOrigin, sourceTaintOrigin, WTF::move(options.filename), wrappedPosition));
 
     CodeCache* cache = vm.codeCache();
     ProgramExecutable* programExecutable = ProgramExecutable::create(globalObject, sourceCode);
@@ -289,6 +289,8 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     if (!unlinkedProgramCodeBlock || error.isValid()) {
         return nullptr;
     }
+
+    static_cast<NodeVMSourceProvider*>(sourceCode.provider())->shareSourceMap(WebCore::clientData(vm)->nodeVMSourceBuffers, unlinkedProgramCodeBlock);
 
     ProgramCodeBlock* programCodeBlock = nullptr;
     {

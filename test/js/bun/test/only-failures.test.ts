@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { lateHeaderFiles, runLateHeaderFiles } from "./printing/late-header";
 
 test.concurrent("only-failures flag should show only failures", async () => {
   const result = await Bun.spawn({
@@ -117,4 +118,18 @@ test("another passing test", () => {
   expect(normalizeBunSnapshot(stderr, dir)).toContain("(fail) failing test");
   // Should not show passing tests
   expect(normalizeBunSnapshot(stderr, dir)).not.toContain("(pass)");
+});
+
+test.concurrent("a call in a test prints the file header only when it prints", async () => {
+  const files = lateHeaderFiles.map(({ file, prints }) => (prints ? `\n${file}:\n${prints}` : ""));
+  const tests = lateHeaderFiles.length * 3;
+  expect(await runLateHeaderFiles("--only-failures")).toEqual({
+    output: [
+      "bun test <version> (<revision>)\n",
+      ...files,
+      `\n ${tests} pass\n 0 fail\n 1 expect() calls\n`,
+      `Ran ${tests} tests across ${lateHeaderFiles.length} files. [<elapsed>]\n`,
+    ].join(""),
+    exitCode: 0,
+  });
 });

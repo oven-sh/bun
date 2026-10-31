@@ -263,6 +263,14 @@ unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
     unsafe { &mut *vm_console(global) }
 }
 
+/// Call before the first byte and before any user code the call can run; a call that returns without printing must not run it.
+#[inline]
+fn before_print() {
+    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+        (hooks.console_on_before_print)();
+    }
+}
+
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
@@ -425,6 +433,9 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
+    // Below `Clear`: a file header printed before the screen clears is lost.
+    before_print();
+
     if message_type == MessageType::Assert && len == 0 {
         let text: &str = if Output::enable_ansi_colors_stderr() {
             pfmt!("<r><red>Assertion failed<r>\n", true)
@@ -467,14 +478,6 @@ fn message_with_type_and_level_(
     };
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
     let writer: &mut dyn bun_io::Write = raw_writer;
-
-    // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
-    // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
-    // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
-    // when `bun test` isn't running or hooks aren't installed.
-    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-        (hooks.console_on_before_print)();
-    }
 
     let mut print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default.
@@ -5725,6 +5728,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
         0
     } + 1;
     *counter.value_ptr = current;
+    before_print();
 
     let writer = this.writer();
     if Output::enable_ansi_colors_stdout() {
@@ -5808,9 +5812,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
         return;
     };
     let Some(value) = prev else { return };
+    let elapsed_ns = value.read();
+    before_print();
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
+        (elapsed_ns / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
     match slice.len() {
         0 => Output::print_errorln(format_args!("")),
@@ -5839,9 +5845,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
+    let elapsed_ns = value.read();
+    before_print();
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
+        (elapsed_ns / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
     match slice.len() {
         0 => {}

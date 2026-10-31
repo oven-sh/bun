@@ -44,6 +44,7 @@ const aboutTheOutput = new Set([
   "target", "sourceMap", "bundleWarnings", "backend", "mode", "bundling", "keepNames", "snapshot", "snapshotSourceMap", "expectExactFilesize", "matchesReference", "assertNotPresent",
   "todo", "notImplemented", "skipOnEsbuild", "treeShaking", "emitDCEAnnotations", "outputPaths", "entryNaming", "timeoutScale", "debugTimeoutScale", "legalComments", "platform", "metafile",
   "unsupportedJSFeatures", "unsupportedCSSFeatures", "host", "cjs2esm", "production", "runtimeFiles", "globalName", "skipIfWeDidNotImplementWildcardSideEffects",
+  "allowUndeclaredGeneratedNames", "allowOutputSyntaxError",
 ]); // prettier-ignore
 
 const isTaken = (path: string) => /\.([cm]?[jt]s|json|txt)$/.test(path);

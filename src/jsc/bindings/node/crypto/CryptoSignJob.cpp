@@ -2,6 +2,7 @@
 #include "NodeValidator.h"
 #include "KeyObject.h"
 #include "JSVerify.h"
+#include "CryptoAlgorithmMLDSA.h"
 #include <openssl/rsa.h>
 
 using namespace JSC;
@@ -32,10 +33,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_verifyResult) {
-        if (ctx->m_unsupportedContext) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Context parameter is unsupported"_s);
-        }
-        throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "verify operation failed"_s);
+        JSValue err = ctx->failureError(lexicalGlobalObject, scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwException(lexicalGlobalObject, scope, err);
         return {};
     }
 
@@ -63,10 +63,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_signResult) {
-        if (ctx->m_unsupportedContext) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Context parameter is unsupported"_s);
-        }
-        throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "sign operation failed"_s);
+        JSValue err = ctx->failureError(lexicalGlobalObject, scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwException(lexicalGlobalObject, scope, err);
         return {};
     }
 
@@ -93,9 +92,26 @@ extern "C" void Bun__SignJobCtx__runTask(SignJobCtx* ctx, JSGlobalObject* global
 {
     ctx->runTask(globalObject);
 }
+
+// BoringSSL takes a context string for ML-DSA keys only. It has no Ed25519ctx and no Ed448.
+bool SignJobCtx::hasUnsupportedContext() const
+{
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_sig.cc#L240-L251
+    return !m_context.isEmpty() && !isMlDsaNid(m_keyData->asymmetricKey.id());
+}
+
+JSValue SignJobCtx::failureError(JSGlobalObject* globalObject, ThrowScope& scope) const
+{
+    if (hasUnsupportedContext()) {
+        return createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s);
+    }
+    return createCryptoError(globalObject, scope, m_opensslError, m_mode == Mode::Sign ? "sign operation failed"_s : "verify operation failed"_s);
+}
+
 void SignJobCtx::runTask(JSGlobalObject* globalObject)
 {
-    if (m_unsupportedContext) {
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_sig.cc#L679-L686
+    if (hasUnsupportedContext()) {
         return;
     }
 
@@ -108,13 +124,15 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
     const auto& key = m_keyData->asymmetricKey;
 
+    const ncrypto::Buffer<const unsigned char> contextString { .data = m_context.span().data(), .len = m_context.size() };
+
     std::optional<EVP_PKEY_CTX*> ctx;
     switch (m_mode) {
     case Mode::Sign:
-        ctx = context.signInit(key, m_digest);
+        ctx = m_context.isEmpty() ? context.signInit(key, m_digest) : context.signInitWithContext(key, m_digest, contextString);
         break;
     case Mode::Verify:
-        ctx = context.verifyInit(key, m_digest);
+        ctx = m_context.isEmpty() ? context.verifyInit(key, m_digest) : context.verifyInitWithContext(key, m_digest, contextString);
         break;
     }
 
@@ -227,9 +245,7 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     switch (m_mode) {
     case Mode::Sign: {
         if (!m_signResult) {
-            JSValue err = m_unsupportedContext
-                ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
-                : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
+            JSValue err = failureError(lexicalGlobalObject, scope);
             RETURN_IF_EXCEPTION(scope, {});
             return { err };
         }
@@ -245,9 +261,7 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     }
     case Mode::Verify: {
         if (!m_verifyResult) {
-            JSValue err = m_unsupportedContext
-                ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
-                : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
+            JSValue err = failureError(lexicalGlobalObject, scope);
             RETURN_IF_EXCEPTION(scope, {});
             return { err };
         }
@@ -303,17 +317,17 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     auto dsaSigEnc = getDSASigEnc(globalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The `context` signing option only applies to Ed448 signatures, which BoringSSL does not
-    // provide, so a provided context always makes the operation itself fail (after input
-    // validation, like Node).
-    bool unsupportedContext = false;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/sig.js#L109-L120
+    JSArrayBufferView* contextView = nullptr;
     if (JSObject* keyOptions = keyValue.getObject()) {
         JSValue contextValue = keyOptions->get(globalObject, Identifier::fromString(globalObject->vm(), "context"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!contextValue.isUndefined()) {
-            getArrayBufferOrView2(globalObject, scope, contextValue, "context"_s, jsUndefined());
-            RETURN_IF_EXCEPTION(scope, {});
-            unsupportedContext = true;
+            contextView = dynamicDowncast<JSArrayBufferView>(contextValue);
+            if (!contextView) {
+                ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.context"_s, "Buffer, TypedArray, or DataView"_s, contextValue);
+                return std::nullopt;
+            }
         }
     }
 
@@ -417,6 +431,18 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         }
     }
 
+    // The bytes are read here, after the key getters ran, as Node reads them when it builds the job.
+    FixedVector<uint8_t> context;
+    if (contextView) {
+        // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_sig.cc#L636-L646
+        auto contextBytes = contextView->span();
+        if (contextBytes.size() > CryptoAlgorithmMLDSA::s_maxContextLength) {
+            ERR::OUT_OF_RANGE(scope, globalObject, "context string must be at most 255 bytes"_s);
+            return std::nullopt;
+        }
+        context = FixedVector<uint8_t>(contextBytes);
+    }
+
     if (mode == Mode::Verify) {
         Vector<uint8_t> signature;
         if (keyObject.asymmetricKey().isSigVariant() && dsaSigEnc == DSASigEnc::P1363) {
@@ -439,7 +465,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             padding,
             pssSaltLength,
             dsaSigEnc,
-            unsupportedContext,
+            WTF::move(context),
             WTF::move(signature));
     }
 
@@ -451,7 +477,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         padding,
         pssSaltLength,
         dsaSigEnc,
-        unsupportedContext);
+        WTF::move(context));
 }
 
 } // namespace Bun

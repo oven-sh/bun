@@ -1238,8 +1238,9 @@ it("generatePrime(Sync) should return an ArrayBuffer", async () => {
 });
 
 describe("sign/verify context option", () => {
-  // The `context` signing option only applies to Ed448, which BoringSSL does not provide, so
-  // providing one fails the operation with the same error on the sync and callback paths.
+  // BoringSSL takes a `context` for ML-DSA keys only. For every other key a context of 1 or more
+  // bytes fails the operation with the same error on the sync and callback paths.
+  // The rest of the option is in sign-verify-context.test.ts.
   const data = Buffer.from("hello");
 
   it("crypto.sign rejects the context option synchronously and asynchronously with the same error", async () => {

@@ -13,6 +13,7 @@ import {
   isLinux,
   isWindows,
   libcPathForDlopen,
+  normalizeBunSnapshot,
   tempDir,
   tls,
 } from "harness";
@@ -1184,6 +1185,37 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(await promise).toBeUndefined();
   expect(client.getServername()).toBeUndefined();
 });
+
+it("reload() of a stopped listener says that the listener is closed", () => {
+  const socket = { data() {} };
+  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket });
+  listener.stop();
+  expect(() => listener.reload({ socket })).toThrow("Listener is closed");
+});
+
+it("getPeerCertificate and exportKeyingMaterial accept undefined for optional arguments", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+  const socket = await connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      data() {},
+      handshake: () => resolve(),
+      error: (_, error) => reject(error),
+      close: () => reject(new Error("closed before the handshake")),
+    },
+  });
+  try {
+    await promise;
+    expect(socket.getPeerCertificate(undefined)).toEqual(socket.getPeerCertificate());
+    expect(socket.exportKeyingMaterial(8, "label", undefined)).toEqual(socket.exportKeyingMaterial(8, "label"));
+  } finally {
+    socket.end();
+  }
+});
+
 it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -2430,6 +2462,83 @@ it("reload() backs out cleanly when a handler getter closes the socket mid-reloa
   expect(stdout).toBe("reload-with-terminate-ok\nsecond-reload:polo\nDONE\n");
   expect(exitCode).toBe(0);
   void stderr;
+});
+
+it("reload() does nothing when the top-level socket getter closes the socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const h = { data() {}, open() {}, close() {}, error() {} };
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
+        for (const verb of ["end", "terminate"]) {
+          const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
+          // The handlers are kept alive while a socket callback is dispatched, so wait until it returns.
+          await new Promise(resolve => setImmediate(resolve));
+          console.log(verb, "reload returned", sock.reload({
+            get socket() {
+              sock[verb]();
+              return h;
+            },
+          }));
+        }
+        listener.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("end reload returned undefined\nterminate reload returned undefined\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+it("upgradeTLS() throws when an option getter re-enters upgradeTLS on the same socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const h = { data() {}, open() {}, close() {}, error() {}, handshake() {}, drain() {} };
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
+        const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
+        await new Promise(resolve => setImmediate(resolve));
+        let inner;
+        const opts = {
+          data: {},
+          socket: { ...h },
+          get tls() {
+            inner ??= sock.upgradeTLS({ data: {}, socket: { ...h }, tls: true });
+            return true;
+          },
+        };
+        let outer;
+        try {
+          outer = sock.upgradeTLS(opts);
+        } catch (e) {
+          console.log("outer upgradeTLS threw:", e.message);
+        }
+        console.log("inner upgradeTLS returned", inner.length, "sockets");
+        for (const s of [...(outer ?? []), ...inner, sock]) s.write("x");
+        for (const s of [...(outer ?? []), ...inner, sock]) s.terminate();
+        listener.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(
+    "outer upgradeTLS threw: upgradeTLS requires an established socket\n" + "inner upgradeTLS returned 2 sockets\n",
+  );
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {
@@ -6528,16 +6637,15 @@ it("a view of part of a buffer as a tls option is read as the view", () => {
   }
 });
 
-it("Array.prototype as a tls option is none of the types one takes", () => {
+it("Array.prototype as a tls option is an empty array, as in Node", () => {
   for (const name of ["key", "cert", "ca", "crl"]) {
-    expect(() =>
-      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
-    ).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
-      }),
-    );
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+      tls: { [name]: Array.prototype } as any,
+    });
+    expect(listener.port).toBeGreaterThan(0);
   }
 });
 
@@ -6551,4 +6659,82 @@ it("a view of shared memory as a tls option is refused", () => {
       ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
     }
   }
+});
+
+// expect(promise).resolves ticks the loop while the dispatch that called the handler is still on the stack.
+// The outer dispatch reads the closed socket again, so the inner ticks must not free it.
+describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
+  it("doesn't crash the dispatch that called it", async () => {
+    const source = `
+      import { expect, test } from "bun:test";
+
+      // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
+      function waitInsideHandler() {
+        expect(Bun.sleep(20)).resolves.toBeUndefined();
+      }
+
+      test("data() closes the accepted socket", async () => {
+        for (let i = 0; i < 3; i++) {
+          const dispatched = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket) {
+                socket.terminate();
+                waitInsideHandler();
+                setTimeout(dispatched.resolve, 0);
+              },
+            },
+          });
+          const peer = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+          peer.write("x");
+          await dispatched.promise;
+          peer.terminate();
+        }
+        console.log("data() done");
+      });
+
+      test("open() closes the accepted socket and the listener", async () => {
+        for (let i = 0; i < 3; i++) {
+          const dispatched = Promise.withResolvers();
+          const server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              open(socket) {
+                socket.terminate();
+                server.stop(true);
+                waitInsideHandler();
+                setTimeout(dispatched.resolve, 0);
+              },
+              data() {},
+            },
+          });
+          // The server resets the client, so its connect may resolve, reject or (on kqueue) never settle.
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: { data() {}, error() {}, connectError() {}, close() {} },
+          }).catch(() => {});
+          await dispatched.promise;
+        }
+        console.log("open() done");
+      });
+    `;
+    using dir = tempDir("socket-close-then-wait-in-handler", { "fixture.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: normalizeBunSnapshot(stdout), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: "bun test <version> (<revision>)\ndata() done\nopen() done",
+      exitCode: 0,
+      stderr: "",
+    });
+  });
 });

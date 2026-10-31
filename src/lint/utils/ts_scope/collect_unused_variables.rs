@@ -1,12 +1,10 @@
 //! typescript-eslint's `util/collectUnusedVariables.ts`.
 //!
-//! Upstream walks the tree once to set `variable.eslintUsed` on what is never to be reported, and
-//! then asks each variable of each scope whether it is exported or used. Here only the parameters
-//! of signatures and setters are walked. What else the visitor marks follows from the declarations
-//! and the references of a symbol.
+//! Upstream walks the tree once to set `variable.eslintUsed` on everything that must never be reported, and then checks
+//! whether each variable of each scope is exported or used. Here only the parameters of signatures and setters are
+//! walked. Everything else the visitor marks can be derived from a symbol's declarations and references.
 //!
-//! The helpers of `isUsedVariable` are the same as those of ESLint's own `no-unused-vars`, and are
-//! public for it.
+//! The helpers of `isUsedVariable` are the same as in ESLint's own `no-unused-vars`, so they're public for it.
 
 use super::estree::is_expression_statement;
 use super::is_type_only_reference;
@@ -32,7 +30,7 @@ use smallvec::{SmallVec, smallvec};
 
 // ───────────────────────────── eslintUsed ─────────────────────────────
 
-/// Some of the symbols of one file: a bit for each.
+/// A set of one file's symbols, with one bit per symbol.
 #[derive(Clone, Debug, Default)]
 pub struct SymbolSet {
     words: Vec<u64>,
@@ -58,7 +56,7 @@ impl SymbolSet {
     }
 }
 
-/// ESLint's `variable.eslintUsed`, for the symbols of one file.
+/// ESLint's `variable.eslintUsed`, for one file's symbols.
 #[derive(Clone, Debug, Default)]
 pub struct UsedMarks {
     marked: SymbolSet,
@@ -78,8 +76,8 @@ impl UsedMarks {
         self.marked.contains(symbol)
     }
 
-    /// ESLint's `markExportedVariables`: marks what the `/* exported a, b */` comments of a script
-    /// name. In a module nothing is in the global scope, and they have no effect.
+    /// ESLint's `markExportedVariables`: marks the variables listed in a script's `/* exported a, b */` comments. In a
+    /// module nothing is in the global scope, so the comments have no effect.
     pub fn mark_exported_variables<'a>(&mut self, file: &'a File<'a>) {
         let global = file.scope();
         if global.symbols().len() == 0 || !strings::contains(file.text(), b"exported") {
@@ -105,7 +103,7 @@ impl UsedMarks {
     }
 }
 
-/// What is before the first `/\s-{2,}\s/u` of the value of a directive comment.
+/// The part of a directive comment's value before the first `/\s-{2,}\s/u`.
 fn without_justification(value: &[u8]) -> &[u8] {
     let (mut space, mut dashes) = (None, 0);
     for (at, c) in strings::wtf8_codepoints(value) {
@@ -134,25 +132,25 @@ fn without_quotes(name: &[u8]) -> &[u8] {
 
 // ───────────────────────────── variables ─────────────────────────────
 
-/// scope-manager's `Variable`, where it is not the same as a [`Symbol`].
+/// scope-manager's `Variable`, where it differs from a [`Symbol`].
 ///
-/// - The name of a class is two variables: one in the scope around a class declaration, and one in
-///   the scope of the class itself, which is what the name means inside the class. Both have the
-///   symbol of the class. [`Variable::references`] has only those of the one.
-/// - [`Variable::defs`] has no declaration that scope-manager has no definition for.
+/// - A class's name is two variables: one in the scope around a class declaration, and one in the class's own scope,
+///   which is what the name resolves to inside the class. Both have the class's symbol. [`Variable::references`] only
+///   returns the references to its own variable.
+/// - [`Variable::defs`] skips a declaration that scope-manager has no definition for.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Variable<'a> {
     symbol: Symbol<'a>,
-    /// For the variable in the scope of a class.
+    /// Set for the variable in a class's own scope.
     class: Option<Class<'a>>,
 }
 
-/// Whether the name that is written at `start` is in the scope of `class`: after its name.
+/// True if the name at offset `start` is in `class`'s scope, which starts after its name.
 fn is_in_class_scope(class: Class, start: u32) -> bool {
     class_scope_range(class).contains_offset(start)
 }
 
-/// From the end of the name of `class` to its end.
+/// From the end of `class`'s name to the end of the class.
 fn class_scope_range(class: Class) -> Span {
     let whole = class.span();
     Span::new(
@@ -161,26 +159,26 @@ fn class_scope_range(class: Class) -> Span {
     )
 }
 
-/// The `A` or the `B` of `namespace A.B {}`, which declare nothing in scope-manager.
+/// The `A` or the `B` in `namespace A.B {}`, which don't declare anything in scope-manager.
 fn is_part_of_qualified_name(module: Module) -> bool {
     module.nested().is_some() || module.outermost() != module
 }
 
-/// Whether scope-manager has a definition for `declaration` in the scope around it.
+/// True if scope-manager has a definition for `declaration` in the enclosing scope.
 #[inline]
 fn is_definition(declaration: Declaration) -> bool {
-    Facts::of_declaration(declaration) & Facts::DEFINED != 0
+    Facts::for_declaration(declaration) & Facts::DEFINED != 0
 }
 
-/// Whether one of the declarations of `symbol` is a class. The flags do not tell if the class is in
-/// conflict with an earlier declaration.
+/// True if one of `symbol`'s declarations is a class. The flags don't tell if the class conflicts with an earlier
+/// declaration.
 fn is_class(symbol: Symbol) -> bool {
     symbol
         .declarations()
         .any(|it| matches!(it, Declaration::Class(_)))
 }
 
-/// The `VarDecl` that `pat`, which a `var`, `let`, `const`, `using` or `catch` binds, is part of.
+/// The `VarDecl` that contains `pat`, which is bound by a `var`, `let`, `const`, `using` or `catch`.
 fn declarator_of(pat: Pat<'_>) -> Option<VarDecl<'_>> {
     let file = pat.file();
     if let Some(&PatParent::Var(declarator)) = file.bound.pat_parent.get(pat.id().idx()) {
@@ -192,21 +190,21 @@ fn declarator_of(pat: Pat<'_>) -> Option<VarDecl<'_>> {
     }
 }
 
-/// What the declarations of a variable say about it, from one pass over them.
+/// Facts about a variable, collected in one pass over its declarations.
 #[derive(Copy, Clone)]
 struct Facts(u16);
 
 impl Facts {
-    /// [`Variable::defs`] is not empty.
+    /// [`Variable::defs`] isn't empty.
     const DEFINED: u16 = 1 << 0;
-    /// A declaration is a class: the references are those of two variables.
+    /// A declaration is a class, so the references belong to two variables.
     const CLASS: u16 = 1 << 1;
-    /// `UnusedVarsVisitor` marks it because of how it is declared: an enum member, the key of a mapped
+    /// `UnusedVarsVisitor` marks it because of how it's declared: an enum member, the key of a mapped
     /// type, a parameter property, a `this` parameter.
     const MARKED: u16 = 1 << 2;
-    /// [`self_reference_range`] can be something for a definition.
+    /// [`self_reference_range`] may return a range for a definition.
     const HAS_RANGES: u16 = 1 << 3;
-    /// [`is_type_import`] does not hold for a definition.
+    /// [`is_type_import`] is false for a definition.
     const NOT_IMPORTED_AS_TYPE: u16 = 1 << 4;
     /// `variable.isTypeVariable`
     const TYPE: u16 = 1 << 5;
@@ -214,8 +212,8 @@ impl Facts {
     const VALUE: u16 = 1 << 6;
     /// A definition is of a kind that can start with `export`.
     const EXPORTABLE: u16 = 1 << 7;
-    /// Of the variable that the name of a class is inside it. Its only definition is the class, also
-    /// if that is an expression.
+    /// The flags of the variable that a class's name is inside the class. Its only definition is the class, even if
+    /// that's an expression.
     const IN_CLASS_SCOPE: u16 = Self::DEFINED
         | Self::CLASS
         | Self::NOT_IMPORTED_AS_TYPE
@@ -223,8 +221,8 @@ impl Facts {
         | Self::VALUE
         | Self::EXPORTABLE;
 
-    /// Of what `var`, `let`, `const`, `using` or `catch` binds.
-    const OF_VARIABLE: u16 = Self::DEFINED
+    /// The flags of a binding of `var`, `let`, `const`, `using` or `catch`.
+    const FOR_VARIABLE: u16 = Self::DEFINED
         | Self::NOT_IMPORTED_AS_TYPE
         | Self::VALUE
         | Self::HAS_RANGES
@@ -235,16 +233,16 @@ impl Facts {
         self.0 & fact != 0
     }
 
-    /// 0 for a declaration that scope-manager has no definition for in the scope around it.
+    /// 0 for a declaration that scope-manager has no definition for in the enclosing scope.
     #[inline]
-    fn of_declaration(declaration: Declaration) -> u16 {
+    fn for_declaration(declaration: Declaration) -> u16 {
         match declaration {
-            Declaration::Var(_) => Self::OF_VARIABLE,
-            _ => Self::of_what_is_no_variable(declaration),
+            Declaration::Var(_) => Self::FOR_VARIABLE,
+            _ => Self::for_non_variable(declaration),
         }
     }
 
-    fn of_what_is_no_variable(declaration: Declaration) -> u16 {
+    fn for_non_variable(declaration: Declaration) -> u16 {
         let declared = Self::DEFINED | Self::NOT_IMPORTED_AS_TYPE;
         let both = Self::TYPE | Self::VALUE;
         match declaration {
@@ -322,15 +320,15 @@ impl Facts {
         if !kinds.is_empty()
             && (DeclarationKinds::VARIABLE | DeclarationKinds::CATCH_CLAUSE).contains(kinds)
         {
-            return Facts(Self::OF_VARIABLE);
+            return Facts(Self::FOR_VARIABLE);
         }
         let declarations = variable.symbol.declarations();
-        Facts(declarations.fold(0, |facts, it| facts | Self::of_declaration(it)))
+        Facts(declarations.fold(0, |facts, it| facts | Self::for_declaration(it)))
     }
 }
 
 impl<'a> Variable<'a> {
-    /// The variable that `symbol` is in the scope it is declared in.
+    /// `symbol`'s variable in the scope where it's declared.
     #[inline]
     pub fn new(symbol: Symbol<'a>) -> Self {
         Variable {
@@ -377,7 +375,7 @@ impl<'a> Variable<'a> {
             .filter(move |it| !is_class || self.has_reference_at(it.ident().start()))
     }
 
-    /// Whether a reference to the symbol that is written at `start` is one to this variable.
+    /// True if a reference to the symbol at offset `start` refers to this variable.
     fn has_reference_at(self, start: u32) -> bool {
         match self.class {
             Some(class) => is_in_class_scope(class, start),
@@ -406,8 +404,7 @@ fn head_of_loop_that_only_returns(statement: Stmt<'_>) -> Option<Stmt<'_>> {
         .then_some(left)
 }
 
-/// Upstream's `visitForInForOf`: the first name that the head of such a loop declares, or the
-/// variable that it assigns to.
+/// Upstream's `visitForInForOf`: the first name that such a loop's head declares, or the variable it assigns to.
 fn variables_of_loops_that_only_return<'a>(file: &'a File<'a>) -> SymbolSet {
     let mut variables = SymbolSet::default();
     let loops = (file.stmts_of_kind(StmtTag::ForIn)).chain(file.stmts_of_kind(StmtTag::ForOf));
@@ -437,7 +434,7 @@ fn variables_of_loops_that_only_return<'a>(file: &'a File<'a>) -> SymbolSet {
     variables
 }
 
-/// The `x` of `for (x in y) return;`
+/// The `x` in `for (x in y) return;`
 fn is_assigned_by_loop_that_only_returns(reference: Reference) -> bool {
     if !reference.is_write() {
         return false;
@@ -452,12 +449,12 @@ fn is_assigned_by_loop_that_only_returns(reference: Reference) -> bool {
     matches!(head.map(Stmt::kind), Some(StmtKind::Expr(target)) if target == id)
 }
 
-/// [`UsedMarks`] that other rules see only at the end: as long as nothing is marked for them,
+/// [`UsedMarks`] that are only published to other rules at the end. As long as nothing is marked for them,
 /// [`Symbol::is_marked_used`] costs nothing.
 struct Marker<'a> {
     marks: UsedMarks,
     unshared: Vec<Symbol<'a>>,
-    /// [`scope_of_parameters`] of the function whose parameters are looked at.
+    /// [`scope_of_parameters`] of the function whose parameters are being visited.
     scope: Option<Scope<'a>>,
 }
 
@@ -485,7 +482,7 @@ impl<'a> Marker<'a> {
     }
 }
 
-/// `declare global {}` marks what `global` means around it.
+/// `declare global {}` marks whatever `global` resolves to around it.
 fn mark_global_augmentations<'a>(file: &'a File<'a>, marks: &mut Marker<'a>) {
     for id in 0..file.hir.modules.len() {
         let module = Module::new(file, hir::ModuleId(id as u32));
@@ -495,8 +492,8 @@ fn mark_global_augmentations<'a>(file: &'a File<'a>, marks: &mut Marker<'a>) {
     }
 }
 
-/// Whether it is a function of `visitFunctionTypeSignature` or `visitSetter`: a signature, a
-/// function type, an overload, an ambient or abstract declaration, or a setter.
+/// True if it's a function that `visitFunctionTypeSignature` or `visitSetter` handles: a signature, a function type, an
+/// overload, an ambient or abstract declaration, or a setter.
 fn has_marked_parameters(func: Func) -> bool {
     match func.kind() {
         FnKind::IndexSignature | FnKind::StaticBlock => false,
@@ -506,7 +503,7 @@ fn has_marked_parameters(func: Func) -> bool {
 }
 
 fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut Marker<'a>) {
-    // Inside a class its name is the other variable, which counts as used anyway.
+    // Inside a class, its name is the other variable, which counts as used anyway.
     if let Some(symbol) = (marks.scope.unwrap_or_else(|| holder.scope())).resolve_name(name)
         && !marks.contains(symbol)
         && Variable::new(symbol).has_reference_at(holder.span().start)
@@ -521,17 +518,17 @@ fn mark_key<'a>(key: Option<Key<'a>>, holder: Node<'a>, marks: &mut Marker<'a>) 
     }
 }
 
-/// Marks what the name of every `Identifier` of ESTree in `node` means where it is written, whether
-/// it refers to that or not: the `b` of `a.b`, a key, a label.
+/// For every ESTree `Identifier` in `node`, marks what its name resolves to at that position, whether or not it's a
+/// reference: the `b` in `a.b`, a key, a label.
 fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
-    // Not by recursion: `T[][][]..` is as deep as it is long.
+    // A stack instead of recursion, because `T[][][]..` is as deep as it's long.
     let mut pending: SmallVec<[Node<'a>; 16]> = smallvec![node];
     while let Some(node) = pending.pop() {
         mark_identifiers_of(node, marks, &mut pending);
     }
 }
 
-/// Adds the children of `node` that are to be looked at to `pending`.
+/// Pushes the children of `node` that still need visiting onto `pending`.
 fn mark_identifiers_of<'a>(
     node: Node<'a>,
     marks: &mut Marker<'a>,
@@ -549,7 +546,7 @@ fn mark_identifiers_of<'a>(
             ExprKind::NewTarget => {
                 marks.mark_variable_as_used("target", node);
             }
-            // The names of the tags are `JSXIdentifier`s.
+            // Tag names are `JSXIdentifier`s.
             ExprKind::Jsx(jsx) => {
                 pending.extend(jsx.type_args().iter().map(Node::Type));
                 pending.extend(jsx.attrs().iter().map(Node::Prop));
@@ -577,7 +574,7 @@ fn mark_identifiers_of<'a>(
             if let Some(name) = func.name() {
                 mark_identifier(name.name(), node, marks);
             }
-            // Its parameters have their own turn.
+            // Its parameters are visited separately.
             if has_marked_parameters(func) {
                 node.for_each_child(|child| {
                     if !matches!(child, Node::Param(_)) {
@@ -615,8 +612,8 @@ fn mark_identifiers_of<'a>(
     node.for_each_child(|child| pending.push(child));
 }
 
-/// What [`Node::scope`] says for everything in the parameters of `func`, where that is plain: its scope, if no scope starts
-/// before they end. The decorators of the parameters of a method are in the scope of the class.
+/// The scope that [`Node::scope`] returns for everything in `func`'s parameters, in the simple case: `func`'s scope, if
+/// no nested scope starts before the parameters end. The decorators of a method's parameters are in the class's scope.
 fn scope_of_parameters(func: Func<'_>) -> Option<Scope<'_>> {
     let scope = func.scope()?;
     let end = func
@@ -633,9 +630,9 @@ fn scope_of_parameters(func: Func<'_>) -> Option<Scope<'_>> {
     is_plain.then_some(scope)
 }
 
-/// Upstream's `visitFunctionTypeSignature` and `visitSetter`. They mean to mark the parameters, and
-/// visit each with a `PatternVisitor` that, with the option `visitChildrenEvenIfSelectorExists` of
-/// the visitor around it, goes on into type annotations and default values.
+/// Upstream's `visitFunctionTypeSignature` and `visitSetter`. They're meant to mark the parameters, but they visit each
+/// with a `PatternVisitor` that also descends into type annotations and default values, because the enclosing visitor
+/// sets `visitChildrenEvenIfSelectorExists`.
 fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut Marker<'a>) {
     for id in 0..file.hir.fns.len() {
         let func = Func::new(file, hir::FnId(id as u32));
@@ -645,7 +642,8 @@ fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut Marker<'a>
         {
             marks.scope = scope_of_parameters(func);
             for param in func.this_param().into_iter().chain(func.params()) {
-                // oxlint leaves the parameters alone, and nothing that has the name of a key or a label in their types.
+                // oxlint never reports these parameters, but it doesn't mark variables that merely share a name with a
+                // key or a label in the parameters' types.
                 if file.language().is_oxlint {
                     param.pat().for_each_binding(&mut |pat| {
                         if let Some(name) = pat.as_ident() {
@@ -689,8 +687,7 @@ fn exported_statement(declaration: Declaration<'_>) -> Option<Stmt<'_>> {
         .filter(|statement| statement.is_exported())
 }
 
-/// typescript-eslint's `isMergedTypeDeclaration`: an interface or a type alias whose name is also
-/// that of a value.
+/// typescript-eslint's `isMergedTypeDeclaration`: an interface or a type alias whose name is also a value's name.
 fn is_merged_type_declaration(facts: Facts, declaration: Declaration) -> bool {
     matches!(
         declaration,
@@ -717,9 +714,8 @@ fn is_exported_with(variable: Variable, facts: Facts) -> bool {
 
 // ───────────────────────────── uses ─────────────────────────────
 
-/// ESLint's and typescript-eslint's `isUnusedExpression`: nothing takes the value of `e`. It is an
-/// expression statement, or an operand of a comma operator of which that holds or that is not the
-/// last.
+/// ESLint's and typescript-eslint's `isUnusedExpression`: `e`'s value is unused. `e` is an expression statement, or
+/// it's an operand of a comma operator that either isn't the last operand or whose own value is unused.
 pub fn is_unused_expression(mut e: Expr) -> bool {
     loop {
         match e.parent() {
@@ -740,18 +736,17 @@ pub fn is_unused_expression(mut e: Expr) -> bool {
     }
 }
 
-/// ESTree's `ArrowFunctionExpression`, `FunctionExpression` and `FunctionDeclaration`. A static
-/// block is none.
+/// ESTree's `ArrowFunctionExpression`, `FunctionExpression` and `FunctionDeclaration`. A static block isn't one.
 fn as_estree_function(node: Node<'_>) -> Option<Func<'_>> {
     node.as_func()
         .filter(|func| func.has_body() && func.kind() != FnKind::StaticBlock)
 }
 
-/// What the walks up from the references to a variable have found, for those that start far below:
-/// the operands of `a = a + a + ..`, of `a = 1, a = 2, ..`.
+/// Caches for the walks up from a variable's references, for those that start deep down: the operands of
+/// `a = a + a + ..` or `a = 1, a = 2, ..`.
 #[derive(Default)]
 pub struct Walks<'a> {
-    /// The function around a node.
+    /// The enclosing function of a node.
     functions: AncestorMemo<'a, Func<'a>>,
     /// `is_in_loop`
     loops: AncestorMemo<'a, bool>,
@@ -759,7 +754,7 @@ pub struct Walks<'a> {
     storable: (Option<Expr<'a>>, AncestorMemo<'a, bool>),
 }
 
-/// ESLint's `isInLoop`: there is a loop around `node` in its function.
+/// ESLint's `isInLoop`: `node` is in a loop within its function.
 fn is_in_loop<'a>(node: Node<'a>, walks: &mut Walks<'a>) -> bool {
     let found = walks.loops.find(node, |_, ancestor| match ancestor {
         Node::Stmt(statement) if statement.is_loop() => Some(true),
@@ -768,9 +763,9 @@ fn is_in_loop<'a>(node: Node<'a>, walks: &mut Walks<'a>) -> bool {
     found == Some(true)
 }
 
-/// ESLint's and typescript-eslint's `getRhsNode`. If `reference` is the left side of an assignment
-/// whose value is not used, in the function that declares the variable and in no loop: the right
-/// side. If it is inside `prev_rhs_node`: that.
+/// ESLint's and typescript-eslint's `getRhsNode`. Returns the right side if `reference` is the left side of an
+/// assignment whose value is unused, in the function that declares the variable and not in a loop. Returns
+/// `prev_rhs_node` if `reference` is inside it.
 pub fn get_rhs_node<'a>(
     reference: Reference<'a>,
     prev_rhs_node: Option<Expr<'a>>,
@@ -797,8 +792,8 @@ pub fn get_rhs_node<'a>(
     (is_in_scope_of_variable && !is_in_loop(Node::Expr(id), walks)).then_some(value)
 }
 
-/// ESLint's and typescript-eslint's `isStorableFunction`: the function `func_node`, which is inside
-/// `rhs_node`, can be called later. It is assigned, passed to a call, or in a statement.
+/// ESLint's and typescript-eslint's `isStorableFunction`: the function `func_node`, which is inside `rhs_node`, can be
+/// called later. It's assigned, passed to a call, or in a statement.
 pub fn is_storable_function<'a>(
     func_node: Func<'a>,
     rhs_node: Expr<'a>,
@@ -850,9 +845,9 @@ pub fn is_inside_of_storable_function<'a>(
     })
 }
 
-/// ESLint's and typescript-eslint's `isReadForItself`: the variable is read only to compute its
-/// own next value. `a += 1` and `a++` whose value is not used, and the `a` on the right of
-/// `a = a + 1`, for which `rhs_node` is what [`get_rhs_node`] returned for the reference before.
+/// ESLint's and typescript-eslint's `isReadForItself`: the variable is only read to compute its own next value. That's
+/// `a += 1` and `a++` whose value is unused, and the `a` on the right of `a = a + 1`, where `rhs_node` is what
+/// [`get_rhs_node`] returned for the previous reference.
 pub fn is_read_for_itself<'a>(
     reference: Reference<'a>,
     rhs_node: Option<Expr<'a>>,
@@ -885,8 +880,8 @@ pub fn is_read_for_itself<'a>(
         })
 }
 
-/// Whether one of `references`, those to one variable in source order, is a read that is not for
-/// the variable itself and that `counts`.
+/// True if one of `references`, which are one variable's references in source order, is a read that isn't for the
+/// variable itself and that `counts` accepts.
 #[inline]
 fn has_use<'a>(
     references: impl Iterator<Item = Reference<'a>>,
@@ -896,9 +891,8 @@ fn has_use<'a>(
     let mut rhs_node = None;
     for reference in references {
         let flags = reference.flags();
-        // Only what is written to is on the left of an assignment or the operand of an update, and
-        // without an assignment before there is no right side to be in.
-        // Nor is the name of a declaration.
+        // Only a write reference can be the left side of an assignment or the operand of an update, and without an
+        // earlier assignment there's no right side to be in. The name in a declaration isn't either of those.
         if rhs_node.is_some() || flags.contains(ReferenceFlags::WRITE) && reference.expr().is_some()
         {
             let is_for_itself = is_read_for_itself(reference, rhs_node, walks);
@@ -914,14 +908,13 @@ fn has_use<'a>(
     false
 }
 
-/// typescript-eslint's `isSelfReference` and `isInsideOneOf`, for what `isUsedVariable` passes to
-/// them: the range in which a reference to what `definition` defines is one from its own
-/// declaration. That is a function declaration, the function that a variable is initialized with, an
-/// interface, a type alias, a namespace, an enum.
+/// typescript-eslint's `isSelfReference` and `isInsideOneOf`, for the arguments `isUsedVariable` passes them. Returns
+/// the range in which a reference to `definition`'s variable comes from its own declaration: a function declaration,
+/// the function that initializes a variable, an interface, a type alias, a namespace or an enum.
 fn self_reference_range(definition: Declaration) -> Option<Span> {
     match definition {
         Declaration::Fn(func) => Some(func.span()),
-        // The parameter of a `catch` has no initializer.
+        // A `catch` parameter has no initializer.
         Declaration::Var(pat) => {
             let init = declarator_of(pat)?.init()?;
             init.as_fn().map(|_| init.span())
@@ -934,13 +927,13 @@ fn self_reference_range(definition: Declaration) -> Option<Span> {
     }
 }
 
-/// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
-/// from outside of its own declaration, and for more than its type unless it is a type.
+/// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it, from outside its own
+/// declaration, and for more than its type unless it's a type.
 fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut Walks<'a>) -> bool {
     if !variable.symbol.has_reads() {
         return false;
     }
-    // oxc has no reference to `React` for an element of JSX.
+    // oxc has no reference to `React` for a JSX element.
     let is_oxlint = variable.symbol.file().language().is_oxlint;
     let is_split = facts.has(Facts::CLASS);
     let references = variable
@@ -959,16 +952,17 @@ fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut W
         (!facts.has(Facts::NOT_IMPORTED_AS_TYPE)
             || !is_type_only_reference(variable.symbol, reference))
             && (!facts.has(Facts::HAS_RANGES) || is_from_outside())
-            // It is written where the name is declared, and is in the scope around that.
+            // typescript-eslint uses the declaration's own name as this reference's identifier, but the reference is in
+            // the enclosing scope, so it's never a self-reference.
             || reference.is_jsx_pragma()
     };
     has_use(references, counts, walks)
 }
 
-/// Whether a look at the first reference that reads `symbol` tells that [`is_used_variable_with`] holds for it, if it has
-/// a definition at all, and its declarations that [`Facts::MARKED`] does not. Nearly every variable is such.
+/// Fast path: true if the first read of `symbol` already shows that [`is_used_variable_with`] is true for it (provided
+/// it has a definition), and its declarations show that [`Facts::MARKED`] isn't set. That covers nearly every variable.
 ///
-/// `properties`: [`parameter_properties`]
+/// `properties` is [`parameter_properties`].
 #[inline]
 fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
     let kinds = symbol.declaration_kinds();
@@ -977,7 +971,7 @@ fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
         | DeclarationKinds::PARAMETER
         | DeclarationKinds::FUNCTION_NAME
         | DeclarationKinds::IMPORT_BINDING;
-    // What nothing modifies is on the left of no assignment, and is not read for itself.
+    // A symbol that's never modified is never the left side of an assignment, and never read for itself.
     if symbol.has_modifying_references() {
         return false;
     }
@@ -997,7 +991,7 @@ fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
     let Some(read) = symbol.references().find(is_use) else {
         return false;
     };
-    // The ranges of `self_reference_range` are those of functions here.
+    // Here the ranges of `self_reference_range` are always functions.
     let has_ranges = kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
     !is_type_only_reference(symbol, read)
         && (!has_ranges
@@ -1005,7 +999,7 @@ fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
             || read.scope().variable_scope() == symbol.scope().variable_scope())
 }
 
-/// [`is_plainly_used`] for what only interfaces, type aliases and type parameters declare.
+/// [`is_plainly_used`] for a symbol declared only by interfaces, type aliases and type parameters.
 fn is_plainly_used_type(symbol: Symbol) -> bool {
     if symbol.declaration_count() != 1 {
         return false;
@@ -1026,7 +1020,7 @@ fn is_plainly_used_type(symbol: Symbol) -> bool {
         })
 }
 
-/// Whether the kinds of its declarations tell that [`Facts::MARKED`] holds for `symbol`.
+/// True if the kinds of `symbol`'s declarations already show that [`Facts::MARKED`] is set.
 #[inline]
 fn is_plainly_marked(symbol: Symbol, properties: &SymbolSet) -> bool {
     let kinds = symbol.declaration_kinds();
@@ -1034,7 +1028,7 @@ fn is_plainly_marked(symbol: Symbol, properties: &SymbolSet) -> bool {
         || kinds == DeclarationKinds::PARAMETER && properties.contains(symbol)
 }
 
-/// What the parameter properties of the file declare.
+/// The symbols that the file's parameter properties declare.
 fn parameter_properties<'a>(file: &'a File<'a>) -> SymbolSet {
     let mut properties = SymbolSet::default();
     for id in 0..file.hir.params.len() {
@@ -1049,9 +1043,8 @@ fn parameter_properties<'a>(file: &'a File<'a>) -> SymbolSet {
     properties
 }
 
-/// typescript-eslint's `isUsedVariable` for a variable of the global scope that the file does not
-/// declare, which is no [`Symbol`]: one that a `/* global name */` comment or the configuration
-/// defines.
+/// typescript-eslint's `isUsedVariable` for a global-scope variable that the file doesn't declare, so it isn't a
+/// [`Symbol`]: one defined by a `/* global name */` comment or the configuration.
 pub fn is_used_global_variable<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
     file.unresolved_references_to(name)
         .any(is_assigned_by_loop_that_only_returns)
@@ -1080,15 +1073,14 @@ impl<'a> VariableAnalysis<'a> {
         &self.unused_variables
     }
 
-    /// `usedVariables`. The variable that the name of a class is inside the class is always here,
-    /// also if the class is among the unused. Empty after [`collect_unused_variables`].
+    /// `usedVariables`. The variable that a class's name is inside the class is always here, even if the class is
+    /// unused. Empty after [`collect_unused_variables`].
     #[inline]
     pub fn used_variables(&self) -> &[Variable<'a>] {
         &self.used_variables
     }
 
-    /// `unusedVariables.has(variable)`, for the variable that `symbol` is in the scope it is
-    /// declared in.
+    /// `unusedVariables.has(variable)`, for `symbol`'s variable in the scope where it's declared.
     #[inline]
     pub fn is_unused(&self, symbol: Symbol<'a>) -> bool {
         self.unused.contains(symbol)
@@ -1101,19 +1093,19 @@ impl<'a> VariableAnalysis<'a> {
     }
 }
 
-/// typescript-eslint's `collectVariables`: every variable of the file, as used or unused.
+/// typescript-eslint's `collectVariables`: classifies every variable of the file as used or unused.
 ///
-/// What has `variable.eslintUsed` set before is what is in `eslint_used`, and what
-/// [`Symbol::is_marked_used`] holds for. `/* exported */` comments are applied here.
+/// `variable.eslintUsed` starts out set for the symbols in `eslint_used` and for those where [`Symbol::is_marked_used`]
+/// is true. `/* exported */` comments are applied here.
 ///
-/// Not among the variables, as upstream: the names of function expressions, and what a script
-/// declares at its top level under a name that a library of TypeScript defines. And the globals
-/// that the file does not declare, which are no [`Symbol`]s: see [`is_used_global_variable`].
+/// As upstream, the variables don't include the names of function expressions, or a script's top-level declarations
+/// whose name a TypeScript library defines. They also don't include globals that the file doesn't declare, which aren't
+/// [`Symbol`]s: see [`is_used_global_variable`].
 pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> VariableAnalysis<'a> {
     collect(file, eslint_used, true)
 }
 
-/// [`collect_variables`] for who does not ask for [`VariableAnalysis::used_variables`].
+/// [`collect_variables`] for a caller that doesn't need [`VariableAnalysis::used_variables`].
 pub fn collect_unused_variables<'a>(
     file: &'a File<'a>,
     eslint_used: UsedMarks,
@@ -1146,7 +1138,7 @@ fn collect<'a>(
     let properties = parameter_properties(file);
     for symbol in file.symbols() {
         if !keeps_used && !declares_globals {
-            // What is marked is used, if it has a definition.
+            // A marked symbol is used, if it has a definition.
             if marks.contains(symbol)
                 || is_plainly_used(symbol, &properties)
                     && !marked_by_loops.contains(symbol)
@@ -1210,7 +1202,7 @@ fn collect<'a>(
 
 // ───────────────────────────── where an identifier is in a pattern ─────────────────────────────
 
-/// Whether the parent of the identifier `pat` is an `ArrayPattern`.
+/// True if the identifier `pat`'s parent is an `ArrayPattern`.
 fn is_array_pattern_element(pat: Pat<'_>) -> bool {
     matches!(pat.parent(), Node::PatElem(it) if !it.is_rest() && it.default().is_none())
 }
@@ -1235,7 +1227,7 @@ pub fn is_referenced_in_array_pattern(reference: Reference<'_>) -> bool {
     }
 }
 
-/// Whether the last property of the object pattern that `property` is in is a rest element.
+/// True if the object pattern that contains `property` ends with a rest element.
 fn is_followed_by_rest(property: PatProp<'_>) -> bool {
     matches!(
         property.parent(),
@@ -1246,9 +1238,8 @@ fn is_followed_by_rest(property: PatProp<'_>) -> bool {
     )
 }
 
-/// `no-unused-vars`' `hasRestSibling(id.parent)`, for the identifier of a definition (a `Node::Pat`)
-/// or of a reference (`reference.node()`): it is a property of an object pattern that ends with a
-/// rest element.
+/// `no-unused-vars`' `hasRestSibling(id.parent)`, for the identifier of a definition (a `Node::Pat`) or of a reference
+/// (`reference.node()`): it's a property of an object pattern that ends with a rest element.
 pub fn has_rest_sibling(id: Node<'_>) -> bool {
     match (id, id.parent()) {
         (Node::Pat(_), Node::PatProp(property)) => {

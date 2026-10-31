@@ -44,13 +44,33 @@ const patterns = {
   nodeFallbacks: {
     paths: ["src/node-fallbacks/*.js"],
   },
-  /** `*.classes.ts` — input to generate-classes codegen */
-  zigGeneratedClasses: {
-    paths: ["src/**/*.classes.ts"],
-  },
   /** built-in modules bundled at build time */
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
+  },
+  /** the generator of the table of built-ins, with Bun's own declarations and data files */
+  builtinsTableCodegen: {
+    paths: ["src/codegen/builtins/**/*.{ts,txt}"],
+  },
+  /** built-ins the AoT compiler implements in TypeScript, read by that generator */
+  aotPrelude: {
+    paths: ["src/aot/prelude/*.ts"],
+  },
+  /** the AoT compiler's Rust sources, read by the check that every name of the schema has a use */
+  aotRust: {
+    paths: ["src/aot/**/*.rs"],
+  },
+  /** native code that can load a runtime module, scanned by the generator of the table of built-ins */
+  nativeModuleLoadSites: {
+    paths: ["src/jsc/bindings/**/*.{cpp,h}", "src/jsc/modules/**/*.{cpp,h}", "src/runtime/**/*.{cpp,h}"],
+  },
+  /** Rust that can call a function of the runtime's JavaScript, scanned by that generator beside the C++ above */
+  nativeCallSites: {
+    paths: ["src/jsc/**/*.rs", "src/runtime/**/*.rs", "src/uws/**/*.rs", "src/*_jsc/**/*.rs"],
+  },
+  /** declarations of what `--trim` can remove */
+  removableFeatures: {
+    paths: ["src/trim/features/*.def"],
   },
   /** one page per lint rule, read by generate-lint-docs.ts */
   lintRuleDocs: {

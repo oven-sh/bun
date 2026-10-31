@@ -744,14 +744,8 @@ fn version_under(
     dep: &Dependency,
     rule: Option<OverrideRule<'_>>,
 ) -> Option<dependency::Version> {
-    let mut version = rule.map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
-    if version.tag == DependencyVersionTag::Catalog {
-        version = lockfile
-            .catalogs
-            .get(lockfile, *version.catalog(), dep.name)?
-            .version;
-    }
-    Some(version)
+    // A rule's `catalog:` names the catalog entry of its key, as in the resolver.
+    lockfile.resolve_catalog_dependency(rule.map_or(dep, OverrideRule::dep))
 }
 
 // `collapse_appended` skips bundled dependencies, because sharing a package that ships in a tarball
@@ -773,7 +767,7 @@ fn reachable(
 
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
-    load_result: &LoadResult<'_>,
+    load_result: &LoadResult,
 ) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
 

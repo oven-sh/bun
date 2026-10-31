@@ -1,8 +1,10 @@
 const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/types");
 const { validateString, validateBuffer } = require("internal/validators");
 
-const StringPrototypeSplit = String.prototype.split;
-const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSplit: (this: string, separator: string | RegExp, limit?: number) => string[] =
+  String.prototype.split;
+const StringPrototypeReplace: (this: string, searchValue: string | RegExp, replaceValue: string) => string =
+  String.prototype.replace;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeIncludes = String.prototype.includes;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -69,7 +71,7 @@ const TLS1_VERSION = 0x0301;
 const TLS1_1_VERSION = 0x0302;
 const TLS1_2_VERSION = 0x0303;
 const TLS1_3_VERSION = 0x0304;
-function tlsStringToProtocolVersion(v) {
+function tlsStringToProtocolVersion(v: string | null | undefined) {
   switch (v) {
     case "TLSv1":
       return TLS1_VERSION;
@@ -88,7 +90,11 @@ function tlsStringToProtocolVersion(v) {
 // unknown method (THROW_ERR_TLS_INVALID_PROTOCOL_METHOD in
 // src/crypto/crypto_context.cc SecureContext::Init).
 let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
-function validateSecureProtocol(secureProtocol, minVersion, maxVersion) {
+function validateSecureProtocol(
+  secureProtocol: string | null | undefined,
+  minVersion: string | null | undefined,
+  maxVersion: string | null | undefined,
+) {
   if (secureProtocol === undefined || secureProtocol === null) return;
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/common.js#L78
   if (secureProtocol) {
@@ -129,7 +135,7 @@ function validateSecureProtocol(secureProtocol, minVersion, maxVersion) {
 // Node's legacy secureProtocol string pins both bounds to a single version
 // (e.g. 'TLSv1_2_method'); 'TLS_method'/'SSLv23_method' leave the range open.
 // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L120
-function secureProtocolToVersionRange(secureProtocol) {
+function secureProtocolToVersionRange(secureProtocol: string | null | undefined) {
   if (typeof secureProtocol !== "string") return null;
   if (
     secureProtocol === "TLSv1_method" ||
@@ -275,7 +281,7 @@ function validateSecureContextOptions(options) {
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
-let NativeSecureContext;
+let NativeSecureContext: $Node.NativeSecureContextConstructor | undefined;
 
 /**
  * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert/ca and fold
@@ -283,9 +289,9 @@ let NativeSecureContext;
  * config, the multi-identity check, the CA store) sees plain key/cert/ca.
  * Returns the original object untouched when no pfx is present.
  */
-function processPfxOptions(options) {
+function processPfxOptions(options: Record<string, any>): Record<string, any> {
   if (options == null || options.pfx == null) return options;
-  NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
+  NativeSecureContext ??= $bindgen("SecureContext.bind.ts", "SecureContext") as $Node.NativeSecureContextConstructor;
   const out = { ...options };
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
@@ -444,10 +450,10 @@ function nodeClientTlsToNative(options) {
  * error string in `verifyError.reason`; everything else is the peer
  * disconnecting mid-handshake, which Node reports as ECONNRESET.
  */
-function tlsHandshakeError(verifyError) {
+function tlsHandshakeError(verifyError: { code?: string; reason?: string; message?: string } | null | undefined) {
   const verifyErrorCode = verifyError ? verifyError.code : undefined;
   if (verifyErrorCode && verifyErrorCode !== "ECONNRESET") {
-    const reason = verifyError.reason || verifyError.message || "TLS handshake failed";
+    const reason = verifyError!.reason || verifyError!.message || "TLS handshake failed";
     const err = new Error(reason) as Error & {
       code?: string;
       library?: string;

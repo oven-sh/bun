@@ -1,13 +1,14 @@
-//! The `oxlint-disable` and `eslint-disable` comments of a file as oxlint applies them (`disable_directives.rs`), which is not
-//! how ESLint does:
+//! A file's `oxlint-disable` and `eslint-disable` comments as oxlint applies them (`disable_directives.rs`), which
+//! differs from ESLint:
 //!
-//! - A comment of either form, `//` or `/* */`, can be any of them.
-//! - What a comment disables is a range of the text. A message is suppressed if it overlaps the range. With `-line` and
-//!   `-next-line` it has to start in it, and `-line` is about what is before the comment.
-//! - A comment that enables ends what was disabled in the same words: all rules, or a rule by its name as it is written. All
-//!   rules stay disabled after `enable a`, and `a` stays disabled after `enable`.
-//! - Names are separated by commas or by white space. A name means the rule whatever plugin it is written with.
-//! - White space is what `char::is_whitespace` of Rust says: U+0085 is, U+FEFF is not.
+//! - Either comment form, `//` or `/* */`, works for every directive.
+//! - A comment disables a range of the text. A message is suppressed if it overlaps the range. With `-line` and
+//!   `-next-line` it has to start in the range, and `-line` covers the text before the comment.
+//! - An enabling comment only ends what was disabled in the same words: all rules, or a rule by its name as written.
+//!   All rules stay disabled after `enable a`, and `a` stays disabled after `enable`.
+//! - Names are separated by commas or whitespace. A name matches the rule no matter which plugin prefix it's written
+//!   with.
+//! - Whitespace is what Rust's `char::is_whitespace` accepts: U+0085 counts, U+FEFF doesn't.
 
 use super::directives::{ConfigComment, Label};
 use super::message::{Data, LintMessage, Locator, RuleId, Suggestion, Suppression};
@@ -24,19 +25,20 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) file: &'a File<'a>,
     pub(crate) report_unused: Severity,
     pub(crate) wants_fixes: bool,
-    /// The rules that are enabled and did not run. What disables them is not reported.
+    /// The enabled rules that didn't run. Comments that disable them aren't reported.
     pub(crate) rules_to_ignore: &'i [RuleId],
-    /// Whether there are more of them, which have no name here. Asked only about a comment that silences nothing.
+    /// True if there are more such rules, whose names aren't known here. Only called for a comment that suppresses
+    /// nothing.
     pub(crate) has_skipped_rules: &'i dyn Fn() -> bool,
-    /// Whether it is known what the rule that a comment names reports: not if it is one that oxlint has and that does not
-    /// exist here. Nothing can be said about a comment that disables such a rule.
-    pub(crate) can_tell: &'i dyn Fn(&[u8]) -> bool,
+    /// True if Bun knows what the rule named in a comment reports. It doesn't for a rule that oxlint has and Bun lacks,
+    /// so a comment that disables such a rule is never reported.
+    pub(crate) knows_rule: &'i dyn Fn(&[u8]) -> bool,
 }
 
 /// `eslint` or `oxlint`
 type Prefix<'a> = &'a [u8];
 
-/// A comment that disables, as far as the one that ends its range needs to know it.
+/// The parts of a disabling comment that the comment ending its range needs.
 #[derive(Copy, Clone)]
 struct Open<'a> {
     start: u32,
@@ -50,27 +52,27 @@ struct Open<'a> {
 struct Range<'a> {
     start: u32,
     stop: u32,
-    /// As it is written. `None`: all rules.
+    /// As written. `None` means all rules.
     name: Option<&'a [u8]>,
     name_span: Span,
     prefix: Prefix<'a>,
-    /// The comment that is reported if the range suppresses nothing, with its delimiters: the one that ends the range, if
-    /// one does.
+    /// The comment that's reported if the range suppresses nothing, with its delimiters. It's the one that ends the
+    /// range, if there is one.
     comment: Span,
     /// `-line` or `-next-line`
-    is_about_a_line: bool,
+    is_single_line: bool,
     justification: &'a [u8],
     is_used: bool,
 }
 
 type Names<'a> = SmallVec<[(&'a [u8], Span); 4]>;
 
-/// How many bytes of white space `text` starts with.
+/// The number of whitespace bytes at the start of `text`.
 fn space_len(text: &[u8]) -> usize {
     text.len() - strings::trim_unicode_whitespace_start(text).len()
 }
 
-/// `collect_rule_names`. `offset`: where `text` starts.
+/// `collect_rule_names`. `offset` is where `text` starts.
 fn names(text: &[u8], offset: u32) -> Names<'_> {
     let mut found = Names::new();
     let mut emit = |start: usize, end: usize| {
@@ -103,8 +105,8 @@ fn names(text: &[u8], offset: u32) -> Names<'_> {
     found
 }
 
-/// Whether a comment that names `name` is about the rule `id`.
-fn is_name_of(name: &[u8], id: &RuleId) -> bool {
+/// True if a comment that lists `name` applies to the rule `id`.
+fn name_matches_rule(name: &[u8], id: &RuleId) -> bool {
     match id {
         RuleId::Known(meta) if !strings::contains_char(meta.name.as_bytes(), b'/') => {
             let short = strings::last_index_of_char(name, b'/').map_or(name, |it| &name[it + 1..]);
@@ -125,15 +127,15 @@ fn removal_of(text: &[u8], comment: Span) -> Span {
     let line_start = strings::last_index_of_char(&text[..start], b'\n').map_or(0, |it| it + 1);
     let line_end =
         strings::index_of_char_usize(&text[end..], b'\n').map_or(text.len(), |it| end + it + 1);
-    let is_alone = strings::trim_unicode_whitespace_end(&text[line_start..start]).is_empty()
+    let is_only_on_line = strings::trim_unicode_whitespace_end(&text[line_start..start]).is_empty()
         && strings::trim_unicode_whitespace_end(&text[end..line_end]).is_empty();
-    match is_alone {
+    match is_only_on_line {
         true => Span::new(line_start as u32, line_end as u32),
         false => comment,
     }
 }
 
-/// `RuleCommentRule::create_fix`: removes one name of several.
+/// `RuleCommentRule::create_fix`: removes one of several names.
 fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> Option<Span> {
     let before = text.get(comment.start as usize..name.start as usize)?;
     let before_trimmed = strings::trim_unicode_whitespace_end(before);
@@ -157,7 +159,7 @@ fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> 
     if space_after > 0 && !matches!(after_trimmed, [] | [b'-', ..] | [b'*', b'/', ..]) {
         return Some(Span::new(name.start, name.end + space_after));
     }
-    // After another name, not after the word that makes the comment a directive.
+    // It has to follow another name, not the word that makes the comment a directive.
     let space_before = (before.len() - before_trimmed.len()) as u32;
     let word_start = (0..before_trimmed.len())
         .rev()
@@ -169,7 +171,7 @@ fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> 
     (space_before > 0 && is_rule).then(|| Span::new(name.start - space_before, name.end))
 }
 
-/// What is in `comment`, without its delimiters.
+/// The contents of `comment`, without its delimiters.
 fn content_of(text: &[u8], comment: Span) -> Span {
     match text.get(comment.start as usize..).unwrap_or_default() {
         [b'/', b'*', ..] => comment.shrink(2, 2),
@@ -179,8 +181,8 @@ fn content_of(text: &[u8], comment: Span) -> Span {
     }
 }
 
-/// `DisableDirectivesBuilder::build_impl`. Also returns the comments that enable what is not disabled: the prefix, the name, and
-/// what is reported.
+/// `DisableDirectivesBuilder::build_impl`. Also returns the comments that enable something that isn't disabled: the
+/// prefix, the name, and the span to report.
 fn ranges<'a>(
     file: &'a File<'a>,
     comments: impl Iterator<Item = &'a ConfigComment>,
@@ -209,7 +211,7 @@ fn ranges<'a>(
                 name_span,
                 prefix,
                 comment: comment.span,
-                is_about_a_line: true,
+                is_single_line: true,
                 justification: file.slice(comment.justification),
                 is_used: false,
             };
@@ -230,7 +232,7 @@ fn ranges<'a>(
                 }
             }
             Label::DisableNextLine => {
-                // To the end of the next line.
+                // Up to the end of the next line.
                 let rest = &text[content.end as usize..];
                 let this_line =
                     strings::index_of_char_usize(rest, b'\n').map_or(rest.len(), |it| it + 1);
@@ -254,7 +256,7 @@ fn ranges<'a>(
                         name_span,
                         prefix: it.prefix,
                         comment: comment.span,
-                        is_about_a_line: false,
+                        is_single_line: false,
                         justification: it.justification,
                         is_used: false,
                     });
@@ -275,7 +277,7 @@ fn ranges<'a>(
             _ => {}
         }
     }
-    // To the end of the file.
+    // Up to the end of the file.
     let open = (all.into_iter().map(|it| (None, it)))
         .chain(by_name.into_iter().map(|it| (Some(it.0), it.1)));
     ranges.extend(open.map(|(name, it)| Range {
@@ -285,7 +287,7 @@ fn ranges<'a>(
         name_span: it.name_span,
         prefix: it.prefix,
         comment: it.comment,
-        is_about_a_line: false,
+        is_single_line: false,
         justification: it.justification,
         is_used: false,
     }));
@@ -294,25 +296,25 @@ fn ranges<'a>(
 }
 
 /// A line and a column.
-type Place = (u32, u32);
+type Position = (u32, u32);
 
-/// What is after the last `/` of the name of a rule. Names that mean the same rule have it in common.
+/// The part of a rule's name after the last `/`. Names that match the same rule share it.
 fn last_part(name: &[u8]) -> &[u8] {
     strings::last_index_of_char(name, b'/').map_or(name, |it| &name[it + 1..])
 }
 
-/// The ranges by the rule that they are about, to find those that overlap a message in the time it takes to look at them and
-/// the logarithm of how many there are.
+/// The ranges grouped by the rule they apply to. Finding the ones that overlap a message takes time proportional to
+/// their number plus the logarithm of the number of ranges.
 struct Index<'a> {
-    /// The last part of the name, which is empty for all rules, and the number of the range. Sorted. So the ranges of a name
-    /// are in the order of where they start, and form a balanced search tree whose root is the one in the middle.
+    /// The last part of the name, which is empty for all rules, and the range's number. Sorted. So a name's ranges are
+    /// ordered by start, and form a balanced search tree whose root is the middle one.
     entries: Vec<(&'a [u8], u32)>,
-    /// For each entry: the last place where a range of its subtree stops.
-    last_stop: Vec<Place>,
+    /// For each entry: the last position where a range in its subtree stops.
+    last_stop: Vec<Position>,
 }
 
 impl<'a> Index<'a> {
-    fn new(ranges: &[Range<'a>], places: &[(Place, Place)]) -> Self {
+    fn new(ranges: &[Range<'a>], positions: &[(Position, Position)]) -> Self {
         let numbered = ranges.iter().zip(0u32..);
         let mut entries: Vec<_> = numbered
             .map(|(it, i)| (it.name.map_or(&b""[..], last_part), i))
@@ -325,21 +327,26 @@ impl<'a> Index<'a> {
         let mut start = 0;
         while let Some(&(name, _)) = index.entries.get(start) {
             let len = index.entries[start..].partition_point(|it| it.0 == name);
-            index.note_stops(places, start, start + len);
+            index.note_stops(positions, start, start + len);
             start += len;
         }
         index
     }
 
-    fn note_stops(&mut self, places: &[(Place, Place)], start: usize, end: usize) -> Place {
+    fn note_stops(
+        &mut self,
+        positions: &[(Position, Position)],
+        start: usize,
+        end: usize,
+    ) -> Position {
         if start >= end {
             return (0, 0);
         }
         let middle = start + (end - start) / 2;
-        let own = places[self.entries[middle].1 as usize].1;
+        let own = positions[self.entries[middle].1 as usize].1;
         let last = own
-            .max(self.note_stops(places, start, middle))
-            .max(self.note_stops(places, middle + 1, end));
+            .max(self.note_stops(positions, start, middle))
+            .max(self.note_stops(positions, middle + 1, end));
         self.last_stop[middle] = last;
         last
     }
@@ -348,20 +355,20 @@ impl<'a> Index<'a> {
     fn overlapping(
         &self,
         name: &[u8],
-        places: &[(Place, Place)],
-        (start, end): (Place, Place),
+        positions: &[(Position, Position)],
+        (start, end): (Position, Position),
         found: &mut SmallVec<[u32; 8]>,
     ) {
         let first = self.entries.partition_point(|it| it.0 < name);
         let len = self.entries[first..].partition_point(|it| it.0 == name);
-        self.search(places, (first, first + len), (start, end), found);
+        self.search(positions, (first, first + len), (start, end), found);
     }
 
     fn search(
         &self,
-        places: &[(Place, Place)],
+        positions: &[(Position, Position)],
         (first, last): (usize, usize),
-        (start, end): (Place, Place),
+        (start, end): (Position, Position),
         found: &mut SmallVec<[u32; 8]>,
     ) {
         if first >= last {
@@ -371,20 +378,20 @@ impl<'a> Index<'a> {
         if self.last_stop[middle] <= start {
             return;
         }
-        self.search(places, (first, middle), (start, end), found);
+        self.search(positions, (first, middle), (start, end), found);
         let number = self.entries[middle].1;
-        let (from, to) = places[number as usize];
+        let (from, to) = positions[number as usize];
         if from < end {
             if to > start {
                 found.push(number);
             }
-            self.search(places, (middle + 1, last), (start, end), found);
+            self.search(positions, (middle + 1, last), (start, end), found);
         }
     }
 }
 
-/// Marks the messages that comments suppress, and adds a message for each comment that does nothing. `comments`: those that
-/// disable and enable, in the order of the source.
+/// Marks the messages that comments suppress, and adds a message for each unused comment. `comments` are the disabling
+/// and enabling comments, in source order.
 pub(crate) fn apply<'a>(
     input: &Input<'_, 'a>,
     comments: impl Iterator<Item = &'a ConfigComment>,
@@ -395,34 +402,37 @@ pub(crate) fn apply<'a>(
     if ranges.is_empty() && unused_enables.is_empty() {
         return;
     }
-    let places: Vec<(Place, Place)> = (ranges
+    let positions: Vec<(Position, Position)> = (ranges
         .iter()
         .map(|it| (locator.position(it.start), locator.position(it.stop))))
     .collect();
-    let index = Index::new(&ranges, &places);
+    let index = Index::new(&ranges, &positions);
     let mut overlapping = SmallVec::new();
     for problem in problems.iter_mut().filter(|it| !it.is_fatal) {
         let Some(id) = &problem.rule_id else {
             continue;
         };
-        let shown = (problem.line, problem.column);
-        let (start, end) =
-            (problem.comments_apply_at).unwrap_or_else(|| (shown, problem.end.unwrap_or(shown)));
+        let reported_start = (problem.line, problem.column);
+        let (start, end) = (problem.comments_apply_at)
+            .unwrap_or_else(|| (reported_start, problem.end.unwrap_or(reported_start)));
         overlapping.clear();
-        index.overlapping(b"", &places, (start, end), &mut overlapping);
+        index.overlapping(b"", &positions, (start, end), &mut overlapping);
         let for_all_rules = overlapping.len();
         match id {
             RuleId::Known(meta) => index.overlapping(
                 last_part(meta.name.as_bytes()),
-                &places,
+                &positions,
                 (start, end),
                 &mut overlapping,
             ),
-            RuleId::Js(rule) => {
-                index.overlapping(last_part(&rule.id), &places, (start, end), &mut overlapping)
-            }
+            RuleId::Js(rule) => index.overlapping(
+                last_part(&rule.id),
+                &positions,
+                (start, end),
+                &mut overlapping,
+            ),
             RuleId::Named(_, id) => {
-                index.overlapping(last_part(id), &places, (start, end), &mut overlapping)
+                index.overlapping(last_part(id), &positions, (start, end), &mut overlapping)
             }
             RuleId::Unknown(_) => {}
         }
@@ -430,9 +440,9 @@ pub(crate) fn apply<'a>(
             overlapping.sort_unstable();
         }
         for &number in &overlapping {
-            let (range, (from, to)) = (&mut ranges[number as usize], places[number as usize]);
-            if (!range.is_about_a_line || from <= start && start < to)
-                && range.name.is_none_or(|name| is_name_of(name, id))
+            let (range, (from, to)) = (&mut ranges[number as usize], positions[number as usize]);
+            if (!range.is_single_line || from <= start && start < to)
+                && range.name.is_none_or(|name| name_matches_rule(name, id))
             {
                 range.is_used = true;
                 problem
@@ -449,8 +459,11 @@ pub(crate) fn apply<'a>(
             && match it.name {
                 None => input.rules_to_ignore.is_empty() && !(input.has_skipped_rules)(),
                 Some(name) => {
-                    (input.can_tell)(name)
-                        && !input.rules_to_ignore.iter().any(|id| is_name_of(name, id))
+                    (input.knows_rule)(name)
+                        && !input
+                            .rules_to_ignore
+                            .iter()
+                            .any(|id| name_matches_rule(name, id))
                 }
             }
     };
@@ -471,7 +484,7 @@ pub(crate) fn apply<'a>(
         }
         problems.push(problem);
     };
-    // The ranges of one comment are next to each other, unless those of another one start in between.
+    // One comment's ranges are adjacent, unless another comment's ranges start in between.
     for group in ranges.chunk_by(|a, b| a.comment == b.comment) {
         let unused = group.iter().filter(|it| is_unused(it));
         let Some(first) = group

@@ -1,45 +1,47 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::throw;
 
-// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
-// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
-pub(crate) fn to_be_empty_object(
-    this: &Expect,
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let this_value = call_frame.this();
-    let (this, value, not) = this.matcher_prelude(global, this_value, "toBeEmptyObject", "")?;
-    let mut pass = value.is_object_empty(global)?;
+impl Expect {
+    pub(crate) fn to_be_empty_object(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let this_value = this_value.to_js();
+        let (this, value, not) = self.matcher_prelude(global, this_value, "toBeEmptyObject", "")?;
+        let mut pass = value.is_object_empty(global)?;
 
-    if not {
-        pass = !pass;
-    }
-    if pass {
-        return Ok(this_value);
-    }
+        if not {
+            pass = !pass;
+        }
+        if pass {
+            return Ok(this_value);
+        }
 
-    let mut formatter = super::make_formatter(global);
-    // `defer formatter.deinit()` → handled by Drop.
-    let received = value.to_fmt(&mut formatter);
+        let mut formatter = super::make_formatter(global);
+        // `defer formatter.deinit()` → handled by Drop.
+        let received = value.to_fmt(&mut formatter);
 
-    if not {
-        let signature = Expect::get_signature("toBeEmptyObject", "", true);
-        return throw!(
+        if not {
+            let signature = Expect::get_signature("toBeEmptyObject", "", true);
+            return throw!(
+                this,
+                global,
+                signature,
+                "\n\nReceived: <red>{}<r>\n", received,
+            );
+        }
+
+        let signature = Expect::get_signature("toBeEmptyObject", "", false);
+        throw!(
             this,
             global,
             signature,
             "\n\nReceived: <red>{}<r>\n", received,
-        );
+        )
     }
-
-    let signature = Expect::get_signature("toBeEmptyObject", "", false);
-    throw!(
-        this,
-        global,
-        signature,
-        "\n\nReceived: <red>{}<r>\n", received,
-    )
 }
 

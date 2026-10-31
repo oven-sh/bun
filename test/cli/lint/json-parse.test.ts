@@ -29,7 +29,7 @@ async function lint(files: Record<string, string>, args: string[]) {
 }
 
 const couldNotBeParsed = "The package.json file could not be parsed: ";
-/** What the rule says is wrong with the text. It also reports the imports, since it knows no dependencies then. */
+/** Keeps only the rule's parse errors. If package.json doesn't parse, it also reports every import as unlisted. */
 const syntaxErrors = (messages: string[]) => messages.filter(it => it.startsWith(couldNotBeParsed));
 
 /**
@@ -153,29 +153,29 @@ describe.concurrent("JSON files that rules read", () => {
   ];
 
   test("syntax errors have V8's messages and positions", async () => {
-    const said = await readAsPackageJson(invalid.map(it => it[0]));
-    expect(said.map((it, i) => [invalid[i][0], syntaxErrors(it)])).toEqual(
+    const reported = await readAsPackageJson(invalid.map(it => it[0]));
+    expect(reported.map((it, i) => [invalid[i][0], syntaxErrors(it)])).toEqual(
       invalid.map(it => [it[0], [couldNotBeParsed + it[1]]]),
     );
   });
 
-  test.each(Object.entries(nested))("deeply nested %s are read", async (_, value) => {
+  test.each(Object.entries(nested))("deeply nested %s are parsed", async (_, value) => {
     const dependencies = `"dependencies":{"listed":"1"}`;
-    const said = await readAsPackageJson([`{${dependencies},"x":${value}}\n`, `{"x":${value},${dependencies}}\n`]);
-    expect(said).toEqual([[unlisted], [unlisted]]);
+    const reported = await readAsPackageJson([`{${dependencies},"x":${value}}\n`, `{"x":${value},${dependencies}}\n`]);
+    expect(reported).toEqual([[unlisted], [unlisted]]);
   });
 
-  test("an object with 100,000 names is read as fast as any other text of that size", async () => {
+  test("an object with 100,000 keys is parsed in linear time", async () => {
     const names = Array.from({ length: 100_000 }, (_, i) => `"package-${i}":"1"`);
     expect(await readAsPackageJson([`{"dependencies":{${names.join(",")},"listed":"1"}}`])).toEqual([[unlisted]]);
   });
 
-  test("the last value of a repeated name counts", async () => {
+  test("the last value of a duplicate key wins", async () => {
     const others = Array.from({ length: 40 }, (_, i) => `"name-${i}":${i}`).join(",");
     const first = `"dependencies":{"unlisted":"1"}`;
     const last = `"dependencies":{"listed":"1"}`;
-    const said = await readAsPackageJson([`{${first},${last}}`, `{${first},${others},${last}}`]);
-    expect(said).toEqual([[unlisted], [unlisted]]);
+    const reported = await readAsPackageJson([`{${first},${last}}`, `{${first},${others},${last}}`]);
+    expect(reported).toEqual([[unlisted], [unlisted]]);
   });
 
   test("the closest package.json can be deeply nested", async () => {
@@ -211,12 +211,12 @@ describe.concurrent("JSON files that rules read", () => {
         `Expected ',' or ']' after array element in JSON at position ${2 * depth + 2} (line ${depth + 1} column 3)`,
       ],
     ];
-    const said = await readAsPackageJson(texts.map(it => it[0]));
-    expect(said.map(syntaxErrors)).toEqual(texts.map(it => [couldNotBeParsed + it[1]]));
+    const reported = await readAsPackageJson(texts.map(it => it[0]));
+    expect(reported.map(syntaxErrors)).toEqual(texts.map(it => [couldNotBeParsed + it[1]]));
   });
 });
 
-// `bun lint` looks for `eslintConfig` in every package.json on the way up.
+// `bun lint` looks for `eslintConfig` in every package.json in the parent directories.
 test.concurrent("a deeply nested package.json without eslintConfig doesn't stop the run", async () => {
   const files = { "package.json": `{"name":"a","x":${nested.arrays}}\n`, "a.js": "debugger;\n" };
   const { stdout, exitCode } = await lint(files, ["-f", "json", "--rule", "no-debugger: error", "a.js"]);
@@ -263,17 +263,17 @@ describe.concurrent("/* eslint rule: .. */ comments", () => {
     ["mini/unchecked", nested.arrays, `depth ${depth}, innermost undefined`],
     ["mini/unchecked", nested.objects, `depth ${depth}, innermost 1`],
     ["mini/anything", nested.both, `depth ${depth}, innermost 1`],
-  ])("%s gets deeply nested options", async (rule, options, said) => {
-    expect(await messages(`${rule}: [2, ${options}]`)).toEqual([`${rule}: ${said}`]);
+  ])("%s gets deeply nested options", async (rule, options, message) => {
+    expect(await messages(`${rule}: [2, ${options}]`)).toEqual([`${rule}: ${message}`]);
   });
 
   test("messages about invalid options print deeply nested values", async () => {
-    const said = await Promise.all([nested.arrays, nested.objects].map(it => messages(`eqeqeq: [2, ${it}]`)));
+    const reported = await Promise.all([nested.arrays, nested.objects].map(it => messages(`eqeqeq: [2, ${it}]`)));
     const invalid = (value: string, all: string) =>
       `eqeqeq: Inline configuration for rule "eqeqeq" is invalid:\n` +
       `\tValue ${value} should be equal to one of the allowed values.\n`.repeat(2) +
       `\tValue ${all} should match some schema in anyOf.\n`;
-    expect(said).toEqual([
+    expect(reported).toEqual([
       [invalid(`<${depth} [><${depth} ]>`, `<${depth + 1} [><${depth + 1} ]>`)],
       [invalid(`<${depth} {"a":>1<${depth} }>`, `[<${depth} {"a":>1<${depth} }>]`)],
     ]);

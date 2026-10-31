@@ -77,4 +77,14 @@ describe("parseArgs default args", () => {
       expect(output?.execArgv).toEqual(execArgv);
     }
   });
+
+  test.each([
+    ["--eval=<code>", code => [`--eval=${code}`]],
+    ["-pe <code>", code => ["-pe", code]],
+    ["a script that shortens process.argv", code => ["-e", `process.argv.length = 0; ${code}`]],
+  ])("returns no positionals when process.argv has no program arguments: %s", async (_, args) => {
+    const code = `console.log(JSON.stringify(require("node:util").parseArgs({ strict: false }).positionals))`;
+    const { stdout } = await spawnBun(...args(code));
+    expect(stdout.split("\n")[0]).toBe("[]");
+  });
 });

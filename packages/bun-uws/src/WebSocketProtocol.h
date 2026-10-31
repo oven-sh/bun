@@ -44,7 +44,8 @@ enum class WebSocketFailureKind : int {
     InvalidUtf8,
     MessageTooBig,
     UnsupportedPayloadLength,
-    InvalidCompressedData
+    InvalidCompressedData,
+    OutOfMemory
 };
 
 /* Reason for failing a connection (RFC 6455 7.1.7) */
@@ -69,6 +70,8 @@ inline constexpr WebSocketFailure FAIL_INVALID_TEXT{WebSocketFailureKind::Invali
 inline constexpr WebSocketFailure FAIL_INVALID_COMPRESSED_DATA{WebSocketFailureKind::InvalidCompressedData, 1007, "Received invalid compressed data"};
 inline constexpr WebSocketFailure FAIL_TOO_BIG_MESSAGE{WebSocketFailureKind::MessageTooBig, 1009, "Received too big message"};
 inline constexpr WebSocketFailure FAIL_UNSUPPORTED_LENGTH{WebSocketFailureKind::UnsupportedPayloadLength, 1009, "Received too big message"};
+/* Allocating a buffer for the peer's message failed. See WebSocket::failOutOfMemory(). */
+inline constexpr WebSocketFailure FAIL_OUT_OF_MEMORY{WebSocketFailureKind::OutOfMemory, 1011, "Received message that does not fit in memory"};
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,

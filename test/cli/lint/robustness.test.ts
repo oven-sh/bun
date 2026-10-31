@@ -1,5 +1,6 @@
-// `bun lint` on inputs that are large in one dimension: it does not overflow the stack, does not run out of memory, and takes time
-// in proportion to the size of the input. The inputs, and what each of them did once, are in oracle/robustness/cases.ts.
+// Runs `bun lint` on inputs that are large in one dimension. It must not overflow the stack or run out of memory, and
+// its run time must be linear in the input size. The inputs, and what each one used to cause, are in
+// oracle/robustness/cases.ts.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -19,8 +20,9 @@ const env = {
   NO_COLOR: "1",
 };
 
-// Not what is tested: they keep a regression from taking the machine along. A release build needs half a second at most for a
-// case, most of them a tenth of that, and the code as it was before either crashes or needs more than the limit.
+// These limits aren't what's tested. They keep a regression from taking down the machine. A release build needs at most
+// half a second for a case, and a tenth of that for most of them, while the old code either crashes or exceeds the
+// limit.
 const isSlowBuild = isDebug || isASAN;
 const seconds = isSlowBuild ? 120 : 10;
 // A sanitizer reserves terabytes of address space.
@@ -51,12 +53,12 @@ describe.concurrent("bun lint", () => {
       if (it.keeps) expect(text.match(it.keeps[0])?.length ?? 0).toBe(it.keeps[1]);
       if (it.length === "as before") expect(text === it.text()).toBe(true);
       else if (it.length !== undefined) expect(Buffer.byteLength(text)).toBe(it.length);
-      // Not the whole output in a failure message: it has megabytes.
+      // Don't put the whole output in a failure message, because it's megabytes long.
       if (it.lacks) expect(stdout.match(it.lacks)?.[0]).toBeUndefined();
       if (it.reports && !it.orWarns?.test(stdout + stderr)) {
         const found = countByRule(stdout);
         const isAsExpected = Bun.deepEquals(found, it.reports);
-        // With what it said in place of the warning.
+        // If neither matched, include the end of the output, where the warning should have been.
         expect(it.orWarns && !isAsExpected ? [found, (stdout + stderr).slice(-500)] : found).toEqual(it.reports);
       }
       if (it.matches) expect(it.matches.test(stdout)).toBe(true);

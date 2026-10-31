@@ -28,7 +28,7 @@ function assert_main() {
 function assert_buildkite_agent() {
   if ! command -v "buildkite-agent" &> /dev/null; then
     echo "error: Cannot find buildkite-agent, please install it:"
-    echo "https://buildkite.com/docs/agent/v3/install"
+    echo "https://buildkite.com/docs/agent/self-hosted/install"
     exit 1
   fi
 }

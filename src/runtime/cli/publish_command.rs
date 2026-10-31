@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use crate::Error;
 use bun_alloc::AllocError;
+use bun_archive::tar;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -12,7 +13,6 @@ use bun_http as http;
 use bun_install::package_manager::options::PublishTarget;
 use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
-use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
@@ -71,20 +71,14 @@ fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
         && (name.len() == README.len() || name[README.len()].into() == u32::from(b'.'))
 }
 
-fn archive_ok<T>(result: ArchiveIterResult<T>) -> T {
-    match result {
-        ArchiveIterResult::Result(value) => value,
-        ArchiveIterResult::Err { archive, message } => {
-            Output::err_generic(
-                "{}: {}",
-                (
-                    bstr::BStr::new(message),
-                    bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
-                ),
-            );
-            Global::crash();
+fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> Result<T, PackError> {
+    result.map_err(|err| {
+        if matches!(err, tar::Error::Alloc(_)) {
+            return PackError::OutOfMemory;
         }
-    }
+        Output::err_generic("{}: {}", (message, err));
+        Global::crash();
+    })
 }
 
 /// `E::String` erases the lifetime of its bytes, so these have to outlive the printing of the AST.
@@ -172,25 +166,26 @@ impl Context {
         let mut maybe_readme: Option<ReadmeInfo> = None;
         let mut files: Vec<Vec<u8>> = Vec::new();
 
-        let mut iter = archive_ok(ArchiveIterator::init(&tarball_bytes));
+        let mut reader = archive_ok(
+            bun_archive::open_memory(&tarball_bytes, tar::Dialect::General),
+            "failed to read tarball",
+        )?;
+        let mut os_path_buf: Vec<OSPathChar> = Vec::new();
 
         let mut unpacked_size: usize = 0;
         let mut total_files: usize = 0;
 
         Output::print(format_args!("\n"));
 
-        while let Some(next) = archive_ok(iter.next()) {
-            // SAFETY: `next.entry` is valid until the next `iter.next()` call.
-            let entry = unsafe { &*next.entry };
-            #[cfg(windows)]
-            let pathname: &[OSPathChar] = entry.pathname_w().as_slice();
-            #[cfg(not(windows))]
-            let pathname: &[OSPathChar] = entry.pathname().as_bytes();
+        while let Some(entry) = archive_ok(reader.next_entry(), "failed to read archive header")? {
+            let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)
+                .map_err(|_| PackError::OutOfMemory)?;
+            let kind = entry.kind();
 
             let size = usize::try_from(entry.size().max(0)).expect("int cast");
 
             unpacked_size += size;
-            total_files += usize::from(next.kind == FileKind::File);
+            total_files += usize::from(kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
             let stripped = (pathname.iter().position(|&c| bun_paths::is_sep_any_t(c)))
@@ -214,7 +209,7 @@ impl Context {
             );
 
             let Some(filename) = stripped else { continue };
-            if next.kind != FileKind::File {
+            if kind != FileKind::File {
                 continue;
             }
             #[cfg(not(windows))]
@@ -228,18 +223,25 @@ impl Context {
             if maybe_package_json_contents.is_none()
                 && strings::eql_case_insensitive_t(filename, b"package.json")
             {
-                maybe_package_json_contents = Some(archive_ok(iter.read_entry_data(&next)?));
+                let mut contents = Vec::new();
+                archive_ok(
+                    reader.read_data(size, &mut contents),
+                    "failed to read archive data",
+                )?;
+                maybe_package_json_contents = Some(contents.into_boxed_slice());
             } else if maybe_readme.is_none() && is_readme_filename(filename) {
-                let contents = archive_ok(iter.read_entry_data(&next)?).into_vec();
                 #[cfg(not(windows))]
                 let filename: Vec<u8> = filename.to_vec();
                 #[cfg(windows)]
                 let filename: Vec<u8> = strings::to_utf8_alloc(filename);
+                let mut contents = Vec::new();
+                archive_ok(
+                    reader.read_data(size, &mut contents),
+                    "failed to read archive data",
+                )?;
                 maybe_readme = Some(ReadmeInfo { filename, contents });
             }
         }
-
-        archive_ok(iter.close());
 
         let Some(package_json_contents) = maybe_package_json_contents else {
             Output::err_generic(

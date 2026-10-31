@@ -13,7 +13,8 @@ const {
   createPooledConnectionHandle,
   sameSettings,
   tryOtherPassword,
-} = require("internal/sql/pool");
+  // The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+} = require("internal/sql/pool") as typeof import("./pool").default;
 const {
   symbols: { _results, _handle, _copy },
 } = require("internal/sql/query");
@@ -24,7 +25,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $rust("postgres.rs", "createBinding") as PostgresDotZig;
+} = $bindgen("postgres.bind.ts", "binding") as PostgresDotZig;
 
 // 1 to 4 are the commands whose tag counts the rows written.
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
@@ -160,7 +161,7 @@ class SQLJSONParameter {
   /// JSON.stringify() calls one toJSON(): this one, not that of a Date or a URL in `value`.
   toJSON(key: string) {
     const value = this.value;
-    const toJSON = (value as { toJSON?: unknown } | null | undefined)?.toJSON;
+    const toJSON = (value as { toJSON?: (this: unknown, key: string) => unknown } | null | undefined)?.toJSON;
     return $isCallable(toJSON) ? toJSON.$call(value, key) : value;
   }
 }
@@ -231,14 +232,11 @@ interface PostgresDotZig {
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
     arrayLiteral: (values: ArrayLike<unknown>, kind: ArrayKind) => string,
   ) => void;
-  createConnection: NativeCreateConnection<$ZigGeneratedClasses.PostgresSQLConnection>;
-  createQuery: NativeCreateQuery<$ZigGeneratedClasses.PostgresSQLQuery>;
+  createConnection: NativeCreateConnection<$Bindgen.PostgresSQLConnection>;
+  createQuery: NativeCreateQuery<$Bindgen.PostgresSQLQuery>;
 }
 
-class PostgresAdapter extends BaseSQLAdapter<
-  $ZigGeneratedClasses.PostgresSQLConnection,
-  $ZigGeneratedClasses.PostgresSQLQuery
-> {
+class PostgresAdapter extends BaseSQLAdapter<$Bindgen.PostgresSQLConnection, $Bindgen.PostgresSQLQuery> {
   readonly createNativeConnection = createPostgresConnection;
   protected readonly createNativeQuery = createPostgresQuery;
   readonly ErrorClass = PostgresError;
@@ -288,7 +286,7 @@ class PostgresAdapter extends BaseSQLAdapter<
 
 type Listener = (payload: string) => void;
 type OnListen = () => void;
-type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
+type ListenHandle = $Bindgen.PostgresSQLConnection;
 
 /** Resolved from `sql.listen()`; removes the registration that call made. */
 class ListenSubscription {
@@ -387,9 +385,9 @@ class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
   [_results] = null;
-  [_handle]: $ZigGeneratedClasses.PostgresSQLQuery;
+  [_handle]: $Bindgen.PostgresSQLQuery;
 
-  constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {
+  constructor(handle: $Bindgen.PostgresSQLQuery) {
     this[_handle] = handle;
   }
 
@@ -685,7 +683,7 @@ class ListenConnection {
 // COPY. The native query calls `copy(chunk)` when the server enters copy mode, then with each chunk (TO STDOUT) or
 // each time the socket has drained (FROM STDIN). The stream ends as the query does.
 
-type CopyHandle = $ZigGeneratedClasses.PostgresSQLQuery;
+type CopyHandle = $Bindgen.PostgresSQLQuery;
 
 function noop() {}
 
@@ -801,7 +799,7 @@ class CopySink {
     return waiting;
   }
 
-  write(chunk: unknown) {
+  write(chunk: string | ArrayBufferView | ArrayBufferLike) {
     try {
       if (this.handle!.copyWrite(chunk)) {
         return;

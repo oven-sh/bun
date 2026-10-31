@@ -1,9 +1,9 @@
-//! The names in `\p{..}`. What they stand for is JavaScriptCore's to know.
+//! The names allowed in `\p{..}`. Only JavaScriptCore needs to know which characters they match.
 
 use super::unicode_tables as tables;
 use bun_core::strings;
 
-/// The index of `name` in `names`, which are separated by spaces.
+/// Index of `name` in `names`, which is a space-separated list.
 fn index_of_name(names: &'static [u8], name: &[u8]) -> Option<usize> {
     let mut all = strings::split(names, b" ");
     let mut index = 0;
@@ -16,7 +16,7 @@ fn index_of_name(names: &'static [u8], name: &[u8]) -> Option<usize> {
     None
 }
 
-/// The version of ECMAScript that has `name`. `versions` count from ES2018.
+/// The ECMAScript version that added `name`. `versions` count from ES2018.
 fn since(names: &'static [u8], versions: &'static [u8], name: &[u8]) -> Option<u32> {
     Some(2018 + u32::from(*versions.get(index_of_name(names, name)?)?))
 }

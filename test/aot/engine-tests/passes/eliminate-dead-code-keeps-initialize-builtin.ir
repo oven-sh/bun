@@ -1,0 +1,15 @@
+# InitializeBuiltin stays. The constant behind it goes when nothing uses it
+# FORM: Prepared optimizing
+# RUN: pass EliminateDeadCode
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unusedRead" results=[{type=undefined}] {
+    InitializeBuiltin builtin=ProcessNextTick
+    v1 = Builtin builtin=ProcessNextTick
+    v2 = Undefined
+    Return v2
+}
+# CHECK-LABEL: function f0 name="unusedRead"
+# CHECK: InitializeBuiltin builtin=ProcessNextTick
+# CHECK-NOT: = Builtin

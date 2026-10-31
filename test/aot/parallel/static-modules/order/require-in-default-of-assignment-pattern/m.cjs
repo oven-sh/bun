@@ -1,0 +1,11 @@
+let a, b, c, d, e;
+({ a = require("./skipped.cjs") } = { a: 1 });
+({ b = require("./x.cjs") } = {});
+({ key: c = require("./skipped.cjs") } = { key: 3 });
+({ key: [d = require("./y.cjs")] } = { key: [] });
+[e = require("./skipped.cjs")] = [5];
+exports.a = a;
+exports.b = b.v;
+exports.c = c;
+exports.d = d.v;
+exports.e = e;

@@ -129,7 +129,7 @@ impl Handler {
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             flags: HandlerFlags::empty(),
         };
 

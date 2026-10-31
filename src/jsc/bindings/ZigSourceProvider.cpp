@@ -41,7 +41,7 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID);
+extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
 void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
@@ -134,7 +134,7 @@ Ref<SourceProvider> SourceProvider::create(
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
         BunString providerSource = Bun::toString(providerSourceString);
-        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID());
+        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled);
     }
 
     if (provider->m_alreadyBundled) {
@@ -266,6 +266,8 @@ static bool generateCachedByteCodeFromSourceCode(const BunString* sourceProvider
     JSC::SourceCodeKey key;
     JSC::UnlinkedCodeBlock* unlinkedCodeBlock = generateUnlinkedCodeForBytecodeCache(vm, sourceProviderURL, inputSourceCode, isModule, depth, optimize, sourceCode, key);
     if (!unlinkedCodeBlock)
+        return false;
+    if (!externalStrings && Bun::hasStringTooLongForBytecodeCache(vm, sourceCode))
         return false;
 
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings, JSC::BytecodeCacheUpdatable::No);
@@ -411,6 +413,22 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 }; // namespace Zig
 
 namespace Bun {
+
+bool hasStringTooLongForBytecodeCache(JSC::VM& vm, const JSC::SourceCode& source)
+{
+    constexpr unsigned limit = 1u << 27;
+    if (static_cast<unsigned>(source.length()) < limit)
+        return false;
+    auto& provider = *source.provider();
+    if (provider.sourceURLDirective().length() >= limit || provider.sourceMappingURLDirective().length() >= limit)
+        return true;
+    // Every other string in the unlinked code is a parser identifier, so it's in the atom table.
+    for (auto& atom : vm.atomStringTable()->table()) {
+        if (atom->length() >= limit)
+            return true;
+    }
+    return false;
+}
 
 // bun:internal-for-testing: whether the source of a function knows where its lines start. Before anything asked for a
 // position in it, that means they came with its code: from the parse, or out of the bytecode.

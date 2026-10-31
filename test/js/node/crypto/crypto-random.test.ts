@@ -1,8 +1,38 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt, randomUUID } from "crypto";
 import { statSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
+
+describe("arguments are validated as in Node", () => {
+  it("a proxy of a function is a callback", async () => {
+    const called = (call: (callback: (err: Error | null) => void) => void) =>
+      new Promise<void>((resolve, reject) => call(new Proxy(err => (err ? reject(err) : resolve()), {})));
+    await called(callback => randomBytes(4, callback));
+    await called(callback => randomInt(5, callback));
+    await called(callback => randomInt(1, 5, callback));
+    await called(callback => randomFill(new Uint8Array(4), callback));
+    await called(callback => randomFill(new Uint8Array(4), 0, callback));
+    await called(callback => randomFill(new Uint8Array(4), 0, 1, callback));
+  });
+
+  it("randomUUID refuses a proxy of an array", () => {
+    expect(() => randomUUID(new Proxy([], {}))).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("randomUUID and randomFill report their arguments", () => {
+    // @ts-expect-error
+    expect(() => randomUUID(5)).toThrow('The "options" argument must be of type object. Received type number (5)');
+    // @ts-expect-error
+    expect(() => randomUUID({ disableEntropyCache: 1 })).toThrow(
+      'The "options.disableEntropyCache" property must be of type boolean. Received type number (1)',
+    );
+    // @ts-expect-error
+    expect(() => randomFillSync(5)).toThrow(
+      'The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type number (5)',
+    );
+  });
+});
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {
@@ -219,6 +249,43 @@ describe("randomFill default size with multi-byte typed arrays", () => {
     }
     expect(tailFilled).toBe(true);
   });
+});
+
+it("randomFill never reports success for bytes it didn't write", async () => {
+  const fill = (view: Uint8Array, change: () => void, offset = 0) => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    randomFill(view, offset, err => resolve(err));
+    change();
+    return promise;
+  };
+  const zeros = Buffer.alloc(32);
+
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+  expect(await fill(new Uint8Array(memory.buffer, 64, 32), () => memory.grow(1))).toBeNull();
+  expect(Buffer.from(memory.buffer, 64, 32)).not.toEqual(zeros);
+  expect(Buffer.from(memory.buffer, 32, 32)).toEqual(zeros);
+  expect(Buffer.from(memory.buffer, 96, 32)).toEqual(zeros);
+
+  const resizable = new ArrayBuffer(64, { maxByteLength: 64 });
+  expect(await fill(new Uint8Array(resizable), () => resizable.resize(32))).toBeNull();
+  expect(Buffer.from(resizable)).not.toEqual(zeros);
+
+  for (const offset of [32, 48]) {
+    const trimmed = new ArrayBuffer(64, { maxByteLength: 64 });
+    expect((await fill(new Uint8Array(trimmed), () => trimmed.resize(32), offset))?.code).toBe(
+      "ERR_CRYPTO_OPERATION_FAILED",
+    );
+  }
+
+  const outOfBounds = new ArrayBuffer(64, { maxByteLength: 64 });
+  expect((await fill(new Uint8Array(outOfBounds, 0, 64), () => outOfBounds.resize(32)))?.code).toBe(
+    "ERR_CRYPTO_OPERATION_FAILED",
+  );
+
+  const transferred = new ArrayBuffer(32);
+  expect((await fill(new Uint8Array(transferred), () => transferred.transfer()))?.code).toBe(
+    "ERR_CRYPTO_OPERATION_FAILED",
+  );
 });
 
 describe("checkPrime candidate handling", () => {

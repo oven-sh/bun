@@ -2,7 +2,7 @@
 // so we ship a [value, buffers] envelope (identity-aliased) and restore Buffer prototypes on receive.
 // Node ref: https://github.com/nodejs/node/blob/main/lib/internal/child_process/serialization.js
 
-const { Buffer } = require("node:buffer");
+const { Buffer }: { Buffer: BufferConstructor } = require("node:buffer");
 const { isUint8Array } = require("node:util/types");
 const BufferPrototype = Buffer.prototype;
 const isBuffer = Buffer.isBuffer;

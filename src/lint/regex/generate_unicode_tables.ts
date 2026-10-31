@@ -2,14 +2,14 @@
 //
 //   bun src/lint/regex/generate_unicode_tables.ts <regexpp>/src/unicode/properties.ts
 //
-// The names of the properties, and the ECMAScript version that added each, come from regexpp.
+// The property names, and the ECMAScript version that added each one, come from regexpp.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const source = readFileSync(process.argv[2], "utf8");
 
-/** The strings given to `new DataSet(..)` for `name`: one per version, from ES2018. */
+/** The strings passed to `new DataSet(..)` for `name`: one per version, starting at ES2018. */
 function dataSet(name: string): string[][] {
   const start = source.indexOf(`const ${name} = new DataSet(`);
   if (start < 0) throw new Error(`no ${name}`);
@@ -57,19 +57,19 @@ function emitNames(doc: string, name: string, names: string[]) {
 }
 
 emitNames(
-  "The values of General_Category, sorted.",
+  "General_Category values, sorted.",
   "GENERAL_CATEGORY_NAMES",
   named("gcValueSets").map(n => n.name),
 );
 
 const scripts = named("scValueSets");
 emitNames(
-  "The values of Script and Script_Extensions, sorted.",
+  "Script and Script_Extensions values, sorted.",
   "SCRIPT_NAMES",
   scripts.map(n => n.name),
 );
 emit(
-  "For each name in `SCRIPT_NAMES`, the version that has it. Versions count from ES2018.",
+  "For each name in `SCRIPT_NAMES`, the version that added it. Versions count from ES2018.",
   "SCRIPT_VERSIONS",
   "u8",
   scripts.map(n => n.version),
@@ -82,7 +82,7 @@ emitNames(
   binary.map(n => n.name),
 );
 emit(
-  "For each name in `BINARY_NAMES`, the version that has it, as in `SCRIPT_VERSIONS`.",
+  "For each name in `BINARY_NAMES`, the version that added it, numbered as in `SCRIPT_VERSIONS`.",
   "BINARY_VERSIONS",
   "u8",
   binary.map(n => n.version),

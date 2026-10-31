@@ -2,12 +2,12 @@
 
 use std::cmp::Ordering;
 
-/// Sorts `items` the way V8 does. What compares equal stays in order.
+/// Sorts `items` the way V8 does. Equal items keep their order.
 ///
-/// Unlike `slice::sort_by`, it takes a `compare` that is not a total order, which those of the
-/// plugins are not for all text. Then the result depends on which items are compared: for fewer
-/// than 64 items, which V8 (14.6, of Node.js 26) sorts as one run, they are the same here.
-/// `n - 1` comparisons if 8 or more `items` are sorted.
+/// Unlike `slice::sort_by`, it accepts a `compare` that isn't a total order, which the plugins' comparers aren't for
+/// all text. The result then depends on which items get compared. For fewer than 64 items, which V8 (14.6, in Node.js
+/// 26) sorts as one run, the same items are compared here. Takes `n - 1` comparisons if 8 or more `items` are already
+/// sorted.
 pub(super) fn stable_sort_by<T: Copy>(
     items: &mut [T],
     mut compare: impl FnMut(&T, &T) -> Ordering,

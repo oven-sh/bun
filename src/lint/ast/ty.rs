@@ -10,7 +10,7 @@ use crate::tokens::skip_trivia;
 use bun_sema::hir;
 
 handle! {
-    /// A type as it is written. Parentheses around it are not part of it.
+    /// A type in the source, excluding any parentheses around it.
     TypeNode, TypeNodeId, types, TypeNode
 }
 
@@ -18,8 +18,7 @@ handle! {
 pub enum TypeKind<'a> {
     /// Syntax the parser failed on.
     Error,
-    /// An element of `extends` or `implements` that is not a name, which is an error:
-    /// `extends f()<Args>`.
+    /// An element of `extends` or `implements` that isn't a name, which is an error: `extends f()<Args>`.
     Heritage {
         expr: Expr<'a>,
         args: List<'a, TypeNode<'a>>,
@@ -64,7 +63,7 @@ pub enum TypeKind<'a> {
     Keyof(TypeNode<'a>),
     Readonly(TypeNode<'a>),
     UniqueSymbol,
-    /// `unique T`, where `T` is not the keyword `symbol`, which is an error.
+    /// `unique T` where `T` isn't the keyword `symbol`, which is an error.
     Unique(TypeNode<'a>),
     /// `typeof a.b.c<Args>`. `expr` is the name as an expression.
     Typeof {
@@ -87,7 +86,7 @@ pub enum TypeKind<'a> {
 }
 
 tags! {
-    /// The kind of a type without what it holds. This is what a rule listens for.
+    /// The kind of a type without its payload. Rules listen for tags.
     TypeTag of TypeNodeKind {
         Error unit,
         Heritage fields,
@@ -120,9 +119,9 @@ tags! {
 }
 
 impl<'a> TypeNode<'a> {
-    /// `None` if the HIR leaves `id` empty, or if the type is from a JSDoc comment.
+    /// `None` if the HIR leaves `id` empty, or if the type comes from a JSDoc comment.
     #[inline]
-    pub(crate) fn written(file: &'a File<'a>, id: hir::TypeNodeId) -> Option<Self> {
+    pub(crate) fn in_source(file: &'a File<'a>, id: hir::TypeNodeId) -> Option<Self> {
         TypeNode::some(file, id).filter(|ty| !super::Handle::is_synthetic(*ty))
     }
 
@@ -232,14 +231,14 @@ impl<'a> TypeNode<'a> {
         (self.try_raw()).map_or(TypeTag::Error, |raw| TypeTag::of(&raw.kind))
     }
 
-    /// Without the parentheses around it.
+    /// Excludes the parentheses around it.
     #[inline]
     pub fn span(self) -> Span {
         (self.try_raw()).map_or_else(Span::default, |raw| Span::new(raw.pos, raw.end))
     }
 
-    /// With all the parentheses around it. The HIR does not record them: they are found in the
-    /// text next to the type.
+    /// Includes all the parentheses around it. The HIR doesn't record them, so they're found by scanning the text next
+    /// to the type.
     pub fn outer_span(self) -> Span {
         let text = self.file.text();
         let mut span = self.span();
@@ -261,9 +260,8 @@ impl<'a> TypeNode<'a> {
         self.outer_span() != self.span()
     }
 
-    /// The range of ESLint's `TSTypeAnnotation` around it, if it is the type of a variable, a
-    /// parameter or a property, or a return type: from the `:`, or the `=>` of a function type,
-    /// to the end of the type and its parentheses.
+    /// The range of ESLint's `TSTypeAnnotation` around it, if it's a return type or the type of a variable, parameter
+    /// or property. It runs from the `:`, or the `=>` of a function type, to the end of the type and its parentheses.
     pub fn annotation_span(self) -> Span {
         let (text, outer) = (self.file.text(), self.outer_span());
         let before = self.file.end_of_token_before(outer.start);
@@ -294,7 +292,7 @@ impl<'a> TypeNode<'a> {
         }
     }
 
-    /// The `name` and the `args` of a `Ref`.
+    /// The `name` and `args` of a `Ref`.
     #[inline]
     pub fn as_ref(self) -> Option<(EntityName<'a>, List<'a, TypeNode<'a>>)> {
         match self.try_raw()?.kind {
@@ -321,7 +319,7 @@ impl<'a> TypeNode<'a> {
         }
     }
 
-    /// The `x` of the `Predicate` `x is T` or `asserts x`, where it is written. It can be `this`.
+    /// The `x` of the `Predicate` `x is T` or `asserts x`, with its position. It can be `this`.
     pub fn predicate_param(self) -> Option<Ident<'a>> {
         let hir::TypeNodeKind::Predicate { param, asserts, .. } = self.try_raw()?.kind else {
             return None;
@@ -340,8 +338,8 @@ impl<'a> TypeNode<'a> {
         (self.tag() == TypeTag::UniqueSymbol).then(|| Span::new(end.saturating_sub(6), end))
     }
 
-    /// Of an `Import`: from the `import`, without a `typeof` before it. ESLint has
-    /// `typeof import("m")` as a `TSTypeQuery` of a `TSImportType` with this range.
+    /// For an `Import`: starts at the `import`, skipping any `typeof` before it. In ESLint, `typeof import("m")` is a
+    /// `TSTypeQuery` of a `TSImportType` with this range.
     pub fn import_span(self) -> Option<Span> {
         let hir::TypeNodeKind::Import { is_typeof, .. } = self.try_raw()?.kind else {
             return None;
@@ -356,7 +354,7 @@ impl<'a> TypeNode<'a> {
         })
     }
 
-    /// Of an `Import`: the module specifier with its quotes.
+    /// For an `Import`: the module specifier with its quotes.
     pub fn import_source_span(self) -> Option<Span> {
         let text = self.file.text();
         let open = skip_trivia(text, self.import_span()?.start + "import".len() as u32);
@@ -368,7 +366,7 @@ impl<'a> TypeNode<'a> {
         ))
     }
 
-    /// Of an `Import`: the `with: { .. }` of `import("m", { with: { .. } })`.
+    /// For an `Import`: the `with: { .. }` of `import("m", { with: { .. } })`.
     pub fn import_attributes(self) -> Option<ImportAttributes<'a>> {
         let options = ImportAttributes::search_span_of_type(&self.file.hir, self.try_raw()?)?;
         ImportAttributes::within(self.file, options)
@@ -390,13 +388,13 @@ impl<'a> TypeTemplate<'a> {
         List::ids(self.ty.file, self.types)
     }
 
-    /// The number of pieces of text: one more than there are substitutions.
+    /// The number of text pieces, which is one more than the number of substitutions.
     #[inline]
     pub fn quasi_count(self) -> usize {
         self.types.len() + 1
     }
 
-    /// The value of the piece of text at `i`.
+    /// The cooked value of text piece `i`.
     pub fn cooked(self, i: usize) -> Option<Name<'a>> {
         let file = self.ty.file;
         if i >= self.texts.len() {
@@ -406,7 +404,7 @@ impl<'a> TypeTemplate<'a> {
         file.name_if_some(bun_sema::atom::Atom(*file.hir.ids.get(at)?))
     }
 
-    /// The piece of text at `i` with its delimiters: `` `a${ ``, `}b${`, `` }c` ``.
+    /// Text piece `i` with its delimiters: `` `a${ ``, `}b${`, `` }c` ``.
     pub fn quasi_span(self, i: usize) -> Span {
         let (text, whole) = (self.ty.file.text(), self.ty.span());
         let start = match i.checked_sub(1).and_then(|before| self.types().get(before)) {
@@ -420,7 +418,7 @@ impl<'a> TypeTemplate<'a> {
         Span::new(start, end)
     }
 
-    /// The piece of text at `i` as it is written, without its delimiters.
+    /// The source text of piece `i`, without its delimiters.
     #[inline]
     pub fn raw(self, i: usize) -> &'a [u8] {
         let is_last = i + 1 == self.quasi_count();
@@ -430,8 +428,8 @@ impl<'a> TypeTemplate<'a> {
 }
 
 impl<'a> List<'a, TypeNode<'a>> {
-    /// The `<..>` around type arguments: the range of ESLint's `TSTypeParameterInstantiation`.
-    /// `None` if the list is empty.
+    /// The `<..>` around type arguments, which is the range of ESLint's `TSTypeParameterInstantiation`. `None` if the
+    /// list is empty.
     pub fn angle_brackets_span(self) -> Option<Span> {
         let (first, last) = (self.first()?, self.last()?);
         Some(angle_brackets(
@@ -443,8 +441,8 @@ impl<'a> List<'a, TypeNode<'a>> {
 }
 
 impl<'a> List<'a, TypeParam<'a>> {
-    /// The `<..>` around type parameters: the range of ESLint's `TSTypeParameterDeclaration`.
-    /// `None` if the list is empty.
+    /// The `<..>` around type parameters, which is the range of ESLint's `TSTypeParameterDeclaration`. `None` if the
+    /// list is empty.
     pub fn angle_brackets_span(self) -> Option<Span> {
         let (first, last) = (self.first()?, self.last()?);
         Some(angle_brackets(
@@ -455,7 +453,7 @@ impl<'a> List<'a, TypeParam<'a>> {
     }
 }
 
-/// From the `<` before `start` to the `>` after `end`, which a `,` may precede.
+/// From the `<` before `start` to the `>` after `end`, allowing a trailing `,` before the `>`.
 fn angle_brackets<'a>(file: &'a File<'a>, start: u32, end: u32) -> Span {
     let text = file.text();
     let mut close = skip_trivia(text, end);
@@ -465,8 +463,8 @@ fn angle_brackets<'a>(file: &'a File<'a>, start: u32, end: u32) -> Span {
     Span::new(file.end_of_token_before(start).saturating_sub(1), close + 1)
 }
 
-/// `with { type: "json" }` after the module specifier of an import or an export, and the
-/// `with: { .. }` in the second argument of an import type.
+/// `with { type: "json" }` after the module specifier of an import or export, or the `with: { .. }` in the second
+/// argument of an import type.
 #[derive(Copy, Clone, Debug)]
 pub struct ImportAttributes<'a> {
     keyword: u32,
@@ -484,7 +482,7 @@ impl<'a> ImportAttributes<'a> {
         })
     }
 
-    /// The index in `Hir::import_attributes` of what [`within`](Self::within) returns.
+    /// The index in `Hir::import_attributes` of the clause that [`within`](Self::within) returns.
     pub(crate) fn index_within(hir: &super::Hir, span: Span) -> Option<usize> {
         let all = hir.import_attributes;
         let first = all.partition_point(|it| it.0 < span.start);
@@ -493,9 +491,9 @@ impl<'a> ImportAttributes<'a> {
             .then_some(first)
     }
 
-    /// Where the keyword of the import type `ty` is, if it has options. The span starts after an argument that isn't a
-    /// string, which can have options of its own. `None` keeps a type without options from finding those of its type
-    /// arguments.
+    /// The span to search for the keyword of the import type `ty`, if it has options. The span starts after an argument
+    /// that isn't a string, since that argument can have its own options. Returning `None` for a type without options
+    /// keeps it from finding the options of its type arguments.
     pub(crate) fn search_span_of_type(hir: &super::Hir, ty: &hir::TypeNode) -> Option<Span> {
         let hir::TypeNodeKind::Import {
             spec,
@@ -509,7 +507,7 @@ impl<'a> ImportAttributes<'a> {
         if attributes == hir::ImportAttributesToken::None {
             return None;
         }
-        // The parser keeps that argument in `args`.
+        // The parser stores a non-string argument in `args`.
         let argument = match spec.is_none() {
             true => hir.ids.get(args.range()).and_then(|it| it.first()),
             false => None,
@@ -543,7 +541,7 @@ impl<'a> ImportAttributes<'a> {
         self.object.span()
     }
 
-    /// In an import type: the `{ with: { .. } }` that is the second argument.
+    /// In an import type: the second argument, `{ with: { .. } }`.
     pub fn options_span(self) -> Span {
         let text = self.object.file().text();
         let mut close = skip_trivia(text, self.object.span().end);
@@ -567,7 +565,7 @@ impl<'a> ImportAttributes<'a> {
     }
 }
 
-/// `A`, `A.B.C`: a name in a type that is not an expression.
+/// `A`, `A.B.C`: a name in a type, which isn't an expression.
 #[derive(Copy, Clone)]
 pub struct EntityName<'a> {
     file: &'a File<'a>,
@@ -595,13 +593,13 @@ impl<'a> EntityName<'a> {
             .map(move |name| file.ident(name.text, name.pos()))
     }
 
-    /// The file, and what the HIR calls the names between the dots.
+    /// The file, and the HIR ids of the names between the dots.
     #[inline]
     pub(crate) fn ids(self) -> (&'a File<'a>, impl Iterator<Item = hir::NameId>) {
         (self.file, self.names.iter())
     }
 
-    /// The name at `i`, counted from the left.
+    /// The name at index `i`, counting from the left.
     #[inline]
     pub fn get(self, i: usize) -> Option<Ident<'a>> {
         let name = (i < self.names.len())
@@ -619,7 +617,7 @@ impl<'a> EntityName<'a> {
         self.names.is_empty()
     }
 
-    /// The `A` of `A.B.C`, which is what is looked up in the scope.
+    /// The `A` of `A.B.C`, which is the part that's looked up in the scope.
     #[inline]
     pub fn first(self) -> Option<Ident<'a>> {
         self.parts().next()
@@ -635,7 +633,7 @@ impl<'a> EntityName<'a> {
         (self.len() == 1).then(|| self.first()).flatten()
     }
 
-    /// Whether it is the single name `name`.
+    /// True if it's the single name `name`.
     #[inline]
     pub fn is(self, name: &str) -> bool {
         self.as_ident().is_some_and(|it| it.name().is(name))
@@ -716,7 +714,7 @@ impl<'a> Mapped<'a> {
         &self.file.hir.mapped[self.id.idx()]
     }
 
-    /// The `K in C`: `C` is its constraint.
+    /// The `K in C`. `C` is its constraint.
     #[inline]
     pub fn param(self) -> TypeParam<'a> {
         TypeParam::new(self.file, self.raw().param)

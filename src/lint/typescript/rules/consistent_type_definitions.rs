@@ -6,16 +6,16 @@ pub struct ConsistentTypeDefinitions {
     prefers_type: bool,
 }
 
-const INTERFACE_OVER_TYPE: Message =
-    Message::new("interfaceOverType", "Use an `interface` instead of a `type`.");
-const TYPE_OVER_INTERFACE: Message =
-    Message::new("typeOverInterface", "Use a `type` instead of an `interface`.");
+const INTERFACE_OVER_TYPE: &Message =
+    &Message::new("interfaceOverType", "Use an `interface` instead of a `type`.");
+const TYPE_OVER_INTERFACE: &Message =
+    &Message::new("typeOverInterface", "Use a `type` instead of an `interface`.");
 
 fn is_within_declare_global(statement: Stmt) -> bool {
     Node::Stmt(statement).ancestors().any(|ancestor| match ancestor {
         Node::Stmt(outer) => match outer.kind() {
             StmtKind::Module(module) => {
-                // oxlint does not ask for the `declare`.
+                // oxlint doesn't require the `declare`.
                 matches!(module.name(), ModuleName::Global)
                     && (outer.flags().contains(Flags::AMBIENT) || outer.file().language().is_oxlint)
             }
@@ -45,7 +45,7 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
         fixes.push(fixer.replace(first_token, "type"));
         fixes.push(fixer.replace(Span::before(head_end, body), " = "));
     }
-    // oxlint replaces all of the declaration, so that no other fix is made in it at the same time.
+    // oxlint replaces the whole declaration, so that no other fix is applied inside it in the same pass.
     if file.language().is_oxlint {
         fixes.push(fixer.replace(body, file.slice(body).to_vec()));
     }
@@ -61,8 +61,8 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
     fixes
 }
 
-/// oxlint points at the keyword, which is before the name.
-fn place<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
+/// oxlint points at the keyword, which comes right before the name.
+fn report_span<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
     if !cx.language().is_oxlint {
         return name.span();
     }
@@ -92,22 +92,23 @@ impl Rule for ConsistentTypeDefinitions {
             let StmtKind::Interface(interface) = statement.kind() else {
                 return;
             };
-            let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+            let report = cx.report(report_span(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
             let fix = |fixer: Fixer<'a>| (!is_declared_again(interface)).then(|| fix_interface(fixer, statement, interface));
             match is_within_declare_global(statement) {
                 false => report.fix_where_safe(|| is_only_declaration(interface), fix),
-                // For oxlint the fix is dangerous there.
+                // oxlint marks the fix as dangerous there.
                 true if cx.language().is_oxlint => report.fix_dangerously(fix),
                 true => report,
             };
-            // oxlint comes to it twice: as what is exported and as the interface. The second fix is in the first.
+            // oxlint visits it twice: as the exported declaration and as the interface. The second fix overlaps the
+            // first.
             if cx.language().is_oxlint && statement.is_default_export() {
-                cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+                cx.report(report_span(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
             }
         } else if let StmtKind::TypeAlias(alias) = statement.kind()
             && alias.ty().tag() == TypeTag::Object
         {
-            cx.report(place(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
+            cx.report(report_span(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
                 .fix(|fixer| fix_type_alias(fixer, statement, alias));
         }
     }

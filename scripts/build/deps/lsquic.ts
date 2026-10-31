@@ -13,6 +13,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
+import { lsxpackDefines } from "./lshpack.ts";
 
 const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
@@ -134,6 +135,24 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_prq_destroy() only frees the free list. A stateless reset whose
+    // send failed is on the returned list, so destroying the engine leaks it.
+    "patches/lsquic/prq-free-returned-conns.patch",
+    // lsquic_conn_goaway_stream_id: on_goaway_received() does not pass the id
+    // of the GOAWAY, and a second GOAWAY with a lower id was not stored.
+    "patches/lsquic/goaway-stream-id.patch",
+    // A server's GOAWAY named the last request it accepted, which tells the
+    // client that this request was rejected. Name the one after it.
+    "patches/lsquic/goaway-first-rejected-id.patch",
+    // An Initial packet that carries a token left one byte for the token's
+    // length, which takes two from 64 bytes on. A client that refilled its
+    // ClientHello after a Retry could then fail the connection while it
+    // resized a packet that was one byte too large.
+    "patches/lsquic/initial-token-length.patch",
+    // send_headers_ietf() encoded every header block into 64 KB on the stack
+    // and failed for a larger one. Such a block gets a heap buffer, sized from
+    // the header list.
+    "patches/lsquic/large-header-block.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],
@@ -161,6 +180,7 @@ export const lsquic: Dependency = {
         ...(needCompatQueue ? [lshpackSrc + "/compat/queue"] : []),
       ],
       defines: {
+        ...lsxpackDefines,
         HAVE_BORINGSSL: 1,
         ...(cfg.windows ? { WIN32: 1, WIN32_LEAN_AND_MEAN: 1 } : {}),
         XXH_HEADER_NAME: "xxhash.h",

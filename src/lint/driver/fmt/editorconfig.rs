@@ -1,33 +1,33 @@
-//! `.editorconfig`, as the two tools read it, which is not the same way.
+//! `.editorconfig`, parsed the way each of the two tools parses it. They differ.
 //!
 //! - Prettier 3.9: the package `editorconfig-without-wasm` 3.0.2, and Prettier's `editorConfigToPrettier`.
 //! - oxfmt 0.72: the crate `editorconfig-parser` 0.0.4, and oxfmt's `apply_editorconfig`.
 //!
-//! Neither knows a comment behind a section or behind a value.
+//! Neither supports a comment after a section header or a value.
 
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_glob::{Candidate, Pattern};
 
-/// What a property is set to.
 #[derive(Clone, PartialEq)]
 enum Value {
     Text(Vec<u8>),
-    /// For Prettier: what `JSON.parse` makes of it.
+    /// For Prettier: the result of `JSON.parse`.
     Number(f64),
     Bool(bool),
     /// For oxfmt: a `usize`.
     Whole(u64),
     /// For oxfmt: `unset`.
     Unset,
-    /// For oxfmt: nothing that the property can be. It takes the place of what the section had before.
-    Nothing,
+    /// For oxfmt: an invalid value for the property. It replaces the section's earlier value.
+    Invalid,
 }
 
-/// `[*.js]` and what follows it.
+/// `[*.js]` and the properties under it.
 struct Section {
     name: Vec<u8>,
-    /// For Prettier for an absolute path, for oxfmt for one from the directory of the file. `None`: it is for no file.
+    /// Matches an absolute path for Prettier, and a path relative to the file's directory for oxfmt. `None` means it
+    /// matches no file.
     glob: Option<Pattern>,
     properties: Vec<(Vec<u8>, Value)>,
 }
@@ -51,9 +51,9 @@ impl Section {
 
 /// An `.editorconfig`.
 pub(crate) struct File {
-    /// What the patterns are relative to.
+    /// The directory the patterns are relative to.
     directory: Vec<u8>,
-    /// `root = true`: the files above it do not count.
+    /// `root = true`: files in parent directories don't apply.
     pub(crate) is_root: bool,
     sections: Vec<Section>,
 }
@@ -64,9 +64,9 @@ const ANYTHING: &[u8] = b"{*,*/**/*}";
 /// The run of `*` at some offset in a pattern. It can be empty.
 struct Stars {
     end: usize,
-    /// A path segment starts with them.
+    /// True if they start a path segment.
     starts_name: bool,
-    /// A path segment ends with them.
+    /// True if they end a path segment.
     ends_name: bool,
 }
 
@@ -82,7 +82,7 @@ impl Stars {
     }
 }
 
-/// `buildFullGlob`: the name of a section in the `.editorconfig` of `directory`, as a pattern for an absolute path.
+/// `buildFullGlob`: turns a section name from `directory`'s `.editorconfig` into a pattern for an absolute path.
 fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
     let glob = match strings::index_of_char_usize(pattern, b'/') {
         None => [b"**/", pattern].concat(),
@@ -121,25 +121,26 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
     full
 }
 
-/// globset's `Glob::new(written)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The section
-/// then applies to no file.
-fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
-    let mut glob = Vec::with_capacity(written.len() + ANYTHING.len());
-    if written.starts_with(b"!") {
+/// globset's `Glob::new(section_name)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The
+/// section then applies to no file.
+fn globset_glob(section_name: &[u8]) -> Option<Pattern> {
+    let mut glob = Vec::with_capacity(section_name.len() + ANYTHING.len());
+    if section_name.starts_with(b"!") {
         glob.push(b'\\');
     }
     // The whole pattern is `**`, which matches everything.
-    if written == b"**/" {
+    if section_name == b"**/" {
         return Some(Pattern::new(b"**"));
     }
     let (mut at, mut depth) = (0, 0_usize);
-    while let Some(&byte) = written.get(at) {
+    while let Some(&byte) = section_name.get(at) {
         match byte {
             b'*' => {
-                let stars = Stars::at(written, at);
+                let stars = Stars::at(section_name, at);
                 let end = stars.end;
-                // Here only `/` or the start of the pattern begins a segment. An alternative can follow a name directly.
-                let is_after_literal = at > 0 && matches!(written[at - 1], b'{' | b',');
+                // Here only `/` or the start of the pattern begins a segment. An alternative can follow a name
+                // directly.
+                let is_after_literal = at > 0 && matches!(section_name[at - 1], b'{' | b',');
                 glob.extend_from_slice(
                     match (
                         stars.starts_name && !is_after_literal,
@@ -155,11 +156,12 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
             }
             b'?' => glob.extend_from_slice(b"{?,/}"),
             b'\\' => {
-                glob.extend_from_slice(written.get(at..at + 2)?);
+                glob.extend_from_slice(section_name.get(at..at + 2)?);
                 at += 1;
             }
             b'[' => {
-                at = bun_lint::glob::from_globset_class(written, at, false, &mut glob).ok()??;
+                at = bun_lint::glob::from_globset_class(section_name, at, false, &mut glob)
+                    .ok()??;
                 continue;
             }
             b'{' => {
@@ -181,7 +183,6 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
     Some(Pattern::new(&bun_glob::pattern::of_fast_glob(&glob)))
 }
 
-/// A number of JSON.
 fn json_number(text: &[u8]) -> Option<f64> {
     let digits = |text: &[u8]| text.iter().take_while(|it| it.is_ascii_digit()).count();
     let whole = text.strip_prefix(b"-").unwrap_or(text);
@@ -213,22 +214,22 @@ fn json_number(text: &[u8]) -> Option<f64> {
     }
 }
 
-/// Whether `text` is `"`, what has no `"` that is not escaped, and `"`.
-fn is_one_string(text: &[u8]) -> bool {
+/// True if `text` is a single quoted string: `"`, then text with no unescaped `"`, then `"`.
+fn is_quoted_string(text: &[u8]) -> bool {
     let [b'"', inner @ .., b'"'] = text else {
         return false;
     };
     let mut is_escaped = false;
     inner.iter().all(|&byte| {
-        let ends_it = byte == b'"' && !is_escaped;
+        let closes_string = byte == b'"' && !is_escaped;
         is_escaped = byte == b'\\' && !is_escaped;
-        !ends_it
+        !closes_string
     }) && !is_escaped
 }
 
 impl Value {
-    /// `normalizeProps`. `key`: in lower case.
-    fn for_prettier(key: &[u8], written: &[u8]) -> Value {
+    /// `normalizeProps`. `key` is lowercase.
+    fn for_prettier(key: &[u8], raw: &[u8]) -> Value {
         let is_known = matches!(
             key,
             b"charset"
@@ -238,24 +239,25 @@ impl Value {
                 | b"insert_final_newline"
                 | b"trim_trailing_whitespace"
         );
-        // `JSON.parse(value)`. An array or an object is nothing that a property is compared with, like its text.
-        match written {
+        // `JSON.parse(value)`. No property is ever compared with an array or an object, or with its source text, so
+        // keeping the text is fine.
+        match raw {
             b"true" => Value::Bool(true),
             b"false" => Value::Bool(false),
             // `String(value)`
-            b"null" => Value::Text(written.to_vec()),
+            b"null" => Value::Text(raw.to_vec()),
             _ => {
                 let string = || {
-                    let parsed = is_one_string(written).then(|| bun_lint::json::parse(written));
+                    let parsed = is_quoted_string(raw).then(|| bun_lint::json::parse(raw));
                     parsed??.into_string().map(Value::Text)
                 };
-                let as_written = || match is_known {
-                    true => Value::Text(written.to_ascii_lowercase()),
-                    false => Value::Text(written.to_vec()),
+                let fallback_text = || match is_known {
+                    true => Value::Text(raw.to_ascii_lowercase()),
+                    false => Value::Text(raw.to_vec()),
                 };
-                (json_number(written).map(Value::Number))
+                (json_number(raw).map(Value::Number))
                     .or_else(string)
-                    .unwrap_or_else(as_written)
+                    .unwrap_or_else(fallback_text)
             }
         }
     }
@@ -266,7 +268,7 @@ impl Value {
             Value::Text(text) => !text.is_empty(),
             Value::Number(number) => *number != 0.0,
             Value::Bool(value) => *value,
-            Value::Whole(_) | Value::Unset | Value::Nothing => false,
+            Value::Whole(_) | Value::Unset | Value::Invalid => false,
         }
     }
 
@@ -286,8 +288,8 @@ impl Value {
         matches!(self, Value::Text(text) if text == word)
     }
 
-    /// The `parse` of the property `key` in `editorconfig-parser`. `None`: it has no such property.
-    fn for_oxfmt(key: &[u8], written: &[u8]) -> Option<Value> {
+    /// `editorconfig-parser`'s `parse` for the property `key`. `None` if it has no such property.
+    fn for_oxfmt(key: &[u8], raw: &[u8]) -> Option<Value> {
         let words: &[&[u8]] = match key {
             b"indent_style" => &[b"tab", b"space"],
             b"end_of_line" => &[b"lf", b"cr", b"crlf"],
@@ -299,16 +301,14 @@ impl Value {
         };
         let takes_number = matches!(key, b"indent_size" | b"tab_width" | b"max_line_length");
         // `str::parse::<usize>`
-        let digits = written.strip_prefix(b"+").unwrap_or(written);
+        let digits = raw.strip_prefix(b"+").unwrap_or(raw);
         let is_number = takes_number && digits.iter().all(u8::is_ascii_digit);
         let number = || bun_core::fmt::parse_decimal::<u64>(digits).filter(|_| is_number);
-        Some(
-            match words.iter().find(|it| it.eq_ignore_ascii_case(written)) {
-                Some(word) => Value::Text(word.to_vec()),
-                None if written.eq_ignore_ascii_case(b"unset") => Value::Unset,
-                None => number().map_or(Value::Nothing, Value::Whole),
-            },
-        )
+        Some(match words.iter().find(|it| it.eq_ignore_ascii_case(raw)) {
+            Some(word) => Value::Text(word.to_vec()),
+            None if raw.eq_ignore_ascii_case(b"unset") => Value::Unset,
+            None => number().map_or(Value::Invalid, Value::Whole),
+        })
     }
 }
 
@@ -321,15 +321,16 @@ impl File {
         }
     }
 
-    /// `parse` of `ini-simple-parser`, and `processFileContents`. `None`: it throws, and nothing of the file counts.
+    /// `ini-simple-parser`'s `parse`, plus `processFileContents`. `None` if it throws, in which case the whole file is
+    /// ignored.
     fn parse(directory: &[u8], text: &[u8]) -> Option<File> {
         let mut file = File::empty(directory);
-        // The section that is open.
+        // The current section.
         let mut at = None;
         for line in strings::split_any(text, b"\r\n") {
             match strings::trim_js_whitespace(line) {
                 [] | [b'#' | b';', ..] => {}
-                // What a name has been seen with goes on.
+                // A repeated name continues the earlier section.
                 [b'[', name @ .., b']'] => {
                     let known = file.sections.iter().position(|it| it.name == name);
                     at = Some(known.unwrap_or_else(|| {
@@ -372,10 +373,9 @@ impl File {
                 continue;
             }
             if let [b'[', name @ .., b']'] = line {
-                file.sections
-                    .push(Section::new(name, glob_of_globset(name)));
+                file.sections.push(Section::new(name, globset_glob(name)));
             }
-            // What follows a section that is not closed is of the one before.
+            // Lines after an unclosed section header belong to the previous section.
             if let Some(section) = file.sections.last_mut()
                 && let Some(equals) = strings::index_of_char_usize(line, b'=')
             {
@@ -389,13 +389,13 @@ impl File {
         file
     }
 
-    /// The `.editorconfig` in `directory`, if there is one, for Prettier.
+    /// Reads the `.editorconfig` in `directory`, if any, the way Prettier does.
     pub(crate) fn read(directory: &[u8]) -> Option<File> {
         let text = fs::read(&paths::join(directory, b".editorconfig")).ok()?;
         Some(File::parse(directory, &text).unwrap_or_else(|| File::empty(directory)))
     }
 
-    /// The same for oxfmt.
+    /// Same, the way oxfmt does.
     pub(crate) fn read_as_oxfmt(directory: &[u8]) -> Option<File> {
         let text = fs::read(&paths::join(directory, b".editorconfig")).ok()?;
         Some(File::parse_as_oxfmt(directory, &text))
@@ -411,18 +411,17 @@ fn text_of(value: bool) -> Vec<u8> {
     }
 }
 
-/// The options of Prettier that `files` have for the file at `path`. `files`: from the farthest to
-/// the nearest.
+/// The Prettier options that `files` set for the file at `path`. `files` is ordered farthest first.
 pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]) -> Found {
-    // `combine`. `unset` is a value like any other: Prettier does not ask for anything else.
+    // `combine`. `unset` is a value like any other, since Prettier doesn't ask for special handling.
     let candidate = Candidate::new(path);
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
     for file in files.filter(|it| paths::inside(&it.directory, path).is_some()) {
-        let is_for_it = |it: &&Section| {
+        let matches_file = |it: &&Section| {
             let glob = it.glob.as_ref();
             glob.is_some_and(|it| it.matches_candidate(&candidate))
         };
-        for section in file.sections.iter().filter(is_for_it) {
+        for section in file.sections.iter().filter(matches_file) {
             for (key, value) in &section.properties {
                 properties.retain(|it| it.0 != &key[..]);
                 properties.push((key, value));
@@ -453,27 +452,27 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
         false => (is(indent_style, b"tab") || is(indent_size, b"tab")).then_some(true),
     };
     options.extend(use_tabs.map(|it| (&b"useTabs"[..], text_of(it))));
-    let shown = |number: u64| match u32::try_from(number) {
+    let to_setting = |number: u64| match u32::try_from(number) {
         Ok(number) => number.to_string().into_bytes(),
-        Err(_) => super::config::NO_END.to_vec(),
+        Err(_) => super::config::UNLIMITED_WIDTH.to_vec(),
     };
     let size = indent_size.filter(|_| use_tabs == Some(false));
     let width = (size.and_then(Value::positive_integer))
         .or_else(|| tab_width.and_then(Value::positive_integer));
-    options.extend(width.map(|it| (&b"tabWidth"[..], shown(it))));
+    options.extend(width.map(|it| (&b"tabWidth"[..], to_setting(it))));
     let max_line_length = get(b"max_line_length");
     let print_width = match is(max_line_length, b"off") {
         true => Some(u64::MAX),
         false => max_line_length.and_then(Value::positive_integer),
     };
-    options.extend(print_width.map(|it| (&b"printWidth"[..], shown(it))));
+    options.extend(print_width.map(|it| (&b"printWidth"[..], to_setting(it))));
     let quote_type = get(b"quote_type");
     let single_quote = match is(quote_type, b"single") {
         true => Some(true),
         false => is(quote_type, b"double").then_some(false),
     };
     options.extend(single_quote.map(|it| (&b"singleQuote"[..], text_of(it))));
-    // For a configuration file of oxfmt further down than where a run like Prettier has started.
+    // For an oxfmt configuration file in a subdirectory of a run that started out emulating Prettier.
     if let Some(Value::Bool(value)) = get(b"insert_final_newline") {
         options.push((b"insertFinalNewline", text_of(*value)));
     }
@@ -485,7 +484,8 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
     options
 }
 
-/// `apply_editorconfig`. `use_tabs`: `useTabs` of the configuration of oxfmt, which counts more than `indent_style`.
+/// `apply_editorconfig`. `use_tabs` is `useTabs` from oxfmt's configuration, which takes precedence over
+/// `indent_style`.
 fn apply_as_oxfmt<'v>(get: impl Fn(&[u8]) -> Option<&'v Value>, use_tabs: Option<bool>) -> Found {
     let whole = |key: &[u8]| match get(key) {
         Some(Value::Whole(number)) => Some(*number),
@@ -503,9 +503,9 @@ fn apply_as_oxfmt<'v>(get: impl Fn(&[u8]) -> Option<&'v Value>, use_tabs: Option
     if let Some(Value::Text(end)) = get(b"end_of_line") {
         options.push((b"endOfLine", end.clone()));
     }
-    let of_style = one_of(b"indent_style", [b"tab", b"space"]);
-    options.extend(of_style.map(|it| (&b"useTabs"[..], text_of(it))));
-    let size = whole(b"indent_size").filter(|_| use_tabs.or(of_style) == Some(false));
+    let style_uses_tabs = one_of(b"indent_style", [b"tab", b"space"]);
+    options.extend(style_uses_tabs.map(|it| (&b"useTabs"[..], text_of(it))));
+    let size = whole(b"indent_size").filter(|_| use_tabs.or(style_uses_tabs) == Some(false));
     let width = size.or_else(|| whole(b"tab_width")).map(|it| it as u8);
     options.extend(width.map(|it| (&b"tabWidth"[..], it.to_string().into_bytes())));
     let final_newline = one_of(b"insert_final_newline", [b"true", b"false"]);
@@ -515,18 +515,18 @@ fn apply_as_oxfmt<'v>(get: impl Fn(&[u8]) -> Option<&'v Value>, use_tabs: Option
     options
 }
 
-/// The options of oxfmt that `file` has for the file at `path`: `EditorConfig::resolve`.
+/// The oxfmt options that `file` sets for the file at `path`. It's `EditorConfig::resolve`.
 pub(crate) fn options_for_oxfmt(file: &File, path: &[u8], use_tabs: Option<bool>) -> Found {
     // `path.strip_prefix(cwd).unwrap_or(path)`
     let relative = paths::inside(&file.directory, path).unwrap_or(path);
-    let is_for_it = |it: &&Section| it.glob.as_ref().is_some_and(|it| it.matches(relative));
+    let matches_file = |it: &&Section| it.glob.as_ref().is_some_and(|it| it.matches(relative));
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
-    for section in file.sections.iter().filter(is_for_it) {
+    for section in file.sections.iter().filter(matches_file) {
         for (key, value) in &section.properties {
-            if *value != Value::Nothing {
+            if *value != Value::Invalid {
                 properties.retain(|it| it.0 != &key[..]);
             }
-            if !matches!(value, Value::Nothing | Value::Unset) {
+            if !matches!(value, Value::Invalid | Value::Unset) {
                 properties.push((key, value));
             }
         }
@@ -535,8 +535,8 @@ pub(crate) fn options_for_oxfmt(file: &File, path: &[u8], use_tabs: Option<bool>
     apply_as_oxfmt(get, use_tabs)
 }
 
-/// Those of `root_properties`: the first `[*]`, which oxfmt looks at before it looks at any file.
-pub(crate) fn options_of_root_for_oxfmt(file: &File, use_tabs: Option<bool>) -> Found {
+/// The options from `root_properties`: the first `[*]` section, which oxfmt reads before it looks at any file.
+pub(crate) fn root_options_for_oxfmt(file: &File, use_tabs: Option<bool>) -> Found {
     let root = file.sections.iter().find(|it| it.name == b"*");
     let get = |key: &[u8]| {
         let mut properties = root.into_iter().flat_map(|it| &it.properties);

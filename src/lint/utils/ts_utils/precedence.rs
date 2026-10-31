@@ -5,7 +5,7 @@ use crate::types::SyntaxKind;
 use crate::utils::ast_utils::is_member_expression;
 use std::borrow::Cow;
 
-/// typescript-eslint's `OperatorPrecedence`, which is TypeScript's. It is ordered: a greater one
+/// typescript-eslint's `OperatorPrecedence`, which is TypeScript's. It's ordered: a greater value
 /// binds tighter.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(i8)]
@@ -40,10 +40,10 @@ impl OperatorPrecedence {
     pub const COALESCE: OperatorPrecedence = OperatorPrecedence::Conditional;
 }
 
-/// typescript-eslint's `getOperatorPrecedenceForNode`. Parentheses around `e` do not count.
+/// typescript-eslint's `getOperatorPrecedenceForNode`. Parentheses around `e` don't count.
 ///
-/// As upstream: `==` has the precedence of an assignment and `=` is `Invalid`, and so are
-/// `satisfies`, `f<T>` and `import()`. The name of `a.b`, which is not an `Expr`, is `Primary`.
+/// As upstream, `==` has an assignment's precedence, and `=` is `Invalid`, as are `satisfies`,
+/// `f<T>` and `import()`. The name in `a.b`, which isn't an `Expr`, is `Primary`.
 pub fn get_operator_precedence_for_node(e: Expr<'_>) -> OperatorPrecedence {
     use OperatorPrecedence as P;
     match e.kind() {
@@ -103,8 +103,9 @@ pub fn get_operator_precedence_for_node(e: Expr<'_>) -> OperatorPrecedence {
     }
 }
 
-/// `esTreeNodeToTSNodeMap.get(node).kind`, from the syntax alone: `e.ts_node().kind()` needs a
-/// program. It is never `ParenthesizedExpression`: ESTree has no node for the parentheses.
+/// `esTreeNodeToTSNodeMap.get(node).kind`, from the syntax alone, because `e.ts_node().kind()`
+/// needs a program. It's never `ParenthesizedExpression`, because ESTree has no node for the
+/// parentheses.
 pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
     use SyntaxKind as K;
     match e.kind() {
@@ -128,7 +129,7 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
         ExprKind::TaggedTemplate(_) => K::TaggedTemplateExpression,
         ExprKind::Array(_) => K::ArrayLiteralExpression,
         ExprKind::Object(_) => K::ObjectLiteralExpression,
-        // The value of a method or an accessor of an object literal is the declaration itself.
+        // The value of an object literal's method or accessor is the declaration itself.
         ExprKind::Fn(func) => match func.kind() {
             FnKind::Arrow => K::ArrowFunction,
             FnKind::Getter => K::GetAccessor,
@@ -169,7 +170,7 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
     }
 }
 
-/// The `ts.SyntaxKind` of the token of a binary operator.
+/// The `ts.SyntaxKind` of a binary operator's token.
 pub fn binary_operator_token_kind(op: BinOp) -> SyntaxKind {
     use SyntaxKind as K;
     match op {
@@ -202,7 +203,7 @@ pub fn binary_operator_token_kind(op: BinOp) -> SyntaxKind {
     }
 }
 
-/// The `ts.SyntaxKind` of the token of an assignment operator. `None` is `=`.
+/// The `ts.SyntaxKind` of an assignment operator's token. `None` is `=`.
 pub fn assignment_operator_token_kind(op: Option<BinOp>) -> SyntaxKind {
     use SyntaxKind as K;
     match op {
@@ -235,15 +236,14 @@ pub fn ts_operator_kind(e: Expr<'_>) -> SyntaxKind {
     }
 }
 
-/// The expression that is `tsNode.parent`, if that is an expression other than a
-/// `ParenthesizedExpression`. What TypeScript has a node of another kind in between for has none:
-/// a substitution of a template (`TemplateSpan`), an expression in the braces of JSX
-/// (`JsxExpression`), the name of a tag, the default of `{ a = 1 }` in an assignment, the `a` of
-/// `typeof a.b` (`QualifiedName`).
+/// `tsNode.parent`, if it's an expression other than a `ParenthesizedExpression`. `None` where
+/// TypeScript has another kind of node in between: a template substitution (`TemplateSpan`), an
+/// expression in JSX braces (`JsxExpression`), a tag's name, the default of `{ a = 1 }` in an
+/// assignment, the `a` in `typeof a.b` (`QualifiedName`).
 fn ts_parent_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     let parent = match e.parent() {
         Node::Expr(parent) => parent,
-        // The value of a method is the `MethodDeclaration`, which is directly in the object.
+        // A method's value is the `MethodDeclaration`, which is directly in the object.
         Node::Prop(prop) if prop.func().is_some() && prop.value() == Some(e) => {
             return prop.parent().as_expr();
         }
@@ -262,8 +262,8 @@ fn ts_parent_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `esTreeNodeToTSNodeMap.get(node).parent.kind`: `ParenthesizedExpression` if `e` is in
-/// parentheses, `ArrowFunction` if it is the body of one, `Unknown` if the parent is not an
+/// `esTreeNodeToTSNodeMap.get(node).parent.kind`: `ParenthesizedExpression` if `e` is
+/// parenthesized, `ArrowFunction` if it's the body of one, `Unknown` if the parent isn't an
 /// expression.
 pub fn ts_parent_syntax_kind(e: Expr<'_>) -> SyntaxKind {
     if e.is_parenthesized() {
@@ -275,8 +275,8 @@ pub fn ts_parent_syntax_kind(e: Expr<'_>) -> SyntaxKind {
     }
 }
 
-/// typescript-eslint's `getOperatorPrecedence` of `tsNode.parent`, with the operator of a parent
-/// that is a `BinaryExpression` and with `hasArguments` of a parent that is a `NewExpression`.
+/// typescript-eslint's `getOperatorPrecedence` of `tsNode.parent`, with the operator if the parent
+/// is a `BinaryExpression` and with `hasArguments` if it's a `NewExpression`.
 pub fn get_operator_precedence_of_ts_parent(e: Expr<'_>) -> OperatorPrecedence {
     let parent = ts_parent_expression(e).filter(|_| !e.is_parenthesized());
     get_operator_precedence(
@@ -286,10 +286,10 @@ pub fn get_operator_precedence_of_ts_parent(e: Expr<'_>) -> OperatorPrecedence {
     )
 }
 
-/// typescript-eslint's `getOperatorPrecedence`. For the kinds of a node without a program, see
+/// typescript-eslint's `getOperatorPrecedence`. To get a node's kinds without a program, see
 /// [`ts_syntax_kind`], [`ts_operator_kind`] and [`ts_parent_syntax_kind`].
 ///
-/// `operator_kind` matters for a `BinaryExpression` only, which is `Invalid` with `Unknown`.
+/// `operator_kind` only matters for a `BinaryExpression`, which is `Invalid` with `Unknown`.
 pub fn get_operator_precedence(
     node_kind: SyntaxKind,
     operator_kind: SyntaxKind,
@@ -366,8 +366,8 @@ pub fn get_operator_precedence(
     }
 }
 
-/// typescript-eslint's `getBinaryOperatorPrecedence`, for the operator of an ESTree node. The comma
-/// is `Invalid`, as upstream.
+/// typescript-eslint's `getBinaryOperatorPrecedence`, for an ESTree node's operator. The comma is
+/// `Invalid`, as upstream.
 pub fn get_binary_operator_precedence(op: BinOp) -> OperatorPrecedence {
     get_binary_operator_precedence_of_kind(binary_operator_token_kind(op))
 }
@@ -404,7 +404,7 @@ pub fn get_binary_operator_precedence_of_kind(kind: SyntaxKind) -> OperatorPrece
     }
 }
 
-/// typescript-eslint's `getWrappedCode`: `text`, in parentheses unless `node_precedence` is greater
+/// typescript-eslint's `getWrappedCode`: `text`, parenthesized unless `node_precedence` is greater
 /// than `parent_precedence`.
 pub fn get_wrapped_code(
     text: &[u8],
@@ -426,8 +426,8 @@ pub(super) fn parenthesize(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// typescript-eslint's `isHigherPrecedenceThanAwait`. Upstream takes the `ts.Node` of an ESTree
-/// node, so parentheses around `e` do not count.
+/// typescript-eslint's `isHigherPrecedenceThanAwait`. Upstream takes an ESTree node's `ts.Node`, so
+/// parentheses around `e` don't count.
 pub fn is_higher_precedence_than_await(e: Expr<'_>) -> bool {
     get_operator_precedence(ts_syntax_kind(e), ts_operator_kind(e), false)
         > OperatorPrecedence::Unary

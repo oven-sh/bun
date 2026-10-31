@@ -1,21 +1,21 @@
-//! `lib/util/Components.js` of eslint-plugin-react from `getWrapperFunctions` on: what detects the
-//! components of a file. The list that it fills is [`ComponentList`].
+//! `lib/util/Components.js` of eslint-plugin-react, from `getWrapperFunctions` on. This is the code
+//! that detects a file's components. It fills a [`ComponentList`].
 //!
 //! Upstream merges its visitors with the rule's and fills the list while ESLint walks the tree.
-//! Here [`Components`] collects its own nodes and goes through them up to a moment that the rule
-//! names: [`Components::advance`] first in each listener that asks or tells it anything,
-//! [`Components::finish`] first in `finish`.
+//! Here [`Components`] collects its own nodes up front and processes them up to a point that the
+//! rule specifies. A rule calls [`Components::advance`] first in every listener that reads or
+//! updates the components, and [`Components::finish`] first in `finish`.
 //!
 //! | upstream | here |
 //! |---|---|
 //! | `Components.detect(rule)` | [`Components::new`] |
 //! | `mergeRules([detectionInstructions, ..])` | [`Components::with`], [`Instructions`] |
 //! | `utils.findReturnStatement` | `util_ast::find_return_statement` |
-//! | `utils.isReactHookCall`, `reactImportInstructions` | in `hook-use-state`, their one reader |
-//! | `components.add(node, 0)` of a `ThisExpression` | nothing: nobody asks for that `this` |
+//! | `utils.isReactHookCall`, `reactImportInstructions` | in `hook-use-state`, their only user |
+//! | `components.add(node, 0)` for a `ThisExpression` | nothing: that `this` is never looked up |
 //!
-//! A `Call`, a `Dot` or an `Index` that is the whole of an optional chain is taken for the
-//! `CallExpression` or the `MemberExpression`, not for the `ChainExpression` around it.
+//! A `Call`, `Dot` or `Index` that is a whole optional chain is treated as the `CallExpression` or
+//! `MemberExpression`, not as the `ChainExpression` around it.
 
 use crate::util_ast::get_property_name;
 use crate::util_component_util::{
@@ -41,23 +41,24 @@ use std::cell::{OnceCell, RefCell};
 
 // ───────────────────────────── the stages ─────────────────────────────
 
-/// Whether an [`Instructions`] has `X` alone or `X:exit` too.
+/// Which listeners an [`Instructions`] has for a node type `X`: only `X`, or `X:exit` as well.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Visit {
     Enter,
     EnterAndExit,
 }
 
-/// One of the visitors that upstream merges between its detection and the rule.
+/// One of the visitors that upstream merges in between its detection and the rule.
 pub(crate) trait Instructions<'a> {
-    /// Every node that it wants to be called with, in any order, as few as a cheap test allows.
+    /// Adds every node this visitor needs to be called with, in any order. It should filter out as
+    /// many as a cheap test allows.
     fn nodes(&self, file: &'a File<'a>, add: &mut dyn FnMut(Node<'a>, Visit));
     fn enter(&mut self, node: Node<'a>, components: &mut Components<'a>);
     fn exit(&mut self, _node: Node<'a>, _components: &mut Components<'a>) {}
     fn program_exit(&mut self, _components: &mut Components<'a>) {}
 }
 
-/// Which method of an [`Instructions`] is due.
+/// Which [`Instructions`] method to call.
 #[derive(Copy, Clone)]
 enum Moment<'a> {
     Enter(Node<'a>),
@@ -67,7 +68,7 @@ enum Moment<'a> {
 
 // ───────────────────────────── node.parent ─────────────────────────────
 
-/// `node.parent` of an expression, as far as upstream asks for its `type`.
+/// An expression's `node.parent`, limited to the `type`s that upstream checks for.
 #[derive(Copy, Clone)]
 enum Parent<'a> {
     VariableDeclarator(VarDecl<'a>),
@@ -84,16 +85,16 @@ enum Parent<'a> {
 }
 
 impl<'a> Parent<'a> {
-    /// The expression that `node` is written as.
-    fn written(node: Node<'a>) -> Option<Expr<'a>> {
-        node.as_written().as_expr()
+    /// The expression that `node` appears as in the source.
+    fn as_expression(node: Node<'a>) -> Option<Expr<'a>> {
+        node.owner_or_self().as_expr()
     }
 
     fn of(node: Node<'a>) -> Parent<'a> {
-        let Some(e) = Parent::written(node) else {
+        let Some(e) = Parent::as_expression(node) else {
             return Parent::Other;
         };
-        // A `ChainExpression`, a `JSXExpressionContainer`.
+        // The parent is a `ChainExpression` or a `JSXExpressionContainer`.
         if e.is_chain_root() || e.jsx_container_span().is_some() {
             return Parent::Other;
         }
@@ -126,8 +127,8 @@ impl<'a> Parent<'a> {
         }
     }
 
-    /// `parent.left.name` of an `AssignmentExpression`, `parent.key.name` of a `Property`. The
-    /// outer `None`: it is neither.
+    /// An `AssignmentExpression`'s `parent.left.name` or a `Property`'s `parent.key.name`. The
+    /// outer `None` means it's neither.
     fn name(self) -> Option<Option<&'a [u8]>> {
         match self {
             Parent::AssignmentExpression(assignment) => {
@@ -150,15 +151,14 @@ fn key_of(property: Node<'_>) -> Option<Key<'_>> {
 
 // ───────────────────────────── wrapper functions ─────────────────────────────
 
-/// An element of what `getWrapperFunctions` returns. `None`: `undefined`, or an `object` that is
-/// falsy.
+/// An element of `getWrapperFunctions`'s result. `None` is `undefined`, or a falsy `object`.
 #[derive(Copy, Clone)]
 struct WrapperFunction<'a> {
     object: Option<&'a [u8]>,
     property: Option<&'a [u8]>,
 }
 
-/// `getWrapperFunctions`. What can equal no name is left out.
+/// `getWrapperFunctions`. Entries that can't equal any name are skipped.
 fn get_wrapper_functions<'a>(file: &'a File<'a>, pragma: &'a [u8]) -> Vec<WrapperFunction<'a>> {
     let component_wrapper_functions = file.settings().get(b"componentWrapperFunctions");
     let component_wrapper_functions =
@@ -183,11 +183,11 @@ fn get_wrapper_functions<'a>(file: &'a File<'a>, pragma: &'a [u8]) -> Vec<Wrappe
             let object = object.map(|it| if it == b"<pragma>" { pragma } else { it });
             Some(WrapperFunction { object, property })
         });
-    let of_the_pragma = ["forwardRef", "memo"].map(|property| WrapperFunction {
+    let pragma_wrappers = ["forwardRef", "memo"].map(|property| WrapperFunction {
         object: Some(pragma),
         property: Some(property.as_bytes()),
     });
-    configured.chain(of_the_pragma).collect()
+    configured.chain(pragma_wrappers).collect()
 }
 
 /// `getComponentNameFromJSXElement`
@@ -213,7 +213,7 @@ fn get_name_of_wrapped_component<'a>(node: List<'a, Expr<'a>>) -> Option<Name<'a
     }
 }
 
-/// The name under which `getDetectedComponents` has `node`, which is [`normalize`]d.
+/// The name `getDetectedComponents` lists `node` under. `node` is already [`normalize`]d.
 fn name_of_detected_component(node: Node<'_>) -> Option<Name<'_>> {
     match node {
         Node::Class(class) if matches!(class.owner(), Node::Stmt(_)) => {
@@ -229,44 +229,45 @@ fn name_of_detected_component(node: Node<'_>) -> Option<Name<'_>> {
 
 // ───────────────────────────── the engine ─────────────────────────────
 
-/// What `isReturningJSX`, `isReturningJSXOrNull` and `isReturningOnlyNull` have said of a function:
-/// a bit for each question.
+/// Cached results of `isReturningJSX`, `isReturningJSXOrNull` and `isReturningOnlyNull` for a
+/// function, one bit per question.
 #[derive(Copy, Clone, Default)]
 struct Returning {
-    asked: u8,
+    computed: u8,
     answers: u8,
 }
 
-/// What a rule gets from `Components.detect`: `components` and `utils`.
+/// The two things `Components.detect` passes to a rule: `components` and `utils`.
 pub(crate) struct Components<'a> {
     file: &'a File<'a>,
     pragmas: OnceCell<Pragmas<'a>>,
     wrapper_functions: OnceCell<Vec<WrapperFunction<'a>>>,
     list: ComponentList<'a>,
-    /// What `getDetectedComponents` returns, by the name. Who is in it can have been banned since.
+    /// The result of `getDetectedComponents`, by name. An entry may have been banned since it was added.
     detected: FxHashMap<Name<'a>, SmallVec<[ComponentId; 1]>>,
     related: Related<'a>,
     returning: RefCell<IdMap<Func<'a>, Returning>>,
     queue: Queue<'a>,
-    /// `None` while it is called.
+    /// `None` while it's being called.
     stages: Vec<Option<Box<dyn Instructions<'a> + 'a>>>,
     is_started: bool,
     is_finished: bool,
     /// See [`Components::closest_candidate`].
     candidates: IdMap<Scope<'a>, Option<Scope<'a>>>,
-    /// [`Components::get_pragma_component_wrapper`] of a function, where the time does not matter:
-    /// many nodes in a function that many calls are around ask for it.
+    /// Cache of [`Components::get_pragma_component_wrapper`] for a function, where the result
+    /// doesn't depend on how far the walk is. Many nodes inside a function wrapped in many calls
+    /// look it up.
     wrappers: IdMap<Func<'a>, Option<Expr<'a>>>,
-    /// [`get_name_of_wrapped_component`], by the first argument: it looks through a whole body.
+    /// Cache of [`get_name_of_wrapped_component`], by first argument. It scans a whole function body.
     wrapped: IdMap<Expr<'a>, Option<Name<'a>>>,
-    /// [`may_have_explicit_components`]
+    /// Cached [`may_have_explicit_components`].
     may_have_explicit: OnceCell<bool>,
-    /// For [`is_explicit_component_function`].
+    /// Cache for [`is_explicit_component_function`].
     documented_at: AncestorMemo<'a, Option<u32>>,
 }
 
 impl<'a> Components<'a> {
-    /// `false` is certain: nothing but what is banned gets into the list of this file.
+    /// Returns false only if nothing but banned entries can get into this file's list.
     pub(crate) fn may_have_any(file: &'a File<'a>) -> bool {
         const NAMES: [&str; 8] = [
             "Component",
@@ -290,7 +291,7 @@ impl<'a> Components<'a> {
             || has_tag()
     }
 
-    /// It costs nothing before the first question.
+    /// Does no work until the first query.
     pub(crate) fn new(file: &'a File<'a>) -> Components<'a> {
         Components {
             file,
@@ -312,7 +313,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// `componentUtil.isES6Component(node, context)`, of a node of the list.
+    /// `componentUtil.isES6Component(node, context)`, for a node in the list.
     pub(crate) fn is_es6_component(&mut self, node: Node<'a>) -> bool {
         match node {
             Node::Class(class) => is_es6_component(class, self.pragmas()),
@@ -325,7 +326,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// With one more of the visitors between the detection and the rule, in upstream's order.
+    /// Adds one more visitor between the detection and the rule. Add them in upstream's order.
     pub(crate) fn with(mut self, stage: Box<dyn Instructions<'a> + 'a>) -> Components<'a> {
         self.stages.push(Some(stage));
         self
@@ -342,7 +343,7 @@ impl<'a> Components<'a> {
 
     // ───────────────────────────── the walk ─────────────────────────────
 
-    /// `node` is one for `detectionInstructions`.
+    /// Queues `node` for `detectionInstructions`.
     fn push(&mut self, node: Node<'a>) {
         self.queue.push(At::enter(node), 0, node);
     }
@@ -357,7 +358,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// Collects the nodes that upstream's visitors do something at.
+    /// Collects the nodes where upstream's visitors do something.
     fn start(&mut self) {
         if std::mem::replace(&mut self.is_started, true) {
             return;
@@ -365,7 +366,7 @@ impl<'a> Components<'a> {
         let file = self.file;
         let pragmas = *self.pragmas();
         let mentions = |name: &[u8]| std::str::from_utf8(name).is_ok_and(|it| file.mentions(it));
-        // With a stage, when `components.list()` is called shows: nothing is left out.
+        // With a stage, the timing of `components.list()` calls is observable, so no node can be skipped.
         let has_stages = !self.stages.is_empty();
 
         // CallExpression
@@ -405,7 +406,7 @@ impl<'a> Components<'a> {
             .filter(|it| ast_utils::is_function_with_body(*it))
         {
             let node = Node::Func(func);
-            // No function is a component that does not return JSX or `null`.
+            // A function that doesn't return JSX or `null` is never a component.
             if has_stages
                 || (func.is_async() && func.is_generator())
                 || (can_return_jsx_or_null && self.is_returning_jsx_or_null(node, Branches::Any))
@@ -441,8 +442,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// `detectionInstructions`, and the one thing that propTypes.js and defaultProps.js do to the
-    /// list.
+    /// `detectionInstructions`, plus the one thing propTypes.js and defaultProps.js do to the list.
     fn detect(&mut self, node: Node<'a>) {
         match node {
             Node::Expr(e) => match e.kind() {
@@ -456,7 +456,8 @@ impl<'a> Components<'a> {
                 ExprKind::Object(_) => {
                     self.add(node, 2);
                 }
-                // What it bans nobody asks for. On the way it can ask for the list.
+                // The `this` that upstream bans here is never looked up, so only the search runs.
+                // It can call `list()`, which has side effects.
                 ExprKind::This => {
                     self.get_parent_stateless_component(node);
                 }
@@ -487,13 +488,13 @@ impl<'a> Components<'a> {
             Moment::Exit(node) => instructions.exit(node, self),
             Moment::ProgramExit => instructions.program_exit(self),
         }
-        if let Some(place) = self.stages.get_mut(stage) {
-            *place = Some(instructions);
+        if let Some(stage_slot) = self.stages.get_mut(stage) {
+            *stage_slot = Some(instructions);
         }
     }
 
-    /// Does what upstream's visitors have done when the rule's listener is called at `to`. It
-    /// never goes back.
+    /// Runs everything upstream's visitors have done by the time the rule's listener is called at
+    /// `to`. It never moves backwards.
     pub(crate) fn advance(&mut self, to: At) {
         self.start();
         while let Some(event) = self.queue.pop_until(to) {
@@ -507,7 +508,7 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// The rest of the walk, and the `Program:exit` of the stages.
+    /// Runs the rest of the walk, then the stages' `Program:exit`.
     pub(crate) fn finish(&mut self) {
         self.advance(At::END);
         if std::mem::replace(&mut self.is_finished, true) {
@@ -567,20 +568,20 @@ impl<'a> Components<'a> {
         is_destructured_from_pragma_import(node, variable, self.pragmas().pragma)
     }
 
-    /// `ask(node)`. What it says of a function is remembered as the answer to `question`.
+    /// `ask(node)`. For a function, the result is cached as the answer to `question`.
     fn is_returning(&self, node: Node<'a>, question: u8, ask: &dyn Fn(Node<'a>) -> bool) -> bool {
         let Node::Func(func) = normalize(node) else {
             return ask(node);
         };
         let bit = 1 << question;
         let known = self.returning.borrow().get(func).copied();
-        if let Some(known) = known.filter(|it| it.asked & bit != 0) {
+        if let Some(known) = known.filter(|it| it.computed & bit != 0) {
             return known.answers & bit != 0;
         }
         let answer = ask(node);
         let mut returning = self.returning.borrow_mut();
         let known = returning.get_or_insert_with(func, Returning::default);
-        known.asked |= bit;
+        known.computed |= bit;
         known.answers |= u8::from(answer) << question;
         answer
     }
@@ -605,7 +606,7 @@ impl<'a> Components<'a> {
         self.is_returning(node, 4, &util_jsx::is_returning_only_null)
     }
 
-    /// `getPragmaComponentWrapper`: the outermost of the calls of wrapper functions around `node`.
+    /// `getPragmaComponentWrapper`. Returns the outermost wrapper function call around `node`.
     pub(crate) fn get_pragma_component_wrapper(&mut self, node: Node<'a>) -> Option<Expr<'a>> {
         let func = node.as_func();
         if let Some(&known) = func.and_then(|it| self.wrappers.get(it)) {
@@ -613,7 +614,7 @@ impl<'a> Components<'a> {
         }
         let mut current_node = node;
         let mut prev_node = None;
-        // What is said of `a.memo(..)` depends on the time.
+        // The answer for `a.memo(..)` depends on how far the walk is, so it isn't cached.
         let mut is_certain = true;
         while let Parent::CallExpression(call) = Parent::of(current_node) {
             let callee = call.callee().map(Expr::tag);
@@ -630,14 +631,14 @@ impl<'a> Components<'a> {
         prev_node
     }
 
-    /// `nodeWrapsComponent`: whether `memo` or `forwardRef` wraps a component that is detected by
-    /// now, or makes a new one.
+    /// `nodeWrapsComponent`. True if `memo` or `forwardRef` wraps a component that's already
+    /// detected, false if it creates a new one.
     fn node_wraps_component(&mut self, node: Call<'a>) -> bool {
         let child_component = node.args().first().and_then(|first| {
             let name = || get_name_of_wrapped_component(node.args());
             *self.wrapped.get_or_insert_with(first, name)
         });
-        // `getDetectedComponents` asks for the list, which moves the props that are used.
+        // `getDetectedComponents` calls `list()`, which copies used props to the enclosing components.
         if !self.stages.is_empty() {
             self.list.list();
         }
@@ -649,7 +650,7 @@ impl<'a> Components<'a> {
             })
     }
 
-    /// `isPragmaComponentWrapper`. It depends on the time.
+    /// `isPragmaComponentWrapper`. The result depends on how far the walk is.
     pub(crate) fn is_pragma_component_wrapper(&mut self, node: Node<'a>) -> bool {
         let Some(call) = node.as_expr().and_then(Expr::as_call) else {
             return false;
@@ -693,7 +694,7 @@ impl<'a> Components<'a> {
                 | Parent::ExportDefaultDeclaration
                 | Parent::ArrowFunctionExpression(_) => return true,
                 Parent::SequenceExpression(sequence)
-                    if Some(last_sequence_expression(sequence)) == Parent::written(node) =>
+                    if Some(last_sequence_expression(sequence)) == Parent::as_expression(node) =>
                 {
                     node = Node::Expr(sequence);
                 }
@@ -702,8 +703,8 @@ impl<'a> Components<'a> {
         }
     }
 
-    /// `getStatelessComponent`: `node` if it is a stateless component, or the call of `memo` or
-    /// `forwardRef` around it.
+    /// `getStatelessComponent`. Returns `node` if it's a stateless component, or the `memo` or
+    /// `forwardRef` call around it.
     pub(crate) fn get_stateless_component(&mut self, node: Node<'a>) -> Option<Node<'a>> {
         let node = normalize(node);
         let func = node
@@ -757,7 +758,7 @@ impl<'a> Components<'a> {
             return is_first_letter_capitalized(name).then_some(node);
         }
 
-        let function_around = match parent {
+        let enclosing_function = match parent {
             // case: any = () => () => null
             // case: { any: () => () => null }
             Parent::ArrowFunctionExpression(arrow) => Some(arrow),
@@ -767,12 +768,12 @@ impl<'a> Components<'a> {
                 if is_first_letter_capitalized(id) {
                     return Some(node);
                 }
-                // `node.parent.parent.parent` of what is directly in the block of a function.
+                // `node.parent.parent.parent`, if the `return` is directly in a function's block.
                 statement.parent().as_func()
             }
             _ => None,
         };
-        if let Some(name) = function_around.and_then(|it| Parent::of(Node::Func(it)).name())
+        if let Some(name) = enclosing_function.and_then(|it| Parent::of(Node::Func(it)).name())
             && self.is_returning_jsx_or_null(node, any)
         {
             return is_first_letter_capitalized(name).then_some(node);
@@ -833,9 +834,10 @@ impl<'a> Components<'a> {
         Some(node)
     }
 
-    /// Whether `node` is given to something with the name of a wrapper function: only then what
-    /// `get_stateless_component` says of it depends on the time, and the list is asked for.
-    fn is_given_to_wrapper(&self, node: Node<'a>) -> bool {
+    /// True if `node` is passed to a call whose callee has a wrapper function's name. Only then
+    /// does `get_stateless_component`'s result depend on how far the walk is, and only then does it
+    /// call `list()`.
+    fn is_passed_to_wrapper(&self, node: Node<'a>) -> bool {
         let Parent::CallExpression(call) = Parent::of(normalize(node)) else {
             return false;
         };
@@ -845,8 +847,9 @@ impl<'a> Components<'a> {
             .any(|it| it.property == name)
     }
 
-    /// The closest scope at or above `scope` whose function is a stateless component, or is given
-    /// to a wrapper. Many nodes under many functions go up these once.
+    /// The closest scope at or above `scope` whose function is a stateless component or is passed
+    /// to a wrapper. It's cached, so many nodes under many nested functions climb each scope only
+    /// once.
     fn closest_candidate(&mut self, scope: Scope<'a>) -> Option<Scope<'a>> {
         let mut passed: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
         let mut current = Some(scope);
@@ -859,7 +862,7 @@ impl<'a> Components<'a> {
             }
             passed.push(it);
             let node = it.node();
-            if self.is_given_to_wrapper(node) || self.get_stateless_component(node).is_some() {
+            if self.is_passed_to_wrapper(node) || self.get_stateless_component(node).is_some() {
                 break Some(it);
             }
             current = it.parent();
@@ -881,13 +884,13 @@ impl<'a> Components<'a> {
         None
     }
 
-    /// `getRelatedComponent`, for a `MemberExpression`. It adds what it finds to the list.
+    /// `getRelatedComponent`, for a `MemberExpression`. Adds what it finds to the list.
     pub(crate) fn get_related_component(&mut self, member: Expr<'a>) -> Option<ComponentId> {
         let component_node = self.related.component_node(member)?;
         Some(self.add(component_node, 1))
     }
 
-    /// `isParentComponentNotStatelessComponent`, where `parent` is that of `node`.
+    /// `isParentComponentNotStatelessComponent`. `parent` is `node`'s parent.
     fn is_parent_component_not_stateless_component(node: Func<'a>, parent: Parent<'a>) -> bool {
         let Parent::Property(property) = parent else {
             return false;
@@ -895,7 +898,7 @@ impl<'a> Components<'a> {
         // custom component functions must start with a capital letter
         let starts_with_no_capital = get_property_name(property).is_some_and(|name| {
             let (first, size) = strings::wtf8_codepoint_at(name, 0);
-            // `charAt(0)` of a character outside the BMP has no case.
+            // For a character outside the BMP, `charAt(0)` is a lone surrogate, which has no case.
             first > 0xFFFF || name.get(..size).is_some_and(text::is_lower_case)
         });
         // react render function cannot have params

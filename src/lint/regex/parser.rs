@@ -1,4 +1,4 @@
-//! `RegExpParser` of `@eslint-community/regexpp`: builds the [`Ast`] from what the validator finds.
+//! `@eslint-community/regexpp`'s `RegExpParser`: builds the [`Ast`] from the validator's callbacks.
 
 use super::ast::{Ast, Data, EscapeSet, Flags, ModifierFlags, NodeData, NodeId, Reference, Run};
 use super::validator::{self, Handler, Mode, Options, SyntaxError};
@@ -43,14 +43,14 @@ pub fn parse_flags(source: &[u8], options: Options) -> Result<Flags, SyntaxError
 
 /// regexpp's `RegExpParserState`.
 ///
-/// A node that is being parsed has the index in `pending` of its first child as the `start` of its
-/// list. The list moves to `Ast::lists` when the node ends.
+/// While a node is being parsed, the `start` of its list is the index in `pending` of its first
+/// child. The list moves to `Ast::lists` when the node ends.
 struct Builder<'s> {
     ast: Ast<'s>,
-    /// The node that is being parsed.
+    /// The node being parsed.
     node: NodeId,
     flags: NodeId,
-    /// The children so far of the nodes that are being parsed, outermost first.
+    /// The children so far of the nodes being parsed, outermost first.
     pending: Vec<NodeId>,
     backreferences: Vec<NodeId>,
     capturing_groups: Vec<NodeId>,
@@ -114,7 +114,7 @@ impl<'s> Builder<'s> {
         }
     }
 
-    /// An empty list for a node that starts.
+    /// An empty list for a node that's starting.
     fn open_list(&self) -> Run {
         Run {
             start: self.pending.len() as u32,
@@ -122,14 +122,14 @@ impl<'s> Builder<'s> {
         }
     }
 
-    /// A child of the current node that has no children itself.
+    /// Adds a child without children to the current node.
     fn leaf(&mut self, data: Data, start: u32, end: u32) -> NodeId {
         let id = self.push(data, self.node, start, end);
         self.pending.push(id);
         id
     }
 
-    /// A child of the current node, which becomes the current node. `data` is given the empty list.
+    /// Adds a child to the current node and makes it the current node. `data` is passed the empty list.
     fn open(&mut self, start: u32, data: impl FnOnce(Run) -> Data) {
         let id = self.push(Data::Any, self.node, start, start);
         self.pending.push(id);
@@ -175,7 +175,7 @@ impl<'s> Builder<'s> {
         self.ast.lists.extend(self.pending.drain(first as usize..));
     }
 
-    /// Removes the last child so far of the current node.
+    /// Removes the current node's most recent child.
     fn pop_child(&mut self) -> Option<NodeId> {
         let (Data::Alternative { elements: list } | Data::CharacterClass { elements: list, .. }) =
             self.data(self.node)?
@@ -224,21 +224,22 @@ impl<'s> Builder<'s> {
     }
 }
 
-/// The groups of one name.
+/// The groups that share one name.
 struct Named {
     name: Run,
-    /// Where they are in the list of all groups with a name.
+    /// Their position in the list of all named groups.
     first: usize,
     len: usize,
-    /// They, as the list that every backreference by this name resolves to.
+    /// The same groups as the list that every backreference by this name resolves to.
     groups: Option<Run>,
     /// The backreferences by this name.
     references: Vec<NodeId>,
 }
 
 impl Builder<'_> {
-    /// Gives each backreference its groups and each group its backreferences. Backreferences by one name share their list, and
-    /// so do the groups of one name that no number refers to: n groups and n backreferences of one name take room for 2 n.
+    /// Gives each backreference its groups and each group its backreferences. Backreferences by the
+    /// same name share one list, and so do groups of the same name that no numbered backreference
+    /// refers to, so n groups and n backreferences of one name take 2n entries.
     fn resolve_backreferences(&mut self) {
         let text = std::mem::take(&mut self.ast.text);
         let text_of =
@@ -269,7 +270,7 @@ impl Builder<'_> {
                 first += same.len();
             }
         }
-        // (group, reference), in the order of the references.
+        // (group, reference), in reference order.
         let mut by_number: Vec<(NodeId, NodeId)> = Vec::new();
         for i in 0..self.backreferences.len() {
             let reference = self.backreferences[i];
@@ -329,7 +330,7 @@ impl Builder<'_> {
                         .ok()
                 })
                 .map_or(&[][..], |at| &names[at].references);
-            // Nodes are numbered in the order of the source.
+            // Node ids are in source order.
             let mut all: Vec<NodeId> = same
                 .iter()
                 .map(|it| it.1)
@@ -349,7 +350,7 @@ impl Handler for Builder<'_> {
     }
 
     fn on_pattern_enter(&mut self, start: u32) {
-        // The flags of a literal come first and stay.
+        // A literal's flags come first and are kept.
         let keep = if self.flags == NodeId::NONE {
             0
         } else {

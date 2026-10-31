@@ -1,31 +1,26 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::{Expect, get_signature, throw};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_include_repeated(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        substring: JsLocal<'_>,
+        count: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         // toIncludeRepeated bypasses get_value (reads `captured_value_get_cached` directly,
         // no `.resolves`/`.rejects` handling), so cannot use the full `matcher_prelude`.
         let this = self.post_match_guard(global);
 
-        let this_value = frame.this();
-        let arguments = frame.arguments();
-
-        if arguments.len() < 2 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "toIncludeRepeated() requires 2 arguments"
-            )));
-        }
+        let this_value = this_value.to_js();
 
         this.increment_expect_call_counter();
 
-        let substring = arguments[0];
-        substring.ensure_still_alive();
+        let substring = substring.to_js();
 
         if !substring.is_string() {
             return Err(global.throw(format_args!(
@@ -33,8 +28,7 @@ impl Expect {
             )));
         }
 
-        let count = arguments[1];
-        count.ensure_still_alive();
+        let count = count.to_js();
 
         if !count.is_any_int() {
             return Err(global.throw(format_args!(

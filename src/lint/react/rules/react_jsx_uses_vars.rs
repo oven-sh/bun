@@ -32,9 +32,9 @@ impl Rule for JsxUsesVars {
         }
         let name = match tag.kind() {
             ExprKind::Ident(name) if is_member || !is_tag_name(name) => name,
-            // A parameter of TypeScript.
+            // TypeScript's `this` parameter.
             ExprKind::This if is_member => e.file().name_of("this"),
-            // `<a:b>` and `<a-b>` are no names of variables.
+            // `<a:b>` and `<a-b>` aren't variable names.
             _ => return,
         };
         mark_variable_as_used(name, Node::Expr(e));

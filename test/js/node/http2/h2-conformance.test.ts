@@ -8,11 +8,12 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
-import { once } from "node:events";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import tls from "node:tls";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -62,16 +63,18 @@ class RawH2 {
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  constructor(port: number, secure = false) {
+    this.socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", ca: tlsCert.cert, ALPNProtocols: ["h2"] })
+      : net.connect(port, "127.0.0.1");
     this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
   }
 
-  static async connect(port: number): Promise<RawH2> {
-    const c = new RawH2(port);
-    await once(c.socket, "connect");
+  static async connect(port: number, secure = false): Promise<RawH2> {
+    const c = new RawH2(port, secure);
+    await once(c.socket, secure ? "secureConnect" : "connect");
     return c;
   }
 
@@ -2064,8 +2067,8 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     });
   });
 
-  // A server-sent reset is charged only when it cancels a request the handler was given. Each
-  // late DATA frame below is answered with RST_STREAM(STREAM_CLOSED), which cancels nothing.
+  // A server-sent reset is charged only when it cancels a request the handler was given. The
+  // late DATA frames below are dropped.
   const lateData = Buffer.concat(
     Array.from({ length: 1200 }, () => encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"))),
   );
@@ -2164,5 +2167,624 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
+  });
+});
+
+describe("DATA past the declared content-length (RFC 9113 §8.1.1)", () => {
+  type Probe = {
+    c: RawH2;
+    /** What 'data' delivered, by stream id. */
+    bodies: Map<number, string>;
+    /** The streams that emitted 'close'. */
+    closed: Set<number>;
+    /** Resolves once `condition` holds for `bodies` and `closed`. */
+    until(condition: () => boolean): Promise<void>;
+  };
+
+  async function withBodyServer(
+    { secure = false, compat = false }: { secure?: boolean; compat?: boolean },
+    run: (probe: Probe) => Promise<void>,
+  ) {
+    const bodies = new Map<number, string>();
+    const closed = new Set<number>();
+    const changes = new EventEmitter();
+    function track(id: number, body: Readable, respond: () => void) {
+      bodies.set(id, "");
+      body.on("error", () => {});
+      body.on("data", (chunk: Buffer) => {
+        bodies.set(id, bodies.get(id) + chunk.toString("latin1"));
+        changes.emit("change");
+      });
+      body.on("end", () => {
+        if (!body.destroyed) respond();
+      });
+      body.on("close", () => {
+        closed.add(id);
+        changes.emit("change");
+      });
+    }
+    const srv = secure ? http2.createSecureServer(tlsCert) : http2.createServer();
+    if (compat) {
+      srv.on("request", (req, res) => track(req.stream.id!, req, () => res.end("ok")));
+    } else {
+      srv.on("stream", stream =>
+        track(stream.id!, stream, () => {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        }),
+      );
+    }
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port, secure);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await run({
+        c,
+        bodies,
+        closed,
+        async until(condition) {
+          while (!condition()) await once(changes, "change");
+        },
+      });
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function openRequest(c: RawH2, streamId: number, contentLength: number) {
+    const field = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral(String(contentLength))]);
+    c.sendFrame(FrameType.HEADERS, 0x4, streamId, requestHeaderBlock("POST", field));
+  }
+
+  async function expectReset(c: RawH2, streamId: number) {
+    const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === streamId);
+    expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+  }
+
+  // Each entry sends a request on stream 1 that declares 5 bytes. `delivered` is what 'data' may see.
+  const framings: Record<string, { delivered: string; send(probe: Probe): void | Promise<void> }> = {
+    "in one frame that ends the stream": {
+      delivered: "",
+      send: ({ c }) => c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello, world")),
+    },
+    "in one frame that leaves the stream open": {
+      delivered: "",
+      send: ({ c }) => c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hello, world")),
+    },
+    "in a second frame": {
+      delivered: "hello",
+      send: ({ c }) =>
+        c.send(
+          Buffer.concat([
+            encodeFrame(FrameType.DATA, 0, 1, Buffer.from("hello")),
+            encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from(", world")),
+          ]),
+        ),
+    },
+    "in a frame that follows a body already read": {
+      delivered: "hello",
+      send: async ({ c, bodies, until }) => {
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hello"));
+        await until(() => bodies.get(1) === "hello");
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from(", world"));
+      },
+    },
+    "in a frame that arrives in pieces": {
+      delivered: "",
+      send: async ({ c }) => {
+        const frame = encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello, world"));
+        c.send(frame.subarray(0, 12));
+        await expectReset(c, 1);
+        c.send(frame.subarray(12));
+      },
+    },
+    "in a padded frame": {
+      delivered: "",
+      send: ({ c }) =>
+        c.sendFrame(FrameType.DATA, 0x9, 1, Buffer.concat([Buffer.from([3]), Buffer.from("hello!"), Buffer.alloc(3)])),
+    },
+  };
+
+  describe.each(["h2c", "tls"])("%s", transport => {
+    test.each(Object.keys(framings))("is not delivered %s", async name => {
+      await withBodyServer({ secure: transport === "tls" }, async probe => {
+        const { c, bodies, closed, until } = probe;
+        openRequest(c, 1, 5);
+        await framings[name].send(probe);
+        await expectReset(c, 1);
+        // The session goes on, and padding does not count toward the next request's length.
+        openRequest(c, 3, 5);
+        c.sendFrame(FrameType.DATA, 0x9, 3, Buffer.concat([Buffer.from([4]), Buffer.from("again"), Buffer.alloc(4)]));
+        await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+        await until(() => closed.has(1));
+        expect(Object.fromEntries(bodies)).toEqual({ 1: framings[name].delivered, 3: "again" });
+        expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      });
+    });
+  });
+
+  test("is not delivered to a request of the compatibility API", async () => {
+    await withBodyServer({ compat: true }, async ({ c, bodies, closed, until }) => {
+      openRequest(c, 1, 5);
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hel"));
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("lo, world"));
+      await expectReset(c, 1);
+      await until(() => closed.has(1));
+      expect(bodies.get(1)).toBe("hel");
+    });
+  });
+
+  test("goes back to the connection window", async () => {
+    await withBodyServer({}, async ({ c, bodies, closed, until }) => {
+      for (const streamId of [1, 3, 5]) {
+        openRequest(c, streamId, 5);
+        c.sendFrame(FrameType.DATA, 0x1, streamId, Buffer.alloc(16000, "x"));
+        await expectReset(c, streamId);
+      }
+      const returned = () =>
+        c.frames
+          .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+          .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+      await c.waitFor(() => returned() >= 48000);
+      expect(returned()).toBe(48000);
+      openRequest(c, 7, 64000);
+      for (let i = 0; i < 4; i++) c.sendFrame(FrameType.DATA, i === 3 ? 0x1 : 0, 7, Buffer.alloc(16000, "y"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 7);
+      await until(() => closed.has(1) && closed.has(3) && closed.has(5));
+      expect([1, 3, 5, 7].map(streamId => bodies.get(streamId)!.length)).toEqual([0, 0, 0, 64000]);
+    });
+  });
+});
+
+describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
+  type Fields = readonly (readonly [string, string])[];
+
+  // Literal never indexed with a new name, so that the bytes on the wire are the bytes written here.
+  function fieldBlock(fields: Fields): Buffer {
+    return Buffer.concat(fields.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
+  }
+
+  // Without the symbol key that lists the never-indexed fields.
+  const named = (headers: http2.IncomingHttpHeaders) => Object.fromEntries(Object.entries(headers));
+
+  /** Sends one request to a fresh server. `headers` and `trailers` are what the stream's events got, if they fired. */
+  async function sendRequest(fields: Fields, options: http2.ServerOptions = {}, trailerFields?: Fields) {
+    let headers: http2.IncomingHttpHeaders | undefined;
+    let trailers: http2.IncomingHttpHeaders | undefined;
+    const srv = http2.createServer(options);
+    srv.on("stream", (stream, received) => {
+      headers = named(received);
+      stream.on("error", () => {});
+      stream.on("trailers", received => (trailers = named(received)));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      stream.resume();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, trailerFields ? 0x4 : 0x5, 1, fieldBlock(fields));
+      if (trailerFields) c.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(trailerFields));
+      const answer = await c.waitFor(
+        f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.HEADERS),
+      );
+      const reset = answer.type === FrameType.RST_STREAM ? answer.payload.readUInt32BE(0) : undefined;
+      return { headers, trailers, reset };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  const refused = { headers: undefined, reset: ErrorCode.PROTOCOL_ERROR };
+  const request = { ":method": "GET", ":scheme": "http", ":path": "/", ":authority": "localhost" };
+
+  test.each([":method", ":scheme", ":path", ":authority", "host"])(
+    "a request whose %s has whitespace at an edge is a stream PROTOCOL_ERROR",
+    async name => {
+      const { ":authority": authority, ...rest } = request;
+      const valid: Record<string, string> = name === "host" ? { ...rest, host: authority } : request;
+      for (const strictFieldWhitespaceValidation of [true, false]) {
+        for (const value of [` ${valid[name]}`, `${valid[name]} `, `\t${valid[name]}`, `${valid[name]}\t`]) {
+          const fields = Object.entries({ ...valid, [name]: value });
+          expect(await sendRequest(fields, { strictFieldWhitespaceValidation })).toEqual(refused);
+        }
+      }
+    },
+  );
+
+  test("a :protocol with whitespace at an edge is valid without strictFieldWhitespaceValidation", async () => {
+    const settings = { enableConnectProtocol: true };
+    const connect = { ...request, ":method": "CONNECT" };
+    for (const value of [" websocket", "websocket ", "\twebsocket", "websocket\t"]) {
+      const fields = Object.entries({ ...connect, ":protocol": value });
+      expect([value, await sendRequest(fields, { settings })]).toEqual([value, refused]);
+      const loose = await sendRequest(fields, { settings, strictFieldWhitespaceValidation: false });
+      expect(loose.headers?.[":protocol"]).toBe(value);
+    }
+    const blank = Object.entries({ ...connect, ":protocol": " \t" });
+    expect(await sendRequest(blank, { settings, strictFieldWhitespaceValidation: false })).toEqual(refused);
+  });
+
+  test.each([
+    [":method", ["GE T", "G\tT", "G@T", "G(T", "G:T", "G\x01T", "G\x7fT", "G\xe9T"], ["get", "A-B", "!#$%&'*+.^_`|~"]],
+    [
+      ":path",
+      ["x", "../x", "?x", "http://localhost/", "*", "/a b", "/a\tb", "/a\x01b", "/a\x7fb"],
+      ["//x", "/\xe9", '/#\\"<>^`{|}'],
+    ],
+    [":scheme", ["ht tp", "1http", "+http", "http:", "http/", "htt\x01p", "htt\xe9p"], ["HTTPS", "ftp", "a+b-c.1"]],
+    [
+      ":authority",
+      ["a b", "a@b", "a/b", "a\\b", "a?b", "a#b", 'a"b', "a<b", "a^b", "a`b", "a{b", "a\x01b", "a\x7fb", "a\xe9b"],
+      ["[::1]:80", "a_b-c.d:1", "!$%&'()*+,;=~"],
+    ],
+  ])("a request with an invalid %s is a stream PROTOCOL_ERROR", async (name, invalid, valid) => {
+    for (const value of invalid) {
+      expect([value, await sendRequest(Object.entries({ ...request, [name]: value }))]).toEqual([value, refused]);
+    }
+    for (const value of valid) {
+      expect((await sendRequest(Object.entries({ ...request, [name]: value }))).headers?.[name]).toBe(value);
+    }
+  });
+
+  test("a :path without a leading slash is valid as OPTIONS * and outside http and https", async () => {
+    expect(await sendRequest(Object.entries({ ...request, ":method": "options", ":path": "*" }))).toEqual(refused);
+    expect(await sendRequest(Object.entries({ ...request, ":method": "OPTIONS", ":path": "x" }))).toEqual(refused);
+    for (const fields of [
+      { ...request, ":method": "OPTIONS", ":path": "*" },
+      { ...request, ":scheme": "ftp", ":path": "x" },
+    ]) {
+      expect((await sendRequest(Object.entries(fields))).headers).toEqual({ ...fields });
+    }
+  });
+
+  test("an invalid host in a request is ignored", async () => {
+    const { ":authority": authority, ...rest } = request;
+    for (const host of ["a b", "a/b", "a@b", "a\x7fb"]) {
+      expect([host, await sendRequest(Object.entries({ ...rest, host }))]).toEqual([host, refused]);
+      expect((await sendRequest(Object.entries({ ...request, host }))).headers).toEqual({ ...request });
+    }
+    expect((await sendRequest(Object.entries({ ...rest, host: authority }))).headers?.host).toBe(authority);
+  });
+
+  /** Answers one request of a fresh client with `frames`. Resolves once the client has answered `until`. */
+  async function answerRequest(
+    frames: (raw: RawH2Server) => void,
+    until: (f: Frame) => boolean,
+    options: http2.ClientSessionOptions = {},
+  ) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
+    const events: [string, http2.IncomingHttpHeaders][] = [];
+    try {
+      client.on("error", () => {});
+      client.on("stream", (pushed, headers) => {
+        events.push(["stream", named(headers)]);
+        pushed.on("error", () => {});
+        pushed.on("push", headers => events.push(["push", named(headers)]));
+        pushed.resume();
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      for (const name of ["headers", "response", "trailers"]) {
+        req.on(name, (headers: http2.IncomingHttpHeaders) => events.push([name, named(headers)]));
+      }
+      req.resume();
+      const closed = new Promise(resolve => req.on("close", resolve));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      frames(raw);
+      await closed;
+      const answer = await raw.waitFor(until);
+      return { events, answer };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  const promise = (fields: Fields) => Buffer.concat([Buffer.from([0, 0, 0, 2]), fieldBlock(fields)]);
+
+  test("a promised request with an invalid pseudo-header is refused", async () => {
+    for (const [name, value] of [
+      [":path", "x"],
+      [":path", "/a b"],
+      [":method", "GE T"],
+      [":scheme", "ht:tp"],
+      [":authority", "a b"],
+    ]) {
+      const { events, answer } = await answerRequest(
+        raw => {
+          raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise(Object.entries({ ...request, [name]: value })));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", "200"]]));
+        },
+        f => f.type === FrameType.RST_STREAM && f.streamId === 2,
+      );
+      expect([value, answer.payload.readUInt32BE(0)]).toEqual([value, ErrorCode.PROTOCOL_ERROR]);
+      expect(events.map(([event]) => event)).toEqual(["response"]);
+    }
+  });
+
+  // Every control byte but HTAB, and NUL, LF and CR, which make the whole block malformed.
+  const controlBytes = Array.from({ length: 0x20 }, (_, code) => code)
+    .filter(code => ![0x00, 0x09, 0x0a, 0x0d].includes(code))
+    .concat(0x7f)
+    .map(code => String.fromCharCode(code));
+  const withControlBytes: Fields = controlBytes.flatMap((c, i) => [
+    [`x-first-${i}`, `${c}b`],
+    [`x-inside-${i}`, `a${c}b`],
+    [`x-last-${i}`, `a${c}`],
+  ]);
+  const kept = { "x-tab": "a\tb", "x-high": "\x80a\xff" };
+  const mixed: Fields = [
+    ["cookie", "a=\x01"],
+    ...withControlBytes.slice(0, 45),
+    ...Object.entries(kept),
+    ...withControlBytes.slice(45),
+  ];
+
+  test("a field whose value has a control byte is left out of a request and its trailers", async () => {
+    const post = { ...request, ":method": "POST" };
+    expect(await sendRequest([...Object.entries(post), ...mixed], {}, mixed)).toEqual({
+      headers: { ...post, ...kept },
+      trailers: kept,
+      reset: undefined,
+    });
+  });
+
+  test("a field whose value has a control byte is left out of a response, its trailers and a push", async () => {
+    const status = { ":status": 200 };
+    const { events } = await answerRequest(
+      raw => {
+        raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise([...Object.entries(request), ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, fieldBlock([[":status", "103"], ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, fieldBlock([[":status", "200"], ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 2, fieldBlock([[":status", "200"], ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(mixed));
+      },
+      f => f.type === FrameType.SETTINGS && (f.flags & 1) !== 0,
+    );
+    expect(events).toEqual([
+      ["stream", { ...request, ...kept }],
+      ["headers", { ":status": 103, ...kept }],
+      ["response", { ...status, ...kept }],
+      ["push", { ...status, ...kept }],
+      ["trailers", kept],
+    ]);
+  });
+
+  test("a :status with a control byte is a stream PROTOCOL_ERROR", async () => {
+    const { events, answer } = await answerRequest(
+      raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", "20\x01"]])),
+      f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+    );
+    expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(events).toEqual([]);
+  });
+
+  test("a response with a request pseudo-header is a stream PROTOCOL_ERROR", async () => {
+    for (const field of [...Object.entries(request), [":protocol", "websocket"]] as Fields) {
+      for (const fields of [[[":status", "200"], field], [field, [":status", "200"]], [field]] as Fields[]) {
+        const { events, answer } = await answerRequest(
+          raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(fields)),
+          f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+        );
+        expect([fields, answer.payload.readUInt32BE(0), events]).toEqual([fields, ErrorCode.PROTOCOL_ERROR, []]);
+      }
+    }
+  });
+
+  test("a pushed response with a request pseudo-header and a promised request with :status are refused", async () => {
+    const response = fieldBlock([[":status", "200"]]);
+    for (const [promised, pushed, expected] of [
+      [
+        Object.entries(request),
+        [
+          [":status", "200"],
+          [":path", "/"],
+        ],
+        ["stream", "response"],
+      ],
+      [Object.entries({ ...request, ":status": "200" }), [[":status", "200"]], ["response"]],
+    ] as [Fields, Fields, string[]][]) {
+      const { events, answer } = await answerRequest(
+        raw => {
+          raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise(promised));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 2, fieldBlock(pushed));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 1, response);
+        },
+        f => f.type === FrameType.RST_STREAM && f.streamId === 2,
+      );
+      expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(events.map(([event]) => event)).toEqual(expected);
+    }
+  });
+
+  test("an empty or a second host in a request is a stream PROTOCOL_ERROR", async () => {
+    const { ":authority": authority, ...rest } = request;
+    for (const base of [Object.entries(rest), Object.entries(request)]) {
+      for (const hosts of [[""], ["a", "a"], ["a", "b"], ["a", ""]]) {
+        const fields: Fields = [...base, ...hosts.map(host => ["host", host] as const)];
+        expect([hosts, await sendRequest(fields)]).toEqual([hosts, refused]);
+      }
+      // An invalid host is ignored, so it is not the first of two.
+      expect((await sendRequest([...base, ["host", "a b"], ["host", "a"], ["host", "a/b"]])).headers?.host).toBe("a");
+    }
+    const post = Object.entries({ ...request, ":method": "POST" });
+    for (const [extra, trailers] of [
+      [[["host", "a"]], [["host", "a"]]],
+      [[["host", "a"]], [["host", "b"]]],
+      [[], [["host", ""]]],
+      [
+        [],
+        [
+          ["host", "a"],
+          ["host", "a"],
+        ],
+      ],
+    ] as [Fields, Fields][]) {
+      const result = await sendRequest([...post, ...extra], {}, trailers);
+      expect([trailers, result.trailers, result.reset]).toEqual([trailers, undefined, ErrorCode.PROTOCOL_ERROR]);
+    }
+    expect((await sendRequest([...post, ["host", "a b"]], {}, [["host", "a"]])).trailers).toEqual({ host: "a" });
+  });
+
+  test("a :status with whitespace at an edge is a stream PROTOCOL_ERROR", async () => {
+    for (const strictFieldWhitespaceValidation of [true, false]) {
+      for (const value of [" 200", "200 ", "\t200", "200\t"]) {
+        const { events, answer } = await answerRequest(
+          raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", value]])),
+          f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+          { strictFieldWhitespaceValidation },
+        );
+        expect([value, answer.payload.readUInt32BE(0), events]).toEqual([value, ErrorCode.PROTOCOL_ERROR, []]);
+      }
+    }
+  });
+
+  test("a :status that is not a status code of HTTP/2 is a stream PROTOCOL_ERROR", async () => {
+    const status = (value: string) => fieldBlock([[":status", value]]);
+    for (const value of [
+      "2x0",
+      "2000",
+      "20",
+      "+20",
+      "-20",
+      "1e2",
+      "2.0",
+      "0200",
+      "0xc8",
+      "200 OK",
+      "099",
+      "000",
+      "101",
+    ]) {
+      const { events, answer } = await answerRequest(
+        raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, status(value)),
+        f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+      );
+      expect([value, answer.payload.readUInt32BE(0), events]).toEqual([value, ErrorCode.PROTOCOL_ERROR, []]);
+    }
+    const { events } = await answerRequest(
+      raw => {
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, status("100"));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, status("199"));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 1, status("999"));
+      },
+      f => f.type === FrameType.SETTINGS && (f.flags & 1) !== 0,
+    );
+    expect(events).toEqual([
+      ["headers", { ":status": 100 }],
+      ["headers", { ":status": 199 }],
+      ["response", { ":status": 999 }],
+    ]);
+  });
+});
+
+describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
+  const resets = (frames: Frame[]) =>
+    frames.filter(f => f.type === FrameType.RST_STREAM).map(f => [f.streamId, f.payload.readUInt32BE(0)]);
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+  const credit = (frames: Frame[]) =>
+    frames
+      .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+      .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+  const small = encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"));
+  const large = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16_384));
+
+  // Each entry closes stream 1 of a server and resolves to the resets that this takes.
+  const closings: Record<string, (c: RawH2) => Promise<number[][]>> = {
+    "the server reset": async c => {
+      // The DATA behind the one that draws the reset arrives in the same read.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5)),
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.from("hello!")),
+          small,
+          small,
+        ]),
+      );
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      return [[1, ErrorCode.PROTOCOL_ERROR]];
+    },
+    "the server answered": async c => {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      return [];
+    },
+  };
+
+  test.each(Object.keys(closings))("that %s is dropped and goes back to the connection window", async name => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.resume();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const expected = await closings[name](c);
+      // More than the whole window, so it only fits if what is dropped comes back. The window is
+      // credited once half of it is used, so less than that can be outstanding after any read.
+      let sent = expected.length ? 8 : 0;
+      for (const frames of [
+        [small, large, large],
+        [large, large],
+        [large, large],
+      ]) {
+        c.send(Buffer.concat(frames));
+        sent += frames.reduce((sum, frame) => sum + frame.length - 9, 0);
+        await c.waitFor(() => credit(c.frames) > sent - 32_767);
+      }
+      // A stream that nobody opened is not a closed one.
+      c.sendFrame(FrameType.DATA, 0, 99, Buffer.from("x"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 101, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 101);
+      expect(resets(c.frames)).toEqual([...expected, [99, ErrorCode.STREAM_CLOSED]]);
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("that the client canceled is dropped", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("response", () => req.close(http2.constants.NGHTTP2_CANCEL));
+      const closed = new Promise(resolve => req.on("close", resolve));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88]));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      await closed;
+      raw.socket!.write(Buffer.concat([...Array(50).fill(small), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+      await raw.waitFor(isPingAck);
+      expect(resets(raw.frames).filter(([, code]) => code !== ErrorCode.CANCEL)).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
   });
 });

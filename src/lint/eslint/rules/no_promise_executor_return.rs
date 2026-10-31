@@ -6,12 +6,12 @@ pub struct NoPromiseExecutorReturn {
     allow_void: bool,
 }
 
-const RETURNS_VALUE: Message = Message::new(
+const RETURNS_VALUE: &Message = &Message::new(
     "returnsValue",
     "Return values from promise executor functions cannot be read.",
 );
-const PREPEND_VOID: Message = Message::new("prependVoid", "Prepend `void` to the expression.");
-const WRAP_BRACES: Message = Message::new("wrapBraces", "Wrap the expression in `{}`.");
+const PREPEND_VOID: &Message = &Message::new("prependVoid", "Prepend `void` to the expression.");
+const WRAP_BRACES: &Message = &Message::new("wrapBraces", "Wrap the expression in `{}`.");
 
 /// ESLint's `curlyWrapFixer`. `arrow` is the `=>` of `function`.
 fn curly_wrap_fixer<'a>(fixer: Fixer<'a>, function: Expr<'a>, arrow: Span) -> [Fix; 2] {
@@ -63,7 +63,7 @@ impl Rule for NoPromiseExecutorReturn {
                 ExprKind::Class(class) => class.name().is_some(),
                 _ => true,
             };
-            // For oxlint the parentheses are part of the body.
+            // oxlint includes the parentheses in the body.
             cx.report(if cx.language().is_oxlint { body.outer_span() } else { body.span() }, RETURNS_VALUE)
                 .suggest(PREPEND_VOID, |fixer| allow_void.then(|| void_prepend_fixer(fixer, body, arrow, false)))
                 .suggest(WRAP_BRACES, |fixer| can_wrap.then(|| curly_wrap_fixer(fixer, executor, arrow)));

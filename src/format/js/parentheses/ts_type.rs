@@ -1,4 +1,4 @@
-//! Which types need parentheses where they are.
+//! Decides which types need parentheses in their position.
 
 use crate::prelude::*;
 
@@ -9,8 +9,7 @@ fn member_count(ty: TypeNode<'_>) -> usize {
     }
 }
 
-/// `| A` is a union of one type here. Prettier's parsers have it as `A`, so the parent of `A` is
-/// what the union is in.
+/// `| A` is a union of one type here. Prettier's parsers produce just `A`, so the parent of `A` is the union's parent.
 pub(crate) fn effective_parent(mut parent: AstNodes<'_>) -> AstNodes<'_> {
     while let AstNodes::TSUnionType(ty) | AstNodes::TSIntersectionType(ty) = parent
         && member_count(ty) <= 1
@@ -88,13 +87,12 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
     }
 }
 
-/// `A extends (infer B) | C`. Prettier writes the parentheses only if `B` has a constraint.
+/// `A extends (infer B) | C`. Prettier prints the parentheses only if `B` has a constraint.
 fn every_infer_in_union_has_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `A extends ((b: B) => b is C) ? D : E`. Prettier writes the parentheses only if `C` is an `infer` with a
-/// constraint.
+/// `A extends ((b: B) => b is C) ? D : E`. Prettier prints the parentheses only if `C` is an `infer` with a constraint.
 fn every_predicate_after_extends_has_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -136,7 +134,7 @@ fn function_like_type_needs_parentheses<'a>(
     }
 }
 
-/// Whether `parent` is an operator that binds more tightly than any that `ty` can be.
+/// True if `parent` is an operator that binds more tightly than anything `ty` can be.
 fn operator_type_or_higher_needs_parens<'a>(ty: TypeNode<'a>, parent: AstNodes<'a>) -> bool {
     match parent {
         AstNodes::TSArrayType(_)

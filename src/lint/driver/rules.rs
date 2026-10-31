@@ -1,4 +1,4 @@
-//! The rules that `bun lint` has.
+//! All of `bun lint`'s rules.
 
 bun_lint::rule_sets! {
     pub enum Rules / Runs {

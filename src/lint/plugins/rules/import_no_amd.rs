@@ -6,8 +6,8 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Forbid AMD `require` and `define` calls.
 pub struct NoAmd;
 
-const EXPECTED_IMPORTS: Message = Message::new("", "Expected imports instead of AMD {{name}}().");
-const OXLINT: Message = Message::new("", "Do not use AMD `require` and `define` calls.");
+const EXPECTED_IMPORTS: &Message = &Message::new("", "Expected imports instead of AMD {{name}}().");
+const OXLINT: &Message = &Message::new("", "Do not use AMD `require` and `define` calls.");
 
 impl Rule for NoAmd {
     const META: Meta = Meta::plugin(Plugin::Import, "no-amd", Kind::Suggestion);
@@ -42,7 +42,7 @@ impl Rule for NoAmd {
             }
             return;
         }
-        // oxlint takes parentheses for nodes, has one scope at the top of any file, and points at the callee.
+        // oxlint's AST keeps parentheses as nodes, every file has a single root scope, and it reports the callee.
         if !callee.is_parenthesized() && !modules.is_parenthesized() && is_in_root_scope(Node::Expr(e), &mut cx.state) {
             cx.report(callee, OXLINT).data("name", callee.text());
         }

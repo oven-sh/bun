@@ -58,17 +58,12 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     (void)scope.tryClearException();
     vm.clearLastException();
 
-    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
-    // if (auto* window = dynamicDowncast<JSDOMWindow>( globalObject)) {
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    // }
-
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
 
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    // The listener's realm can be a node:vm context, which isn't a Zig::GlobalObject.
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
     RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {
@@ -158,10 +153,10 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         // null String means the one-arg constructor was used.
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto* error = JSC::createTypeError(lexicalGlobalObject, "Invalid URL"_s);
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)), 0);
+        Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)));
         error->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, message));
         if (!extra.isNull())
-            error->putDirect(vm, JSC::Identifier::fromString(vm, "base"_s), JSC::jsString(vm, extra));
+            Bun::putDirectNamed(vm, error, "base"_s, JSC::jsString(vm, extra));
         return error;
     }
 

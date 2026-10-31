@@ -960,6 +960,12 @@ test("scan handles a cwd with redundant trailing separators when following symli
   expect(exitCode).toBe(0);
 });
 
+// globalThis has its own private names, such as the module resolver's.
+test("scan and scanSync throw a TypeError when `this` is globalThis", () => {
+  expect(() => Bun.Glob.prototype.scanSync.call(globalThis, "fs")).toThrow(TypeError);
+  expect(() => Bun.Glob.prototype.scan.call(globalThis, "fs")).toThrow(TypeError);
+});
+
 // A pattern segment that spells out a leading `.` is an explicit request for
 // that dotfile/dot-directory, so the `dot: false` default must not hide it.
 // This matches bash, picomatch, minimatch and fast-glob.
@@ -1277,4 +1283,17 @@ describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
       expect(err?.code).toBe("EPERM");
     },
   );
+});
+
+test("scan and scanSync reject a cwd or a pattern with a null byte", () => {
+  using dir = tempDir("glob-scan-null-byte", { "safe/inside.ts": "x" });
+  const nullByteError = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  const cwd = `${dir}/safe\0/../secret`;
+  expect(() => Array.from(new Glob("*.ts").scanSync({ cwd }))).toThrow(nullByteError);
+  expect(() => Array.from(new Glob("*.ts").scanSync(cwd))).toThrow(nullByteError);
+  expect(() => new Glob("*.ts").scan({ cwd })).toThrow(nullByteError);
+  const pattern = `${dir}/safe\0trailer/*.ts`;
+  expect(() => Array.from(new Glob(pattern).scanSync())).toThrow(nullByteError);
+  expect(() => new Glob(pattern).scan()).toThrow(nullByteError);
+  expect(new Glob("a\0b").match("a\0b")).toBe(true);
 });

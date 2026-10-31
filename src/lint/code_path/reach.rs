@@ -1,14 +1,13 @@
-//! Which statements can be reached, without the graphs.
+//! Statement reachability, computed without building the graphs.
 //!
-//! Whether a segment is reachable is decided when ESLint makes it, from those before it, and
-//! never changes. So what `CodePathState` does can be done with that one bit in the place of each
-//! segment, and the answers are the same. Nothing in an expression makes anything unreachable, so
-//! only statements are looked at: this takes a few instructions for each statement of a function.
-//! The exception is the start of a `try` block, where ESLint looks for the first node that may
-//! throw.
+//! ESLint decides whether a segment is reachable when it creates it, from its predecessors, and
+//! that never changes. So `CodePathState`'s logic can run with that one bit in place of each
+//! segment and get the same answers. Nothing in an expression makes anything unreachable, so only
+//! statements are visited, at a few instructions per statement. The exception is the start of a
+//! `try` block, where ESLint looks for the first node that may throw.
 //!
-//! The names of the methods are those of `CodePathState`, in snake case. Where this gives up (a
-//! generator with a `try` statement, deep nesting), the analysis itself answers.
+//! Methods are named after `CodePathState`'s, in snake case. Where this gives up (a generator with
+//! a `try` statement, deep nesting), it falls back to the full analysis.
 
 use super::analyzer::{
     self, boolean_value_if_simple_constant, has_code_path, is_binding_a_reference, is_breakable,
@@ -21,21 +20,21 @@ use crate::ast::{
 };
 use bun_sema::atom::Atom;
 
-/// What can be reached in a file.
+/// Reachability results for a file.
 pub(crate) struct Reach {
-    /// The statements that cannot be reached.
+    /// The unreachable statements.
     unreachable: Marks,
     has_unreachable: bool,
-    /// The statements whose end can be reached. Not known where the analysis has answered.
+    /// The statements whose end is reachable. Not recorded where the full analysis was used.
     ends: Marks,
     /// The loops that can start another iteration.
     repeating: Marks,
-    /// The cases whose end can be reached.
+    /// The cases whose end is reachable.
     case_ends: Marks,
-    /// The functions whose end can be reached.
+    /// The functions whose end is reachable.
     fn_ends: Marks,
     is_end_reachable: bool,
-    /// Asked for once for all functions.
+    /// Initialized once for all functions.
     stack: bun_core::StackCheck,
 }
 
@@ -96,26 +95,26 @@ impl Reach {
         self.is_end_reachable
     }
 
-    /// What the analysis has found.
+    /// Records a result from the full analysis.
     pub(super) fn set_statement(&mut self, stmt: Stmt, is_reachable: bool) {
         self.unreachable.set(stmt.id().idx(), !is_reachable);
         self.ends.set(stmt.id().idx(), false);
         self.repeating.set(stmt.id().idx(), false);
     }
 
-    /// What the analysis has found, after [`Reach::set_statement`].
+    /// Records a result from the full analysis. Call it after [`Reach::set_statement`].
     pub(super) fn set_repeating(&mut self, stmt: Stmt) {
         self.repeating.add(stmt.id().idx());
     }
 
-    /// What the analysis has found.
+    /// Records a result from the full analysis.
     pub(super) fn set_case_end(&mut self, case: Case, is_reachable: bool) {
         self.case_ends.set(case.id().idx(), is_reachable);
     }
 }
 
-/// Whether the end of the code path of `root`, which is a function or the file, can be reached.
-/// Fills in `reach` for the statements and cases of that code path.
+/// True if the end of `root`'s code path is reachable. `root` is a function or the file. Fills in
+/// `reach` for that code path's statements and cases.
 pub(super) fn is_end_reachable(root: Node, mut reach: Option<&mut Reach>) -> bool {
     let statements = match root {
         Node::File(file) => file.body(),
@@ -156,8 +155,8 @@ enum Position {
     Finally,
 }
 
-/// ESLint's `TryContext`. A fork context is `None` if it is empty, or else what `makeNext(0, -1)`
-/// of it is.
+/// ESLint's `TryContext`. A fork context is `None` if it's empty, otherwise the result of its
+/// `makeNext(0, -1)`.
 struct Try {
     has_finalizer: bool,
     position: Position,
@@ -168,7 +167,7 @@ struct Try {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Target {
-    /// A labeled statement that is neither a loop nor a `switch`.
+    /// A labeled statement that's neither a loop nor a `switch`.
     Label,
     Switch,
     /// A loop whose `continueDestSegments` are known when its body starts.
@@ -177,7 +176,7 @@ enum Target {
     DoWhile,
 }
 
-/// ESLint's `BreakContext`, with the `LoopContext` of a loop.
+/// ESLint's `BreakContext`, plus the `LoopContext` for a loop.
 struct Jumps {
     target: Target,
     label: Option<Atom>,
@@ -188,30 +187,30 @@ struct Jumps {
     continued: u64,
     /// `continueDestSegments`
     continue_dest: u64,
-    /// A `continue` leads back to `continue_dest`.
+    /// True if a `continue` jumps back to `continue_dest`.
     is_repeating: bool,
 }
 
-/// ESLint's `CodePathState`, with a bit in the place of a segment.
+/// ESLint's `CodePathState`, with one bit in place of each segment.
 struct Quick<'r, 'a> {
     file: &'a File<'a>,
     reach: Option<&'r mut Reach>,
-    /// `forkContext.head`: a bit for each of the `count` parallel routes.
+    /// `forkContext.head`: one bit for each of the `count` parallel routes.
     head: u64,
-    /// The other entries of `forkContext`, joined. There are some only in a `catch` block.
+    /// The other entries of `forkContext`, merged. It's only nonzero in a `catch` block.
     rest: u64,
     /// `forkContext.count`
     count: u32,
     tries: Vec<Try>,
     targets: Vec<Jumps>,
-    /// The label of the statement that is about to be entered.
+    /// The label of the statement that's about to be entered.
     label: Option<Atom>,
     stack: bun_core::StackCheck,
     is_generator: bool,
     has_given_up: bool,
 }
 
-/// `mergeExtraSegments`: joins the two halves of `routes` until there are `to` of them.
+/// `mergeExtraSegments`: merges the two halves of `routes` until only `to` routes remain.
 fn merge(mut routes: u64, mut from: u32, to: u32) -> u64 {
     while from > to {
         from /= 2;
@@ -243,7 +242,8 @@ impl<'a> Quick<'_, 'a> {
 
     #[inline]
     fn statement_of_list(&mut self, stmt: Stmt<'a>) {
-        // Most have no statement in them and lead nowhere else, and whether they may throw matters in a `try` statement only.
+        // Most statements contain no other statement and don't jump anywhere, and whether they may
+        // throw only matters in a `try` statement.
         let is_plain = self.tries.is_empty()
             && !matches!(
                 stmt.tag(),
@@ -269,7 +269,7 @@ impl<'a> Quick<'_, 'a> {
         }
     }
 
-    /// What `statement` does with one that changes nothing.
+    /// What `statement` does for a statement that doesn't change the state.
     #[inline]
     fn plain_statement(&mut self, stmt: Stmt<'a>) {
         if let Some(reach) = &mut self.reach
@@ -291,7 +291,7 @@ impl<'a> Quick<'_, 'a> {
         }
     }
 
-    /// What is in the head of a `for`.
+    /// Handles the statement in a `for` head.
     fn head_of_for(&mut self, stmt: Stmt<'a>) {
         if !stmt.is_wrapper() {
             self.enter(stmt);
@@ -304,7 +304,7 @@ impl<'a> Quick<'_, 'a> {
             return;
         }
         self.enter(stmt);
-        // The rest is left to the analysis, which does not recurse.
+        // Leave the rest to the full analysis, which doesn't recurse.
         if !self.stack.is_safe_to_recurse() {
             self.has_given_up = true;
         }
@@ -350,7 +350,7 @@ impl<'a> Quick<'_, 'a> {
             }
             StmtKind::While { test, body } => {
                 self.push(Target::Loop, label);
-                // `makeWhileTest` makes the next of all the entries.
+                // `makeWhileTest` calls `makeNext` over all the entries.
                 self.add_rest();
                 self.set_continue_dest();
                 self.may_throw(test.into());
@@ -402,8 +402,8 @@ impl<'a> Quick<'_, 'a> {
                 self.head_of_for(left);
                 self.may_throw(expr.into());
                 let before_body = self.head;
-                // The rule takes the way back from the right side for one from the body if that is
-                // a `continue`.
+                // If the body is a `continue`, the rule mistakes the loop back from the right side
+                // for one from the body.
                 if body.tag() == StmtTag::Continue
                     && let Some(jumps) = self.targets.last_mut()
                 {
@@ -442,14 +442,14 @@ impl<'a> Quick<'_, 'a> {
         });
     }
 
-    /// The segments that have just been made are those that the loop goes back to.
+    /// The segments just created are the ones the loop jumps back to.
     fn set_continue_dest(&mut self) {
         if let Some(jumps) = self.targets.last_mut() {
             jumps.continue_dest = self.head;
         }
     }
 
-    /// Leaves a loop, from the end of which `from` lead back to `to`.
+    /// Leaves a loop whose end, `from`, jumps back to `to`.
     fn pop_loop(&mut self, stmt: Stmt<'a>, from: u64, to: u64) -> Jumps {
         let jumps = self.pop();
         if (jumps.is_repeating || from & to != 0)
@@ -539,10 +539,10 @@ impl<'a> Quick<'_, 'a> {
         }
     }
 
-    /// In a `catch` block, ESLint lets a `while` loop and the first `case` of a `switch` also follow
-    /// the end of the `try` block. What cannot be reached from what precedes it can be reached that
-    /// way: there, that the end of a statement can be reached does not tell that there is a way
-    /// from its start, which is what [`Reach::is_known_to_complete`] is about.
+    /// In a `catch` block, ESLint also connects the end of the `try` block to a `while` loop and to
+    /// the first `case` of a `switch`. That can make code reachable that isn't reachable from what
+    /// precedes it. In that case a statement's end being reachable doesn't mean there's a path from
+    /// its start, which is what [`Reach::is_known_to_complete`] promises, so this gives up.
     fn add_rest(&mut self) {
         if self.rest & !self.head != 0 && self.reach.is_some() {
             self.has_given_up = true;
@@ -583,7 +583,7 @@ impl<'a> Quick<'_, 'a> {
             }
             self.statements(body);
             end_of_previous = self.head;
-            // The rules are not told that the body of an empty case starts.
+            // No event is emitted for the start of an empty case's body.
             let current = if has_case && body.is_empty() {
                 tests
             } else {
@@ -612,7 +612,8 @@ impl<'a> Quick<'_, 'a> {
         handler: Option<Stmt<'a>>,
         finalizer: Option<Stmt<'a>>,
     ) {
-        // A `yield` can be left by a `return` or a `throw`, and is in an expression.
+        // A `yield` can exit through a `return` or a `throw`, and it's inside an expression, which
+        // this doesn't look at.
         if self.is_generator {
             self.has_given_up = true;
             return;
@@ -708,8 +709,8 @@ impl<'a> Quick<'_, 'a> {
     }
 }
 
-/// Whether ESLint takes a node in `root` for one that may throw, not looking into what has a code
-/// path of its own. `None` if that depends on more than is looked at here.
+/// Returns whether ESLint considers some node in `root` able to throw, ignoring anything that has
+/// its own code path. `None` if that depends on more than this checks.
 fn has_throwable(root: Node) -> Option<bool> {
     let mut todo = vec![root];
     let mut is_sure = true;
@@ -728,7 +729,8 @@ fn has_throwable(root: Node) -> Option<bool> {
                 | ExprTag::AsConst => return Some(true),
                 ExprTag::Dot | ExprTag::Ident if e.is_jsx_tag_name() => continue,
                 ExprTag::Dot => return Some(true),
-                // Not in an `ArrayPattern` or a `RestElement`, which look like literals here.
+                // It can't throw in an `ArrayPattern` or a `RestElement`, which look like literals
+                // here.
                 ExprTag::Ident => match e.parent() {
                     Node::Expr(parent)
                         if matches!(parent.tag(), ExprTag::Array | ExprTag::Spread) =>

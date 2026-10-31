@@ -28,6 +28,10 @@ pub struct SliceIterator<'a> {
 }
 
 impl<'a> SliceIterator<'a> {
+    pub fn new(words: &'a [&'a [u8]]) -> SliceIterator<'a> {
+        SliceIterator { remain: words }
+    }
+
     pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
         pop_first(&mut self.remain)
     }
@@ -91,7 +95,7 @@ impl ArgIter<'static> for OsIterator {
 /// `[&ZStr]` view in place: zero alloc, zero lazy-init shim, zero extra
 /// `.text`.
 #[inline]
-pub(crate) fn os_argv() -> &'static [&'static [u8]] {
+fn os_argv() -> &'static [&'static [u8]] {
     let z: &'static [&'static bun_core::ZStr] = bun_core::argv().as_slice();
     // SAFETY: `#[repr(transparent)] struct ZStr([u8])` (bun_core/util.rs) ⇒
     // `&ZStr` and `&[u8]` have identical (ptr, len) layout, hence so do

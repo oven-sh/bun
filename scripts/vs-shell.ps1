@@ -49,6 +49,11 @@ if($env:VSINSTALLDIR -eq $null) {
   } finally {
     Pop-Location
   }
+
+  # Launch-VsDevShell.ps1 only prints a message when it fails.
+  if ($env:VSINSTALLDIR -eq $null) {
+    throw "Launch-VsDevShell.ps1 did not load the Visual Studio environment."
+  }
 }
 
 if($env:VSCMD_ARG_TGT_ARCH -eq "x86") {

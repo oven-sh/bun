@@ -1,15 +1,16 @@
-// All of `compare.ts`: each plugin on public projects and on the fixtures of its own repository.
+// Runs `compare.ts` for each plugin, on public projects and on the fixtures in the plugin's own repository.
 //
 //     bun run.ts [--fix] [--show=0] [--threads=8] <packages> <corpora> [name ..] -- <bun lint, as a command>
 //
-// `<packages>`: a directory where `bun add` has installed eslint, typescript@5, typescript-eslint, globals, @eslint/js and
-// the packages that `configs/*.mjs` import. The configurations are copied there. `<corpora>`: a directory with shallow clones, by the name
-// of the repository, of what is listed below (`git clone --depth 1 https://github.com/<owner>/<name>`).
+// `<packages>` is a directory where `bun add` has installed eslint, typescript@5, typescript-eslint, globals,
+// @eslint/js and the packages that `configs/*.mjs` import. The configs are copied there. `<corpora>` is a directory
+// with a shallow clone of each repository listed below, named after the repository
+// (`git clone --depth 1 https://github.com/<owner>/<name>`).
 
 import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-// The configuration, the repository, the patterns.
+// [config, repository, patterns]
 const cases: [string, string, string[]][] = [
   ["vue", "element-plus/element-plus", ["**/*.vue"]],
   ["vue", "vuejs/eslint-plugin-vue", ["tests/fixtures/**/*.vue"]],

@@ -154,7 +154,7 @@ const socksAgents: { shape: string; create(proxy: Proxy): http.Agent }[] = [
   },
 ];
 
-describe.each(implementations)("ws client connection options ($name)", ({ ws: implementation }) => {
+describe.each(implementations)("ws client connection options ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   /** A client with `watch()` attached. Disposing it calls terminate(). */
@@ -440,6 +440,27 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
     );
     expect(await store).toBe("the caller's");
   });
+
+  // The handshake runs from the event loop, whoever turns it. `expect().resolves` is deliberately not awaited: it
+  // ticks the event loop until the promise settles, here inside a store. With npm ws, node:tls runs the callback there.
+  test.skipIf(!builtin)(
+    "checkServerIdentity of a socket made outside every store doesn't run in the store of a caller that ticks the event loop",
+    async () => {
+      await using peer = await createPeer({ secure: true });
+      const storage = new AsyncLocalStorage<string>();
+      const { promise: checked, resolve } = Promise.withResolvers<void>();
+      let store: string | undefined;
+      using client = connect(peer.url, {
+        ca: certificate.cert,
+        checkServerIdentity: () => {
+          store = storage.getStore() ?? "no store";
+          resolve();
+        },
+      });
+      storage.run("the waiter's", () => void expect(checked).resolves.toBeUndefined());
+      expect(store).toBe("no store");
+    },
+  );
 
   test("a checkServerIdentity verdict that rejectUnauthorized: false dropped isn't reported later", async () => {
     await using peer = await createPeer({

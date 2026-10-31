@@ -1,10 +1,11 @@
-//! The JSDoc comments of a file: [`File::jsdoc`].
+//! A file's JSDoc comments. See [`File::jsdoc`].
 //!
-//! The names, the fields and the shapes are those of the crate oxc_jsdoc, with which oxlint and oxfmt read comments, so that
-//! a port of their code stays one. What is done with the text of a part follows `oxc_jsdoc`, which is under the MIT license.
-//! Where the parts are is read by `bun_sema::check::jsdoc`, once for a file.
+//! The names, fields and shapes match the oxc_jsdoc crate, which oxlint and oxfmt use to read comments, so code ported
+//! from them stays a straight port. How each part's text is processed follows `oxc_jsdoc`, which is MIT licensed.
+//! `bun_sema::check::jsdoc` locates the parts, once per file.
 //!
-//! Text is a slice of [`File::text`]. White space is `char::is_whitespace`, and bytes that are not UTF-8 are U+FFFD.
+//! Text is a slice of [`File::text`]. Whitespace means `char::is_whitespace`, and bytes that aren't valid UTF-8 count
+//! as U+FFFD.
 
 use super::File;
 use crate::span::Span;
@@ -13,15 +14,15 @@ use bun_core::strings;
 use bun_sema::check::jsdoc::{Flavor, Outline, Range, Tag};
 
 impl<'a> File<'a> {
-    /// The `/** */` comments of the file, as oxc_jsdoc reads them. This call costs nothing: they are read when the first of
-    /// them is asked for.
+    /// The file's `/** */` comments, as oxc_jsdoc reads them. This call is free, because they're parsed lazily on the
+    /// first lookup.
     #[inline]
     pub fn jsdoc(&'a self) -> JSDocs<'a> {
         JSDocs { file: self }
     }
 }
 
-/// Empty if `span` is not in `text`.
+/// Empty if `span` is out of bounds.
 fn slice(text: &[u8], span: Span) -> &[u8] {
     text.get(span.range()).unwrap_or_default()
 }
@@ -59,26 +60,26 @@ pub struct JSDoc<'a> {
 }
 
 impl<'a> JSDoc<'a> {
-    /// With the `/**` and the `*/`.
+    /// Includes the `/**` and `*/`.
     #[inline]
     pub fn comment_span(self) -> Span {
         self.comment_span
     }
 
-    /// `JSDoc::span`: what is between the `/**` and the `*/`.
+    /// `JSDoc::span`: everything between the `/**` and `*/`.
     #[inline]
     pub fn span(self) -> Span {
         self.comment_span.shrink(3, 2)
     }
 
-    /// `/***/`, `/*****/`: no JSDoc comment for oxc.
+    /// `/***/`, `/*****/`, which oxc doesn't treat as JSDoc comments.
     pub fn is_all_asterisks(self) -> bool {
         slice(self.text, self.span())
             .iter()
             .all(|&byte| byte == b'*')
     }
 
-    /// `JSDoc::comment`: what is before the first tag.
+    /// `JSDoc::comment`: everything before the first tag.
     pub fn comment(self) -> JSDocCommentPart<'a> {
         let span = self.span();
         let end = self.tags.first().map_or(span.end, |tag| tag.at);
@@ -157,7 +158,7 @@ impl<'a> JSDocTag<'a> {
         (self.r#type(), name, comment)
     }
 
-    /// `@kind{type}`. The formatter's own.
+    /// `@kind{type}`. Not in oxc_jsdoc. The formatter needs it.
     pub fn has_no_space_before_type(self) -> bool {
         self.text.get(self.row.name_end as usize) == Some(&b'{')
     }
@@ -185,12 +186,12 @@ pub struct JSDocTagTypePart<'a> {
 }
 
 impl<'a> JSDocTagTypePart<'a> {
-    /// With the braces.
+    /// Includes the braces.
     pub fn raw(self) -> &'a [u8] {
         self.raw
     }
 
-    /// Without them and the white space in them.
+    /// Without the braces and the whitespace just inside them.
     pub fn parsed(self) -> &'a [u8] {
         let end = self.raw.len().saturating_sub(1);
         strings::trim_unicode_whitespace(self.raw.get(1..end).unwrap_or_default())
@@ -201,9 +202,9 @@ impl<'a> JSDocTagTypePart<'a> {
 #[derive(Copy, Clone)]
 pub struct JSDocTagTypeNamePart<'a> {
     pub span: Span,
-    /// It is in brackets.
+    /// True if it's in brackets.
     pub optional: bool,
-    /// And has a `=`.
+    /// True if it also has a `=`.
     pub default: bool,
     raw: &'a [u8],
 }
@@ -213,7 +214,7 @@ impl<'a> JSDocTagTypeNamePart<'a> {
         self.raw
     }
 
-    /// The name alone.
+    /// Just the name.
     pub fn parsed(self) -> &'a [u8] {
         if !self.optional {
             return self.raw;
@@ -225,7 +226,7 @@ impl<'a> JSDocTagTypeNamePart<'a> {
     }
 }
 
-/// `*word*` at the start of a line is emphasis, not the `*` that starts a line of the comment.
+/// Strips a comment line's leading `*`. `*word*` at the start of a line is emphasis, so that `*` stays.
 fn without_star(trimmed: &[u8]) -> Option<&[u8]> {
     let rest = trimmed.strip_prefix(b"*")?;
     let first = bstr::decode_utf8(rest).0;
@@ -233,7 +234,7 @@ fn without_star(trimmed: &[u8]) -> Option<&[u8]> {
     (!is_emphasis).then_some(rest)
 }
 
-/// A description as it is written, with the `*` at the start of each line.
+/// A description's source text, including the `*` at the start of each line.
 #[derive(Copy, Clone)]
 pub struct JSDocCommentPart<'a> {
     pub span: Span,
@@ -260,13 +261,13 @@ impl<'a> JSDocCommentPart<'a> {
         lines.filter(|line| !line.is_empty())
     }
 
-    /// Without the `*` at the start of each line, the white space around each line, and empty lines.
+    /// Strips the `*` at the start of each line, the whitespace around each line, and empty lines.
     pub fn parsed(self) -> Vec<u8> {
         bstr::join(b"\n", self.parsed_lines())
     }
 
-    /// Without the `*` at the start of each line. Empty lines stay, the indentation behind `* ` stays, two blanks at the end of
-    /// a line stay.
+    /// Strips the `*` at the start of each line, but keeps empty lines, indentation after `* `, and two trailing spaces
+    /// on a line.
     pub fn parsed_preserving_whitespace(self) -> Vec<u8> {
         if !strings::contains_char(self.raw, b'\n') {
             return strings::trim_unicode_whitespace(self.raw).to_vec();

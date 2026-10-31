@@ -1,10 +1,11 @@
-//! The rules of `jest` and `vitest` as oxlint has them: each is a port of the rule of the same name of oxlint 1.87, with the same
-//! options, the same messages, at the same places. They exist only with a configuration of oxlint.
+//! oxlint's `jest` and `vitest` rules. Each is a port of the oxlint 1.87 rule of the same name, with the same options,
+//! messages and report positions. They're only available with an oxlint config.
 //! - https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 //! - which are ports of https://github.com/jest-community/eslint-plugin-jest (Copyright Jonathan Kim, MIT License) and
 //!   https://github.com/vitest-dev/eslint-plugin-vitest (Copyright Verite Mugabo, MIT License)
 //!
-//! The rules of `bun:test` are the same rules for the tests of `bun test`. They are Bun's own, and exist with every configuration.
+//! The `bun:test` rules are the same rules applied to `bun test` tests. They're Bun's own and are available with every
+//! config.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
@@ -16,7 +17,7 @@ mod jest_matchers;
 mod jest_mocks;
 mod jest_tests;
 
-// `<1>`: the rule of `vitest`. `<2>`: that of `bun:test`.
+// `<1>` is the `vitest` rule, `<2>` the `bun:test` rule.
 bun_lint::rules! {
     bun_test_consistent_test_filename::ConsistentTestFilename = vitest_consistent_test_filename<2>,
     bun_test_consistent_test_it::ConsistentTestIt = jest_consistent_test_it<2>,

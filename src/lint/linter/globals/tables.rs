@@ -2,7 +2,7 @@
 //! @typescript-eslint/scope-manager 8.71.1 (`src/lib`), eslint 8.57.1 with globals 13.24.0, and
 //! javascript-globals 1.6.0. Not edited by hand.
 
-/// All names, sorted, one after the other.
+/// All names, sorted and concatenated.
 #[rustfmt::skip]
 pub(super) static NAMES: &[u8] = b"\
 $$$$0$1$2$3$4$A$F$H$R$_$bindable$break$continue$derived$effect$host$inspect$props$state$w$xAIAICreateMonitor\
@@ -479,7 +479,7 @@ versionviviewportvisitvisualViewportvitestwaitwaitswaitsForwaitsForPromisewebkit
 webkitRequestFileSystemSyncwebkitResolveLocalFileSystemSyncURLwebkitResolveLocalFileSystemURLwebkitURLwhen\
 whichwindowwithDefaultsxcontextxdescribexitxspecifyxtest";
 
-/// Where each name ends in `NAMES`.
+/// Each name's end offset in `NAMES`.
 #[rustfmt::skip]
 pub(super) static NAME_ENDS: &[u16] = &[
     1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 32, 38, 47, 55, 62, 67, 75, 81,
@@ -634,9 +634,9 @@ pub(super) static NAME_ENDS: &[u16] = &[
     47569, 47600, 47609, 47613, 47618, 47624, 47636, 47644, 47653, 47656, 47664, 47669,
 ];
 
-/// The lists, one after the other, each sorted but for a library, which has its own order: the index of a name `<< 2`, and flags. For an
-/// environment and a version of ECMAScript, 1: writable. For a library, 1: a type, 2: a value. For
-/// the changes to an environment, 1: writable, 2: it is not in it.
+/// The lists, concatenated. Each is sorted, except a library's, which has its own order. An entry is a
+/// name's index `<< 2` plus flags. For an environment and an ECMAScript version, 1 means writable. For a library,
+/// 1 means a type and 2 a value. For the changes to an environment, 1 means writable and 2 means removed.
 #[rustfmt::skip]
 pub(super) static ENTRIES: &[u16] = &[
     10232, 11516, 0, 324, 748, 4784, 5720, 5740, 5948, 6364, 7160, 10132, 10264, 380, 9956, 10004, 10392, 10396, 10400, 10404,
@@ -1053,8 +1053,8 @@ pub(super) static ENTRIES: &[u16] = &[
     9637, 9673, 2813, 4245, 8369, 8833, 2617, 7057,
 ];
 
-/// The environments of the `globals` package, sorted by name: where each starts in `ENTRIES`, and
-/// how many entries it has.
+/// The `globals` package's environments, sorted by name: each one's start in `ENTRIES` and its number of
+/// entries.
 #[rustfmt::skip]
 pub(super) static ENVIRONMENTS: &[(&str, u16, u16)] = &[
     ("amd", 0, 2),
@@ -1109,7 +1109,7 @@ pub(super) static ENVIRONMENTS: &[(&str, u16, u16)] = &[
     ("yui", 3239, 4),
 ];
 
-/// Where the environments of ESLint 8 are other than `ENVIRONMENTS`, sorted by name. Not what its `builtin` defines anyway.
+/// How ESLint 8's environments differ from `ENVIRONMENTS`, sorted by name. Omits what its `builtin` defines.
 #[rustfmt::skip]
 pub(super) static CHANGES_FOR_ESLINT_8: &[(&str, u16, u16)] = &[
     ("browser", 3253, 447),
@@ -1132,7 +1132,7 @@ pub(super) static CHANGES_FOR_ESLINT_8: &[(&str, u16, u16)] = &[
     ("worker", 3728, 230),
 ];
 
-/// The same for oxlint. It has environments that are not in `ENVIRONMENTS`.
+/// The same for oxlint, which also has environments that aren't in `ENVIRONMENTS`.
 #[rustfmt::skip]
 pub(super) static CHANGES_FOR_OXLINT: &[(&str, u16, u16)] = &[
     ("audioworklet", 4627, 54),
@@ -1169,7 +1169,7 @@ pub(super) static CHANGES_FOR_OXLINT: &[(&str, u16, u16)] = &[
     ("yui", 5071, 4),
 ];
 
-/// `conf/globals.js`: what each version of ECMAScript adds to the one before it.
+/// `conf/globals.js`: what each ECMAScript version adds to the previous one.
 #[rustfmt::skip]
 pub(super) static ECMA_VERSIONS: &[(u32, u16, u16)] = &[
     (3, 5075, 37),
@@ -1191,8 +1191,8 @@ pub(super) static ECMA_VERSIONS: &[(u32, u16, u16)] = &[
 /// `conf/globals.js`: what `sourceType: "commonjs"` adds.
 pub(super) static COMMONJS: (u16, u16) = (5148, 4);
 
-/// The libraries of TypeScript, sorted by name: the entries, and where the libraries that it
-/// includes start in `LIB_DEPENDENCIES`, and how many they are.
+/// TypeScript's libraries, sorted by name: the entries, then the start in `LIB_DEPENDENCIES` of the
+/// libraries it includes, and their number.
 #[rustfmt::skip]
 pub(super) static LIBS: &[(&str, u16, u16, u16, u8)] = &[
     ("decorators", 5152, 12, 0, 0),

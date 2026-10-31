@@ -1,5 +1,4 @@
-//! What does not depend on the language: the intermediate representation, the vocabulary to write
-//! it in, and the printer.
+//! The language-independent parts: the intermediate representation, the builders that write it, and the printer.
 
 pub(crate) mod builders;
 pub(crate) mod document;

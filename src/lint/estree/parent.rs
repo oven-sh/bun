@@ -1,4 +1,4 @@
-//! The way up, and the way from a node of [`crate::ast`] to the nodes that are made of it.
+//! Navigation from a node to its ESTree parent, and from a [`crate::ast`] node to the ESTree nodes made from it.
 
 use super::vnode::{Part, VNode};
 use crate::ast::{
@@ -7,7 +7,7 @@ use crate::ast::{
 };
 use smallvec::{SmallVec, smallvec};
 
-/// The node that the parameters, the type parameters and the return type of `func` are fields of.
+/// Returns the node that has `func`'s parameters, type parameters and return type as fields.
 fn function_node<'a>(func: Func<'a>) -> VNode<'a> {
     match (func.owner(), func.kind()) {
         (
@@ -19,7 +19,7 @@ fn function_node<'a>(func: Func<'a>) -> VNode<'a> {
     }
 }
 
-/// The `Decorator` whose expression is `e`, among the modifiers of `owner`.
+/// Returns the `Decorator` whose expression is `e`, among `owner`'s modifiers.
 fn decorator<'a>(
     owner: Node<'a>,
     modifiers: List<'a, Modifier<'a>>,
@@ -29,7 +29,7 @@ fn decorator<'a>(
     Some(VNode::new(owner, Part::Decorator(found.id().0)))
 }
 
-/// The mapped type that `param` is the `K in T` of.
+/// Returns the mapped type that has `param` as its `K in T`.
 fn mapped_type<'a>(param: TypeParam<'a>) -> Option<TypeNode<'a>> {
     param
         .parent()
@@ -37,7 +37,7 @@ fn mapped_type<'a>(param: TypeParam<'a>) -> Option<TypeNode<'a>> {
         .filter(|ty| matches!(ty.kind(), TypeKind::Mapped(_)))
 }
 
-/// The `TSImportType` of the import type `ty`.
+/// Returns the `TSImportType` of the import type `ty`.
 fn import_type<'a>(ty: TypeNode<'a>) -> VNode<'a> {
     match ty.kind() {
         TypeKind::Import {
@@ -47,7 +47,7 @@ fn import_type<'a>(ty: TypeNode<'a>) -> VNode<'a> {
     }
 }
 
-/// What the statement `statement`, with an `export` before it, is in.
+/// Returns the parent of `statement`, including any `export` in front of it.
 fn above_stmt<'a>(statement: Stmt<'a>) -> VNode<'a> {
     match statement.parent() {
         Node::Stmt(parent) => match parent.kind() {
@@ -65,7 +65,7 @@ fn above_stmt<'a>(statement: Stmt<'a>) -> VNode<'a> {
     }
 }
 
-/// What the main node of `statement` is in.
+/// Returns the parent of `statement`'s main node.
 fn above_main_of_stmt<'a>(statement: Stmt<'a>) -> VNode<'a> {
     match VNode::is_exported_declaration(statement) {
         true => VNode::new(statement, Part::Export),
@@ -73,7 +73,7 @@ fn above_main_of_stmt<'a>(statement: Stmt<'a>) -> VNode<'a> {
     }
 }
 
-/// What the expression `e`, with all that ESTree has around it, is in.
+/// Returns the parent of the expression `e`, including every wrapper node that ESTree puts around it.
 fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
     let attribute = |owner: Node<'a>, attributes: Option<crate::ast::ImportAttributes<'a>>| {
         let found = attributes?
@@ -89,7 +89,7 @@ fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
             ExprKind::Binary {
                 op: BinOp::Comma, ..
             } => {
-                // To the outermost of the comma operators.
+                // Go up to the outermost comma operator.
                 while !above.is_parenthesized()
                     && let Node::Expr(next) = above.parent()
                     && matches!(next.kind(), ExprKind::Binary { op: BinOp::Comma, left, .. } if left == above)
@@ -127,7 +127,7 @@ fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
     })
 }
 
-/// What the main node of `e` is in.
+/// Returns the parent of `e`'s main node.
 fn above_main_of_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
     if e.is_chain_root() {
         return Some(VNode::new(e, Part::Chain));
@@ -142,12 +142,12 @@ fn above_chain<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
     }
 }
 
-/// What the outermost node of `param` is in.
+/// Returns the parent of `param`'s outermost node.
 fn above_param<'a>(param: Param<'a>) -> Option<VNode<'a>> {
     param.func().map(function_node)
 }
 
-/// What the type `ty` itself, without a `TSTypeAnnotation`, is in.
+/// Returns the parent of the type `ty` itself, not counting a `TSTypeAnnotation`.
 fn above_type<'a>(ty: TypeNode<'a>) -> Option<VNode<'a>> {
     let parent = ty.parent();
     Some(match parent {
@@ -184,7 +184,7 @@ fn above_type<'a>(ty: TypeNode<'a>) -> Option<VNode<'a>> {
 }
 
 impl<'a> VNode<'a> {
-    /// The node that the qualified name in it is a field of.
+    /// Returns the node that has this node's qualified name as a field.
     fn owner_of_name(self) -> VNode<'a> {
         match self.base {
             Node::Type(ty) if VNode::is_heritage(ty) => self.with(Part::Heritage),
@@ -193,7 +193,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The number of names in the qualified name in it.
+    /// Returns the number of names in this node's qualified name.
     fn name_len(self) -> u32 {
         match self.base.as_stmt().map(Stmt::kind) {
             Some(StmtKind::Module(module)) => super::views::module_depth(module) as u32,
@@ -201,7 +201,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The node for the names up to the one at `i`, which is not the first.
+    /// Returns the node for the names up to and including index `i`, which isn't 0.
     fn names_through(self, i: u32) -> VNode<'a> {
         match self.base {
             Node::Type(ty) if VNode::is_heritage(ty) => self.with(Part::MemberName(i)),
@@ -216,7 +216,7 @@ impl<'a> VNode<'a> {
         Some(match (self.base, self.part) {
             (Node::File(_), _) => return None,
 
-            // Parts that are the same for all.
+            // Parts that work the same for every kind of base node.
             (_, KeyQuasi | KeyNamespace | KeyName) => self.with(Key),
             (_, Key) => main,
             (_, AttributeKey(id)) => self.with(Attribute(id)),
@@ -226,7 +226,7 @@ impl<'a> VNode<'a> {
             (_, NamePart(i)) => self.names_through(i.max(1)),
             (_, Qualified(i) | MemberName(i)) if i + 1 >= self.name_len() => self.owner_of_name(),
             (_, Qualified(i) | MemberName(i)) => self.names_through(i + 1),
-            (Node::Param(param), Decorator(_)) => VNode::of_param(param),
+            (Node::Param(param), Decorator(_)) => VNode::from_param(param),
             (_, Decorator(_)) => main,
 
             (Node::Expr(e), part) => match part {
@@ -338,7 +338,7 @@ impl<'a> VNode<'a> {
         })
     }
 
-    /// Calls `visit` with each child, in the order in which ESLint traverses them.
+    /// Calls `visit` with each child, in ESLint's traversal order.
     pub(crate) fn for_each_child(self, mut visit: impl FnMut(VNode<'a>)) {
         let dialect = self.dialect();
         for entry in self.node_type().fields() {
@@ -356,14 +356,17 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// The same. `visit` is also given the type of the node, which is known here.
+    /// Calls `visit` with each ESTree node made from `node`, an outer node before the nodes inside it. Over all the
+    /// nodes of a file, that's every ESTree node exactly once. `visit` also gets the node's type, which is already
+    /// known here.
     pub(crate) fn for_each_with_type_at(
         node: Node<'a>,
         visit: &mut dyn FnMut(VNode<'a>, super::NodeType),
     ) {
-        // The parts of a node are a tree of their own, except where the outermost is missing.
+        // A node's parts form their own tree, except where the outermost part is missing.
         fn descend<'a>(v: VNode<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
-            // The next is the last. Not by recursion: the parts of `A.B.C..`, which is one node, are as deep as it is long.
+            // A stack: the next node to visit is the last. No recursion, because the parts of `A.B.C..`, which is one
+            // node, nest as deep as the name is long.
             let mut pending: SmallVec<[VNode<'a>; 8]> = smallvec![v];
             while let Some(v) = pending.pop() {
                 let node_type = v.node_type();
@@ -407,9 +410,9 @@ impl<'a> VNode<'a> {
                     && matches!(e.parent(), Node::Expr(above)
                         if matches!(above.kind(), ExprKind::Binary { op: BinOp::Comma, left, .. } if left == e));
                 if !is_operand_of_comma {
-                    root(VNode::of_expr(e));
+                    root(VNode::from_expr(e));
                 }
-                // No listener is called with the placeholder in `{}`.
+                // Nothing calls this with the placeholder in `{}`, so its nodes are visited here, with the element.
                 if let ExprKind::Jsx(jsx) = e.kind() {
                     let values = jsx.attrs().iter().filter_map(|it| it.value());
                     for empty in jsx
@@ -418,13 +421,13 @@ impl<'a> VNode<'a> {
                         .chain(values)
                         .filter(|it| it.is_missing())
                     {
-                        VNode::of_expr(empty)
+                        VNode::from_expr(empty)
                             .into_iter()
                             .for_each(|it| descend(it, visit));
                     }
                 }
             }
-            Node::Stmt(statement) => root(Some(VNode::of_stmt(statement))),
+            Node::Stmt(statement) => root(Some(VNode::from_stmt(statement))),
             Node::Func(func) => match function_node(func).base == node {
                 true => root(Some(VNode::new(func, Part::Main))),
                 false => root(
@@ -434,7 +437,7 @@ impl<'a> VNode<'a> {
                 ),
             },
             Node::Param(param) => {
-                let outermost = VNode::of_param(param);
+                let outermost = VNode::from_param(param);
                 match outermost.base == node {
                     true => root(Some(outermost)),
                     false => super::Nodes::decorators(param, param.modifiers()).for_each(root),
@@ -455,11 +458,11 @@ impl<'a> VNode<'a> {
             } else if VNode::is_heritage(ty) {
                 VNode::new(ty, Part::Heritage)
             } else {
-                VNode::of_type(ty)
+                VNode::from_type(ty)
             })),
-            Node::Pat(pat) => root(VNode::of_pat(pat)),
-            Node::PatElem(element) => root(VNode::of_pat_elem(element)),
-            Node::TupleElem(element) => root(Some(VNode::of_tuple_elem(element))),
+            Node::Pat(pat) => root(VNode::from_pat(pat)),
+            Node::PatElem(element) => root(VNode::from_pat_elem(element)),
+            Node::TupleElem(element) => root(Some(VNode::from_tuple_elem(element))),
             _ => root(Some(VNode::new(node, Part::Main))),
         }
     }

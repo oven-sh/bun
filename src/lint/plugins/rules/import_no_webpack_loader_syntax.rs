@@ -8,11 +8,11 @@ use bun_lint_oxlint::import::is_in_root_scope;
 /// Forbid webpack loader syntax in imports.
 pub struct NoWebpackLoaderSyntax(Visitor);
 
-const UNEXPECTED: Message =
-    Message::new("", "Unexpected '!' in '{{name}}'. Do not use import syntax to configure webpack loaders.");
-const OXLINT: Message = Message::new("", "Unexpected `!` in `{{name}}`.");
+const UNEXPECTED: &Message =
+    &Message::new("", "Unexpected '!' in '{{name}}'. Do not use import syntax to configure webpack loaders.");
+const OXLINT: &Message = &Message::new("", "Unexpected `!` in `{{name}}`.");
 
-/// What oxlint looks at: an `import` of the top level, and a `require(..)` without parentheses that no scope is around.
+/// True for what oxlint checks: a top-level `import`, and a `require(..)` without parentheses that's in the root scope.
 fn is_seen_by_oxlint<'a>(importer: Node<'a>, memo: &mut AncestorMemo<'a, ()>) -> bool {
     match importer {
         Node::Stmt(stmt) => stmt.tag() == StmtTag::Import && matches!(stmt.parent(), Node::File(_)),
@@ -51,7 +51,7 @@ impl Rule for NoWebpackLoaderSyntax {
                 cx.report(visited.importer, UNEXPECTED).data("name", visited.specifier);
                 continue;
             }
-            // oxlint points at the name.
+            // oxlint reports the specifier.
             if is_seen_by_oxlint(visited.importer, &mut memo) {
                 cx.report(visited.source, OXLINT).data("name", visited.specifier);
             }

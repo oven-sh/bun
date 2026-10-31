@@ -1,4 +1,4 @@
-//! What several kinds of nodes are formatted with.
+//! Helpers shared by several kinds of nodes.
 
 pub(crate) mod array;
 pub(crate) mod assignment_like;
@@ -21,7 +21,7 @@ pub(crate) mod typescript;
 
 use crate::prelude::*;
 
-/// `connect(a, b, c)(d)`: `call` is the callee of a call that has fewer arguments, but some.
+/// `connect(a, b, c)(d)`: `call` is the callee of a call that has fewer arguments, but at least one.
 #[inline]
 pub(crate) fn is_long_curried_call(call: Expr<'_>, f: &Formatter<'_>) -> bool {
     call.as_call_like()
@@ -30,8 +30,8 @@ pub(crate) fn is_long_curried_call(call: Expr<'_>, f: &Formatter<'_>) -> bool {
         && matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent, f))
 }
 
-/// Whether what is behind `callee` can be between a callee and its arguments: whitespace, a comment, a
-/// `)`, or the start of `(`, `<T>(` or `?.(`.
+/// True if the character after `callee` can come between a callee and its arguments: whitespace, a comment, a `)`, or
+/// the start of `(`, `<T>(` or `?.(`.
 #[inline]
 fn may_be_followed_by_arguments(callee: Expr<'_>) -> bool {
     (callee.file().text().get(callee.span().end as usize)).is_some_and(|&next| {
@@ -39,14 +39,14 @@ fn may_be_followed_by_arguments(callee: Expr<'_>) -> bool {
     })
 }
 
-/// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`, unless the tree is
+/// `parent` is the call that contains `call`. A whole optional chain is in a `ChainExpression`, unless the tree is
 /// Babel's.
 fn is_long_curried_callee<'a>(call: Expr<'a>, parent: Expr<'a>, f: &Formatter<'_>) -> bool {
     let (Some(this), Some(parent)) = (call.as_call_like(), parent.as_call_like()) else {
         return false;
     };
     parent.callee() == call
-        && (f.context().has_tree_of_babel() || !call.is_chain_root())
+        && (f.context().has_babel_tree() || !call.is_chain_root())
         && this.args().len() > parent.args().len()
         && !parent.args().is_empty()
 }

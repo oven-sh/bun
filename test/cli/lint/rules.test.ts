@@ -129,7 +129,7 @@ describe.concurrent("React Compiler rules only match eslint-plugin-react-hooks w
   const names = ["exhaustive-effect-dependencies", "capitalized-calls"];
   const briefly = (reports: string[]) => reports.map(it => it.split(" ").slice(0, 2).join(" "));
 
-  test("without a config file", async () => {
+  test("without a config file, they report a missing effect dependency and allow BigInt() and Symbol()", async () => {
     const bunfig = `[lint.rules]\n${names.map(name => `"react-hooks/${name}" = "error"\n`).join("")}`;
     const reports = await lint({ "bunfig.toml": bunfig, "a.jsx": effect, "b.jsx": calls }, "react-hooks/");
     expect(briefly(reports)).toEqual([
@@ -220,21 +220,22 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
     ]);
   });
 
-  // To read a directory takes as long as it has entries, and a project can be in one with tens of thousands, like `$TMPDIR`.
-  describe.skipIf(!isLinux)("the directory above a project is not read", () => {
+  // Listing a directory takes time proportional to its entry count, and a project can be in a directory with tens of
+  // thousands of entries, like `$TMPDIR`.
+  describe.skipIf(!isLinux)("the project's parent directory is never listed", () => {
     const files: Record<string, string> = {
       "above/project/bunfig.toml": rules("default"),
       "above/project/package.json": `{ "name": "project", "type": "module" }`,
       "above/project/tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [] }, "include": ["src"] }`,
     };
-    // Enough for every thread to look for packages and configuration files all the way up.
+    // Enough files for every thread to search all the parent directories for packages and config files.
     for (let i = 0; i < 40; i++) {
       files[`above/project/src/a${i}.ts`] =
         `import b from "./b${i}";\nimport c from "not-installed-${i % 5}";\nexport const a = [b, c];\n`;
       files[`above/project/src/b${i}.ts`] = "export const b = 1;\n";
     }
-    /** Sets the time of the last access back. Reading the directory moves it, if it is before the last change. */
-    const forget = (directory: string) => {
+    /** Sets the access time to before the modification time, so that listing the directory updates it (`relatime`). */
+    const resetAccessTime = (directory: string) => {
       utimesSync(directory, new Date(Date.now() - 3 * 86_400_000), statSync(directory).mtime);
       return statSync(directory).atimeMs;
     };
@@ -242,11 +243,11 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
     test.each(["lint -f unix .", "lint -f unix --type-aware .", "check"])("by bun %s", async command => {
       using dir = tempDir("bun-lint-rules", files);
       const above = join(String(dir), "above");
-      let before = forget(above);
+      let before = resetAccessTime(above);
       readdirSync(above);
-      // Mounted with `noatime`: nothing shows whether it is read.
+      // The file system is mounted with `noatime`, so there's no way to tell if the directory was listed.
       if (statSync(above).atimeMs === before) return;
-      before = forget(above);
+      before = resetAccessTime(above);
       await using proc = spawn({
         cmd: [bunExe(), ...command.split(" "), "--threads", "8"],
         env,
@@ -338,14 +339,14 @@ describe.concurrent("rules that sort", () => {
         ["a10", "a1b", "a2"],
         ["15", "1e", "2a"],
         ["231a", "23e9", "25b6"],
-      ].map((circle): [string, string[]] => {
-        const all = circle.flatMap(key => [..."qrstuvwxyz"].map(end => `${key}_${end}`));
+      ].map((cycle): [string, string[]] => {
+        const all = cycle.flatMap(key => [..."qrstuvwxyz"].map(end => `${key}_${end}`));
         return [
-          `${circle.join(", ")} many times`,
+          `many keys that start with ${cycle.join(", ")}`,
           [...new Set(all.map((_, i) => all[(i * 19 + (i >> 2)) % all.length]))],
         ];
       }),
-    ])("%s", async (_, keys) => {
+    ])("--fix terminates and keeps every key: %s", async (_, keys) => {
       expect(keys.length).toBeGreaterThan(21);
       const before = `export const table = {\n${keys.map((key, i) => `  "${key}": ${i}, // ${key}\n`).join("")}};\n`;
       using dir = tempDir("bun-lint-rules", {
@@ -437,11 +438,11 @@ C.propTypes = {
   });
 });
 
-// Most of what is looked for to resolve an import is not there: `./b.tsx`, `./b.d.ts`, `./b/package.json`.
-test("to find that a directory lacks a name does not take longer the more it has", async () => {
+// Most of the paths tried while resolving an import don't exist: `./b.tsx`, `./b.d.ts`, `./b/package.json`.
+test("looking up a missing file doesn't get slower as the directory gets larger", async () => {
   const count = 6_000;
   async function cpu(pathOf: (i: number) => string) {
-    // oxlint looks for `.js` and others before `.ts`.
+    // oxlint tries `.js` and other extensions before `.ts`.
     const files: Record<string, string> = {
       ".oxlintrc.json": `{ "plugins": ["import"], "categories": { "correctness": "off" }, "rules": { "import/default": "error" } }`,
     };

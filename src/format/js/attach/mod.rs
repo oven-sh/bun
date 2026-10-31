@@ -3,11 +3,11 @@
 //! 1. The parser has already recorded the nodes around each comment ([`bun_lint::ast::comments::Comment`]).
 //!    [`surrounding_nodes`] converts them to the nodes the printers use.
 //! 2. [`rules`] has the special cases from Prettier's `handle-comments.js`.
-//! 3. Any other comment is attached by its position in the line: a comment on its own line becomes a leading comment of the
-//!    following node, and a comment at the end of a line becomes a trailing comment of the preceding node.
+//! 3. Any other comment is attached by its position in the line: a comment on its own line becomes a leading comment of
+//!    the following node, and a comment at the end of a line becomes a trailing comment of the preceding node.
 //!
-//! Nothing here searches the tree. Of the source text, the rules look at the byte at an offset that the lexer has recorded, to
-//! tell which token is before or after a comment.
+//! Nothing here searches the tree. The only source text the rules read is the byte at an offset the lexer recorded, to
+//! tell which token comes before or after a comment.
 
 mod debug;
 mod flow;
@@ -29,7 +29,7 @@ pub(crate) enum Placement {
     Dangling,
 }
 
-/// Prettier's `comment.marker`. It tells apart the dangling comments of one node that are printed in different places.
+/// Prettier's `comment.marker`. It distinguishes dangling comments of one node that are printed in different places.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Marker {
     #[default]
@@ -44,8 +44,8 @@ pub(crate) enum Marker {
     Mixins,
     /// In the `</>` of a fragment, which is a node for Prettier. A comment in the `<>` has no marker.
     ClosingFragment,
-    /// The comment is inside an ignored node, so it is copied along with the node's source text. Prettier does not attach such
-    /// a comment at all.
+    /// The comment is inside an ignored node, so it's copied along with the node's source text. Prettier doesn't attach
+    /// such a comment at all.
     InIgnoredNode,
 }
 
@@ -53,10 +53,10 @@ pub(crate) enum Marker {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Owner<'a> {
     Node(AstNodes<'a>),
-    /// An identifier or a literal key, given by its start offset. For Prettier it is an `Identifier` or `Literal` node.
+    /// An identifier or a literal key, given by its start offset. For Prettier it's an `Identifier` or `Literal` node.
     Name(u32),
-    /// The parentheses after a `/** @type {T} */` cast: the expression inside them and the offset of the `(`. For Prettier it is
-    /// Babel's `ParenthesizedExpression` node.
+    /// The parentheses after a `/** @type {T} */` cast: the expression inside them and the offset of the `(`. For
+    /// Prettier it's Babel's `ParenthesizedExpression` node.
     CastParens(Expr<'a>, u32),
 }
 
@@ -65,7 +65,7 @@ pub(crate) struct Attachment<'a> {
     pub(crate) owner: Owner<'a>,
     pub(crate) placement: Placement,
     pub(crate) marker: Marker,
-    /// Prettier's `comment.unignore`: a `prettier-ignore` comment that does not apply to its owner.
+    /// Prettier's `comment.unignore`: a `prettier-ignore` comment that doesn't apply to its owner.
     pub(crate) is_unignored: bool,
     /// A `prettier-ignore` comment that applies to its owner.
     pub(crate) ignores_owner: bool,
@@ -108,8 +108,8 @@ pub(crate) struct Attached<'a> {
     pub(crate) attachments: Vec<Attachment<'a>>,
     /// Prettier's `node.prettierIgnore`: nodes that are ignored because of a comment attached to a different node.
     pub(crate) ignored_nodes: Vec<Owner<'a>>,
-    /// Start offsets of the owners that are not next to their comment, or do not contain their dangling comment. Sorted. While
-    /// a node is printed that has neither a comment nor one of these in it, nothing in it owns a comment.
+    /// Sorted start offsets of the owners that aren't next to their comment, or don't contain their dangling comment.
+    /// If a node's span contains neither a comment nor one of these offsets, nothing inside it owns a comment.
     pub(crate) relocated_owner_starts: Vec<u32>,
     pub(crate) has_ignore_comments: bool,
 }
@@ -117,7 +117,7 @@ pub(crate) struct Attached<'a> {
 #[derive(Copy, Clone)]
 pub(crate) struct Options {
     /// Prettier would parse this file with Babel instead of typescript-estree. Their trees differ in a few places.
-    pub(crate) has_tree_of_babel: bool,
+    pub(crate) has_babel_tree: bool,
     pub(crate) experimental_ternaries: bool,
     pub(crate) flavor: Flavor,
 }
@@ -142,25 +142,24 @@ struct CommentContext<'a> {
     is_last_comment: bool,
 }
 
-/// Whether only spaces and tabs separate two consecutive comments.
+/// True if only spaces and tabs separate two consecutive comments.
 fn are_on_same_line(first: Comment<'_>, second: Comment<'_>) -> bool {
     first.next_token_start() == second.next_token_start() && !second.has_newline_before()
 }
 
-/// Prettier's `isOwnLineComment` and `isEndOfLineComment`. A run of comments on one line that share the same preceding (or
-/// following) node is classified as a whole.
+/// Prettier's `isOwnLineComment` and `isEndOfLineComment`. A run of comments on one line that share the same preceding
+/// (or following) node is classified as a whole.
 ///
-/// Remembers the run of the comment that was asked about last, so that a long run is walked once and not once for each of its
-/// comments.
+/// Caches the run of the last comment looked up, so a long run is walked once instead of once per comment.
 struct TextPositions {
     /// The comments from `.0` to `.1` are a run with the same preceding node.
     with_same_preceding_node: (usize, usize),
-    /// The same for the following node.
+    /// Same, for the following node.
     with_same_following_node: (usize, usize),
 }
 
 impl TextPositions {
-    const NONE_ASKED_YET: TextPositions = TextPositions {
+    const NOTHING_CACHED: TextPositions = TextPositions {
         with_same_preceding_node: (1, 0),
         with_same_following_node: (1, 0),
     };
@@ -211,8 +210,8 @@ impl TextPositions {
     }
 }
 
-/// The default for a comment that no rule handles. Returns `None` for a comment between two nodes on the same line, which
-/// [`break_ties`] decides.
+/// The default for a comment that no rule handles. Returns `None` for a comment between two nodes on the same line,
+/// which [`break_ties`] decides.
 fn attach_by_text_position<'a>(
     text_position: TextPosition,
     nodes: &SurroundingNodes<'a>,
@@ -229,9 +228,9 @@ fn attach_by_text_position<'a>(
     )
 }
 
-/// Prettier's `breakTies`. `ties` are consecutive comments between the same two nodes on one line. The ones at the end that
-/// are separated from the following node only by whitespace and `(` become its leading comments. The rest become trailing
-/// comments of the preceding node.
+/// Prettier's `breakTies`. `ties` are consecutive comments between the same two nodes on one line. The ones at the end
+/// that are separated from the following node only by whitespace and `(` become its leading comments. The rest become
+/// trailing comments of the preceding node.
 fn break_ties<'a>(
     cx: &AttachContext<'a, '_>,
     ties: &mut Vec<usize>,
@@ -264,12 +263,13 @@ fn break_ties<'a>(
     }
 }
 
-/// Whether an ignore comment that trails `owner` ignores it in the oxfmt flavor. For Prettier every comment of a node counts.
-/// For oxfmt the comment has to come right after the node, with nothing but separators between them, and end its line.
+/// True if an ignore comment that trails `owner` applies to it in the oxfmt flavor. For Prettier every comment of a
+/// node counts. For oxfmt the comment has to come right after the node, with nothing but separators between them, and
+/// end its line.
 ///
 /// ```js
 /// a  +  b; // prettier-ignore            is copied
-/// f(a  +  b /* prettier-ignore */);      is formatted: the comment does not end its line
+/// f(a  +  b /* prettier-ignore */);      is formatted: the comment doesn't end its line
 /// (a  +  b) // prettier-ignore           is formatted: a `)` is between the two
 ///   .c;
 /// ```
@@ -281,7 +281,7 @@ fn trailing_ignore_comment_counts_for_oxfmt<'a>(
 ) -> bool {
     let text = cx.file.text();
     let owner_end = match owner {
-        // `span_of` gives a name no width.
+        // `span_of` returns an empty span for a name.
         Owner::Name(start) => {
             let name = text.get(start as usize..).unwrap_or_default();
             start as usize + bun_lint::tokens::token_len(name)
@@ -307,9 +307,9 @@ pub(crate) fn attach<'a>(
         ..Attached::default()
     };
     let mut ties: Vec<usize> = Vec::new();
-    let mut text_positions = TextPositions::NONE_ASKED_YET;
+    let mut text_positions = TextPositions::NOTHING_CACHED;
     for (id, comment) in file.comments_by_id().enumerate() {
-        // The usual case. See `AttachContext::list_elements_around`.
+        // The common case. See `AttachContext::list_elements_around`.
         if nodes[id].is_before_list_element
             && comment.has_newline_before()
             && let Some(following_node) = nodes[id].following_node
@@ -331,7 +331,7 @@ pub(crate) fn attach<'a>(
         };
         attached.has_ignore_comments |= context.is_ignore_comment;
         let mut ignored_node = None;
-        // `handleClosureTypeCastComments` is the only rule that does not ask what the enclosing node is.
+        // `handleClosureTypeCastComments` is the only rule that doesn't check the enclosing node.
         let has_no_rule = context.nodes.is_before_list_element
             && (context.text_position != TextPosition::EndOfLine
                 || !comment.looks_like_type_cast());
@@ -365,7 +365,7 @@ pub(crate) fn attach<'a>(
             following_node,
             Some(program),
         ];
-        // `class A // comment ⏎ {}`: the comment dangles from the body, and is not in it.
+        // `class A // comment ⏎ {}`: the comment dangles from the body but isn't inside it.
         let is_outside_of_owner = attachment.placement == Placement::Dangling
             && !cx.span_of(attachment.owner).contains(comment.span());
         if is_outside_of_owner || !nearby.contains(&Some(attachment.owner)) {
@@ -401,8 +401,8 @@ pub(crate) fn attach<'a>(
     }
     let ignored_starts = attached.ignored_nodes.iter().map(|node| cx.start_of(*node));
     attached.relocated_owner_starts.extend(ignored_starts);
-    // `let a: /* comment */ | B`: the comment belongs to `B`, and the printers get to `B` by way of the union `| B`, which does not
-    // contain the comment.
+    // `let a: /* comment */ | B`: the comment belongs to `B`, but the printers reach `B` through the union `| B`, which
+    // doesn't contain the comment.
     let starts_in_unions = (attached.attachments.iter())
         .filter(|attachment| cx.is_only_member_of_union(attachment.owner))
         .map(|attachment| cx.start_of(attachment.owner));

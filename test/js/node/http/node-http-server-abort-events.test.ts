@@ -1274,6 +1274,43 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
   }
 });
 
+test("headersSent and setHeader() agree when the response ends on a closed socket", async () => {
+  async function endAfterSocketClose(chunk: string | undefined) {
+    const { promise: sampled, resolve } = Promise.withResolvers<unknown>();
+    const server = createServer((req, res) => {
+      req.socket.on("close", () => {
+        res.end(chunk);
+        let setHeader = "ok";
+        try {
+          res.setHeader("X-Late", "1");
+        } catch (e) {
+          setHeader = (e as NodeJS.ErrnoException).code!;
+        }
+        resolve({ headersSent: res.headersSent, finished: res.finished, setHeader });
+      });
+      client.destroy();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    try {
+      return await sampled;
+    } finally {
+      server.close();
+    }
+  }
+
+  // Node.js drops the chunk of a destroyed response before it renders the head.
+  expect(await endAfterSocketClose("late")).toEqual({ headersSent: false, finished: true, setHeader: "ok" });
+  expect(await endAfterSocketClose(undefined)).toEqual({
+    headersSent: true,
+    finished: true,
+    setHeader: "ERR_HTTP_HEADERS_SENT",
+  });
+});
+
 // Like Node.js's net.Socket: the connection socket (req.socket) emits 'end' for
 // the peer's FIN and 'error' (read ECONNRESET, routed to 'clientError') for the
 // peer's RST, each before 'close'. A close the server starts emits only 'close'.

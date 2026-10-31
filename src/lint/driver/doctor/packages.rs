@@ -20,8 +20,8 @@ macro_rules! pretty {
 /// Places that can use a package but aren't checked.
 const NOT_CHECKED: [&str; 3] = ["other tools' configs", "CI files", "Git hooks"];
 
-/// Whether `name` is `family-..`, `@scope/family` or `@scope/family-..`.
-fn is_of_family(name: &[u8], family: &[u8]) -> bool {
+/// True if `name` is `family-..`, `@scope/family` or `@scope/family-..`.
+fn is_in_family(name: &[u8], family: &[u8]) -> bool {
     let (is_scoped, own) = match (name.first(), strings::index_of_char_usize(name, b'/')) {
         (Some(b'@'), Some(slash)) => (true, &name[slash + 1..]),
         _ => (false, name),
@@ -33,7 +33,8 @@ fn is_of_family(name: &[u8], family: &[u8]) -> bool {
     }
 }
 
-/// Whether the package `name` only exists to serve ESLint or oxlint. `vite-plugin-eslint` doesn't, because it serves Vite.
+/// True if the package `name` only exists to serve ESLint or oxlint. `vite-plugin-eslint` doesn't, because it serves
+/// Vite.
 pub(crate) fn is_for_linting(name: &[u8]) -> bool {
     let families: [&[u8]; 3] = [
         b"eslint-plugin",
@@ -45,15 +46,15 @@ pub(crate) fn is_for_linting(name: &[u8]) -> bool {
         b"eslint" | b"oxlint" | b"oxlint-tsgolint" | b"typescript-eslint"
     ) || name.starts_with(b"@eslint/")
         || name.starts_with(b"@typescript-eslint/")
-        || families.iter().any(|it| is_of_family(name, it))
+        || families.iter().any(|it| is_in_family(name, it))
 }
 
-/// The same for Prettier and oxfmt.
+/// Same for Prettier and oxfmt.
 pub(crate) fn is_for_formatting(name: &[u8]) -> bool {
     let families: [&[u8]; 2] = [b"prettier-plugin", b"prettier-config"];
     matches!(name, b"prettier" | b"oxfmt")
         || name.starts_with(b"@prettier/plugin-")
-        || families.iter().any(|it| is_of_family(name, it))
+        || families.iter().any(|it| is_in_family(name, it))
 }
 
 /// Why a package has to stay installed.
@@ -65,7 +66,7 @@ pub(crate) enum Need {
     Files,
     /// `bun fmt` skips files because of a plugin it doesn't have. Until that changes, only the old tool formats them.
     SkippedFiles,
-    /// The config file can't be loaded without it. Holds the file's name as shown to the user.
+    /// The config file can't be loaded without it. The value is the file's name as shown to the user.
     Configuration(Vec<u8>),
     /// There's no config file, so having this dependency is what picks whose defaults apply.
     Defaults,
@@ -102,7 +103,7 @@ impl Need {
     }
 
     /// The reason printed after the names of `count` packages.
-    fn shown(&self, count: usize) -> String {
+    fn explanation(&self, count: usize) -> String {
         let (it, its) = if count == 1 {
             ("it", "its")
         } else {
@@ -140,7 +141,7 @@ fn required_by(installed: &Json) -> Vec<Vec<u8>> {
     names
 }
 
-/// Whether any word of the shell command `command` is `name` or a path ending in `name`.
+/// True if any word of the shell command `command` is `name` or a path ending in `name`.
 fn runs(command: &[u8], name: &[u8]) -> bool {
     strings::tokenize_any(command, b" \t\n;&|()\"'")
         .any(|word| word == name || paths::basename(word) == name)
@@ -174,12 +175,12 @@ pub(crate) struct Packages {
 }
 
 impl Packages {
-    /// Reads the `package.json` closest to `cwd`. `is_of_a_tool` says whether a package only exists to serve the replaced
-    /// tool. `need` says why a run still needs a package, if it does.
+    /// Reads the `package.json` closest to `cwd`. `is_tool_package` says whether a package only exists to serve the
+    /// replaced tool. `need` says why a run still needs a package, if it does.
     #[optimize(size)]
     pub(crate) fn new(
         cwd: &[u8],
-        is_of_a_tool: &dyn Fn(&[u8]) -> bool,
+        is_tool_package: &dyn Fn(&[u8]) -> bool,
         need: &dyn Fn(&[u8]) -> Option<Need>,
     ) -> Packages {
         let mut packages = Packages::default();
@@ -192,11 +193,11 @@ impl Packages {
         };
         let mut staying = Vec::new();
         for name in names_in(&manifest, &[b"dependencies", b"devDependencies"]) {
-            let is_of_a_tool = is_of_a_tool(&name);
-            let used = || run_by(&manifest, &name).filter(|_| is_of_a_tool);
+            let is_tool_package = is_tool_package(&name);
+            let used = || run_by(&manifest, &name).filter(|_| is_tool_package);
             match need(&name).or_else(used) {
                 Some(need) => packages.needed.push((name.clone(), need)),
-                None if is_of_a_tool => {
+                None if is_tool_package => {
                     packages.removable.push(name);
                     continue;
                 }
@@ -210,12 +211,12 @@ impl Packages {
                 continue;
             };
             let uses = required_by(&installed);
-            let (kept, removable) = std::mem::take(&mut packages.removable)
+            let (still_needed, removable) = std::mem::take(&mut packages.removable)
                 .into_iter()
                 .partition(|it| uses.contains(it));
             packages.removable = removable;
-            let kept: Vec<Vec<u8>> = kept;
-            for name in kept {
+            let still_needed: Vec<Vec<u8>> = still_needed;
+            for name in still_needed {
                 let need = Need::Dependent(stays.clone());
                 packages.needed.push((name.clone(), need));
                 staying.push(name);
@@ -276,7 +277,7 @@ impl Packages {
                 "{} {} <d>({})<r>\n",
                 label,
                 BStr::new(&names.join(&b", "[..])),
-                need.shown(names.len())
+                need.explanation(names.len())
             );
         }
         if !self.removable.is_empty() {

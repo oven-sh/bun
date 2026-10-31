@@ -21,7 +21,7 @@ use crate::util::FxHashSet;
 struct CheckOrder {
     /// The file being checked.
     file: FileId,
-    follows_later_files: bool,
+    follows_other_files: bool,
     /// `links.deferredNodes`
     deferred_nodes: std::collections::VecDeque<Node>,
     is_deferred: FxHashSet<(FileId, Node)>,
@@ -31,21 +31,27 @@ struct CheckOrder {
     current_node: Node,
 }
 
+impl CheckOrder {
+    fn is_followed(&self, file: FileId) -> bool {
+        file == self.file || self.follows_other_files
+    }
+}
+
 impl Checker<'_, '_> {
     /// Calls `visit` on each expression in the order in which `checkSourceFile` of `file` reaches them, until `visit`
-    /// returns true. `visit` also receives the expression's file and `c.currentNode`. With `follows_later_files`,
-    /// requests are also followed into files that are checked later. Nodes deferred in a later file are skipped,
-    /// because that file's own check handles them.
+    /// returns true. `visit` also receives the expression's file and `c.currentNode`. With `follows_other_files`,
+    /// requests are also followed into other files, from where they can lead back into `file`. Nodes deferred in
+    /// another file are skipped, because that file's own check handles them.
     pub(super) fn follow_check(
         &mut self,
         file: FileId,
-        follows_later_files: bool,
+        follows_other_files: bool,
         visit: &mut dyn FnMut(&mut Self, FileId, ExprId, Node) -> bool,
     ) {
         let hir = self.hir(file);
         let mut order = CheckOrder {
             file,
-            follows_later_files,
+            follows_other_files,
             deferred_nodes: Default::default(),
             is_deferred: Default::default(),
             is_resolved: Default::default(),
@@ -98,7 +104,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if func.is_none()
             || hir[func].ret.is_some()
-            || !self.is_followed(file, order)
+            || !order.is_followed(file)
             || !order.is_resolved.insert((file, hir.node(func)))
         {
             return false;
@@ -122,14 +128,9 @@ impl Checker<'_, '_> {
     ) -> bool {
         ty.is_none()
             && initializer.is_some()
-            && self.is_followed(file, order)
+            && order.is_followed(file)
             && order.is_resolved.insert((file, declaration))
             && self.follow_node(file, self.hir(file).node(initializer), order, visit)
-    }
-
-    fn is_followed(&self, file: FileId, order: &CheckOrder) -> bool {
-        file == order.file
-            || order.follows_later_files && self.is_checked_no_later_than(order.file, file)
     }
 
     fn follow_node(
@@ -260,7 +261,7 @@ impl Checker<'_, '_> {
             Identifier if expression.is_some() && bound.symbol_of_expr(expression).is_some() => {
                 let files = self.files();
                 let symbol = files.sym(file, bound.symbol_of_expr(expression));
-                let target = if order.follows_later_files && files.is_non_local_alias(symbol) {
+                let target = if order.follows_other_files && files.is_non_local_alias(symbol) {
                     files.resolve_alias(symbol)
                 } else {
                     Some(symbol)

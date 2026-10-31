@@ -1,17 +1,17 @@
-// The test cases of eslint-plugin-react-hooks for its rules of the React Compiler as files, for eslint.ts.
+// Writes eslint-plugin-react-hooks's test cases for its React Compiler rules as files, for eslint.ts.
 //
 //   bun plugin-cases.ts <react>/packages/eslint-plugin-react-hooks/__tests__ <out directory>
 //
-// Of `ReactCompilerRule*-test.ts`: each `filename: '..'` with the `code:` that follows it, which is a template without
-// substitutions, after `normalizeIndent` or not. What comes after `invalid: [` is not valid. Nothing of the files is run. Writes
-// <Flow|Typescript>/<number>.<valid|invalid>.<extension of the filename>. The cases with Flow's `component` and `hook` are for
-// hermes-eslint: espree refuses them.
+// Scans `ReactCompilerRule*-test.ts` for each `filename: '..'` and the `code:` after it, which is a template without
+// substitutions, optionally tagged with `normalizeIndent`. Cases after `invalid: [` are invalid. The test files are
+// never executed. Writes <Flow|Typescript>/<number>.<valid|invalid>.<extension of the filename>. The cases with Flow's
+// `component` and `hook` need hermes-eslint, because espree rejects them.
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { options } from "./shared.ts";
 
-/** What the tag of that name in the test files does: it removes the indentation of the second line from all lines. */
+/** Same as the tag with this name in the test files: removes the second line's indentation from every line. */
 function normalizeIndent(text: string): string {
   const lines = text.split("\n");
   const padding = /\s+/.exec(lines[1] ?? "")?.[0] ?? "";

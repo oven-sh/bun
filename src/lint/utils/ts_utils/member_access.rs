@@ -1,6 +1,6 @@
-//! `getStaticMemberAccessValue` and `isStaticMemberAccessOfValue` of `misc.ts`, and what is built
-//! on them: `hasOverloadSignatures.ts`, and the syntactic halves of
-//! `isArrayMethodCallWithPredicate.ts` and `isPromiseAggregatorMethod.ts`.
+//! `getStaticMemberAccessValue` and `isStaticMemberAccessOfValue` of `misc.ts`, and the helpers built on them:
+//! `hasOverloadSignatures.ts`, and the syntactic halves of `isArrayMethodCallWithPredicate.ts` and
+//! `isPromiseAggregatorMethod.ts`.
 
 use super::estree::sibling_statements;
 use super::misc::NodeWithKey;
@@ -9,7 +9,7 @@ use crate::ast::{Expr, Flags, Func, KeyKind, Member, Node, Stmt};
 use crate::utils::eslint_utils::{StaticSymbol, StaticValue, get_static_value};
 use std::borrow::Cow;
 
-/// What [`get_static_member_access_value`] returns: upstream's `string | symbol`.
+/// The result of [`get_static_member_access_value`]: upstream's `string | symbol`.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum MemberAccessValue<'a> {
     String(Cow<'a, [u8]>),
@@ -30,7 +30,7 @@ impl MemberAccessValue<'_> {
     }
 }
 
-/// `getStaticValue(e, scope)`, with `String()` applied to what is not a symbol.
+/// `getStaticValue(e, scope)`, with `String()` applied to anything that isn't a symbol.
 fn static_key_value(e: Expr<'_>) -> Option<MemberAccessValue<'_>> {
     Some(match get_static_value(e, Some(e.file().scope()))? {
         StaticValue::Symbol(StaticSymbol::WellKnown(name)) => {
@@ -43,9 +43,9 @@ fn static_key_value(e: Expr<'_>) -> Option<MemberAccessValue<'_>> {
     })
 }
 
-/// typescript-eslint's `getStaticMemberAccessValue`: the key that a member access (an `Expr`)
-/// reads, or that a `Member` or a `Prop` declares, if it can be told without running the program.
-/// A number is a string: `a[0]` is `"0"`. As upstream, `a.#b` is `"b"`, without the `#`.
+/// typescript-eslint's `getStaticMemberAccessValue`: the key that a member access (an `Expr`) reads, or that a `Member`
+/// or a `Prop` declares, if it's known without running the program. A number becomes a string: `a[0]` is `"0"`. As
+/// upstream, `a.#b` is `"b"`, without the `#`.
 #[inline]
 pub fn get_static_member_access_value<'a>(
     node: impl Into<NodeWithKey<'a>>,
@@ -70,11 +70,11 @@ fn static_member_access_value_of<'a>(node: NodeWithKey<'a>) -> Option<MemberAcce
     }
 }
 
-/// typescript-eslint's `isStaticMemberAccessOfValue`, for values that are strings: whether the node
-/// looks like `x.value`, `x['value']`, or `const v = 'value'; x[v]`, for one of `values`.
+/// typescript-eslint's `isStaticMemberAccessOfValue`, for string values: true if the node looks like `x.value`,
+/// `x['value']`, or `const v = 'value'; x[v]`, for one of `values`.
 ///
-/// To compare with a value that [`get_static_member_access_value`] returned, which can be a symbol,
-/// compare two results of that.
+/// To compare with a value returned by [`get_static_member_access_value`], which can be a symbol, compare two of its
+/// results.
 pub fn is_static_member_access_of_value<'a>(
     node: impl Into<NodeWithKey<'a>>,
     values: &[impl AsRef<[u8]>],
@@ -85,7 +85,7 @@ pub fn is_static_member_access_of_value<'a>(
         .is_some_and(|value| values.iter().any(|it| it.as_ref() == value))
 }
 
-/// The object of the member access that `call`, a `Call`, calls, if the member is one of `names`.
+/// The object of the member access that the `Call` `call` calls, if the member is one of `names`.
 fn object_of_called_method<'a>(call: Expr<'a>, names: &[&str]) -> Option<Expr<'a>> {
     let callee = call.as_call()?.callee();
     // `(a?.b)()` calls a `ChainExpression`.
@@ -96,11 +96,11 @@ fn object_of_called_method<'a>(call: Expr<'a>, names: &[&str]) -> Option<Expr<'a
     is_static_member_access_of_value(callee, names).then_some(obj)
 }
 
-/// typescript-eslint's `isArrayMethodCallWithPredicate`: whether `call` calls `every`, `filter`,
-/// `find`, `findIndex`, `findLast`, `findLastIndex` or `some` of an array.
+/// typescript-eslint's `isArrayMethodCallWithPredicate`: true if `call` calls an array's `every`, `filter`, `find`,
+/// `findIndex`, `findLast`, `findLastIndex` or `some`.
 ///
-/// `is_array_or_tuple` is given the object, and does upstream's test of its type: whether a
-/// constituent of the constrained type at that location is an array or a tuple type.
+/// `is_array_or_tuple` receives the object and does upstream's type test: whether a constituent of the constrained type
+/// at that location is an array or a tuple type.
 pub fn is_array_method_call_with_predicate<'a>(
     call: Expr<'a>,
     is_array_or_tuple: impl FnOnce(Expr<'a>) -> bool,
@@ -117,11 +117,11 @@ pub fn is_array_method_call_with_predicate<'a>(
     object_of_called_method(call, &ARRAY_PREDICATE_FUNCTIONS).is_some_and(is_array_or_tuple)
 }
 
-/// typescript-eslint's `isPromiseAggregatorMethod`: whether `call` calls `all`, `allSettled`, `race`
-/// or `any` of the `Promise` constructor.
+/// typescript-eslint's `isPromiseAggregatorMethod`: true if `call` calls the `Promise` constructor's `all`,
+/// `allSettled`, `race` or `any`.
 ///
-/// `is_promise_constructor_like` is given the object, and does upstream's test of its type:
-/// `isPromiseConstructorLike` of the constrained type at that location.
+/// `is_promise_constructor_like` receives the object and does upstream's type test: `isPromiseConstructorLike` of the
+/// constrained type at that location.
 pub fn is_promise_aggregator_method<'a>(
     call: Expr<'a>,
     is_promise_constructor_like: impl FnOnce(Expr<'a>) -> bool,
@@ -131,7 +131,7 @@ pub fn is_promise_aggregator_method<'a>(
         .is_some_and(is_promise_constructor_like)
 }
 
-/// A `TSDeclareFunction`, with the flags of its statement.
+/// A `TSDeclareFunction`, with its statement's flags.
 fn as_declare_function(statement: Stmt<'_>) -> Option<(Func<'_>, Flags)> {
     match statement.as_fn() {
         Some(func) if !func.has_body() => Some((func, statement.flags())),
@@ -167,9 +167,9 @@ fn method_has_overload_signatures(member: Member<'_>) -> bool {
     })
 }
 
-/// typescript-eslint's `hasOverloadSignatures`, for a function declaration (its `Func` or its
-/// `Stmt`) or a method of a class (its `Member`): whether there is a declaration without a body of
-/// the same name beside it. For an exported function, one that is exported in the same way.
+/// typescript-eslint's `hasOverloadSignatures`, for a function declaration (its `Func` or its `Stmt`) or a class method
+/// (its `Member`): true if it has a sibling declaration without a body and with the same name. For an exported
+/// function, the sibling must be exported the same way.
 pub fn has_overload_signatures<'a>(node: impl Into<Node<'a>>) -> bool {
     match node.into() {
         Node::Member(member) => method_has_overload_signatures(member),

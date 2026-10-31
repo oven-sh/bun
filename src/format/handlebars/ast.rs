@@ -1,11 +1,11 @@
-//! The tree that `@glimmer/syntax` makes of a template, in flat lists.
+//! The tree that `@glimmer/syntax` builds from a template, stored in flat lists.
 
 pub(crate) type NodeId = u32;
 
-/// The node that stands for `undefined`. It prints nothing.
+/// The node that represents `undefined`. It prints nothing.
 pub(crate) const NOTHING: NodeId = 0;
 
-/// Bytes of the template, or of `Tree::owned` where the tree has what the template has not.
+/// A range of bytes in the template, or in `Tree::owned` for text that isn't a substring of the template.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Text {
     start: u32,
@@ -46,7 +46,7 @@ impl Text {
     }
 }
 
-/// A part of `Tree::lists` or of `Tree::names`.
+/// A range of `Tree::lists` or `Tree::names`.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Range {
     pub(crate) start: u32,
@@ -81,7 +81,7 @@ pub(crate) const INVERSE_OPEN: u8 = 1 << 2;
 pub(crate) const INVERSE_CLOSE: u8 = 1 << 3;
 pub(crate) const CLOSE_OPEN: u8 = 1 << 4;
 pub(crate) const CLOSE_CLOSE: u8 = 1 << 5;
-/// Of a block: it is written `{{else a}}`.
+/// Block: it's written as `{{else a}}`.
 pub(crate) const CHAINED: u8 = 1 << 6;
 
 #[derive(Copy, Clone)]
@@ -97,7 +97,7 @@ pub(crate) enum Kind {
     },
     Element {
         tag: Text,
-        /// `attributes`, `modifiers` and `comments`, in the order of the template.
+        /// `attributes`, `modifiers` and `comments`, in source order.
         attributes: Range,
         block_params: Range,
         children: Range,
@@ -106,7 +106,7 @@ pub(crate) enum Kind {
     BlockStatement {
         call: Call,
         program: NodeId,
-        /// `NOTHING`: there is none.
+        /// `NOTHING` if there's none.
         inverse: NodeId,
         strip: u8,
     },
@@ -152,7 +152,7 @@ pub(crate) enum Kind {
     String {
         value: Text,
     },
-    /// As it is written.
+    /// The number's source text.
     Number {
         token: Text,
     },
@@ -167,16 +167,16 @@ pub(crate) struct Node {
     /// `loc.start.offset` and `loc.end.offset`, in bytes.
     pub(crate) start: u32,
     pub(crate) end: u32,
-    /// `kind` is not all that the template says from `start` to `end`: the parsers have dropped or changed something.
-    /// So that text is printed, as for `prettier-ignore`.
-    pub(crate) is_as_written: bool,
+    /// `kind` doesn't capture everything in the template from `start` to `end`, because the parsers dropped or changed
+    /// something. So that text is printed verbatim, as with `prettier-ignore`.
+    pub(crate) is_verbatim: bool,
 }
 
 const NO_NODE: Node = Node {
     kind: Kind::Nothing,
     start: 0,
     end: 0,
-    is_as_written: false,
+    is_verbatim: false,
 };
 
 pub(crate) struct Tree {
@@ -185,7 +185,7 @@ pub(crate) struct Tree {
     /// The tails of paths, and block parameters.
     names: Vec<Text>,
     owned: Vec<u8>,
-    /// The parsers have dropped something that is in no node. So the template is printed as it is written, all of it.
+    /// The parsers dropped something that isn't inside any node. So the whole template is printed verbatim.
     pub(crate) has_lost_text: bool,
 }
 
@@ -218,7 +218,7 @@ impl Tree {
             kind,
             start: start as u32,
             end: end as u32,
-            is_as_written: false,
+            is_verbatim: false,
         });
         (self.nodes.len() - 1) as NodeId
     }
@@ -227,10 +227,10 @@ impl Tree {
         self.nodes.get(id as usize).copied().unwrap_or(NO_NODE)
     }
 
-    /// See [`Node::is_as_written`].
-    pub(crate) fn keep_as_written(&mut self, id: NodeId) {
+    /// See [`Node::is_verbatim`].
+    pub(crate) fn keep_verbatim(&mut self, id: NodeId) {
         if let Some(node) = self.nodes.get_mut(id as usize) {
-            node.is_as_written = true;
+            node.is_verbatim = true;
         }
     }
 
@@ -272,7 +272,7 @@ impl Tree {
         }
     }
 
-    /// `source`: the template.
+    /// `source` is the template.
     pub(crate) fn text<'a>(&'a self, source: &'a [u8], text: Text) -> &'a [u8] {
         let bytes = if text.is_owned() {
             &self.owned[..]
@@ -282,7 +282,7 @@ impl Tree {
         bytes.get(text.range()).unwrap_or_default()
     }
 
-    /// Where a text that is written to `owned` starts.
+    /// Returns the start of a text that's about to be written to `owned`.
     pub(crate) fn start_text(&self) -> usize {
         self.owned.len()
     }
@@ -300,7 +300,7 @@ impl Tree {
         }
     }
 
-    /// What has been written since `start_text` returned `start`.
+    /// Returns the text written since `start_text` returned `start`.
     pub(crate) fn end_text(&self, start: usize) -> Text {
         Text {
             start: start as u32 | OWNED,
@@ -308,7 +308,7 @@ impl Tree {
         }
     }
 
-    /// Makes `text` end where `owned` ends, so that it can grow.
+    /// Moves `text` to the end of `owned`, so that it can grow.
     fn own(&mut self, source: &[u8], text: &mut Text) {
         if text.is_owned() && text.range().end == self.owned.len() {
             return;
@@ -318,7 +318,7 @@ impl Tree {
         *text = self.end_text(start);
     }
 
-    /// `text += source[start..end]`. Nothing is copied as long as `text` is one piece of the template.
+    /// `text += source[start..end]`. Nothing is copied as long as `text` stays a contiguous piece of the template.
     pub(crate) fn append_source(
         &mut self,
         source: &[u8],

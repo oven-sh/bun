@@ -87,7 +87,7 @@ mod watcher_atomics;
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
-use deferred_request::{DeferredRequest, Handler, ResponseAndMethod};
+use deferred_request::{DeferredRequest, DeferredScriptRequest, Handler, ResponseAndMethod};
 pub(crate) use directory_watch_store::DirectoryWatchStore;
 use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled};
 use failures::mark_all_route_children;
@@ -96,12 +96,12 @@ use hmr_socket::hmr_socket_behavior;
 pub(crate) use hot_reload_event::HotReloadEvent;
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
-    is_allowed_dev_origin, origin_forbidden,
+    is_allowed_dev_origin, on_outdated_js_corked, origin_forbidden,
 };
 pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
-use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, to_opaque_file_id};
+use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, relative_path, to_opaque_file_id};
 pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
@@ -181,8 +181,20 @@ impl IncrementalResult {
 pub(crate) struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
+    /// Filled by `TraceImportGoal::FindErrors`.
+    pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
+    pub(crate) fn new(server_files: usize, client_files: usize) -> crate::Result<GraphTraceState> {
+        let server_bits = DynamicBitSet::init_empty(server_files)?;
+        let client_bits = DynamicBitSet::init_empty(client_files)?;
+        Ok(GraphTraceState {
+            server_bits,
+            client_bits,
+            failures: Vec::new(),
+        })
+    }
+
     #[inline]
     pub(crate) fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
         match side {
@@ -194,6 +206,7 @@ impl GraphTraceState {
     pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
+        self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
@@ -211,6 +224,7 @@ impl GraphTraceState {
         self.server_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
+        self.failures = Vec::new();
     }
 }
 
@@ -320,31 +334,6 @@ impl DevServer {
         VirtualMachine::get_mut()
     }
 
-    // ── transpiler accessors ───────────────────────────────────────────────
-    // The three transpilers are `MaybeUninit` until `init()` writes them via
-    // `Framework::init_transpiler`. Every access after `init()` returns goes
-    // through these helpers; the SAFETY contract is that `init()` is the only
-    // constructor and it always populates all three before returning `Ok`.
-    #[inline]
-    pub(crate) fn server_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_ref() }
-    }
-    #[inline]
-    pub(crate) fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_mut() }
-    }
-    #[inline]
-    pub(crate) fn client_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_ref() }
-    }
-    #[inline]
-    pub(crate) fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_mut() }
-    }
     #[inline]
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
@@ -364,7 +353,7 @@ pub(crate) struct Options<'a> {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-// The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
+// The fields `client_graph`, `server_graph` and `directory_watchers`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
 // made it easier to group related fields together, but one must remember those
 // structures still depend on the DevServer pointer.
@@ -441,6 +430,8 @@ pub(crate) struct CurrentBundle {
     /// calling their handler on success or sending the error page on failure.
     /// Owned by `deferred_request_pool` in DevServer.
     pub(crate) requests: deferred_request::List,
+    /// Answered by `finalize_bundle_cleanup`.
+    pub(crate) script_requests: Vec<bun_ptr::RefPtr<DeferredScriptRequest>>,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
@@ -552,7 +543,7 @@ pub(crate) struct DevServer {
     // `Watcher::shutdown` instead.
     pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    /// Heap-owned via `heap::into_raw` so a still-queued
+    /// Heap-owned via `heap::alloc_nn` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.
     pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
@@ -572,11 +563,10 @@ pub(crate) struct DevServer {
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // `MaybeUninit` until `Framework::init_transpiler` populates them in place
-    // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
-    // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
-    pub(crate) server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    pub(crate) client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
+    pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
+    pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
+    // Without a separate SSR graph, a bitwise copy of `server_transpiler`, not a value of its own.
     pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
@@ -636,5 +626,5 @@ pub(crate) fn get_deinit_count_for_testing() -> usize {
 
 type DebuggerId = jsc::debugger::DebuggerId;
 
-type BunFrontendDevServerAgent =
-    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent;
+type BunFrontendDevServerAgent<'a> =
+    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent<'a>;

@@ -12,7 +12,7 @@ pub(crate) enum CharacterClass {
     Other,
 }
 
-/// micromark's `classifyCharacter`. `None`: the start or the end of the text.
+/// micromark's `classifyCharacter`. `None` is the start or the end of the text.
 pub(crate) fn classify(c: Option<char>) -> CharacterClass {
     match c {
         None => CharacterClass::Whitespace,
@@ -36,8 +36,8 @@ pub(crate) fn numeric_character(code: u32) -> char {
     }
 }
 
-/// The character reference that `text` starts with, `&amp;`, `&#38;` or `&#x26;`: its length. What it stands
-/// for is appended to `out`.
+/// The length of the character reference that `text` starts with: `&amp;`, `&#38;` or `&#x26;`. The decoded character
+/// is appended to `out`.
 pub(crate) fn character_reference(text: &[u8], out: Option<&mut Vec<u8>>) -> Option<usize> {
     let body = text.strip_prefix(b"&")?;
     if let Some(number) = body.strip_prefix(b"#") {
@@ -75,8 +75,7 @@ pub(crate) fn character_reference(text: &[u8], out: Option<&mut Vec<u8>>) -> Opt
     Some(count + 2)
 }
 
-/// micromark's `decodeString`: `text` without the backslashes of its escapes and with what its character
-/// references stand for.
+/// micromark's `decodeString`: `text` with its backslash escapes and character references decoded.
 pub(crate) fn unescape(text: &[u8], out: &mut Vec<u8>) {
     let mut rest = text;
     while let Some(at) = bun_core::strings::index_of_any(rest, b"\\&") {
@@ -107,7 +106,7 @@ pub(crate) fn push_lowercase(text: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-/// micromark's `normalizeIdentifier`: white space is collapsed, and the case does not count.
+/// micromark's `normalizeIdentifier`: collapses whitespace and ignores case.
 pub(crate) fn normalize_identifier(text: &[u8]) -> Vec<u8> {
     let mut collapsed = Vec::with_capacity(text.len());
     for word in bun_core::strings::split_any(text, b"\t\n\r ").filter(|word| !word.is_empty()) {

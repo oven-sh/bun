@@ -21,7 +21,7 @@ async function run(cwd: string, args: string[]) {
 
 const cases: [name: string, input: string, output: string][] = [
   [
-    "keeps a hugged table with a trailing comment as it is",
+    "leaves a hugged table with a trailing comment unchanged",
     `[lint.rules]
 "prefer-const" = ["warn", {
   destructuring = "any", # "any" or "all"
@@ -108,7 +108,7 @@ b=false}]
 `,
   ],
   [
-    "keeps a table that only holds a comment",
+    "keeps a table that only contains a comment",
     `a = {
   # nothing
 }
@@ -307,7 +307,7 @@ d = [ # first
 `,
   ],
   [
-    "doesn't take a # in a key or a string for a comment",
+    "doesn't mistake a # in a key or a string for a comment",
     `a = {
   "b#c".d = "# not a comment", # comment
   e = '#',
@@ -320,7 +320,7 @@ d = [ # first
 `,
   ],
   [
-    "keeps a multi-line string in a table as it is",
+    "leaves a multi-line string in a table unchanged",
     `a = {
   b = """
 x # y
@@ -500,14 +500,14 @@ describe.concurrent("a table with a comment", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // The table, what Bun makes of it, and what oxfmt 0.72 makes of it.
+  // Each row is the table, Bun's output and oxfmt 0.72's output.
   test.each([
     ["a = { # c\n b = 1 }\n", "a = { # c\n  b = 1,\n}\n", "a = { # c b = 1 }\n"],
     ["a = { b = 1 # c\n, d = 2 }\n", "a = {\n  b = 1, # c\n  d = 2,\n}\n", "a = { b = 1 # c, d = 2 }\n"],
     ["a = { b = 1,\n # c\n d = 2 }\n", "a = {\n  b = 1,\n  # c\n  d = 2,\n}\n", "a = { b = 1 # c, d = 2 }\n"],
     ["a = { b = 1, d = 2 # c\n }\n", "a = {\n  b = 1,\n  d = 2, # c\n}\n", "a = { b = 1, d = 2 # c }\n"],
-  ])("wherever the comment is: %j", async (before, after, ofOxfmt) => {
-    expect(after).not.toBe(ofOxfmt);
+  ])("is expanded wherever the comment is: %j", async (before, after, byOxfmt) => {
+    expect(after).not.toBe(byOxfmt);
     using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": before, "b.toml": after });
     const checked = await run(String(dir), ["--debug-check", "."]);
     expect(checked.stderr).toBe("");
@@ -519,7 +519,7 @@ describe.concurrent("a table with a comment", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("--debug-check has nothing to say about it", async () => {
+  test("passes --debug-check", async () => {
     using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
     const result = await run(String(dir), ["--debug-check", "."]);
     expect(result.stderr).toBe("");

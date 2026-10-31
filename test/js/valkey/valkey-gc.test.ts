@@ -463,6 +463,120 @@ test.concurrent("RedisClient survives GC after a command throws during argument 
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  "set and send write the original key bytes when a later argument's toString() detaches the key's buffer",
+  async () => {
+    const src = `
+    const net = require("node:net");
+
+    const tail = Buffer.from("$1\\r\\nv\\r\\n");
+    let wire = Buffer.alloc(0);
+    let want = 0;
+    let resolveFrame;
+    let saidHello = false;
+    function tails() {
+      let n = 0, i = -1;
+      while ((i = wire.indexOf(tail, i + 1)) !== -1) n++;
+      return n;
+    }
+    const server = net.createServer(socket => {
+      socket.on("data", data => {
+        if (!saidHello) {
+          if (data.includes("HELLO")) { saidHello = true; socket.write("+OK\\r\\n"); }
+          return;
+        }
+        wire = Buffer.concat([wire, data]);
+        if (resolveFrame && tails() >= want) {
+          socket.write("+OK\\r\\n");
+          const r = resolveFrame; resolveFrame = null; r();
+        }
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise((resolve, reject) => {
+      server.listen(0, "127.0.0.1", resolve);
+      server.on("error", reject);
+    });
+
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port, { autoReconnect: false });
+    await client.connect();
+
+    const keep = [];
+    function value(key) {
+      return Object.assign(new String("v"), {
+        toString() {
+          key.buffer.transfer(0);
+          for (let i = 0; i < 24; i++) keep.push(new Uint8Array(4096).fill(0x5a));
+          return "v";
+        },
+      });
+    }
+    function key(name) {
+      const key = Buffer.from(new ArrayBuffer(4096));
+      key.write(name);
+      return key;
+    }
+
+    for (const [name, run] of [
+      ["first-key", key => client.set(key, value(key))],
+      ["second-key", key => client.send("LPUSH", [key, value(key)])],
+    ]) {
+      want++;
+      const done = new Promise(r => (resolveFrame = r));
+      run(key(name)).catch(() => {});
+      await done;
+    }
+
+    client.close();
+    server.close();
+    console.log(JSON.stringify([wire.includes("first-key"), wire.includes("second-key")]));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("[true,true]");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each(["null", "undefined", "{}", "42"])(
+  "RedisClient ignores onconnect and onclose handlers set to %s",
+  async handler => {
+    const src = `
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data(socket) { socket.write("%0\\r\\n"); } },
+      });
+      const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, { autoReconnect: false });
+      client.onconnect = ${handler};
+      client.onclose = ${handler};
+      await client.connect();
+      client.close();
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Fuzzer found heap corruption (zapped cell during GC marking) when a custom
 // setter on a generated class was invoked with a receiver that is not an
 // instance of that class (e.g. through a Proxy wrapping the instance, or an

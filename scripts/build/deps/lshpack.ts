@@ -12,6 +12,17 @@ import type { Dependency, DirectBuild } from "../source.ts";
 
 const LSHPACK_COMMIT = "cf0f70dd10b352194c97448eb5d00b4aa484f531";
 
+/**
+ * The width of `name_len` and `val_len` in `struct lsxpack_header`, which
+ * ls-hpack, ls-qpack, lsquic and bun's own sources pass to each other. 16 bits
+ * by default, which can't hold an HTTP/3 field of 64 KB. Everything that
+ * includes lsxpack_header.h has to agree, so this is the only place that says
+ * it: lshpack and lsquic (which compiles lsqpack.c) spread it into their
+ * defines, and `provides.defines` below hands it to bun's sources, which
+ * static_assert it. packages/h3blast has a Makefile of its own and repeats it.
+ */
+export const lsxpackDefines = { LSXPACK_MAX_STRLEN: 0xffff_ffff }; // UINT32_MAX. A string would be quoted.
+
 export const lshpack: Dependency = {
   name: "lshpack",
   versionMacro: "LSHPACK",
@@ -41,6 +52,7 @@ export const lshpack: Dependency = {
         ...(cfg.windows ? ["compat/windows"] : []),
       ],
       defines: {
+        ...lsxpackDefines,
         XXH_HEADER_NAME: "xxhash.h",
         // lshpack.c defaults LS_HPACK_USE_LARGE_TABLES=1 internally; setting
         // it here is purely defensive so the bss-huff-tables patch can't be
@@ -56,5 +68,6 @@ export const lshpack: Dependency = {
   provides: cfg => ({
     libs: [],
     includes: cfg.windows || cfg.abi === "musl" ? [".", "compat/queue"] : ["."],
+    defines: Object.entries(lsxpackDefines).map(([name, value]) => `${name}=${value}`),
   }),
 };

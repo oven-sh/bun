@@ -1,6 +1,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -72,6 +73,43 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
   });
+
+  // The response writer takes a failed send for backpressure and would send the same bytes again.
+  // A body above 16 KB is not copied into the cork buffer and leaves through writev().
+  test.each([
+    ["send", 16384],
+    ["writev", 32768],
+  ] as const)(
+    "%s → more bytes than it was given: that connection ends and the server goes on",
+    async (syscall, length) => {
+      const { proc, port } = await spawnServer(/* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
+        fetch(req) {
+          if (req.url.endsWith("/excess")) fault.set({ syscall: "${syscall}", action: "excess" });
+          return new Response(Buffer.alloc(${length}, 0x61));
+        } });
+      console.log(s.port);
+      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+    `);
+      const lengthOrCode = (path: string) =>
+        fetch(`http://127.0.0.1:${port}/${path}`)
+          .then(res => res.arrayBuffer())
+          .then(
+            body => body.byteLength,
+            error => error.code,
+          );
+      try {
+        expect(await lengthOrCode("excess")).toBe("ECONNRESET");
+        expect(await lengthOrCode("")).toBe(length);
+      } finally {
+        proc.kill("SIGTERM");
+        await proc.exited;
+      }
+      expect(proc.signalCode).toBeNull();
+      expect(proc.exitCode).toBe(0);
+    },
+  );
 
   test("recv → short reads (1 byte) deliver complete request body to handler", async () => {
     const { proc, port } = await spawnServer(/* js */ `
@@ -151,5 +189,32 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     }
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
+  });
+});
+
+// The dispatcher removes a paused socket from the epoll set when its peer hangs up, so resuming it
+// is a new EPOLL_CTL_ADD that can fail. kqueue and libuv never do that.
+describe.skipIf(skip || !isLinux)("Bun.serve: resuming a request socket fails in the kernel", () => {
+  const ping = "HTTP/1.1 200 OK, pong";
+  const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];
+
+  test.each([
+    ["body-buffered", bodyFails],
+    ["body-stream", bodyFails],
+    ["response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]],
+  ])("%s", async (mode, expected) => {
+    using dir = tempDir("serve-resume-fault", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "serve-resume-fault-fixture.ts"), mode, join(String(dir), "s.sock")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr: exitCode === 0 ? "" : stderr.slice(-3000) }).toEqual({
+      stdout: expected,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });

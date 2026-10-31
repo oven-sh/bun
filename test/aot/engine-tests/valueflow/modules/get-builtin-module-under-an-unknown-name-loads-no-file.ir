@@ -1,0 +1,54 @@
+# readline = require("node:readline"); loaded = process.getBuiltinModule(name); loaded()
+# process.getBuiltinModule answers a module of the library or undefined, whatever name it is given. The module that the program requires has run and is in the answer.
+# A file of the program is not: the one that nobody imports stays unreached. Nor is the module outside the image, so no unseen code runs.
+# The name still reaches the loader of the host at run time, so the image has to admit loads by name
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> ProcessGetBuiltinModule
+# CHECK: f0 v5 ->{{*}} f2
+# CHECK-NOT: f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+# UNREACHED-NEXT: unreached f4
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName ProcessGetBuiltinModule f0:v4
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+module m3 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = Builtin builtin=ProcessGetBuiltinModule
+    v4 = Call v3, -, v2
+    v5 = Call v4
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="createInterface" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="other" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f4 name="exported" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}

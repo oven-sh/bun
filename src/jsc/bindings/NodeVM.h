@@ -5,6 +5,7 @@
 #include "BunGlobalScope.h"
 
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSGlobalProxy.h>
 #include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
@@ -26,8 +27,10 @@ namespace NodeVM {
 
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType, const JSC::SourceCode& source);
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
-// Copies `bytes`: a decoded code block reads the payload long after decodeCodeBlock() returns.
-Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes);
+JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, std::span<const uint8_t> bytecode);
+// Returns null unless `cachedData` is intact output from createCachedDataBuffer().
+// Copies the bytecode because a decoded code block keeps reading it after decodeCodeBlock() returns.
+RefPtr<JSC::CachedBytecode> unwrapCachedData(std::span<const uint8_t> cachedData);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
@@ -77,6 +80,7 @@ public:
     JSGlobalObject* parsingContext = nullptr;
     JSValue contextExtensions {};
     bool produceCachedData = false;
+    bool cachedDataProvided = false;
 
     using BaseVMOptions::BaseVMOptions;
 
@@ -92,33 +96,6 @@ public:
     // queue, drained only after each script/module evaluation (Node's
     // own_microtask_queue contextify behavior).
     bool ownMicrotaskQueue = false;
-};
-
-class NodeVMGlobalObject;
-
-class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
-
-    static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
-
-    DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
-
-    NodeVMGlobalObject* parentGlobal() const { return m_parentGlobal.get(); }
-
-private:
-    WriteBarrier<NodeVMGlobalObject> m_parentGlobal;
-
-    NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject);
-
-    void finishCreation(VM&);
 };
 
 // This class represents a sandboxed global object for vm contexts
@@ -148,8 +125,6 @@ public:
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
-    NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
@@ -164,12 +139,34 @@ public:
 private:
     // The contextified object that acts as the global proxy
     WriteBarrier<JSObject> m_sandbox;
-    // A special object used when the context is not contextified.
-    WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
+
+    bool putOwnOrInherited(JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+};
+
+// The `globalThis` of a vm context. JSC doesn't support a Proxy in the prototype chain of a global object,
+// so the global object has no prototype, and its proxy has the prototype that scripts see and set.
+class NodeVMGlobalProxy final : public JSC::JSGlobalProxy {
+public:
+    using Base = JSC::JSGlobalProxy;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags & ~JSC::OverridesGetPrototype;
+
+    DECLARE_INFO;
+
+    static NodeVMGlobalProxy* create(JSC::VM&, NodeVMGlobalObject* target);
+
+    using JSC::JSObject::getPrototype;
+    using JSC::JSObject::setPrototype;
+
+private:
+    NodeVMGlobalProxy(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* target)
+        : Base(vm, structure, target)
+    {
+    }
 };
 
 // Helper functions to create vm contexts and run code

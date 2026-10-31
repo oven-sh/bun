@@ -131,6 +131,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Check if the HMAC is already finalized
     if (hmac->m_finalized) {
+        // Hmac.prototype._transform passes `false`. Node drops a chunk written after digest().
+        if (callFrame->argument(3).isFalse()) {
+            return JSValue::encode(jsUndefined());
+        }
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 

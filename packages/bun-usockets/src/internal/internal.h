@@ -190,6 +190,8 @@ long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
 #endif
 void us_internal_free_closed_sockets(us_loop_r loop);
+/* Defers closing `s` with `code` to us_internal_loop_post. */
+void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 /* Unlink the group from the loop iff every list/count is now zero. */
@@ -230,6 +232,10 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
+/* Closes a stopped poll's descriptor. On epoll/kqueue this is bsd_close_socket.
+ * On libuv the descriptor must outlive the handle's uv_close, which can be
+ * deferred (see us_poll_stop in eventing/libuv.c). */
+void us_internal_poll_close_fd(struct us_poll_t *p);
 
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
@@ -380,8 +386,10 @@ struct us_socket_t {
   unsigned char ssl_first_flight_before_fin : 1;
   /* us_internal_ssl_shutdown held its FIN back for that step. */
   unsigned char ssl_shutdown_after_first_flight : 1;
-  /* ssl_raw_write shut the write side down, not the owner. */
+  /* A send that no retry can save shut the write side down, not the owner. */
   unsigned char ssl_send_rejected : 1;
+  /* The same on a socket without TLS: loop.c closes it after its next event. */
+  unsigned char send_rejected : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

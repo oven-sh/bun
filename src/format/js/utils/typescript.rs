@@ -19,8 +19,7 @@ pub(crate) fn is_object_like_type(ty: TypeNode<'_>) -> bool {
     matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_))
 }
 
-/// `| A` and `& A` are a union and an intersection of one type here. Prettier's parsers have them
-/// as `A`.
+/// `| A` and `& A` are a union and an intersection of one type here. Prettier's parsers produce plain `A`.
 pub(crate) fn without_lone_operator(mut ty: TypeNode<'_>) -> TypeNode<'_> {
     while let TypeKind::Union(types) | TypeKind::Intersection(types) = ty.kind()
         && types.len() == 1

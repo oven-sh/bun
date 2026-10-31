@@ -1,4 +1,5 @@
-//! `rules/shared/eslint_unicorn/no_negated_condition.rs`: the fix that `eslint/no-negated-condition` and `unicorn/no-negated-condition` have in common.
+//! `rules/shared/eslint_unicorn/no_negated_condition.rs`: the fix shared by `eslint/no-negated-condition` and
+//! `unicorn/no-negated-condition`.
 
 use crate::ast_util::could_be_asi_hazard;
 use bun_lint::prelude::*;
@@ -34,8 +35,8 @@ fn push_swap_statement_branches<'a>(
     if consequent.text() == alternate.text() && is_block(consequent) == is_block(alternate) {
         return;
     }
-    // What is not a block gets braces, for the `;` that is not written and the `else` that would belong to another
-    // `if`.
+    // Wrap a statement that isn't a block in braces. It may rely on an implicit `;`, or be an `if` that would capture
+    // the `else`.
     let in_block = |it: Stmt<'a>| {
         if is_block(it) {
             it.text().to_vec()
@@ -62,7 +63,7 @@ pub fn fix_conditional_expression<'a>(
         operand: argument, ..
     } = test.kind()
     {
-        // What the expression starts with without the `!`.
+        // The first character of the expression once the `!` is removed.
         let after_bang = file.slice(test.span().shrink(1, 0));
         let first_significant = bun_core::strings::wtf8_first_codepoint(
             bun_core::strings::trim_unicode_whitespace_start(after_bang),
@@ -120,7 +121,7 @@ pub fn fix_conditional_expression<'a>(
     let (cons_span, alt_span) = (yes.outer_span(), no.outer_span());
     let (cons_src, alt_src) = (file.slice(cons_span), file.slice(alt_span));
     if cons_src != alt_src {
-        // `for (a ? b : c in d;;)` is something else.
+        // `for (a ? b : c in d;;)` would parse differently.
         let is_for_statement_init = || {
             !e.is_parenthesized()
                 && matches!(e.parent(), Node::Stmt(parent)
@@ -146,7 +147,7 @@ pub fn fix_conditional_expression<'a>(
     fixes
 }
 
-/// Whether a statement starts with it.
+/// True if a statement starts with `e`.
 fn is_expression_statement_start(e: Expr) -> bool {
     for ancestor in Node::Expr(e).ancestors() {
         match ancestor {
@@ -154,7 +155,7 @@ fn is_expression_statement_start(e: Expr) -> bool {
                 return statement.tag() == StmtTag::Expr
                     && statement.span().start == e.span().start;
             }
-            // It is not what the statement starts with either.
+            // `outer` starts earlier, so the statement doesn't start with `e`.
             Node::Expr(outer) if outer.span().start != e.span().start => return false,
             Node::Expr(outer) => match outer.tag() {
                 ExprTag::Binary

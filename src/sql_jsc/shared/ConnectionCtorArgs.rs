@@ -19,12 +19,6 @@ const SSL_MODES: [SSLMode; 5] = [
 ];
 
 pub(crate) struct ConnectionCtorArgs {
-    pub hostname_str: bun_core::String,
-    pub port: i32,
-    pub username_str: bun_core::String,
-    pub password_str: bun_core::String,
-    pub database_str: bun_core::String,
-    pub path_str: bun_core::String,
     pub ssl_mode: SSLMode,
     pub tls_config: SSLConfig,
     /// Moves into the connection.
@@ -35,45 +29,30 @@ pub(crate) struct ConnectionCtorArgs {
     pub max_lifetime_ms: u32,
 }
 
-fn timeout_ms(global_object: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
+fn timeout_ms(value: f64) -> u32 {
     // `as` maps NaN to zero.
-    Ok(value
-        .to_number(global_object)?
-        .clamp(0.0, f64::from(i32::MAX)) as u32)
+    value.clamp(0.0, f64::from(i32::MAX)) as u32
 }
 
 impl ConnectionCtorArgs {
-    /// Parses `arguments[0..=6]`, `[8]` and `[11..=13]`. `Ok(None)`: a JS exception is pending.
+    /// `ssl_mode` is an index of `SSL_MODES`. `Ok(None)`: a JS exception is pending.
     pub(crate) fn parse(
         global_object: &JSGlobalObject,
         vm: &mut VirtualMachine,
-        arguments: &[JSValue],
+        hostname: &[u8],
+        ssl_mode: u8,
+        tls_object: JSValue,
+        idle_timeout: f64,
+        connection_timeout: f64,
+        max_lifetime: f64,
     ) -> JsResult<Option<Self>> {
-        let hostname_str = arguments[0].to_bun_string(global_object)?;
-        let port = arguments[1].coerce::<i32>(global_object)?;
-        let username_str = arguments[2].to_bun_string(global_object)?;
-        let password_str = arguments[3].to_bun_string(global_object)?;
-        let database_str = arguments[4].to_bun_string(global_object)?;
-        let path_str = arguments[8].to_bun_string(global_object)?;
-        let idle_timeout_ms = timeout_ms(global_object, arguments[11])?;
-        let connection_timeout_ms = timeout_ms(global_object, arguments[12])?;
-        let max_lifetime_ms = timeout_ms(global_object, arguments[13])?;
         // A C string from here on: the resolver, SNI and the certificate check would see the name up to the NUL.
-        if bun_core::strings::contains_char(hostname_str.to_utf8().slice(), 0) {
+        if bun_core::strings::contains_char(hostname, 0) {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("hostname must not contain null bytes")));
         }
-        let Some(ssl_mode) = Some(arguments[5])
-            .filter(|mode| mode.is_any_int())
-            .and_then(|mode| usize::try_from(mode.to_int32()).ok())
-            .and_then(|i| SSL_MODES.get(i).copied())
-        else {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "sslMode must be an integer from 0 (disable) to 4 (verify-full)"
-            )));
-        };
+        let ssl_mode = SSL_MODES[usize::from(ssl_mode)];
 
-        let tls_object = arguments[6];
         let mut tls_config = SSLConfig::default();
         let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != SSLMode::Disable {
@@ -114,18 +93,12 @@ impl ConnectionCtorArgs {
         }
 
         Ok(Some(Self {
-            hostname_str,
-            port,
-            username_str,
-            password_str,
-            database_str,
-            path_str,
             ssl_mode,
             tls_config,
             secure,
-            idle_timeout_ms,
-            connection_timeout_ms,
-            max_lifetime_ms,
+            idle_timeout_ms: timeout_ms(idle_timeout),
+            connection_timeout_ms: timeout_ms(connection_timeout),
+            max_lifetime_ms: timeout_ms(max_lifetime),
         }))
     }
 }

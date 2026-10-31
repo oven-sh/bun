@@ -18,7 +18,7 @@ pub enum StmtKind<'a> {
     Empty,
     Debugger,
     Expr(Expr<'a>),
-    /// `var`, `let`, `const`, `using`, `await using`. Also what the head of a `for` declares.
+    /// `var`, `let`, `const`, `using`, `await using`. Also the declaration in a `for` head.
     Var(List<'a, VarDecl<'a>>),
     Fn(Func<'a>),
     Class(Class<'a>),
@@ -33,15 +33,15 @@ pub enum StmtKind<'a> {
         yes: Stmt<'a>,
         no: Option<Stmt<'a>>,
     },
-    /// `init` is a `Var`, or an `Expr` that is a [wrapper](Stmt::is_wrapper).
+    /// `init` is a `Var`, or an `Expr` that's a [wrapper](Stmt::is_wrapper).
     For {
         init: Option<Stmt<'a>>,
         test: Option<Expr<'a>>,
         update: Option<Expr<'a>>,
         body: Stmt<'a>,
     },
-    /// `left` is a `Var` with one declaration, or an `Expr` that is a [wrapper](Stmt::is_wrapper).
-    /// A destructuring target is an `Array` or an `Object`, as in an assignment.
+    /// `left` is a `Var` with one declaration, or an `Expr` that's a [wrapper](Stmt::is_wrapper). A destructuring
+    /// target is an `Array` or an `Object`, as in an assignment.
     ForIn {
         left: Stmt<'a>,
         expr: Expr<'a>,
@@ -96,8 +96,8 @@ pub enum StmtKind<'a> {
         alias: Option<Ident<'a>>,
         type_only: bool,
     },
-    /// `export default e`. A function or a class declaration after `export default` is a `Fn` or
-    /// a `Class` with `Flags::EXPORT | Flags::DEFAULT`.
+    /// `export default e`. A function or class declaration after `export default` is a `Fn` or a `Class` with
+    /// `Flags::EXPORT | Flags::DEFAULT`.
     ExportDefault(Expr<'a>),
     /// `export = e`
     ExportAssign(Expr<'a>),
@@ -105,8 +105,12 @@ pub enum StmtKind<'a> {
     ExportAsNamespace(Name<'a>),
 }
 
+/// A kind of the HIR that is listed after the braces is shown as another.
 macro_rules! tags {
-    ($(#[$doc:meta])* $name:ident of $kind:ident { $($variant:ident $pattern:tt,)* }) => {
+    (
+        $(#[$doc:meta])* $name:ident of $kind:ident { $($variant:ident $pattern:tt,)* }
+        $($hidden:ident $hidden_pattern:tt => $shown:ident,)*
+    ) => {
         $(#[$doc])*
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
@@ -118,7 +122,10 @@ macro_rules! tags {
 
             #[inline]
             pub(crate) fn of(kind: &hir::$kind) -> $name {
-                match kind { $(tags!(@pattern $kind $variant $pattern) => $name::$variant,)* }
+                match kind {
+                    $(tags!(@pattern $kind $variant $pattern) => $name::$variant,)*
+                    $(tags!(@pattern $kind $hidden $hidden_pattern) => $name::$shown,)*
+                }
             }
         }
     };
@@ -129,9 +136,9 @@ macro_rules! tags {
 pub(crate) use tags;
 
 tags! {
-    /// The kind of a statement without what it holds. This is what a rule listens for.
+    /// The kind of a statement without its payload. Rules listen for tags.
     ///
-    /// A `with` statement has the tag `Block`.
+    /// A `with` statement has the tag `Block`, a directive the tag `Expr`.
     StmtTag of StmtKind {
         Empty unit,
         Debugger unit,
@@ -165,6 +172,8 @@ tags! {
         ExportAssign tuple,
         ExportAsNamespace tuple,
     }
+    With fields => Block,
+    Directive fields => Expr,
 }
 
 impl<'a> Stmt<'a> {
@@ -173,12 +182,12 @@ impl<'a> Stmt<'a> {
     pub fn kind(self) -> StmtKind<'a> {
         match self.file.plain_stmts.get(self.id.idx()) {
             Some(raw) => self.kind_of::<true>(raw),
-            None => self.kind_in_general(),
+            None => self.kind_slow(),
         }
     }
 
     #[inline(never)]
-    fn kind_in_general(self) -> StmtKind<'a> {
+    fn kind_slow(self) -> StmtKind<'a> {
         match self.try_raw() {
             Some(raw) => self.kind_of::<false>(raw),
             None => StmtKind::Empty,
@@ -198,7 +207,9 @@ impl<'a> Stmt<'a> {
         match raw.kind {
             hir::StmtKind::Empty => StmtKind::Empty,
             hir::StmtKind::Debugger => StmtKind::Debugger,
-            hir::StmtKind::Expr(expr) => StmtKind::Expr(e(expr)),
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Directive { expr, .. } => {
+                StmtKind::Expr(e(expr))
+            }
             hir::StmtKind::Var(decls) => StmtKind::Var(List::run(file, decls)),
             hir::StmtKind::Fn(f) => StmtKind::Fn(Func::new(file, f)),
             hir::StmtKind::Class(c) => StmtKind::Class(Class::new(file, c)),
@@ -237,9 +248,10 @@ impl<'a> Stmt<'a> {
                 body: s(body),
                 test: e(test),
             },
-            hir::StmtKind::Block(list) => match file.hir.with_bodies.is_empty() {
-                true => StmtKind::Block(List::ids(file, list)),
-                false => self.kind_of_block_or_with(raw, list),
+            hir::StmtKind::Block(list) => StmtKind::Block(List::ids(file, list)),
+            hir::StmtKind::With { object, body } => StmtKind::With {
+                object: e(object),
+                body: s(body),
             },
             hir::StmtKind::Switch { expr, cases } => StmtKind::Switch {
                 expr: e(expr),
@@ -272,7 +284,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// Apart from `kind_of`, which without these has to save no registers.
+    /// Split out of `kind_of`, which doesn't have to save any registers without these two.
     #[inline(never)]
     fn kind_of_four_parts(self, raw: &hir::Stmt) -> StmtKind<'a> {
         let file = self.file;
@@ -303,22 +315,6 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The kind of what the HIR has as the block `list`, in a file with a `with` statement.
-    #[inline(never)]
-    fn kind_of_block_or_with(
-        self,
-        raw: &hir::Stmt,
-        list: hir::IdList<hir::StmtId>,
-    ) -> StmtKind<'a> {
-        let list = List::ids(self.file, list);
-        match (list.get(0).map(Stmt::kind), list.get(1)) {
-            (Some(StmtKind::Expr(object)), Some(body)) if self.file.is_with(raw) => {
-                StmtKind::With { object, body }
-            }
-            _ => StmtKind::Block(list),
-        }
-    }
-
     #[inline]
     pub fn tag(self) -> StmtTag {
         (self.try_raw()).map_or(StmtTag::Empty, |raw| StmtTag::of(&raw.kind))
@@ -329,7 +325,7 @@ impl<'a> Stmt<'a> {
     #[inline]
     pub fn span(self) -> Span {
         match self.try_raw() {
-            // The HIR positions the block after `finally` at the keyword.
+            // The HIR starts the block after `finally` at the keyword.
             Some(
                 raw @ hir::Stmt {
                     kind: hir::StmtKind::Block(_),
@@ -343,8 +339,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// `export`, `default`, `declare`, `async`, `abstract`, `const`, and decorators, in source
-    /// order.
+    /// `export`, `default`, `declare`, `async`, `abstract`, `const`, and decorators, in source order.
     #[inline]
     pub fn modifiers(self) -> List<'a, Modifier<'a>> {
         match self.try_raw() {
@@ -362,15 +357,14 @@ impl<'a> Stmt<'a> {
         flags
     }
 
-    /// It starts with `export`.
+    /// True if it has the `export` modifier.
     #[inline]
     pub fn is_exported(self) -> bool {
         self.flags().contains(Flags::EXPORT)
     }
 
-    /// The declaration without `export` and `export default`, which is what ESLint calls the
-    /// declaration: those are an `ExportNamedDeclaration` or an `ExportDefaultDeclaration` around
-    /// it.
+    /// The declaration without `export` or `export default`. That's the range of ESLint's declaration node, which it
+    /// wraps in an `ExportNamedDeclaration` or `ExportDefaultDeclaration`.
     pub fn span_without_export(self) -> Span {
         let whole = self.span();
         let mut start = whole.start;
@@ -382,9 +376,8 @@ impl<'a> Stmt<'a> {
         Span::new(start, whole.end)
     }
 
-    /// The range of ESLint's `ExportNamedDeclaration` or `ExportDefaultDeclaration` around a
-    /// declaration: from the `export`. It differs from [`Stmt::span`] where decorators come first:
-    /// `@d export class C {}`.
+    /// The range of ESLint's `ExportNamedDeclaration` or `ExportDefaultDeclaration` around a declaration, which starts
+    /// at the `export`. It differs from [`Stmt::span`] when decorators come first: `@d export class C {}`.
     pub fn export_span(self) -> Option<Span> {
         let export = self
             .modifiers()
@@ -428,7 +421,7 @@ impl<'a> Stmt<'a> {
             .then(|| Span::new(end - 1, end))
     }
 
-    /// Of a `Try` with a `catch`: from the `catch` to the end of its block, the range of ESLint's
+    /// For a `Try` with a `catch`: from the `catch` to the end of its block, which is the range of ESLint's
     /// `CatchClause`.
     pub fn catch_clause_span(self) -> Option<Span> {
         let StmtKind::Try { block, handler, .. } = self.kind() else {
@@ -440,15 +433,15 @@ impl<'a> Stmt<'a> {
         ))
     }
 
-    /// The module specifier with its quotes: of an `Import`, of an `ExportNamed` or an
-    /// `ExportStar` after `from`, of an `ImportEquals` in `require(..)`.
+    /// The module specifier with its quotes: in an `Import`, after the `from` of an `ExportNamed` or `ExportStar`, or
+    /// in the `require(..)` of an `ImportEquals`.
     pub fn module_specifier_span(self) -> Option<Span> {
         let text = self.file.text();
         let is_at = |at: u32, token: &[u8]| {
             text.get(at as usize..)
                 .is_some_and(|it| it.starts_with(token))
         };
-        // Past `token`, if it is at `at`.
+        // The position after `token` and any trivia, if `token` is at `at`.
         let past = |at: u32, token: &[u8]| {
             is_at(at, token).then(|| skip_trivia(text, at + token.len() as u32))
         };
@@ -499,7 +492,7 @@ impl<'a> Stmt<'a> {
         let (&quote, inside) = rest
             .split_first()
             .filter(|it| matches!(it.0, b'"' | b'\''))?;
-        // Nearly all are a path without an escape, on one line.
+        // Nearly every specifier is a path without escapes, on one line.
         let len = match bun_core::strings::index_of_any(inside, &[quote, b'\\', b'\n', b'\r']) {
             Some(at) if inside[at] == quote => at + 2,
             _ => crate::tokens::token_len(rest),
@@ -528,7 +521,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `N` of the `ExportAsNamespace` `export as namespace N`, where it is written.
+    /// The `N` of the `ExportAsNamespace` `export as namespace N`, with its position.
     pub fn namespace_export_name(self) -> Option<Ident<'a>> {
         let hir::StmtKind::ExportAsNamespace(name) = self.try_raw()?.kind else {
             return None;
@@ -541,15 +534,13 @@ impl<'a> Stmt<'a> {
         Some(self.file.ident(name, at))
     }
 
-    /// It wraps the expression in the head of a `for`, or the object of a `with`. The HIR has a
-    /// statement there and the source has none: it is nobody's parent and no listener is called
-    /// with it.
+    /// True if it wraps the expression in a `for` head.
     #[inline]
     pub fn is_wrapper(self) -> bool {
         self.file.wrapped_in(self.id).is_some()
     }
 
-    /// The `for` or `with` statement that it is a wrapper in.
+    /// The `for` statement it's a wrapper in.
     #[inline]
     pub(crate) fn wrapped_in(self) -> Option<Stmt<'a>> {
         self.file
@@ -557,7 +548,7 @@ impl<'a> Stmt<'a> {
             .map(|parent| Stmt::new(self.file, parent))
     }
 
-    /// The label of a `Labeled`, a `Break` or a `Continue`, where it is written.
+    /// The label of a `Labeled`, a `Break` or a `Continue`, with its position.
     pub fn label(self) -> Option<Ident<'a>> {
         let (file, start) = (self.file, self.span().start);
         match self.try_raw()?.kind {
@@ -574,23 +565,15 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The statements, if it is a block.
+    /// The statements, if it's a block.
     #[inline]
     pub fn as_block(self) -> Option<List<'a, Stmt<'a>>> {
-        let raw = self.try_raw()?;
-        match raw.kind {
-            hir::StmtKind::Block(list) => match self.file.hir.with_bodies.is_empty() {
-                true => Some(List::ids(self.file, list)),
-                false => match self.kind_of_block_or_with(raw, list) {
-                    StmtKind::Block(statements) => Some(statements),
-                    _ => None,
-                },
-            },
+        match self.try_raw()?.kind {
+            hir::StmtKind::Block(list) => Some(List::ids(self.file, list)),
             _ => None,
         }
     }
 
-    /// It is a `With`.
     #[inline]
     pub fn is_with(self) -> bool {
         self.file.has_with_statements() && matches!(self.kind(), StmtKind::With { .. })
@@ -600,7 +583,9 @@ impl<'a> Stmt<'a> {
     #[inline]
     pub fn as_expr(self) -> Option<Expr<'a>> {
         match self.try_raw()?.kind {
-            hir::StmtKind::Expr(e) => Some(Expr::new(self.file, e)),
+            hir::StmtKind::Expr(e) | hir::StmtKind::Directive { expr: e, .. } => {
+                Some(Expr::new(self.file, e))
+            }
             _ => None,
         }
     }
@@ -662,7 +647,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// What a `Return` returns: `Some(None)` for a bare `return`.
+    /// The value of a `Return`. `Some(None)` for a bare `return`.
     #[inline]
     pub fn as_return(self) -> Option<Option<Expr<'a>>> {
         match self.try_raw()?.kind {
@@ -671,7 +656,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `test`, the `yes` and the `no` of an `If`.
+    /// The `test`, `yes` and `no` of an `If`.
     #[inline]
     pub fn as_if(self) -> Option<(Expr<'a>, Stmt<'a>, Option<Stmt<'a>>)> {
         match self.try_raw()?.kind {
@@ -684,7 +669,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `expr` and the `cases` of a `Switch`.
+    /// The `expr` and `cases` of a `Switch`.
     #[inline]
     pub fn as_switch(self) -> Option<(Expr<'a>, List<'a, Case<'a>>)> {
         match self.try_raw()?.kind {
@@ -695,7 +680,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `label` and the `body` of a `Labeled`.
+    /// The `label` and `body` of a `Labeled`.
     #[inline]
     pub fn as_labeled(self) -> Option<(Name<'a>, Stmt<'a>)> {
         match self.try_raw()?.kind {
@@ -706,7 +691,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `left`, the `expr`, the `body` and `is_await` of a `ForOf`.
+    /// The `left`, `expr`, `body` and `is_await` of a `ForOf`.
     #[inline]
     pub fn as_for_of(self) -> Option<(Stmt<'a>, Expr<'a>, Stmt<'a>, bool)> {
         match self.try_raw()?.kind {
@@ -725,7 +710,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `init`, the `test`, the `update` and the `body` of a `For`.
+    /// The `init`, `test`, `update` and `body` of a `For`.
     #[inline]
     #[expect(clippy::type_complexity)]
     pub fn as_for(
@@ -750,7 +735,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `block`, the `param`, the `handler` and the `finalizer` of a `Try`.
+    /// The `block`, `param`, `handler` and `finalizer` of a `Try`.
     #[inline]
     #[expect(clippy::type_complexity)]
     pub fn as_try(
@@ -775,7 +760,7 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The `object` and the `body` of a `With`.
+    /// The `object` and `body` of a `With`.
     #[inline]
     pub fn as_with(self) -> Option<(Expr<'a>, Stmt<'a>)> {
         match self.file.has_with_statements() {
@@ -796,9 +781,8 @@ impl<'a> Stmt<'a> {
         )
     }
 
-    /// `"use strict"` and the like: the text between the quotes, if this is an expression
-    /// statement that consists of an unparenthesized string literal and is among the first
-    /// statements of a function, of a namespace or of the file.
+    /// `"use strict"` and the like. Returns the text between the quotes if this is an expression statement made of an
+    /// unparenthesized string literal, among the first statements of a function, a namespace or the file.
     pub fn directive(self) -> Option<&'a [u8]> {
         let expr = self.as_expr()?;
         if expr.as_string().is_none() || expr.is_parenthesized() {
@@ -812,8 +796,8 @@ impl<'a> Stmt<'a> {
             Node::Stmt(parent) => parent.as_module()?.innermost().body(),
             _ => return None,
         };
-        // Where the statements start, and where the strings that they start with end. The next question is about the same ones
-        // if there are many strings.
+        // Caches where the statement list starts and where its leading strings end. If there are many leading strings,
+        // the next call is likely for the same list.
         let start = siblings.first()?.span().start;
         let end = match self.file.lazy.directives.get() {
             Some((known, end)) if known == start => end,
@@ -835,25 +819,13 @@ impl<'a> Stmt<'a> {
 }
 
 impl super::File<'_> {
-    /// Whether the file has a `with` statement, which is a [`StmtKind::With`] with the tag `Block`.
+    /// True if the file has a `with` statement, which is a [`StmtKind::With`] with the tag `Block`.
     #[inline]
     pub fn has_with_statements(&self) -> bool {
         !self.hir.with_bodies.is_empty()
     }
 
-    /// The HIR stores `with (object) body` as a block of the two, positioned at the keyword.
-    #[inline]
-    fn is_with(&self, raw: &hir::Stmt) -> bool {
-        !self.hir.with_bodies.is_empty()
-            && matches!(raw.kind, hir::StmtKind::Block(list) if list.len() == 2)
-            && self
-                .hir
-                .text
-                .get(raw.start as usize..)
-                .is_some_and(|it| it.starts_with(b"with"))
-    }
-
-    /// The `for` or `with` statement that the statement `id` is a wrapper in.
+    /// The `for` statement that the statement `id` is a wrapper in, if any.
     #[inline]
     pub(super) fn wrapped_in(&self, id: hir::StmtId) -> Option<hir::StmtId> {
         if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
@@ -862,14 +834,10 @@ impl super::File<'_> {
         let bun_sema::bind::Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return None;
         };
-        let raw = self.hir.stmts.get(parent.idx())?;
-        let is_wrapper = match raw.kind {
+        let is_wrapper = match self.hir.stmts.get(parent.idx())?.kind {
             hir::StmtKind::For { init: head, .. }
             | hir::StmtKind::ForIn { left: head, .. }
             | hir::StmtKind::ForOf { left: head, .. } => head == id,
-            hir::StmtKind::Block(list) => {
-                self.is_with(raw) && self.hir.ids.get(list.start as usize) == Some(&id.0)
-            }
             _ => false,
         };
         is_wrapper.then_some(parent)
@@ -877,8 +845,7 @@ impl super::File<'_> {
 }
 
 handle! {
-    /// `pat: ty = init` in a `var`, `let`, `const` or `using` statement. Also the `e` of
-    /// `catch (e)`.
+    /// `pat: ty = init` in a `var`, `let`, `const` or `using` statement. Also the `e` of `catch (e)`.
     VarDecl, VarDeclId, var_decls, VarDecl
 }
 
@@ -895,7 +862,7 @@ impl<'a> VarDecl<'a> {
 
     #[inline]
     pub fn ty(self) -> Option<TypeNode<'a>> {
-        TypeNode::written(self.file, self.raw().ty)
+        TypeNode::in_source(self.file, self.raw().ty)
     }
 
     #[inline]
@@ -908,7 +875,7 @@ impl<'a> VarDecl<'a> {
         self.raw().kind
     }
 
-    /// `Flags::DEFINITE` for `x!: T`, and the flags of the statement.
+    /// `Flags::DEFINITE` for `x!: T`, plus the statement's flags.
     #[inline]
     pub fn flags(self) -> Flags {
         self.raw().flags
@@ -926,8 +893,8 @@ impl<'a> VarDecl<'a> {
         self.flags().contains(Flags::DEFINITE)
     }
 
-    /// The pattern and its type annotation, which is the range of ESLint's `id`: typescript-eslint
-    /// has the annotation as a part of the `Identifier` or the pattern.
+    /// The pattern and its type annotation. That's the range of ESLint's `id`, because typescript-eslint includes the
+    /// annotation in the `Identifier` or pattern.
     pub fn binding_span(self) -> Span {
         let pat = self.pat().span();
         match self.ty() {

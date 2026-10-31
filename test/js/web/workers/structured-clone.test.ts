@@ -5,6 +5,7 @@ import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Cert
 import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { deserialize as v8Deserialize } from "node:v8";
+import { receiveMessageOnPort } from "node:worker_threads";
 import { deflate } from "node:zlib";
 import { join } from "path";
 
@@ -853,6 +854,100 @@ describe("deserializing a version 13 payload", () => {
     expect(+cloned[0]).toBe(5);
     expect(+cloned[1]).toBe(5);
     expect(cloned[0]).not.toBe(cloned[1]);
+  });
+});
+
+async function describeKey(key: CryptoKey) {
+  return {
+    type: key.type,
+    algorithm: key.algorithm,
+    usages: key.usages,
+    extractable: key.extractable,
+    material: Buffer.from(await crypto.subtle.exportKey(key.type === "public" ? "spki" : "pkcs8", key)).toString("hex"),
+  };
+}
+
+test("receiveMessageOnPort returns an X25519 CryptoKey", async () => {
+  const { privateKey } = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+  const { port1, port2 } = new MessageChannel();
+  port1.postMessage(privateKey);
+  expect(await describeKey(receiveMessageOnPort(port2)!.message)).toEqual(await describeKey(privateKey));
+  port1.close();
+});
+
+// An OKP CryptoKey record has these fields, in order:
+//   format version, CryptoKeyTag, record length, format version, key format, extractable,
+//   usage count, usage tags, OKP, algorithm, curve, [key type], key size, key bytes.
+// Only an X25519 record has the key type.
+describe("X25519 CryptoKey records", () => {
+  const compact = (spaced: string) => spaced.replaceAll(" ", "");
+  const read = (spaced: string) => deserialize(Buffer.from(compact(spaced), "hex"));
+  const written = (key: CryptoKey) => Buffer.from(serialize(key)).toString("hex");
+
+  // The X25519 key pair from Node's test-webcrypto-derivebits-cfrg.js.
+  const x25519Private = "c8838e76d057dfb7d8c95a69e138160add6373fd71a4d276bb56e3a81b64ff61";
+  const x25519Public = "1cf2b1e6022ec537371ed7f53e54fa1154d83e98eb64ea51fae5b3307cfe9706";
+  const importX25519 = () =>
+    Promise.all([
+      crypto.subtle.importKey(
+        "pkcs8",
+        Buffer.from(`302e020100300506032b656e04220420${x25519Private}`, "hex"),
+        "X25519",
+        true,
+        ["deriveBits"],
+      ),
+      crypto.subtle.importKey(
+        "spki",
+        Buffer.from(`302a300506032b656e032100${x25519Public}`, "hex"),
+        "X25519",
+        true,
+        [],
+      ),
+    ]);
+
+  test("an X25519 record includes the key type", async () => {
+    const [privateKey, publicKey] = await importX25519();
+    const privateRecord = `0e000000 21 39000000 0e000000 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
+    const publicRecord = `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
+
+    expect(written(privateKey)).toBe(compact(privateRecord));
+    expect(written(publicKey)).toBe(compact(publicRecord));
+    expect(await describeKey(read(privateRecord))).toEqual(await describeKey(privateKey));
+    expect(await describeKey(read(publicRecord))).toEqual(await describeKey(publicKey));
+  });
+
+  // No release could ever read these records.
+  test("rejects the X25519 records without a key type that Bun 1.4.3 wrote", () => {
+    const privateRecord = `0e000000 21 38000000 0e000000 02000000 01000000 01000000 05 05 17 00 20000000 ${x25519Private}`;
+    const publicRecord = `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 00 20000000 ${x25519Public}`;
+
+    expect(() => read(privateRecord)).toThrow(new TypeError("Unable to deserialize data."));
+    expect(() => read(publicRecord)).toThrow(new TypeError("Unable to deserialize data."));
+  });
+
+  test.each([
+    [
+      "an X25519 key type that isn't public or private",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 02 20000000 ${x25519Public}`,
+    ],
+    [
+      "a 31-byte X25519 key",
+      `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 00 00 1f000000 ${x25519Public.slice(2)}`,
+    ],
+    [
+      "the X25519 algorithm with the Ed25519 curve",
+      `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 01 20000000 ${x25519Public}`,
+    ],
+    [
+      "the Ed25519 algorithm with the X25519 curve",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 16 00 00 20000000 ${x25519Public}`,
+    ],
+    [
+      "the AES-GCM algorithm in an OKP record",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 09 00 00 20000000 ${x25519Public}`,
+    ],
+  ])("%s is rejected", (_what, malformed) => {
+    expect(() => read(malformed)).toThrow(new TypeError("Unable to deserialize data."));
   });
 });
 

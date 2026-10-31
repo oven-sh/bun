@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prefer `String#codePointAt` over `String#charCodeAt` and `String.fromCodePoint` over `String.fromCharCode`.
 pub struct PreferCodePoint;
 
-const PREFER_CODE_POINT: Message = Message::new("", "Prefer `{{good_method}}` over `{{bad_method}}`");
+const PREFER_CODE_POINT: &Message = &Message::new("", "Prefer `{{good_method}}` over `{{bad_method}}`");
 
 impl Rule for PreferCodePoint {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-code-point", Kind::Suggestion).fixable(Fixable::Code);
@@ -40,7 +40,7 @@ impl Rule for PreferCodePoint {
     }
 }
 
-/// It is what a call of `charCodeAt` calls, or an argument of one.
+/// True if it's the callee or an argument of a `charCodeAt` call.
 fn is_in_call_of_char_code_at(member_expr: Expr) -> bool {
     let Some(call_expr) = member_expr.parent().as_expr().and_then(Expr::as_call) else {
         return false;

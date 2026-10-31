@@ -209,6 +209,9 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
+    UvTimer,
+    WorkerWaitsForRoom,
 }
 
 impl Tag {
@@ -301,8 +304,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Widen to the `u32`-repr [`KindBig`] used in [`ID`](Timer::ID) so the
-    /// `{i32, u32}` pair `bitcast`s to a `u64` async-id.
+    /// Returns the [`KindBig`] that [`ID`](Timer::ID) packs into the `u64` async-id.
     #[inline]
     pub fn big(self) -> KindBig {
         match self {
@@ -313,8 +315,7 @@ impl Kind {
     }
 }
 
-/// Same variants as [`Kind`] but `#[repr(u32)]` so `ID { i32, KindBig }`
-/// is exactly one pointer / `u64`.
+/// Same variants as [`Kind`]. Stored in the two low bits of the `u64` async-id.
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum KindBig {

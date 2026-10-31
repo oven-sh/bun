@@ -11,6 +11,7 @@ use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
+use crate::api::h2_frame_parser_body::{has_control_byte, has_edge_whitespace};
 use bun_collections::HashMap;
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
@@ -25,6 +26,25 @@ mod pseudo {
     pub(super) const STATUS: u8 = 16;
     pub(super) const PROTOCOL: u8 = 32;
     pub(super) const UNKNOWN: u8 = 64;
+
+    /// Whether nghttp2 takes the value of a pseudo-header (nghttp2_check_method,
+    /// nghttp2_check_path, check_scheme, check_authority, parse_status_code).
+    pub(super) fn is_valid_value(bit: u8, value: &[u8]) -> bool {
+        let all = |extra: &[u8]| {
+            value
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+        };
+        match bit {
+            METHOD => all(b"!#$%&'*+-.^_`|~"),
+            PATH => value.iter().all(|&c| c > b' ' && c != 0x7f),
+            SCHEME => value.first().is_some_and(u8::is_ascii_alphabetic) && all(b"+-."),
+            AUTHORITY => all(b"!$%&'()*+,-.:;=[]_~"),
+            // Three digits from 100 up. HTTP/2 has no 101 (RFC 9113 §8.6).
+            STATUS => matches!(value, [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9']) && value != b"101",
+            _ => true,
+        }
+    }
 }
 
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
@@ -43,6 +63,8 @@ pub(crate) struct Stream {
     /// A non-informational inbound header block was delivered: the next inbound HEADERS on this
     /// stream is a trailer section (RFC 9113 §8.1).
     pub recv_final_headers: bool,
+    /// A request's header section had a `host`: its trailer section cannot have another.
+    pub recv_host: bool,
     /// Declared `content-length` of the inbound message, if any (RFC 9113 §8.1.1).
     pub content_length: Option<u64>,
     /// DATA payload bytes (padding excluded) received so far.
@@ -58,10 +80,17 @@ impl Stream {
             send_window: SendWindow::new(initial_send),
             recv_window: RecvWindow::new(initial_recv),
             recv_final_headers: false,
+            recv_host: false,
             content_length: None,
             recv_body_bytes: 0,
             opened_after_goaway: false,
         }
+    }
+
+    /// RFC 9113 §8.1.1 (nghttp2_http_on_data_chunk): more DATA than the declared `content-length`.
+    fn body_exceeds_content_length(&self) -> bool {
+        self.content_length
+            .is_some_and(|declared| self.recv_body_bytes > declared)
     }
 }
 
@@ -295,6 +324,8 @@ pub(crate) struct Connection {
     /// session option; not a SETTINGS parameter). An empty DATA frame without END_STREAM counts
     /// as an invalid frame.
     pub max_invalid_frames: u32,
+    /// node's strictFieldWhitespaceValidation session option (not a SETTINGS parameter).
+    pub strict_field_whitespace: bool,
     /// The initial window size the peer has ACKed (RFC 9113 6.5.3): until our SETTINGS is ACKed,
     /// the peer may legitimately send according to the previous value - enforce the larger.
     acked_local_initial_window: u32,
@@ -369,6 +400,7 @@ impl Connection {
             frames_received: 0,
             frames_sent: 0,
             max_invalid_frames: 1000,
+            strict_field_whitespace: true,
             acked_local_initial_window: 65_535,
             enforced_max_header_list_size: local.max_header_list_size,
             pending_local_settings_acks: std::collections::VecDeque::new(),
@@ -658,8 +690,7 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
+        // Late DATA for an evicted id is dropped (is_closed_stream). A late HEADERS for an
         // evicted id re-opens a fresh entry (the parity check still applies); that matches how
         // trailers-after-close are treated as a new block by the legacy parser as well.
         let mut evict = std::mem::take(&mut self.evict_buf);
@@ -1231,7 +1262,11 @@ impl Connection {
         // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
         // block) is a request; a later HEADERS on the same stream is a trailer section.
         let mut saw_connect = false;
-        let mut saw_host = false;
+        let mut saw_options = false;
+        let mut saw_host = self.streams.get(&target).is_some_and(|s| s.recv_host);
+        let mut http_scheme = false;
+        let mut origin_form = false;
+        let mut asterisk_form = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
@@ -1273,11 +1308,10 @@ impl Connection {
                                 b"protocol" => pseudo::PROTOCOL,
                                 _ => pseudo::UNKNOWN,
                             };
-                            // 8.3.1: requests never carry :status - a server seeing it inbound is
-                            // a malformed block. (The client direction also constrains pseudo
-                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
-                            // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            // 8.3: :status is the only pseudo-header of a response, and a request
+                            // does not have it. A PUSH_PROMISE block is a request.
+                            let wrong_direction =
+                                (rest == b"status") == (self.is_server || push_parent.is_some());
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
@@ -1289,7 +1323,14 @@ impl Connection {
                                 && self.local_settings.enable_connect_protocol == 0;
                             // nghttp2 (check_pseudo_header) treats an empty pseudo-header value as
                             // malformed, so `:path: ""` never counts as a present :path (§8.3.1:
-                            // `:path` "MUST NOT be empty" for http/https).
+                            // `:path` "MUST NOT be empty" for http/https). JS drops a field with
+                            // whitespace at an edge of its value, so it is not a present one either.
+                            // Without strictFieldWhitespaceValidation nghttp2 takes such a :protocol,
+                            // unless it is all whitespace.
+                            let edge_whitespace = has_edge_whitespace(value_b)
+                                && (self.strict_field_whitespace
+                                    || bit != pseudo::PROTOCOL
+                                    || value_b.iter().all(|c| matches!(c, b' ' | b'\t')));
                             if seen_regular
                                 || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
@@ -1297,6 +1338,9 @@ impl Connection {
                                 || protocol_disabled
                                 || is_trailer
                                 || value_b.is_empty()
+                                || edge_whitespace
+                                || has_control_byte(value_b)
+                                || !pseudo::is_valid_value(bit, value_b)
                             {
                                 malformed = true;
                             }
@@ -1307,12 +1351,34 @@ impl Connection {
                             if rest == b"method" && value_b == b"CONNECT" {
                                 saw_connect = true;
                             }
+                            match bit {
+                                pseudo::METHOD => saw_options = value_b == b"OPTIONS",
+                                pseudo::SCHEME => {
+                                    http_scheme = value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                pseudo::PATH => {
+                                    origin_form = value_b.starts_with(b"/");
+                                    asterisk_form = value_b == b"*";
+                                }
+                                _ => {}
+                            }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" if is_request => saw_host = true,
+                                // nghttp2 ignores a request's Host that is not an authority.
+                                b"host" if self.is_server || push_parent.is_some() => {
+                                    if !pseudo::is_valid_value(pseudo::AUTHORITY, value_b) {
+                                        continue;
+                                    }
+                                    // check_pseudo_header: not empty, and one per stream.
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1326,6 +1392,10 @@ impl Connection {
                                     _ => malformed = true,
                                 },
                                 _ => {}
+                            }
+                            // nghttp2 ignores such a field (NGHTTP2_ERR_IGN_HTTP_HEADER).
+                            if has_control_byte(value_b) {
+                                continue;
                             }
                         }
                     }
@@ -1374,6 +1444,7 @@ impl Connection {
         // :scheme/:path and carries :authority; extended CONNECT (:protocol, RFC 8441) requires
         // :method CONNECT and :authority. Without this a block with an empty or missing :path
         // reaches JS as a request with an empty url (no compliant peer can produce that shape).
+        // For http and https, :path starts with "/", or is "*" in an OPTIONS request (check_path).
         if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
@@ -1383,10 +1454,12 @@ impl Connection {
                 (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    || (http_scheme && !origin_form && !(asterisk_form && saw_options))
             };
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
+                s.recv_host = saw_host;
                 if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }
@@ -1492,8 +1565,10 @@ impl Connection {
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
-        let mut discard = false;
+        let closed = self.is_closed_stream(sink, hdr.stream_id);
+        let mut discard = closed;
         match self.streams.get_mut(&hdr.stream_id) {
+            _ if closed => {}
             None => {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
@@ -1522,6 +1597,14 @@ impl Connection {
                         return StreamedDataStart::Fatal;
                     } else {
                         st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
+                        if st.body_exceeds_content_length() {
+                            self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
+                            if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
+                                st2.state = State::Closed;
+                            }
+                            sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
+                            discard = true;
+                        }
                     }
                 }
             }
@@ -1568,6 +1651,19 @@ impl Connection {
             if let Some(state) = state {
                 sink.on_stream_end(inflight.stream_id, state);
             }
+        }
+    }
+
+    fn has_existed(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
+    }
+
+    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, as nghttp2 does.
+    fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        match self.streams.get(&stream_id) {
+            Some(s) => s.state == State::Closed,
+            // A stream the embedder opened has no entry here until its first inbound frame.
+            None => !sink.is_local_stream(stream_id) && self.has_existed(sink, stream_id),
         }
     }
 
@@ -1629,11 +1725,14 @@ impl Connection {
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
         }
+        if self.is_closed_stream(sink, hdr.stream_id) {
+            return false;
+        }
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
+            // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
@@ -1644,7 +1743,11 @@ impl Connection {
                         DataDecision::FlowControlViolation
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
-                        DataDecision::Deliver(0)
+                        if s.body_exceeds_content_length() {
+                            DataDecision::Rst(ErrorCode::ProtocolError)
+                        } else {
+                            DataDecision::Deliver(0)
+                        }
                     }
                 }
             }
@@ -1756,10 +1859,7 @@ impl Connection {
         // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
         // below the highest stream id either layer has started has existed; the embedder's
         // mark covers locally-initiated streams this engine never saw HEADERS for.
-        if on_idle
-            && (hdr.stream_id <= self.last_stream_id
-                || hdr.stream_id <= sink.highest_started_stream_id())
-        {
+        if on_idle && self.has_existed(sink, hdr.stream_id) {
             return false;
         }
         if on_idle {
@@ -2043,9 +2143,7 @@ impl Connection {
     /// The outbound half does not run through this engine yet, so without this hook a
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry.
+    /// has the same observable behavior as scan-eviction of a Closed stream.
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

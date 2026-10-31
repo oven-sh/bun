@@ -4,11 +4,11 @@ use super::Located;
 use crate::ast::{ExprKind, Node};
 use crate::types::{SyntaxKind, TsNode, Type};
 
-/// `getContextualType(checker, node)`: the type of what the expression goes into, which is the type
-/// of the parameter for an argument, the annotation for an initializer, the type of the target for
-/// what is assigned. `None` for any position that is not one of a few that are known.
+/// `getContextualType(checker, node)`: the type of the place the expression flows into. That's the parameter's type for
+/// an argument, the annotation for an initializer, and the target's type for an assigned value. `None` for any position
+/// outside the handful it knows.
 ///
-/// As upstream, an expression in parentheses has none: its parent is the `ParenthesizedExpression`.
+/// As upstream, a parenthesized expression has none, because its parent is the `ParenthesizedExpression`.
 pub fn get_contextual_type<'a>(node: impl Located<'a>) -> Option<Type<'a>> {
     let node = node.to_ts_node();
     let parent = node.parent()?;
@@ -23,8 +23,8 @@ pub fn get_contextual_type<'a>(node: impl Located<'a>) -> Option<Type<'a>> {
         | SyntaxKind::Parameter => {
             return Some(parent.type_node()?.get_type_from_type_node());
         }
-        // `checker.getContextualType(parent)`: the container has one as the value of an attribute,
-        // which is that of its content, and none as a child of an element.
+        // `checker.getContextualType(parent)`: as an attribute's value the container has a contextual type, and its
+        // content has the same one. As an element's child it has none.
         SyntaxKind::JsxExpression => {
             if parent.parent()?.kind() != SyntaxKind::JsxAttribute {
                 return None;

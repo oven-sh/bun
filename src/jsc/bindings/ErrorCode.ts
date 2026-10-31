@@ -358,5 +358,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
+  ["HPE_INVALID_URL", Error],
 ];
 export default errors;

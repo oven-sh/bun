@@ -233,14 +233,18 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   // call. The stream runs the write callbacks and destroys it on the next tick.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
   for (const side of ["client", "server"] as const) {
-    test.each(["ECONNRESET", "EPIPE"] as const)(
-      `send → %s on the first attempt: write() returns false and the socket is errored in the same call (${side} writer)`,
-      async errno => {
+    test.each([
+      { result: "ECONNRESET", rule: { action: "errno", errno: "ECONNRESET" }, code: "ECONNRESET" },
+      { result: "EPIPE", rule: { action: "errno", errno: "EPIPE" }, code: "EPIPE" },
+      { result: "more bytes than it was given", rule: { action: "excess" }, code: "ECONNABORTED" },
+    ] as const)(
+      `send → $result on the first attempt: write() returns false and the socket is errored in the same call (${side} writer)`,
+      async ({ rule, code }) => {
         using p = await connectedPair();
         const writer = side === "client" ? p.client : p.serverSock;
         const fd = (writer as any)._handle.fd as number;
         expect(fd).toBeGreaterThanOrEqual(0);
-        fault.set({ syscall: "send", action: "errno", errno, repeat: 1, fd });
+        fault.set({ syscall: "send", ...rule, repeat: 1, fd });
 
         const events: string[] = [];
         writer.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} ${e.syscall}`));
@@ -263,9 +267,9 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
 
         expect({ first, afterFirst, second, events }).toEqual({
           first: false,
-          afterFirst: { destroyed: false, errored: errno, writable: false, writableLength: 0 },
+          afterFirst: { destroyed: false, errored: code, writable: false, writableLength: 0 },
           second: false,
-          events: [`write#1 ${errno}`, `write#2 ${errno}`, `error ${errno} write`, "close true"],
+          events: [`write#1 ${code}`, `write#2 ${code}`, `error ${code} write`, "close true"],
         });
       },
     );

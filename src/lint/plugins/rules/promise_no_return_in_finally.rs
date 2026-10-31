@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Disallow return statements in a `finally()` callback of a promise.
 pub struct NoReturnInFinally;
 
-const NO_RETURN_IN_FINALLY: Message = Message::new("", "Don't return in a finally callback");
+const NO_RETURN_IN_FINALLY: &Message = &Message::new("", "Don't return in a finally callback");
 
 impl Rule for NoReturnInFinally {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-return-in-finally", Kind::Problem);
@@ -26,7 +26,7 @@ impl Rule for NoReturnInFinally {
         };
         let callbacks = call_expr.args().iter().filter(|it| !it.is_parenthesized()).filter_map(Expr::as_fn);
         for statements in callbacks.filter_map(Func::body_statements) {
-            // The first, of those that are directly in the body.
+            // Only the first `return`, and only those directly in the body.
             if let Some(return_stmt) = statements.iter().find(|it| it.tag() == StmtTag::Return) {
                 cx.report(return_stmt, NO_RETURN_IN_FINALLY);
             }

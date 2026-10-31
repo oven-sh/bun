@@ -1,19 +1,19 @@
-//! The parser for the expressions of Angular: `Parser` and `_ParseAST` of `@angular/compiler`.
+//! The parser for Angular expressions: `Parser` and `_ParseAST` in `@angular/compiler`.
 //!
-//! It accepts what Angular accepts without an error. It makes no tree: what it makes of an expression is TypeScript that
-//! the parser for TypeScript reads into the tree that Angular makes of the expression. That is the text of the expression,
-//! except that
+//! It accepts exactly what Angular accepts without an error. It doesn't build a tree. Instead it rewrites the
+//! expression into TypeScript that the TypeScript parser reads into the same tree Angular would build. That's the
+//! expression's text, except that
 //!
-//! - a pipe `a | b: c : d` is `a | b( c , d)`. Angular has no bitwise operators;
-//! - there are parentheses where TypeScript would group otherwise: `a => b | c` is `(a => b) | c`, `a && b ?? c` is
-//!   `a && (b ?? c)`, `a + b = c` is `a + (b = c)`, `--a` is `-(-a)`, ``a?.b`c`.d`` is ``(a?.b)`c`.d``, and `a < b` is
-//!   `(a < b)`, which cannot be the start of type arguments;
-//! - what TypeScript does not take is something as long that it takes: a name that is a reserved word starts with `_`, a
-//!   line break before `!`, before `=>` or after `.` is a blank, `1.2.3` is `11111`, and an escape sequence or a line break
-//!   in a string is `_`.
+//! - a pipe `a | b: c : d` becomes `a | b( c , d)`, which is safe because Angular has no bitwise operators;
+//! - parentheses are added where TypeScript would group differently: `a => b | c` becomes `(a => b) | c`, `a && b ?? c`
+//!   becomes `a && (b ?? c)`, `a + b = c` becomes `a + (b = c)`, `--a` becomes `-(-a)`, ``a?.b`c`.d`` becomes
+//!   ``(a?.b)`c`.d``, and `a < b` becomes `(a < b)`, which can't be the start of type arguments;
+//! - anything TypeScript rejects is replaced with something of the same length that it accepts: a name that's a
+//!   reserved word starts with `_`, a line break before `!`, before `=>` or after `.` becomes a space, `1.2.3` becomes
+//!   `11111`, and an escape sequence or a line break in a string becomes `_`.
 //!
-//! Names, numbers and strings are written as they are in the text, not as they are parsed: the formatter for JavaScript
-//! takes them from a second text, `shown` of `Code::TypeScript`.
+//! Names, numbers and strings are printed as they are in the source, not as they're parsed. The JavaScript formatter
+//! reads them from a second text, the `display_code` field of `Code::TypeScript`.
 
 use super::lexer::{Kind, Token, tokenize};
 use bun_core::strings;
@@ -24,28 +24,28 @@ pub(crate) struct Failed;
 
 pub(crate) type Parsed<T> = Result<T, Failed>;
 
-/// What is to be written for an expression.
+/// The code to write for an expression.
 #[derive(Debug)]
 pub(crate) enum Code {
-    /// What Prettier prints, which is one string.
+    /// Prettier's output, for an expression whose document is a single string.
     Printed(Vec<u8>),
     TypeScript {
         /// `(`, the expression, a line break and `)`.
         code: Vec<u8>,
-        /// The same, as long, for whoever writes a part of the text or looks at it, if that is not the same: with every
-        /// name as it is written, and blanks for the parentheses that are not written.
-        shown: Option<Vec<u8>>,
+        /// A copy of `code` with the same length, for code that prints or inspects the source text: every name is as
+        /// written, and the added parentheses are spaces. `None` if it would equal `code`.
+        display_code: Option<Vec<u8>>,
     },
 }
 
 #[derive(Debug)]
 pub(crate) struct Expression {
     pub(crate) code: Code,
-    /// Prettier's `hasNgSideEffect`: there is a call or an assignment in it.
+    /// Prettier's `hasNgSideEffect`: it contains a call or an assignment.
     pub(crate) has_side_effect: bool,
 }
 
-/// What an expression is, as far as that says where TypeScript needs parentheses to read it as Angular does.
+/// The kind of an expression, as far as it matters for where TypeScript needs parentheses to group it like Angular.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Shape {
     Pipe,
@@ -73,15 +73,16 @@ pub(super) struct Operand {
 
 #[derive(Debug, Copy, Clone)]
 enum Change {
-    /// `)` before the byte, which ends the arguments of a pipe.
+    /// Insert `)` before the byte, to end the arguments of a pipe.
     EndArguments,
-    /// `)` before the byte, which is shown as a blank: what asks what follows an expression finds what is in the text.
+    /// Insert `)` before the byte. It's a space in `display_code`, so code that looks at what follows an expression
+    /// sees the source text.
     Close,
-    /// `(` before the byte, which is shown as a blank.
+    /// Insert `(` before the byte. It's a space in `display_code`.
     Open,
-    /// Another byte in its place.
+    /// Replace the byte.
     Put(u8),
-    /// Another byte in its place, which is not shown.
+    /// Replace the byte, but keep showing the original.
     Hide(u8),
 }
 
@@ -91,7 +92,7 @@ struct Edit {
     change: Change,
 }
 
-/// The levels of binary operators, from the one that binds least.
+/// Precedence levels of the binary operators, lowest first.
 const OR: u8 = 1;
 const AND: u8 = 2;
 const NULLISH: u8 = 3;
@@ -100,7 +101,7 @@ const RELATIONAL: u8 = 5;
 const ADDITIVE: u8 = 6;
 const MULTIPLICATIVE: u8 = 7;
 
-/// Whether TypeScript does not read `name` as a name where an expression or a parameter is expected, in a module.
+/// True if TypeScript doesn't accept `name` as an identifier where it expects an expression or a parameter in a module.
 fn is_reserved_word(name: &[u8]) -> bool {
     matches!(
         name,
@@ -165,7 +166,7 @@ fn is_assignment_operation(operator: &[u8]) -> bool {
     )
 }
 
-/// `Parser._commentStart`: where the comment starts that goes on to the end of `input`.
+/// `Parser._commentStart`: returns the start of the comment that runs to the end of `input`.
 pub(crate) fn comment_start(input: &[u8]) -> Option<usize> {
     if !strings::contains(input, b"//") {
         return None;
@@ -187,15 +188,16 @@ pub(crate) fn comment_start(input: &[u8]) -> Option<usize> {
 pub(crate) struct Parser<'i> {
     pub(super) input: &'i [u8],
     tokens: Vec<Token>,
-    odd_blanks: Vec<u32>,
+    angular_only_whitespace: Vec<u32>,
     pub(super) index: usize,
-    /// `parseFlags & 1`: assignments and no pipes.
+    /// `parseFlags & 1`: assignments are allowed and pipes aren't.
     is_action: bool,
-    /// What makes TypeScript of the expression that is being parsed.
+    /// The edits that turn the expression being parsed into TypeScript.
     edits: Vec<Edit>,
-    /// How many calls and assignments there have been.
+    /// The number of calls and assignments parsed so far.
     side_effects: u32,
-    /// Where the parentheses are that have been closed last, and what is in them without parentheses of its own.
+    /// The span of the most recently closed parentheses, and the span of their contents with any nested parentheses
+    /// stripped.
     last_parentheses: (std::ops::Range<u32>, std::ops::Range<u32>),
     stack_check: bun_core::StackCheck,
 }
@@ -208,23 +210,23 @@ const END: Token = Token {
 };
 
 impl<'i> Parser<'i> {
-    /// `input`: all of the text. `len`: how much of it is not a comment.
+    /// `input` is the whole text, and `len` is how much of it isn't a comment.
     pub(crate) fn new(
         input: &'i [u8],
         len: usize,
         is_action: bool,
         stack_check: bun_core::StackCheck,
     ) -> Self {
-        let (mut tokens, mut odd_blanks) = (Vec::new(), Vec::new());
+        let (mut tokens, mut angular_only_whitespace) = (Vec::new(), Vec::new());
         tokenize(
             input.get(..len).unwrap_or(input),
             &mut tokens,
-            &mut odd_blanks,
+            &mut angular_only_whitespace,
         );
         Parser {
             input,
             tokens,
-            odd_blanks,
+            angular_only_whitespace,
             index: 0,
             is_action,
             edits: Vec::new(),
@@ -333,20 +335,20 @@ impl<'i> Parser<'i> {
         self.edits.push(Edit { at, change });
     }
 
-    /// Puts `operand` in parentheses.
+    /// Wraps `operand` in parentheses.
     fn wrap(&mut self, operand: Operand) {
         self.edit(operand.start, Change::Open);
         self.edit(operand.end, Change::Close);
     }
 
-    /// Puts `operand` in parentheses if nothing but a comma, a colon or a bracket can be around it in TypeScript.
+    /// Wraps `operand` in parentheses if, in TypeScript, only a comma, a colon or a bracket can be next to it.
     fn wrap_arrow_or_assignment(&mut self, operand: Operand) {
         if matches!(operand.shape, Shape::Arrow | Shape::Assignment) {
             self.wrap(operand);
         }
     }
 
-    /// Takes the line breaks out from before the token that is next, where TypeScript does not take one.
+    /// Removes the line breaks before the next token, for a place where TypeScript doesn't allow one.
     fn join_with_previous_line(&mut self) {
         let (from, to) = (self.current_end_index(), self.input_index());
         for at in from..to {
@@ -356,15 +358,16 @@ impl<'i> Parser<'i> {
         }
     }
 
-    /// `name` is where TypeScript expects a name that is not a reserved word.
+    /// Call where TypeScript expects `name` to be an identifier that isn't a reserved word.
     fn hide_reserved_word(&mut self, name: Token) {
         if is_reserved_word(self.text_of(name)) {
             self.edit(name.start, Change::Hide(b'_'));
         }
     }
 
-    /// Angular takes a line break and any escape sequence in a string. What is in it is nothing to the parser.
-    fn hide_what_is_in_string(&mut self, string: Token) {
+    /// Angular accepts a line break and any escape sequence in a string. The parser doesn't care about a string's
+    /// contents.
+    fn hide_string_contents(&mut self, string: Token) {
         let text = self.text_of(string);
         let mut at = 0;
         while let Some(found) = text
@@ -383,8 +386,8 @@ impl<'i> Parser<'i> {
         }
     }
 
-    /// Angular takes `1.2.3`, `1e2e3` and `01`.
-    fn hide_what_is_no_number(&mut self, number: Token) {
+    /// Angular accepts `1.2.3`, `1e2e3` and `01`.
+    fn hide_invalid_number(&mut self, number: Token) {
         let text = self.text_of(number);
         let exponent = strings::index_of_any(text, b"eE");
         let (mantissa, exponent) = text.split_at(exponent.unwrap_or(text.len()));
@@ -409,9 +412,9 @@ impl<'i> Parser<'i> {
         }
     }
 
-    /// What Prettier prints for `tokens`, which are an expression, if its document for that is nothing but strings:
-    /// `a`, `a.b`, `a()`, `a.b()`, a word that stands for a value or digits, after any number of `!`. A member access
-    /// after anything but a name can be on a line of its own, as can one after `a.b`.
+    /// Returns Prettier's output for the expression `tokens` if its document is only strings: `a`, `a.b`, `a()`,
+    /// `a.b()`, a keyword literal or digits, after any number of `!`. A member access after anything but a name can go
+    /// on its own line, and so can one after `a.b`.
     fn printed(&self, tokens: &[Token]) -> Option<Vec<u8>> {
         let negations = tokens
             .iter()
@@ -454,8 +457,8 @@ impl<'i> Parser<'i> {
         text
     }
 
-    /// Makes TypeScript of `operand`, which is all that has been parsed since the last call: the tokens from `first_token`
-    /// on.
+    /// Turns `operand` into TypeScript. It must cover everything parsed since the last call, which is the tokens from
+    /// `first_token` on.
     pub(super) fn finish(
         &mut self,
         first_token: usize,
@@ -474,9 +477,12 @@ impl<'i> Parser<'i> {
             };
         }
         let (start, end) = (operand.start, operand.end);
-        let first_blank = self.odd_blanks.partition_point(|at| *at < start);
-        for index in first_blank..self.odd_blanks.partition_point(|at| *at < end) {
-            self.edit(self.odd_blanks[index], Change::Put(b' '));
+        let first_whitespace = self
+            .angular_only_whitespace
+            .partition_point(|at| *at < start);
+        for index in first_whitespace..self.angular_only_whitespace.partition_point(|at| *at < end)
+        {
+            self.edit(self.angular_only_whitespace[index], Change::Put(b' '));
         }
         crate::sort::sort_by_key(&mut self.edits[..], |edit| {
             let rank = match edit.change {
@@ -488,7 +494,7 @@ impl<'i> Parser<'i> {
         });
         let mut code = Vec::with_capacity((end - start) as usize + self.edits.len() + 3);
         code.push(b'(');
-        // Where a byte is hidden, and the byte.
+        // The offset of each hidden byte, and the byte to show there.
         let mut hidden: Vec<(usize, u8)> = Vec::new();
         let mut from = start as usize;
         for edit in self.edits.drain(..) {
@@ -518,22 +524,22 @@ impl<'i> Parser<'i> {
         }
         code.extend_from_slice(self.input.get(from..end as usize).unwrap_or_default());
         code.extend_from_slice(b"\n)");
-        let shown = (!hidden.is_empty()).then(|| {
-            let mut shown = code.clone();
+        let display_code = (!hidden.is_empty()).then(|| {
+            let mut display_code = code.clone();
             for (at, byte) in hidden {
-                shown[at] = byte;
+                display_code[at] = byte;
             }
-            shown
+            display_code
         });
         Expression {
-            code: Code::TypeScript { code, shown },
+            code: Code::TypeScript { code, display_code },
             has_side_effect,
         }
     }
 
     // ───────────────────────────── `_ParseAST` ─────────────────────────────
 
-    /// Where `operand` is without the parentheses that all of it is in.
+    /// Returns `operand`'s span without the parentheses that enclose all of it.
     fn without_parentheses(&self, operand: Operand) -> std::ops::Range<u32> {
         match self.last_parentheses.0 == (operand.start..operand.end) {
             true => self.last_parentheses.1.clone(),
@@ -541,7 +547,7 @@ impl<'i> Parser<'i> {
         }
     }
 
-    /// `parseChain`. Returns the expressions, and where the node is that `angular-estree-parser` makes of them.
+    /// `parseChain`. Returns the expressions, and the span of the node that `angular-estree-parser` builds from them.
     pub(crate) fn parse_chain(&mut self) -> Parsed<(Vec<Expression>, std::ops::Range<usize>)> {
         let mut expressions = Vec::new();
         let start = self.input_index();
@@ -620,7 +626,7 @@ impl<'i> Parser<'i> {
         Ok(self.operand(start, Shape::Conditional))
     }
 
-    /// The level of the binary operator that is next.
+    /// Returns the level of the next token if it's a binary operator.
     fn binary_level(&self) -> Option<u8> {
         let next = self.next();
         if !matches!(next.kind, Kind::Operator | Kind::Keyword) {
@@ -639,7 +645,7 @@ impl<'i> Parser<'i> {
         })
     }
 
-    /// `parseLogicalOr` down to `parseMultiplicative`: what the operators of `level` and above make.
+    /// `parseLogicalOr` down to `parseMultiplicative`: parses operators of `level` and above.
     fn parse_binary(&mut self, level: u8) -> Parsed<Operand> {
         let start = self.input_index();
         let mut left = self.parse_exponentiation()?;
@@ -655,7 +661,7 @@ impl<'i> Parser<'i> {
                 _ => Shape::Binary,
             };
             match operator_level {
-                // TypeScript does not take `??` next to these.
+                // TypeScript rejects `??` next to these without parentheses.
                 OR | AND => {
                     for operand in [left, right] {
                         if operand.shape == Shape::Nullish {
@@ -721,7 +727,7 @@ impl<'i> Parser<'i> {
     fn parse_call_chain(&mut self) -> Parsed<Operand> {
         let start = self.input_index();
         let mut result = self.parse_primary()?;
-        // There has been a `?.`.
+        // The chain has a `?.` so far.
         let mut is_optional_chain = false;
         loop {
             if self.consume_optional_character(b'.') {
@@ -746,7 +752,7 @@ impl<'i> Parser<'i> {
                 self.advance();
                 result = self.operand(start, Shape::Other);
             } else if matches!(self.next().kind, Kind::TemplateEnd | Kind::TemplatePart) {
-                // To TypeScript the chain goes on behind the template.
+                // In TypeScript the optional chain would continue after the template.
                 if std::mem::take(&mut is_optional_chain) {
                     self.wrap(result);
                 }
@@ -786,7 +792,7 @@ impl<'i> Parser<'i> {
             Kind::Character(b'{') => self.parse_literal_map()?,
             Kind::Identifier => {
                 self.hide_reserved_word(next);
-                // To TypeScript, `async(...a)` and `async() :` can only be the start of an arrow function.
+                // In TypeScript, `async(...a)` and `async() :` can only be the start of an arrow function.
                 if self.text_of(next) == b"async"
                     && self
                         .tokens
@@ -798,11 +804,11 @@ impl<'i> Parser<'i> {
                 return self.parse_access_member(start, false);
             }
             Kind::Number => {
-                self.hide_what_is_no_number(next);
+                self.hide_invalid_number(next);
                 self.advance();
             }
             Kind::String => {
-                self.hide_what_is_in_string(next);
+                self.hide_string_contents(next);
                 self.advance();
             }
             Kind::TemplateEnd | Kind::TemplatePart => self.parse_template_literal()?,
@@ -812,7 +818,7 @@ impl<'i> Parser<'i> {
         Ok(self.operand(start, Shape::Other))
     }
 
-    /// `...` and what is spread, or an expression.
+    /// Parses `...` and the spread expression, or a plain expression.
     fn parse_spread_element_or_pipe(&mut self) -> Parsed<()> {
         self.consume_optional_operator(b"...");
         self.parse_pipe().map(|_| ())
@@ -842,11 +848,11 @@ impl<'i> Parser<'i> {
                 self.advance();
                 match key.kind {
                     Kind::String => {
-                        self.hide_what_is_in_string(key);
+                        self.hide_string_contents(key);
                         self.expect_character(b':')?;
                         self.parse_pipe()?;
                     }
-                    // To Angular it is a string like another.
+                    // Angular treats it like any other string.
                     Kind::TemplateEnd => {
                         if strings::index_of_any(self.text_of(key), b"'\"\\\n").is_some() {
                             return Err(Failed);
@@ -873,7 +879,8 @@ impl<'i> Parser<'i> {
         self.expect_character(b'}')
     }
 
-    /// The name of a property, which is next. `start`: where what it is a property of starts, or the name.
+    /// Parses a property name, which is the next token. `start` is the start of the object, or of the name if there's
+    /// none.
     fn parse_access_member(&mut self, start: u32, is_safe: bool) -> Parsed<Operand> {
         if !matches!(self.next().kind, Kind::Identifier | Kind::Keyword) {
             return Err(Failed);
@@ -888,7 +895,7 @@ impl<'i> Parser<'i> {
         self.parse_assigned_value(start)
     }
 
-    /// The operator of an assignment, which is next, and the value.
+    /// Parses an assignment operator, which is the next token, and the value.
     fn parse_assigned_value(&mut self, start: u32) -> Parsed<Operand> {
         self.advance();
         self.parse_conditional()?;
@@ -896,7 +903,7 @@ impl<'i> Parser<'i> {
         Ok(self.operand(start, Shape::Assignment))
     }
 
-    /// The arguments, after the `(`.
+    /// Parses the arguments after the `(`.
     fn parse_call(&mut self, start: u32) -> Parsed<Operand> {
         if !self.is_character(b')') {
             loop {
@@ -911,7 +918,7 @@ impl<'i> Parser<'i> {
         Ok(self.operand(start, Shape::Other))
     }
 
-    /// The key, after the `[`.
+    /// Parses the key after the `[`.
     fn parse_keyed_read_or_write(&mut self, start: u32, is_safe: bool) -> Parsed<Operand> {
         self.parse_pipe()?;
         self.expect_character(b']')?;
@@ -935,11 +942,11 @@ impl<'i> Parser<'i> {
                 Kind::Operator if self.text_of(token) == b"${" => {
                     self.parse_pipe()?;
                 }
-                // The end of what is interpolated.
+                // The end of an interpolation.
                 Kind::Character(b'}')
                     if matches!(self.next().kind, Kind::TemplatePart | Kind::TemplateEnd)
                         && self.next().start == token.end => {}
-                // Angular passes over anything else.
+                // Angular skips anything else.
                 _ => {
                     for at in token.start..token.end {
                         self.edit(at, Change::Put(b' '));
@@ -951,13 +958,14 @@ impl<'i> Parser<'i> {
     }
 
     fn parse_regular_expression_literal(&mut self) -> Parsed<()> {
-        // `//`, which Angular takes, starts a comment in TypeScript. A name is written as it is in the text too.
+        // Angular accepts `//`, which starts a comment in TypeScript. An identifier works because it's also printed
+        // from `display_code`.
         let body = self.next();
         if body.end - body.start == 2 {
             self.edit(body.start, Change::Hide(b'_'));
             self.edit(body.start + 1, Change::Hide(b'_'));
         }
-        // So does `/*`, and a line break ends a regular expression there.
+        // `/*` also starts a comment, and a line break ends a regular expression in TypeScript.
         for (at, &byte) in (body.start..).zip(self.text_of(body)) {
             if byte == b'\n' || (byte == b'*' && at == body.start + 1) {
                 self.edit(at, Change::Hide(b'_'));

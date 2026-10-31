@@ -16,6 +16,12 @@ pub enum Error {
     SourceMapTooLarge,
     #[error("embedded module graph would exceed 4 GiB (its offsets are 32-bit)")]
     ModuleGraphTooLarge,
+    #[error("invalid compiled image size or alignment")]
+    ImageMisaligned,
+    #[error("Corrupted module graph: invalid compiled program record")]
+    CorruptedCompiledProgram,
+    #[error("BUN_AOT_START_AT names no entry point of the executable")]
+    NoEntryPointToStartAt,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -49,6 +55,11 @@ impl Error {
             Self::SourceMapTooLarge => "SourceMapTooLarge",
             Self::ModuleGraphTooLarge => {
                 "embedded module graph would exceed 4 GiB (its offsets are 32-bit)"
+            }
+            Self::ImageMisaligned => "ImageMisaligned",
+            Self::CorruptedCompiledProgram => "CorruptedCompiledProgram",
+            Self::NoEntryPointToStartAt => {
+                "BUN_AOT_START_AT names no entry point of the executable"
             }
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",

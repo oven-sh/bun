@@ -291,6 +291,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
     }
 
+    /// TLS sockets only. The kernel rejected a send of TLS records, so the error
+    /// code of the close stands for the lost records, not for a failed read.
+    pub fn ssl_send_rejected(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.ssl_send_rejected(),
+            duplex _d => false,
+            pipe _p => false,
+            else => false,
+        )
+    }
+
     /// What the read side holds right now, without waiting for the loop to
     /// poll. Transports the loop does not `recv()` report nothing queued.
     pub fn queued_input(&self) -> QueuedInput {

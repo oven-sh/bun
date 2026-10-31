@@ -1,9 +1,9 @@
-//! What `print/jsx/` and the code around JSX elements share.
+//! Code shared by `print/jsx/` and the code around JSX elements.
 
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// Nothing else is white space in JSX.
+/// JSX treats nothing else as whitespace.
 pub(crate) fn is_jsx_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\n' | b'\t' | b'\r')
 }
@@ -12,20 +12,20 @@ pub(crate) fn has_line_break(whitespace: &[u8]) -> bool {
     bun_core::strings::index_of_any(whitespace, b"\r\n").is_some()
 }
 
-/// Prettier's `isMeaningfulJsxText`: it is not only white space with a line break in it.
+/// Prettier's `isMeaningfulJsxText`: false if it's only whitespace with a line break in it.
 pub(crate) fn is_meaningful_jsx_text(text: &[u8]) -> bool {
     !text.iter().copied().all(is_jsx_whitespace) || !has_line_break(text)
 }
 
-/// Whether an element gets parentheses if it breaks.
+/// Controls whether an element is wrapped in parentheses when it breaks.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum WrapState {
-    /// Where it is, it is set apart already: in an array, in `{}`, as an argument.
+    /// Its position already sets it apart: in an array, in `{}`, as an argument.
     NoWrap,
     WrapOnBreak,
 }
 
-/// A space between children. At the end of a line it has to be written as `{" "}`.
+/// A space between children. At the end of a line it has to be printed as `{" "}`.
 pub(crate) struct JsxSpace;
 
 impl<'a> Format<'a> for JsxSpace {
@@ -55,7 +55,7 @@ impl<'a> Format<'a> for JsxRawSpace {
     }
 }
 
-/// `{" "}`. `child`: what is in the braces.
+/// `{" "}`. `child` is the content of the braces.
 pub(crate) fn is_whitespace_jsx_expression<'a>(child: Expr<'a>, comments: &Comments<'a>) -> bool {
     matches!(child.kind(), ExprKind::String(value) if value.bytes() == b" ")
         && !child.is_jsx_text()

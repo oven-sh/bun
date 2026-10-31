@@ -373,5 +373,53 @@
                 "NAPI_VERSION=8",
             ],
         },
+        # The Windows link shapes of an addon that names node.exe in its import tables without
+        # node-gyp's win_delay_load_hook. On other platforms they are ordinary addons.
+        {
+            "target_name": "no_delay_load_hook_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                        },
+                    },
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "win_delay_load_hook": "false",
+        },
+        {
+            "target_name": "no_delay_load_hook_ctor_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["REGISTER_VIA_CONSTRUCTOR"],
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                        },
+                    },
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_ctor_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["REGISTER_VIA_CONSTRUCTOR"],
+            "win_delay_load_hook": "false",
+        },
+        {
+            "target_name": "regular_node_exe_import_missing_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["IMPORT_MISSING_FROM_HOST"],
+            "win_delay_load_hook": "false",
+        },
     ]
 }

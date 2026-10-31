@@ -117,7 +117,7 @@ impl Expr {
         self.deep_clone_no_detach(bump, bun_core::StackCheck::init())
     }
     #[inline]
-    pub(crate) fn deep_clone_no_detach(
+    pub fn deep_clone_no_detach(
         &self,
         bump: &Bump,
         stack_check: bun_core::StackCheck,
@@ -1835,6 +1835,8 @@ impl Data {
                     properties,
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
+                    assigns_fields_in_constructor: el.assigns_fields_in_constructor,
+                    inner_class_ref: el.inner_class_ref,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))
             }
@@ -2054,14 +2056,7 @@ impl Data {
             return;
         }
 
-        // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
-        // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
-        // we cannot extend that trait from this crate-file scope. `NoUninit`
-        // bound lets `bytemuck::bytes_of` view the value's bytes safely.
-        #[inline(always)]
-        fn raw<H: bun_core::Hasher + ?Sized, T: bytemuck::NoUninit>(h: &mut H, v: T) {
-            h.update(bytemuck::bytes_of(&v));
-        }
+        use bun_core::write_any_to_hasher as raw;
         #[inline(always)]
         fn name_of<H: bun_core::Hasher + ?Sized, S: crate::base::SymbolTable + ?Sized>(
             h: &mut H,
@@ -2218,7 +2213,7 @@ impl Data {
                 if current.is_utf8() {
                     hasher.update(&current.data);
                 } else {
-                    hasher.update(bytemuck::cast_slice::<u16, u8>(current.slice16()));
+                    hasher.update(bun_core::slice_as_bytes(current.slice16()));
                 }
                 hasher.update(b"\x00");
             }

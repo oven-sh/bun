@@ -1,8 +1,8 @@
 //! Tokens to tree.
 //!
-//! The tree is the one that taplo's parser makes of a document without errors, without its white
-//! space: where a comment or a run of line breaks is in it decides what becomes of it. It is a vector
-//! of elements in the order of the text: a node is followed by what is in it.
+//! This is the tree that taplo's parser builds for a document without errors, minus the whitespace.
+//! Where a comment or a run of line breaks sits in the tree decides how it's printed. The tree is a
+//! vector of elements in source order, where a node is followed by its children.
 
 use crate::FormatError;
 use crate::text::BOM;
@@ -18,7 +18,7 @@ pub(super) enum Kind {
     Value,
     Array,
     InlineTable,
-    /// A token that is written as it is.
+    /// A token that's copied verbatim.
     Text,
     /// `[` of an array, `{`
     Open,
@@ -33,23 +33,23 @@ pub(super) enum Kind {
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Element {
     pub(super) kind: Kind,
-    /// Of a token.
+    /// The token's span. Empty for a node.
     pub(super) start: u32,
     pub(super) end: u32,
-    /// The index of the element after this one and all that is in it.
+    /// Index of the first element after this one and its descendants.
     pub(super) next: u32,
 }
 
 struct Builder<'t> {
     text: &'t [u8],
     tokens: std::slice::Iter<'t, Token>,
-    /// Behind the last token.
+    /// Offset just past the last token.
     at: usize,
     elements: Vec<Element>,
     stack_check: bun_core::StackCheck,
 }
 
-/// `tokens`: those of `text`.
+/// `tokens` must be the tokens of `text`.
 pub(super) fn build(text: &[u8], tokens: &[Token]) -> Result<Vec<Element>, FormatError> {
     let mut builder = Builder {
         text,
@@ -66,14 +66,14 @@ pub(super) fn build(text: &[u8], tokens: &[Token]) -> Result<Vec<Element>, Forma
         if kind == TokenKind::Key {
             let entry = builder.start(Kind::Entry);
             builder.key_and_value()?;
-            builder.comment_on_the_line();
+            builder.same_line_comment();
             builder.finish(entry);
         } else {
             let header = builder.start(Kind::Header);
             builder.token(Kind::Text);
             builder.key();
             builder.token(Kind::Text);
-            builder.comment_on_the_line();
+            builder.same_line_comment();
             builder.finish(header);
         }
     }
@@ -103,7 +103,7 @@ impl Builder<'_> {
         self.elements[node].next = self.elements.len() as u32;
     }
 
-    /// The next token, as `kind`.
+    /// Pushes the next token as `kind`.
     fn token(&mut self, kind: Kind) {
         if let Some(token) = self.tokens.next() {
             self.push(kind, token.start as usize, token.end as usize);
@@ -111,13 +111,13 @@ impl Builder<'_> {
         }
     }
 
-    /// Where the next token starts.
+    /// Start of the next token.
     fn gap_end(&self) -> usize {
         let next = self.tokens.as_slice().first();
         next.map_or(self.text.len(), |it| it.start as usize)
     }
 
-    fn skip_blanks(&mut self) {
+    fn skip_spaces_and_tabs(&mut self) {
         let rest = self.text.get(self.at..).unwrap_or_default();
         self.at += rest
             .iter()
@@ -125,9 +125,9 @@ impl Builder<'_> {
             .count();
     }
 
-    /// taplo's `step`: a comment behind a token, on its line, is in the node that the token is in.
-    fn comment_on_the_line(&mut self) {
-        self.skip_blanks();
+    /// taplo's `step`: a comment after a token on the same line belongs to the token's node.
+    fn same_line_comment(&mut self) {
+        self.skip_spaces_and_tabs();
         if self.at < self.gap_end() && self.text[self.at] == b'#' {
             let rest = &self.text[self.at..];
             let len = bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
@@ -136,11 +136,11 @@ impl Builder<'_> {
         }
     }
 
-    /// The comments and the line breaks up to the next token.
+    /// Pushes the comments and line breaks up to the next token.
     fn trivia(&mut self) {
         let end = self.gap_end();
         loop {
-            self.comment_on_the_line();
+            self.same_line_comment();
             if self.at >= end {
                 return;
             }
@@ -152,7 +152,7 @@ impl Builder<'_> {
                     2 * pairs.take_while(|pair| *pair == b"\r\n").count()
                 }
             };
-            // Between two tokens there is nothing else.
+            // Nothing else can appear between two tokens.
             if len == 0 {
                 self.at = end;
                 return;
@@ -186,7 +186,7 @@ impl Builder<'_> {
             Some(TokenKind::InlineOpen) => self.container(Kind::InlineTable)?,
             _ => {
                 self.token(Kind::Text);
-                self.comment_on_the_line();
+                self.same_line_comment();
             }
         }
         self.finish(value);

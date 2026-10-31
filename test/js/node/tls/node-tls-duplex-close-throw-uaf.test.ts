@@ -7,17 +7,19 @@
 // on the existing null-check.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tls as tlsCert } from "harness";
+import { join } from "node:path";
 
-async function run(script: string, expected = "ok") {
+// `script` is the source of a script, or the arguments that run a fixture file.
+async function run(script: string | string[], expected = "ok", env: Record<string, string> = {}) {
   // Spawn a subprocess so an ASAN use-after-poison report shows up as a
   // non-zero exit + stderr dump rather than killing the test runner itself.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [bunExe(), ...(typeof script === "string" ? ["-e", script] : script)],
     // Disable the external ASAN symbolizer: when the UAF fires it can wedge
     // on a broken pipe to llvm-symbolizer and the subprocess never exits,
     // turning a clear assertion failure into a test timeout.
-    env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+    env: { ...bunEnv, ...env, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -230,5 +232,64 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     `,
       "eof in 'end'\neof in 'readable'\nok",
     );
+  });
+});
+
+// The native context of a TLS socket over a Duplex must not be freed while a
+// frame of its TLS engine is on the stack. A callback only has to turn the event
+// loop synchronously for queued tasks to run under such a frame:
+// `expect().resolves` and `Bun.build` with an async plugin `setup()` do. The
+// fixture counts the live contexts, so these tests do not need ASAN to fail.
+// Serial, like the tests above: several debug subprocesses at once reach the
+// default test timeout.
+describe("a TLS socket over a Duplex keeps its native context", () => {
+  const fixture = join(import.meta.dir, "tls-duplex-destroy-then-turn-fixture.mjs");
+  const env = { TLS_KEY: tlsCert.key, TLS_CERT: tlsCert.cert };
+  // Three contexts before the turn: the socket, its peer, and one that nothing
+  // holds. The turn frees the third: it ran the queued tasks.
+  const kept = { before: 3, afterTurn: 2, afterClose: 0 };
+
+  test("while a callback of the handshake closes the socket and turns the event loop", async () => {
+    const expected = { "ALPNCallback": kept, "server 'keylog'": kept, "client 'secureConnect'": kept };
+    await run([fixture, "handshake"], JSON.stringify(expected), env);
+  });
+
+  test("while a callback of the session closes the socket and turns the event loop", async () => {
+    const expected = {
+      "server 'data'": kept,
+      "server 'data', turned by Bun.build()": kept,
+      "client 'data'": kept,
+      "the transport's write()": kept,
+    };
+    await run([fixture, "data"], JSON.stringify(expected), env);
+  });
+
+  test("while a callback turns the event loop and something else closes the socket", async () => {
+    const expected = {
+      "the transport's final(), destroy() in a later turn": kept,
+      "server 'data', the transport closes during the turn": kept,
+      "server 'data', its Bun.ModuleGraph is disposed": kept,
+    };
+    await run([fixture, "waits"], JSON.stringify(expected), env);
+  });
+
+  test("and frees it whichever way the connection ends", async () => {
+    const one = { open: 1, ended: 0 };
+    const pair = { open: 2, ended: 0 };
+    const expected = {
+      "destroy() before the engine starts": one,
+      "destroy() twice": pair,
+      "end() on both sides": pair,
+      "a string from the transport before the engine starts": one,
+      "its Bun.ModuleGraph is disposed before the engine starts": one,
+      "its Bun.ModuleGraph is disposed under the transport's 'end', before the engine starts": {
+        graphErrors: [],
+        open: 1,
+        afterTurn: 1,
+        ended: 0,
+      },
+      "destroy(), then its Bun.ModuleGraph is disposed in the same turn": one,
+    };
+    await run([fixture, "ends"], JSON.stringify(expected), env);
   });
 });

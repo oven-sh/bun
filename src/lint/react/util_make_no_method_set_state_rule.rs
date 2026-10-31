@@ -14,7 +14,7 @@ pub(crate) enum Mode {
     DisallowInFunc,
 }
 
-/// `>=`
+/// `methodNoopsAsOf`. Each version means `>=`.
 const METHOD_NOOPS_AS_OF: [(&str, Version); 2] = [
     ("componentDidMount", (16, 3, 0)),
     ("componentDidUpdate", (16, 3, 0)),
@@ -28,12 +28,12 @@ pub(crate) fn should_be_noop<'a>(file: &'a File<'a>, method_name: &str) -> bool 
     })
 }
 
-/// What the walks up from the calls of a file have found, for one `name_matches`.
+/// Caches the ancestor walks from a file's calls, for one `name_matches`.
 #[derive(Default)]
 pub(crate) struct Walks<'a> {
-    /// The nearest ancestor with the name: its range and its `key.name`.
+    /// Nearest ancestor with a matching name: its range and its `key.name`.
     methods: AncestorMemo<'a, (Span, &'a [u8])>,
-    /// The nearest ancestor that is a function.
+    /// Nearest ancestor that's a function.
     functions: AncestorMemo<'a, Node<'a>>,
 }
 
@@ -59,8 +59,8 @@ fn name_of_method(ancestor: Node<'_>) -> Option<&[u8]> {
     }
 }
 
-/// The listener for `CallExpression`. `Some`: `call.callee()` is reported, with this `data.name`.
-pub(crate) fn method_around_set_state<'a>(
+/// The `CallExpression` listener. On `Some`, report `call.callee()` with this `data.name`.
+pub(crate) fn method_enclosing_set_state<'a>(
     call: Expr<'a>,
     name_matches: &dyn Fn(&[u8]) -> bool,
     mode: Mode,
@@ -71,7 +71,8 @@ pub(crate) fn method_around_set_state<'a>(
     if !is_member_called(callee, "setState") || !callee.object().is_some_and(is_this) {
         return None;
     }
-    // `depth` only grows on the way up: it is the nearest ancestor with the name or none.
+    // `depth` only grows on the way up, so if the nearest ancestor with a matching name isn't
+    // reported, none is.
     let call = Node::Expr(call);
     let (method, name) = (walks.methods).find_with(call, estree_parent, |_, ancestor| {
         let name = name_of_method(ancestor).filter(|name| name_matches(name))?;
@@ -80,13 +81,13 @@ pub(crate) fn method_around_set_state<'a>(
     if mode == Mode::DisallowInFunc {
         return Some(name);
     }
-    // `depth > 1`: two functions are inside of it.
-    let mut function_around = |node| {
+    // `depth > 1`: the call is inside two functions that are inside the method.
+    let mut enclosing_function = |node| {
         (walks.functions).find_with(node, estree_parent, |_, ancestor| {
             is_function(ancestor).then_some(ancestor)
         })
     };
-    let second = function_around(call).and_then(&mut function_around);
+    let second = enclosing_function(call).and_then(&mut enclosing_function);
     let is_deep = second.is_some_and(|function| method.contains(function.span()));
     (!is_deep).then_some(name)
 }

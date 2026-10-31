@@ -7,7 +7,7 @@ pub struct RequireMockTypeParameters<const RUNNER: u8 = { jest::VITEST }> {
     check_import_functions: bool,
 }
 
-const REQUIRE_MOCK_TYPE_PARAMETERS: Message = Message::new("", "Missing type parameters on mock function call");
+const REQUIRE_MOCK_TYPE_PARAMETERS: &Message = &Message::new("", "Missing type parameters on mock function call");
 
 impl<const RUNNER: u8> Rule for RequireMockTypeParameters<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "require-mock-type-parameters", Kind::Problem);
@@ -40,7 +40,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, check_import_functions: boo
     let Some(vi_fn) = jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
         return;
     };
-    // Bun has both.
+    // Bun has both `vi` and `jest`.
     let is_mocker = match vi_fn.kind {
         JestFnKind::General(JestGeneralFnKind::Vitest) => true,
         JestFnKind::General(JestGeneralFnKind::Jest) => ctx.runner == Runner::Bun,
@@ -54,7 +54,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, check_import_functions: boo
         b"importMock" | b"importActual" => check_import_functions,
         _ => false,
     };
-    // What is not called needs no type.
+    // A function that isn't called doesn't need type parameters.
     if let Some(member) = vi_fn.members.iter().find(|member| member.name().is_some_and(is_require_mock_type))
         && let Some(member_expression) = member.parent
         && let Some(call_expr) = jest::parent_expression(member_expression).and_then(Expr::as_call)

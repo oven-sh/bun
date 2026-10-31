@@ -5,10 +5,10 @@ use crate::js::utils::statement_body::{write_comments_before_keyword, write_spac
 use crate::prelude::*;
 use crate::write;
 
-/// Writes `part`, which is followed by `catch` or `finally`, and the space before that keyword.
+/// Prints `part`, which is followed by `catch` or `finally`, and the space before that keyword.
 ///
-/// See [`comments_stay_between_head_and_body`]: for oxfmt the comments between the two keep their lines. They are the
-/// trailing comments of `node`, which `part` writes, and `comments_before_keyword`.
+/// See [`comments_stay_between_head_and_body`]: oxfmt keeps the comments between the two on their lines. They're
+/// `node`'s trailing comments, which `part` prints, plus `comments_before_keyword`.
 fn write_part_before_keyword<'a>(
     part: &(impl Format<'a> + Spanned),
     node: AstNodes<'a>,
@@ -36,7 +36,7 @@ pub(crate) fn write_try_statement<'a>(
 ) {
     write!(f, "try");
     write_space_before_body(block.as_ast_nodes(), f);
-    // oxfmt writes the comments of an ignored clause like any other leading comments: `} // prettier-ignore⏎catch ( e ) {}`
+    // oxfmt prints an ignored clause's comments like any other leading comments: `} // prettier-ignore⏎catch ( e ) {}`
     let before_catch = |f: &Formatter<'a>| {
         let owned = f.comments().of_node(AstNodes::CatchClause(statement));
         match owned.is_ignored {
@@ -120,7 +120,7 @@ fn write_catch_clause<'a>(param: Option<VarDecl<'a>>, body: Stmt<'a>, f: &mut Fo
     write!(f, body);
 }
 
-/// Whether a comment of the catch parameter `node` is a line comment or has a line break between it and the parameter.
+/// True if a comment on the catch parameter `node` is a line comment or has a line break between it and the parameter.
 fn has_comment_with_line_break<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     let owned = f.comments().of_node(node);
     let mut leading = owned.leading.iter();

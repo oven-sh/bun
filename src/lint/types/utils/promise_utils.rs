@@ -3,7 +3,7 @@
 use crate::ast::{Expr, ExprKind};
 use crate::utils::ts_utils::is_static_member_access_of_value;
 
-/// What [`parse_then_call`] returns.
+/// The result of [`parse_then_call`].
 #[derive(Copy, Clone, Debug)]
 pub struct ThenCall<'a> {
     pub object: Expr<'a>,
@@ -11,22 +11,22 @@ pub struct ThenCall<'a> {
     pub on_rejected: Option<Expr<'a>>,
 }
 
-/// What [`parse_catch_call`] returns.
+/// The result of [`parse_catch_call`].
 #[derive(Copy, Clone, Debug)]
 pub struct CatchCall<'a> {
     pub object: Expr<'a>,
     pub on_rejected: Option<Expr<'a>>,
 }
 
-/// What [`parse_finally_call`] returns.
+/// The result of [`parse_finally_call`].
 #[derive(Copy, Clone, Debug)]
 pub struct FinallyCall<'a> {
     pub object: Expr<'a>,
     pub on_finally: Option<Expr<'a>>,
 }
 
-/// If the call `node` is `object.method_name(..)`, the object and the first two arguments. An
-/// argument that is spread, and what follows it, is unknown.
+/// If the call `node` is `object.method_name(..)`, returns the object and the first two arguments. A spread argument
+/// and everything after it are `None`.
 fn parse_method_call<'a>(
     node: Expr<'a>,
     method_name: &str,
@@ -50,8 +50,7 @@ fn parse_method_call<'a>(
     Some((obj, [arguments.next(), arguments.next()]))
 }
 
-/// `parseThenCall(node, context)`: the parts of what looks like `promise.then(..)`. The type of
-/// the object is not looked at.
+/// `parseThenCall(node, context)`: the parts of what looks like `promise.then(..)`. The object's type isn't checked.
 pub fn parse_then_call(node: Expr<'_>) -> Option<ThenCall<'_>> {
     let (object, [on_fulfilled, on_rejected]) = parse_method_call(node, "then")?;
     Some(ThenCall {

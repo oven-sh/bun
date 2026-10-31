@@ -1,17 +1,16 @@
-//! The way down the left edge of an expression.
+//! Walks down the left edge of an expression.
 
 use crate::prelude::*;
 
-/// What `e` starts with, if that is an expression: the `a` of `a.b`, `a()`, `a + b`, `a = b`,
-/// `a ? b : c`, `a, b`, `a as T`, `a!`, `a++`, `` a`b` ``. Prettier's `hasNakedLeftSide` and
-/// `getLeftSide`.
+/// The expression that `e` starts with, if any: the `a` in `a.b`, `a()`, `a + b`, `a = b`, `a ? b : c`, `a, b`, `a as
+/// T`, `a!`, `a++`, `` a`b` ``. Prettier's `hasNakedLeftSide` and `getLeftSide`.
 ///
-/// In ESTree the left side of an assignment and the operand of `++` are not expressions. Use
-/// [`ExpressionLeftSide::is_assignment_target`] to tell.
+/// In ESTree the left side of an assignment and the operand of `++` aren't expressions. Check
+/// [`ExpressionLeftSide::is_assignment_target`] to tell them apart.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExpressionLeftSide<'a> {
     pub(crate) expr: Expr<'a>,
-    /// It is, or is at the left edge of, what an assignment or `++` writes to.
+    /// It is, or is on the left edge of, the target of an assignment or `++`.
     pub(crate) is_assignment_target: bool,
 }
 
@@ -25,8 +24,7 @@ impl<'a> From<Expr<'a>> for ExpressionLeftSide<'a> {
 }
 
 impl<'a> ExpressionLeftSide<'a> {
-    /// The last of the expressions down the left edge of `expression` that ESTree calls an
-    /// `Expression`.
+    /// The last expression down `expression`'s left edge that ESTree calls an `Expression`.
     pub(crate) fn leftmost(expression: Expr<'a>) -> Expr<'a> {
         ExpressionLeftSide::from(expression)
             .iter_expression()
@@ -88,7 +86,7 @@ impl<'a> ExpressionLeftSide<'a> {
         }
     }
 
-    /// Itself, what it starts with, and so on.
+    /// Itself, then what it starts with, and so on.
     pub(crate) fn iter(self) -> impl Iterator<Item = ExpressionLeftSide<'a>> {
         std::iter::successors(Some(self), |it| it.left())
     }

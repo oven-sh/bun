@@ -15,7 +15,7 @@ pub use bun_sema::check::services::LiteralValue as Literal;
 
 /// `ts.Type`
 ///
-/// Two types are `==` where TypeScript has one object: types are interned.
+/// Types are interned, so two are `==` exactly when TypeScript has one object for both.
 #[derive(Copy, Clone)]
 pub struct Type<'a> {
     file: &'a File<'a>,
@@ -47,12 +47,12 @@ impl std::fmt::Debug for Type<'_> {
     }
 }
 
-/// A list of types: the constituents of a union, type arguments.
+/// A list of types, such as a union's constituents or type arguments.
 #[derive(Copy, Clone)]
 pub struct TypeList<'a> {
     file: &'a File<'a>,
     ids: &'a [TypeId],
-    /// The one element, if `ids` is empty.
+    /// The only element, if `ids` is empty.
     one: Option<TypeId>,
 }
 
@@ -212,7 +212,7 @@ pub enum TypeStructure<'a> {
         extends_type: Type<'a>,
         /// `root.isDistributive`
         is_distributive: bool,
-        /// `checker.getTypeFromTypeNode(root.node.trueType)`, which is not instantiated.
+        /// `checker.getTypeFromTypeNode(root.node.trueType)`, not instantiated.
         root_true_type: Type<'a>,
         /// `checker.getTypeFromTypeNode(root.node.falseType)`
         root_false_type: Type<'a>,
@@ -236,7 +236,7 @@ pub enum TypeStructure<'a> {
         readonly: MappedModifier,
         optional: MappedModifier,
     },
-    /// `ts.TemplateLiteralType`. There is one more text than types.
+    /// `ts.TemplateLiteralType`. `texts` has one more element than `types`.
     TemplateLiteral {
         texts: &'a [&'a [u8]],
         types: TypeList<'a>,
@@ -309,8 +309,8 @@ impl<'a> Type<'a> {
 
     // ───────────────────────────── fields ─────────────────────────────
 
-    /// `type.flags`, `type.getFlags()`. Of the type itself: a union has `UNION`, not the flags of
-    /// its constituents. For those, [`utils::get_type_flags`](super::utils::get_type_flags).
+    /// `type.flags`, `type.getFlags()`. These are the type's own flags: a union has `UNION`, not its constituents'
+    /// flags. For those, use [`utils::get_type_flags`](super::utils::get_type_flags).
     pub fn flags(self) -> TypeFlags {
         self.file.query(|q| q.type_flags(self.id))
     }
@@ -320,13 +320,13 @@ impl<'a> Type<'a> {
         self.file.query(|q| q.flags_of_constituents(self.id))
     }
 
-    /// `tsutils.isTypeFlagSet(type, flags)`: of the type itself.
+    /// `tsutils.isTypeFlagSet(type, flags)`, on the type's own flags.
     #[inline]
     pub fn has_flags(self, flags: TypeFlags) -> bool {
         self.flags().intersects(flags)
     }
 
-    /// `type.objectFlags`. Empty for what is not an object type.
+    /// `type.objectFlags`. Empty for anything but an object type.
     pub fn object_flags(self) -> ObjectFlags {
         self.file.query(|q| q.object_flags(self.id))
     }
@@ -343,7 +343,7 @@ impl<'a> Type<'a> {
         self.symbol()
     }
 
-    /// `type.aliasSymbol`: the type alias that it was written as.
+    /// `type.aliasSymbol`: the type alias it was written as.
     pub fn alias_symbol(self) -> Option<TsSymbol<'a>> {
         let id = self.file.query(|q| q.alias_symbol(self.id))?;
         Some(TsSymbol::new(self.file, id))
@@ -356,13 +356,13 @@ impl<'a> Type<'a> {
 
     /// `type.types` of a union or an intersection. Empty for any other type.
     ///
-    /// See [`tsutils::union_constituents`](super::tsutils::union_constituents), which yields the
-    /// type itself if it is not a union.
+    /// See [`tsutils::union_constituents`](super::tsutils::union_constituents), which yields the type itself if it
+    /// isn't a union.
     pub fn types(self) -> TypeList<'a> {
         self.list(self.file.query(|q| q.constituents(self.id)))
     }
 
-    /// `type.value` of a string, number or bigint literal type, also of a member of an enum.
+    /// `type.value` of a string, number or bigint literal type, including an enum member's.
     pub fn value(self) -> Option<Literal<'a>> {
         self.file.query(|q| q.literal_value(self.id))
     }
@@ -388,9 +388,8 @@ impl<'a> Type<'a> {
         self.file.query(|q| q.intrinsic_name(self.id))
     }
 
-    /// `reference.target`: the generic class or interface that it is an instantiation of, which
-    /// for a type that has no type arguments is the type itself. A tuple type is its own target
-    /// here: see [`Type::tuple_target`].
+    /// `reference.target`: the generic class or interface it instantiates. A type without type arguments is its own
+    /// target. So is a tuple type here: see [`Type::tuple_target`].
     pub fn target(self) -> Option<Type<'a>> {
         self.op(TypeOp::Target)
     }
@@ -458,7 +457,7 @@ impl<'a> Type<'a> {
         }
     }
 
-    // ───────────────────────────── what kind of type it is ─────────────────────────────
+    // ───────────────────────────── type kinds ─────────────────────────────
 
     flag_tests! {
         /// `type.isUnion()`. `boolean` and an enum with several members are unions.
@@ -489,11 +488,10 @@ impl<'a> Type<'a> {
         is_tuple_type Tuple;
         /// `checker.isArrayLikeType(type)`
         is_array_like_type ArrayLike;
-        /// `tsutils.isIntrinsicErrorType(type)`: the type of what is in error. It has
-        /// [`TypeFlags::ANY`].
+        /// `tsutils.isIntrinsicErrorType(type)`: the type of anything that has an error. It has [`TypeFlags::ANY`].
         is_error Error;
-        /// The checker gave up on it: a cycle or a limit. It has [`TypeFlags::ANY`]. TypeScript
-        /// has no such type, so there is nothing to report for it.
+        /// True if the checker gave up on it because of a cycle or a limit. It has [`TypeFlags::ANY`]. TypeScript has
+        /// no such type, so there's nothing to report for it.
         is_unresolved Unresolved;
         /// `isNonDeferredTypeReference(type)`
         is_non_deferred_type_reference NonDeferredTypeReference;
@@ -512,11 +510,10 @@ impl<'a> Type<'a> {
             .query(|q| q.is_related(Relation::Assignable, self.id, target.id))
     }
 
-    // ───────────────────────────── types made from it ─────────────────────────────
+    // ───────────────────────────── derived types ─────────────────────────────
 
     type_ops! {
-        /// `checker.getApparentType(type)`: `String` for `string`, the constraint for a type
-        /// parameter.
+        /// `checker.getApparentType(type)`: `String` for `string`, the constraint for a type parameter.
         get_apparent_type Apparent;
         /// `checker.getWidenedType(type)`
         get_widened_type Widened;
@@ -527,8 +524,7 @@ impl<'a> Type<'a> {
     }
 
     optional_type_ops! {
-        /// `checker.getBaseConstraintOfType(type)`. `None`: it is not a type variable, or it has
-        /// no constraint.
+        /// `checker.getBaseConstraintOfType(type)`. `None` if it isn't a type variable or has no constraint.
         get_base_constraint_of_type BaseConstraint;
         /// `type.getConstraint()`, which is `checker.getBaseConstraintOfType(type)`.
         get_constraint BaseConstraint;
@@ -536,19 +532,18 @@ impl<'a> Type<'a> {
         get_awaited_type Awaited;
         /// `InterfaceType.thisType`
         this_type ThisType;
-        /// `getModifiersTypeFromMappedType(type)`, `type.modifiersType`: the `T` of
-        /// `{ [P in keyof T]: .. }`.
+        /// `getModifiersTypeFromMappedType(type)`, `type.modifiersType`: the `T` in `{ [P in keyof T]: .. }`.
         get_modifiers_type_from_mapped_type ModifiersTypeOfMapped;
     }
 
-    /// `checker.getTypeArguments(type)`, of a reference to a class, an interface, an array or a
-    /// tuple type. As in TypeScript the `this` type can follow the arguments that are written.
+    /// `checker.getTypeArguments(type)` of a reference to a class, an interface, an array or a tuple type. As in
+    /// TypeScript, the `this` type can follow the written arguments.
     pub fn get_type_arguments(self) -> TypeList<'a> {
         self.list(self.file.query(|q| q.type_arguments(self.id)))
     }
 
-    /// `checker.getBaseTypes(type)`, `type.getBaseTypes()`: what the class or the interface
-    /// extends. Empty unless it is the declared type of a class or an interface.
+    /// `checker.getBaseTypes(type)`, `type.getBaseTypes()`: what the class or interface extends. Empty unless it's the
+    /// declared type of a class or interface.
     pub fn get_base_types(self) -> TypeList<'a> {
         self.list(self.file.query(|q| q.base_types(self.id)))
     }
@@ -584,8 +579,7 @@ impl<'a> Type<'a> {
         infos.iter().map(move |&info| IndexInfo::new(file, info))
     }
 
-    /// `checker.getIndexInfoOfType(type, kind)`: the index signature whose key is exactly `string`
-    /// or `number`.
+    /// `checker.getIndexInfoOfType(type, kind)`: the index signature whose key is exactly `string` or `number`.
     pub fn get_index_info(self, kind: IndexKind) -> Option<IndexInfo<'a>> {
         let key = match kind {
             IndexKind::String => TypeId::STRING,

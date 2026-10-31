@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -171,6 +171,58 @@ describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at th
       signalCode: null,
     });
   }, 120_000);
+});
+
+it("a test timeout doesn't kill the child of a spawnSync running in a Worker", async () => {
+  // The child is told to stop right after the deadline and then sleeps 200 ms, so a signal sent at the deadline
+  // would kill it first.
+  const untilStopped = `
+    for (let i = 0; i < 2000 && !require("node:fs").existsSync("stop"); i++) Bun.sleepSync(5);
+    Bun.sleepSync(200);
+  `;
+  using dir = tempDir("spawnsync-worker-test-timeout", {
+    "timeout.test.ts": `
+      import { afterAll, expect, test } from "bun:test";
+      import { writeFileSync } from "node:fs";
+
+      const worker = new Worker(new URL("worker.ts", import.meta.url).href);
+      afterAll(() => worker.terminate());
+      const ended = new Promise(resolve => {
+        worker.onmessage = event => resolve(event.data);
+      });
+
+      test("times out", async () => {
+        await new Promise(() => {});
+      }, 1000);
+
+      test("the worker's child exited on its own", async () => {
+        writeFileSync("stop", "");
+        expect(await ended).toEqual({ exitCode: 0, signalCode: null });
+      });
+    `,
+    // With a pipe, spawnSync waits in its own event loop, which checks bun:test's deadlines.
+    "worker.ts": `
+      const { exitCode, signalCode = null } = Bun.spawnSync({
+        cmd: [process.execPath, "-e", ${JSON.stringify(untilStopped)}],
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      postMessage({ exitCode, signalCode });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "timeout.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout + stderr).toContain("(pass) the worker's child exited on its own");
+  expect(exitCode).toBe(1);
 });
 
 describe("uid/gid", () => {

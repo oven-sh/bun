@@ -1,0 +1,11 @@
+{
+  "name": "small-renderer",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "aot": "./index.aot.ts",
+      "default": "./index.js"
+    }
+  }
+}

@@ -10,7 +10,7 @@ use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// The `( .. )` of a function, with the `this` parameter.
+/// A function's `( .. )`, including the `this` parameter.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatFormalParameters<'a>(pub(crate) Func<'a>);
 
@@ -32,9 +32,9 @@ fn has_modifier(param: Param<'_>) -> bool {
 
 /// Prettier's `printFunctionParameters`.
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
-    // Comments that are attached to the parentheses. For oxfmt `class A { b ⏎// comment⏎ () {} }` is `b () {}⏎// comment`, and
-    // `b /* prettier-ignore */ ( c ) {}` is `b/* prettier-ignore */ ( c ) {}`. For Prettier only in Flow:
-    // `declare function a /* comment */ (): void`
+    // Comments attached to the parentheses. oxfmt prints `class A { b ⏎// comment⏎ () {} }` as `b () {}⏎// comment`,
+    // and `b /* prettier-ignore */ ( c ) {}` as `b/* prettier-ignore */ ( c ) {}`. Prettier only has such comments in
+    // Flow: `declare function a /* comment */ (): void`
     if !f.is_quiet() {
         let node = AstNodes::FormalParameters(func);
         let owned = f.comments().of_node(node);
@@ -71,8 +71,8 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
         && !has_any_decorated_parameter;
 
     let layout = if can_hug
-        // The callback of a test. Not that of `inject`, `async`, `fakeAsync` and `waitForAsync`,
-        // whose parameters can break.
+        // A test's callback. Not the callbacks of `inject`, `async`, `fakeAsync` and `waitForAsync`, whose parameters
+        // can break.
         || matches!(
             func.owner(),
             Node::Expr(function) if matches!(
@@ -103,10 +103,10 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
 }
 
 /// The node whose parameters Prettier prints for `func`. It owns the comments in empty parentheses. Babel has no
-/// `FunctionExpression` in a method, so there it is the method.
+/// `FunctionExpression` in a method, so there it's the method.
 fn function_node<'a>(func: Func<'a>, f: &Formatter<'a>) -> AstNodes<'a> {
     let node = func.as_ast_nodes();
-    if !matches!(node, AstNodes::Function(_)) || !f.context().has_tree_of_babel() {
+    if !matches!(node, AstNodes::Function(_)) || !f.context().has_babel_tree() {
         return node;
     }
     match func.owner() {
@@ -129,8 +129,9 @@ fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<
     if all_dangling_comments.is_empty() {
         return;
     }
-    // `() /* comment */ => a`: Prettier means to leave out the comment before the `=>`, but misspells `comment.marker`. So
-    // it writes the line breaks even if no comment is between them. The empty text makes the second line break count.
+    // `() /* comment */ => a`: Prettier means to skip the comment before the `=>`, but misspells `comment.marker`, so
+    // it prints the line breaks even with no comment between them. The empty text keeps the printer from merging the
+    // two line breaks.
     let comments = dangling_comments_with_marker(node, Marker::None, f);
     let format_comments = FormatDanglingComments::Comments {
         comments,
@@ -153,10 +154,10 @@ fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<
     }
 }
 
-/// Prettier's `hasComment(parameter)`. A parameter without a default value is the same node as its pattern in ESTree.
+/// Prettier's `hasComment(parameter)`. In ESTree a parameter without a default value is the same node as its pattern.
 ///
-/// The pattern and the type in the parameter ask this too while they are written, so [`Formatter::is_quiet`] says nothing
-/// about it.
+/// The parameter's pattern and type also call this while they're printed, so [`Formatter::is_quiet`] can't be used as a
+/// shortcut here.
 fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
     (comments.is_owner(Node::Param(param)) && comments.has_comments(param.as_ast_nodes()))
@@ -174,18 +175,18 @@ fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
 /// ) {}
 /// ```
 ///
-/// Prettier on the left, oxfmt on the right.
+/// Prettier is on the left, oxfmt on the right.
 fn hugs_pattern_with_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `function a({ b } // comment⏎ = {}) {}` is `function a({⏎  b,⏎} = {}) {} // comment` for oxfmt, and
-/// `function a({ b } = {}) {} // comment` for Prettier.
-fn comment_behind_pattern_breaks_it(f: &Formatter<'_>) -> bool {
+/// oxfmt prints `function a({ b } // comment⏎ = {}) {}` as `function a({⏎  b,⏎} = {}) {} // comment`, Prettier as
+/// `function a({ b } = {}) {} // comment`.
+fn comment_after_pattern_breaks_it(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// The modifiers of a parameter, in the order that they are written in.
+/// A parameter's modifiers, in print order.
 const MODIFIERS: [(Flags, &str); 6] = [
     (Flags::PUBLIC, "public"),
     (Flags::PROTECTED, "protected"),
@@ -214,7 +215,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         return match has_decorators {
             true => write!(
                 f,
-                group(&format_args!(FormatDecorators::of_param(param), content))
+                group(&format_args!(FormatDecorators::from_param(param), content))
             ),
             false => write!(f, content),
         };
@@ -238,7 +239,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             let optional = param.is_optional().then_some("?");
             match param
                 .default()
-                .filter(|_| !comment_behind_pattern_breaks_it(f))
+                .filter(|_| !comment_after_pattern_breaks_it(f))
             {
                 Some(_) => write!(
                     f,
@@ -256,7 +257,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             return write!(f, left);
         };
         let write_assignment_pattern = |f: &mut Formatter<'a>| {
-            // `({ a } // comment⏎ = {}) => {}`: the comment does not break the pattern.
+            // `({ a } // comment⏎ = {}) => {}`: the comment doesn't break the pattern.
             match is_group {
                 true => write!(f, group(&left)),
                 false => write!(f, left),
@@ -267,7 +268,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             }
             write!(f, [space(), "=", space(), initializer]);
         };
-        // `private a = 1`: the `AssignmentPattern` in a `TSParameterProperty` is a node of its own. Not for oxfmt.
+        // `private a = 1`: the `AssignmentPattern` in a `TSParameterProperty` is its own node, except in oxfmt.
         match param.is_parameter_property() && !f.options().flavor.is_oxfmt() {
             true => format_node(
                 AstNodes::AssignmentPattern(Node::Param(param)),
@@ -278,7 +279,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         }
     });
 
-    // A group makes no difference to what has no place to break at.
+    // A group makes no difference if nothing inside can break.
     if !has_decorators && (!is_group || cannot_break(param, f)) {
         return write!(f, content);
     }
@@ -292,16 +293,16 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
-    } else if decorators_of_parameter_are_a_group_of_their_own(f) {
+    } else if parameter_decorators_get_their_own_group(f) {
         write!(
             f,
-            [group(&FormatDecorators::of_param(param)), group(&content)]
+            [group(&FormatDecorators::from_param(param)), group(&content)]
         );
     } else {
         write!(
             f,
             group(&format_args!(
-                FormatDecorators::of_param(param),
+                FormatDecorators::from_param(param),
                 group(&content)
             ))
         );
@@ -314,8 +315,8 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
 ///                            | undefined,
 /// ```
 ///
-/// Prettier on the left: what does not fit breaks after the decorators first. oxfmt on the right.
-fn decorators_of_parameter_are_a_group_of_their_own(f: &Formatter<'_>) -> bool {
+/// Prettier is on the left: if it doesn't fit, the line after the decorators breaks first. oxfmt is on the right.
+fn parameter_decorators_get_their_own_group(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -327,13 +328,13 @@ fn decorators_of_parameter_are_a_group_of_their_own(f: &Formatter<'_>) -> bool {
 /// ) {}
 /// ```
 ///
-/// Prettier on the left, for `a: /* comment */⏎B`: only a pattern is a group, so the line break after the comment breaks with
-/// the parameters. oxfmt on the right.
+/// Prettier is on the left, for `a: /* comment */⏎B`: only a pattern is a group, so the line break after the comment
+/// breaks with the parameters. oxfmt is on the right.
 fn every_parameter_is_a_group(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether `param` is a name, and its type a keyword or a name.
+/// True if `param` is a plain name and its type is a keyword or a name.
 fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
     f.is_quiet()
         && param.default().is_none()
@@ -352,7 +353,7 @@ struct ParameterList<'a> {
 
 #[derive(Debug, Copy, Clone)]
 enum ParameterLayout {
-    /// The only parameter is written right after the `(`, even if it breaks:
+    /// The only parameter is printed right after the `(`, even if it breaks:
     ///
     /// ```javascript
     /// function test({
@@ -361,7 +362,7 @@ enum ParameterLayout {
     /// }) {}
     /// ```
     Hug,
-    /// On one line if they fit, otherwise each on its own line.
+    /// All on one line if they fit, otherwise each on its own line.
     Default,
 }
 
@@ -400,7 +401,7 @@ impl<'a> Format<'a> for ParameterList<'a> {
     }
 }
 
-/// `a => a`: whether the options ask for it and the parameters allow it. Prettier's `shouldPrintParamsWithoutParens`.
+/// `a => a`: true if the options ask for it and the parameters allow it. Prettier's `shouldPrintParamsWithoutParens`.
 pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     f.options().arrow_parentheses.is_as_needed()
         && arrow.params().len() == 1
@@ -456,7 +457,7 @@ pub(crate) fn should_hug_function_parameters<'a>(
         && !parameter_has_comment(only_parameter, f)
 }
 
-/// Whether all parameters are plain names, without default values. A rest parameter is not.
+/// True if all parameters are plain names without default values. A rest parameter doesn't qualify.
 pub(crate) fn has_only_simple_parameters(func: Func<'_>, allow_type_annotations: bool) -> bool {
     func.params_with_this().all(|parameter| {
         !parameter.is_rest()

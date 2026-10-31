@@ -23,12 +23,12 @@ pub struct LengthWriter<C: WriterContext> {
 impl<C: WriterContext> LengthWriter<C> {
     pub fn write(self) -> Result<(), AnyPostgresError> {
         self.context
-            .pwrite(&int32(self.context.offset() - self.index), self.index)
+            .pwrite(&int32(self.context.offset() - self.index)?, self.index)
     }
 
     pub fn write_excluding_self(self) -> Result<(), AnyPostgresError> {
         self.context.pwrite(
-            &int32(self.context.offset().saturating_sub(self.index + 4)),
+            &int32(self.context.offset().saturating_sub(self.index + 4))?,
             self.index,
         )
     }

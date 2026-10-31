@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Prefers use of `Math.min()` and `Math.max()` instead of ternary expressions when performing simple comparisons.
 pub struct PreferMathMinMax;
 
-const PREFER_MATH_MIN_MAX: Message =
-    Message::new("", "Prefer `Math.min()` and `Math.max()` over ternaries for simple comparisons.");
+const PREFER_MATH_MIN_MAX: &Message =
+    &Message::new("", "Prefer `Math.min()` and `Math.max()` over ternaries for simple comparisons.");
 
 /// A number, or `-a`, `typeof a` and the like.
 fn is_number_or_unary(e: Expr) -> bool {
@@ -22,7 +22,7 @@ fn is_identifier(e: Expr) -> bool {
     get_inner_expression(e).tag() == ExprTag::Ident
 }
 
-/// For oxlint what is in parentheses is the same as nothing.
+/// oxlint never treats a parenthesized expression as the same as anything.
 fn is_same<'a>(operand: Expr<'a>, branch: Expr<'a>) -> bool {
     !operand.is_parenthesized() && !branch.is_parenthesized() && is_same_expression(operand, branch)
 }

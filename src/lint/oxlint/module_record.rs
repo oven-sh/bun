@@ -1,8 +1,8 @@
-//! oxlint's `ModuleRecord`: what a file imports and exports at its top level, as `oxc_parser` records it ("ParseModule" of the
-//! specification), and what its rules of `import` ask the records of other files.
+//! oxlint's `ModuleRecord`: a file's top-level imports and exports as `oxc_parser` records them ("ParseModule" in the
+//! specification), plus the queries its `import` rules run on other files' records.
 //!
-//! - [`ModuleRecord`] is that of the file which is linted, with the places.
-//! - [`Record`] is that of another file, without them: [`get_loaded_module`].
+//! - [`ModuleRecord`] is the linted file's record, with spans.
+//! - [`Record`] is another file's record, without spans. See [`get_loaded_module`].
 
 use crate::hash_order::{HashOrder, hash_of_str};
 use crate::import::{
@@ -30,7 +30,7 @@ impl<'a> From<Ident<'a>> for NameSpan<'a> {
     }
 }
 
-/// The name in the other module of what `export .. from` exports.
+/// The name that an `export .. from` entry has in the other module.
 #[derive(Copy, Clone)]
 pub enum ExportImportName<'a> {
     Name(NameSpan<'a>),
@@ -44,7 +44,7 @@ pub enum ExportImportName<'a> {
 #[derive(Copy, Clone)]
 pub enum ExportExportName<'a> {
     Name(NameSpan<'a>),
-    /// The `default` of `export default ..`.
+    /// The `default` in `export default ..`.
     Default(Span),
     /// `export * from "m"`
     Null,
@@ -62,9 +62,9 @@ impl ExportExportName<'_> {
 
 #[derive(Copy, Clone)]
 pub struct ExportEntry<'a> {
-    /// Of an `export { a }` of what is imported: the `import`.
+    /// For an `export { a }` where `a` is imported, this is the `import` statement.
     pub statement_span: Span,
-    /// The specifier, the declaration without its `export`, or the whole of an `export *`.
+    /// The specifier, the declaration without its `export`, or the whole `export *` statement.
     pub span: Span,
     pub module_request: Option<NameSpan<'a>>,
     pub import_name: ExportImportName<'a>,
@@ -72,7 +72,7 @@ pub struct ExportEntry<'a> {
     pub is_type: bool,
 }
 
-/// A statement that names a module.
+/// A statement with a module specifier.
 #[derive(Copy, Clone)]
 pub struct RequestedModule {
     pub statement_span: Span,
@@ -88,7 +88,7 @@ pub struct ModuleRecord<'a> {
     pub local_export_entries: Vec<ExportEntry<'a>>,
     pub indirect_export_entries: Vec<ExportEntry<'a>>,
     pub star_export_entries: Vec<ExportEntry<'a>>,
-    /// Where each name is exported, the last time.
+    /// The span of each name's last export.
     pub exported_bindings: FxHashMap<Name<'a>, Span>,
 }
 
@@ -99,7 +99,7 @@ pub fn module_request(declaration: Import<'_>) -> NameSpan<'_> {
     }
 }
 
-/// `ModuleRecord::requested_modules`: by specifier, in the order in which they are first named.
+/// `ModuleRecord::requested_modules`, grouped by specifier, in order of first appearance.
 pub fn requested_modules<'a>(
     file: &'a File<'a>,
 ) -> Vec<(Name<'a>, SmallVec<[RequestedModule; 1]>)> {
@@ -136,23 +136,24 @@ pub fn requested_modules<'a>(
     all
 }
 
-/// `requested`, which is in the order of the source, in the order in which oxlint goes through its `requested_modules`. That is a
-/// `FxHashMap` which is collected from the `FxHashMap` to which the parser adds one specifier after the other.
+/// Reorders `requested` from source order to the order in which oxlint iterates over its `requested_modules`. That's an
+/// `FxHashMap` collected from another `FxHashMap`, which the parser fills one specifier at a time.
 pub fn in_hash_order<'a, T>(requested: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
-    let mut of_parser = HashOrder::new();
+    let mut parser_map = HashOrder::new();
     for (at, (name, _)) in requested.iter().enumerate() {
         let hash = hash_of_str(name.bytes());
-        of_parser.insert(hash, (hash, at));
+        parser_map.insert(hash, (hash, at));
     }
     let mut collected = HashOrder::with_capacity(requested.len());
-    of_parser
+    parser_map
         .iter()
         .for_each(|(hash, at)| collected.insert(hash, at));
     picked(requested, collected.iter())
 }
 
-/// `entries`, which are in the order in which their names get into an `FxHashMap` of oxlint, in the order of that map.
-pub fn in_order_of_map<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
+/// Reorders `entries` from the order in which oxlint inserts their names into an `FxHashMap` to that map's iteration
+/// order.
+pub fn in_map_order<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
     let mut map = HashOrder::new();
     for (at, (name, _)) in entries.iter().enumerate() {
         map.insert(hash_of_str(name.bytes()), at);
@@ -160,10 +161,10 @@ pub fn in_order_of_map<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)>
     picked(entries, map.iter())
 }
 
-/// Those of `all` at `places`, each of which comes once.
-fn picked<T>(all: Vec<T>, places: impl Iterator<Item = usize>) -> Vec<T> {
+/// The elements of `all` at `indices`, which must be distinct.
+fn picked<T>(all: Vec<T>, indices: impl Iterator<Item = usize>) -> Vec<T> {
     let mut all: Vec<Option<T>> = all.into_iter().map(Some).collect();
-    places.filter_map(|at| all.get_mut(at)?.take()).collect()
+    indices.filter_map(|at| all.get_mut(at)?.take()).collect()
 }
 
 impl<'a> ModuleRecord<'a> {
@@ -261,7 +262,7 @@ impl<'a> ModuleRecord<'a> {
                                 ImportImportName::Name(imported) => {
                                     Some((it, NameSpan::from(imported.imported())))
                                 }
-                                // As the parser has it: the name here, not `default`.
+                                // Like oxc's parser, use the local name, not `default`.
                                 ImportImportName::Default(local) => {
                                     Some((it, NameSpan::from(local)))
                                 }
@@ -339,8 +340,8 @@ impl<'a> ModuleRecord<'a> {
         }
     }
 
-    /// The `default` of the first `export default ..` or `export { a as default }`. If there is none, of the first that exports what
-    /// another module has.
+    /// The `default` in the first `export default ..` or `export { a as default }`. If there's none, the `default` in
+    /// the first re-export.
     pub fn export_default(&self) -> Option<Span> {
         let entries = self
             .local_export_entries
@@ -351,7 +352,7 @@ impl<'a> ModuleRecord<'a> {
             .find_map(|it| it.default_export_span())
     }
 
-    /// What the rules read of it when another file is linted.
+    /// The parts of the record that rules read while they lint another file.
     fn to_remote(&self, file: &'a File<'a>) -> Record {
         let owned = |name: Name<'a>| Box::<[u8]>::from(name.bytes());
         let mut exported_bindings: Vec<Box<[u8]>> =
@@ -404,8 +405,8 @@ fn module_request_of<'a>(entry: &ImportEntry<'a>) -> NameSpan<'a> {
     module_request(entry.declaration)
 }
 
-/// The resolver of oxlint leaves a query and a fragment out: `./a?raw` and `./a#b` are `./a`. A `#` that no query is before can also
-/// be part of the name of a file: that is tried first, then what is second here.
+/// oxlint's resolver strips a query and a fragment: `./a?raw` and `./a#b` resolve as `./a`. A `#` with no query before
+/// it can also be part of a file name, so the first path returned keeps it, and the second is the fallback without it.
 fn paths_of(specifier: &[u8]) -> (&[u8], Option<&[u8]>) {
     match strings::index_of_any(specifier.get(1..).unwrap_or_default(), b"?#").map(|at| at + 1) {
         Some(at) if specifier.get(at) == Some(&b'#') => (specifier, specifier.get(..at)),
@@ -414,8 +415,9 @@ fn paths_of(specifier: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-/// What a rule that asks about other files starts with. While they are not all known, it says what the file exports and names, and
-/// has it linted again if it names a module: `true`, and there is nothing to report yet.
+/// A rule that needs other files calls this first. While the module graph is incomplete, it records the file's exports
+/// and requests, and has the file linted again if it has any requests. In that case it returns true, and there's
+/// nothing to report yet.
 pub fn is_waiting_for_modules<'a>(file: &'a File<'a>) -> bool {
     let Some(modules) = file.modules().filter(|it| !it.is_complete()) else {
         return false;
@@ -438,7 +440,7 @@ pub fn is_waiting_for_modules<'a>(file: &'a File<'a>) -> bool {
     !requests.is_empty()
 }
 
-/// Another file, and what is known of it.
+/// Another file and its record.
 #[derive(Copy, Clone)]
 pub struct Loaded<'m> {
     pub modules: &'m dyn Modules,
@@ -446,8 +448,8 @@ pub struct Loaded<'m> {
     pub record: &'m Record,
 }
 
-/// `module_record.get_loaded_module(specifier)` of the file that is linted. `specifier` has to be one that an `import` or an
-/// `export .. from` of it has. `None` if there is no such file, if it is not JavaScript or TypeScript, or if it cannot be parsed.
+/// `module_record.get_loaded_module(specifier)` for the linted file. `specifier` must appear in one of its `import`s or
+/// `export .. from`s. `None` if there's no such file, if it isn't JavaScript or TypeScript, or if it can't be parsed.
 pub fn get_loaded_module<'a>(file: &'a File<'a>, specifier: &[u8]) -> Option<Loaded<'a>> {
     load(file.modules()?, file.path(), specifier)
 }
@@ -484,8 +486,8 @@ impl<'m> Loaded<'m> {
     }
 }
 
-/// `exported_bindings_from_star_export()` of the modules that were asked about: the names that each gets by `export * from`, directly
-/// or not.
+/// A cache of `exported_bindings_from_star_export()` per module: the names a module gets through `export * from`,
+/// directly or transitively.
 #[derive(Default)]
 pub struct StarExports<'m>(FxHashMap<ModuleId, FxHashSet<&'m [u8]>>);
 
@@ -517,7 +519,7 @@ impl<'m> StarExports<'m> {
     }
 }
 
-/// `{name:?}` in a message: in double quotes, as Rust writes a string.
+/// `{name:?}` in a message: double-quoted and escaped like Rust's `Debug` for strings.
 pub fn debug(name: &[u8]) -> String {
     let mut text = String::with_capacity(name.len());
     for chunk in name.utf8_chunks() {

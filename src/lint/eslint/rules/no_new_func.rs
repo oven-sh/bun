@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `new` operators with the `Function` object.
 pub struct NoNewFunc;
 
-const NO_FUNCTION_CONSTRUCTOR: Message =
-    Message::new("noFunctionConstructor", "The Function constructor is eval.");
+const NO_FUNCTION_CONSTRUCTOR: &Message =
+    &Message::new("noFunctionConstructor", "The Function constructor is eval.");
 
 impl Rule for NoNewFunc {
     const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion).reports_at_the_end();
@@ -42,8 +42,8 @@ impl Rule for NoNewFunc {
         };
         if function.is_ident("Function") && ast_utils::is_global_reference(function) {
             // oxlint points at the `Function`.
-            let place = if cx.language().is_oxlint { function } else { e };
-            cx.report(place, NO_FUNCTION_CONSTRUCTOR).labels_with(|labels| {
+            let location = if cx.language().is_oxlint { function } else { e };
+            cx.report(location, NO_FUNCTION_CONSTRUCTOR).labels_with(|labels| {
                 if let (Some(first), Some(last)) = (call.args().first(), call.args().last()) {
                     let arguments = first.outer_span().to(last.outer_span());
                     labels.push(arguments, "`Function` evaluates source text at runtime, similar to `eval`.");

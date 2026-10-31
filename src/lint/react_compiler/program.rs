@@ -1,22 +1,22 @@
-//! Which functions of a file the compiler is run on, and what becomes of what it says of them: what `oxc_react_compiler::lint()`
-//! does around its pipeline (`lib.rs`, `react_compiler/entrypoint/program.rs`, `imports.rs`), function by function and under the
-//! same names.
+//! Decides which of a file's functions the compiler runs on, and what happens to the diagnostics. This is what
+//! `oxc_react_compiler::lint()` does around its pipeline (`lib.rs`, `react_compiler/entrypoint/program.rs`,
+//! `imports.rs`), function by function and under the same names.
 //!
-//! The options are those of oxlint, which are fixed: `compilation_mode: infer`, `panic_threshold: none`, `target: 19`, the output
-//! mode `lint`, no gating, no directives of its own, no imports that are forbidden. What only another value of these can
-//! reach is left out.
+//! The options are oxlint's, which are fixed: `compilation_mode: infer`, `panic_threshold: none`, `target: 19`, the
+//! output mode `lint`, no gating, no custom directives, no forbidden imports. Code that only other values can reach
+//! isn't ported.
 //!
-//! [`Flavor::Eslint`] is what `eslint-plugin-react-hooks` does with the same options, which are its defaults: the `Program.ts` that
-//! oxc's file is a port of, on the tree of Babel, and around it `RunReactCompiler.ts` of the plugin. The two differ where oxc's
-//! tree is not Babel's (parentheses, parameters, directives), where oxc lists what to walk and Babel's `traverse` goes
-//! everywhere, and in which files are looked at at all.
+//! [`Flavor::Eslint`] is what `eslint-plugin-react-hooks` does with the same options, which are its defaults. That's
+//! the `Program.ts` that oxc's file is a port of, running on Babel's tree, with the plugin's `RunReactCompiler.ts`
+//! around it. The two differ where oxc's tree isn't Babel's (parentheses, parameters, directives), where oxc lists what
+//! to walk and Babel's `traverse` goes everywhere, and in which files they look at in the first place.
 //!
-//! Nothing here calls itself: what oxc and Babel walk by recursion is a list of what is left to walk.
+//! Nothing here recurses. Where oxc and Babel walk recursively, this keeps a worklist.
 
 use crate::compile::{Compiler, Flavor};
 use crate::finding::Finding;
 use crate::suppression::{
-    ProgramSuppressions, find_program_suppressions, remove_what_flow_suppresses,
+    ProgramSuppressions, find_program_suppressions, remove_flow_suppressed,
     suppressions_to_diagnostics,
 };
 use bun_core::strings;
@@ -31,7 +31,7 @@ use bun_react_compiler::diagnostics::ErrorCategory;
 use bun_react_compiler::environment::is_hook_name;
 use bun_react_compiler::hir::ReactFunctionType;
 
-/// oxlint's `eslint_suppression_rules`: the defaults of the compiler, and how oxlint spells the same rules.
+/// oxlint's `eslint_suppression_rules`: the compiler's defaults, plus oxlint's names for the same rules.
 const ESLINT_SUPPRESSION_RULES: [&str; 4] = [
     "react-hooks/exhaustive-deps",
     "react-hooks/rules-of-hooks",
@@ -56,8 +56,8 @@ struct CompileSource<'a> {
 
 // ───────────────────────────── directives ─────────────────────────────
 
-/// Whether one of the strings that the body of the function starts with is one of `directives`. oxc goes by their values. The
-/// `DirectiveLiteral.value` of Babel's tree is what is written between the quotes.
+/// True if one of the string statements at the start of the function's body is one of `directives`. oxc compares their
+/// values. Babel's `DirectiveLiteral.value` is the raw text between the quotes.
 fn has_body_directive(func: Func<'_>, flavor: Flavor, directives: &[&str]) -> bool {
     let statements = func.body_statements().into_iter().flatten();
     let mut leading = statements.map_while(|statement| match statement.kind() {
@@ -69,7 +69,7 @@ fn has_body_directive(func: Func<'_>, flavor: Flavor, directives: &[&str]) -> bo
     leading.any(|(expression, value)| match flavor {
         Flavor::Oxlint => value.is_any(directives),
         Flavor::Eslint => match expression.text() {
-            [_, written @ .., _] => directives.iter().any(|it| it.as_bytes() == written),
+            [_, raw_text @ .., _] => directives.iter().any(|it| it.as_bytes() == raw_text),
             _ => false,
         },
     })
@@ -90,14 +90,15 @@ fn is_component_name(name: &[u8]) -> bool {
     name.first().is_some_and(u8::is_ascii_uppercase)
 }
 
-/// Whether `expr` is in a `ParenthesizedExpression`. oxc's tree has these nodes, and what is matched against a kind of expression
-/// does not match through one. Babel's tree has none.
+/// True if `expr` is in a `ParenthesizedExpression`. oxc's tree has these nodes, and a match on an expression's kind
+/// doesn't see through them. Babel's tree doesn't have them.
 fn is_parenthesized_expression(expr: Expr<'_>, flavor: Flavor) -> bool {
     flavor == Flavor::Oxlint && expr.is_parenthesized()
 }
 
-/// Check if an expression is a hook call (identifier with hook name, or member expression `PascalCase.useHook`). The `Foo?.useHook`
-/// of `(Foo?.useHook)()` is none for Babel, and in parentheses for oxc.
+/// Check if an expression is a hook call (identifier with hook name, or member expression `PascalCase.useHook`). The
+/// `Foo?.useHook` in `(Foo?.useHook)()` doesn't count: Babel has a different node type for it, and oxc sees the
+/// parentheses.
 fn expr_is_hook(expr: Expr<'_>, flavor: Flavor) -> bool {
     if is_parenthesized_expression(expr, flavor) {
         return false;
@@ -119,15 +120,15 @@ fn expr_is_hook(expr: Expr<'_>, flavor: Flavor) -> bool {
     }
 }
 
-/// Whether neither the call nor its callee has a `?.`: Babel's `CallExpression`, as opposed to its `OptionalCallExpression`. oxc's
-/// `expr_contains_optional` stops at parentheses and at `!`, which makes no difference for a callee that [`expr_is_hook`]
-/// accepts.
+/// True if neither the call nor its callee has a `?.`. That's Babel's `CallExpression`, as opposed to its
+/// `OptionalCallExpression`. oxc's `expr_contains_optional` stops at parentheses and at `!`, which makes no difference
+/// for a callee that [`expr_is_hook`] accepts.
 fn is_regular_call(call: Call<'_>) -> bool {
     call.chain() == Chain::No
 }
 
-/// Babel's `FunctionDeclaration`, `FunctionExpression` and `ArrowFunctionExpression`: what can be compiled, and what a search in
-/// a function does not go into. A method is none of these.
+/// Babel's `FunctionDeclaration`, `FunctionExpression` and `ArrowFunctionExpression`. These can be compiled, and a
+/// search inside a function doesn't descend into them. A method is none of these.
 fn is_function(func: Func<'_>) -> bool {
     matches!(func.kind(), FnKind::Decl | FnKind::Expr | FnKind::Arrow)
 }
@@ -142,7 +143,7 @@ fn is_non_node(expr: Expr<'_>) -> bool {
     )
 }
 
-/// The searches in a function: what is yet to be looked at, in no particular order.
+/// Worklist for the searches inside a function: the nodes still to visit, in no particular order.
 struct Search<'a> {
     flavor: Flavor,
     pending: Vec<Node<'a>>,
@@ -164,8 +165,8 @@ impl<'a> Search<'a> {
         self.pending.extend(nodes.into_iter().map(Into::into));
     }
 
-    /// All that is in `node`, as Babel's `traverse` has it. But for types, where there is nothing to find unless a name of a
-    /// member is computed from something that TypeScript does not allow there.
+    /// Queues all of `node`'s children, like Babel's `traverse`, except types. There's nothing to find in a type,
+    /// unless a member's name is computed from something that TypeScript doesn't allow there.
     fn look_into(&mut self, node: Node<'a>) {
         let pending = &mut self.pending;
         node.for_each_child(|child| {
@@ -175,8 +176,8 @@ impl<'a> Search<'a> {
         });
     }
 
-    /// Check if a function returns non-node values. The `return` statements are visited in the order of the source, and the last
-    /// one that is visited decides.
+    /// Check if a function returns non-node values. The `return` statements are visited in source order, and the last
+    /// one visited decides.
     fn returns_non_node_fn(&mut self, func: Func<'a>) -> bool {
         let last = match (self.flavor, func.body()) {
             (Flavor::Oxlint, FnBody::Expr(expr)) => return is_non_node(expr),
@@ -192,8 +193,8 @@ impl<'a> Search<'a> {
         }
     }
 
-    /// The plugin's `returnsNonNode` skips nested functions and the methods of objects, not those of classes: their `return`
-    /// statements count as those of the function.
+    /// The plugin's `returnsNonNode` skips nested functions and object methods, but not class methods, so their
+    /// `return` statements count as the function's.
     fn last_return_statement(&mut self, func: Func<'a>) -> Option<Stmt<'a>> {
         let mut last: Option<Stmt<'a>> = None;
         self.pending.clear();
@@ -241,7 +242,8 @@ impl<'a> Search<'a> {
         false
     }
 
-    /// The plugin's `callsHooksOrCreatesJsx`: everywhere but in nested functions. The methods of objects and of classes are none.
+    /// The plugin's `callsHooksOrCreatesJsx`: everywhere except in nested functions. Object and class methods don't
+    /// count as nested functions.
     fn calls_hooks_or_creates_jsx_anywhere(&mut self, func: Func<'a>) -> bool {
         self.look_into(Node::Func(func));
         while let Some(node) = self.pending.pop() {
@@ -318,12 +320,12 @@ impl<'a> Search<'a> {
                 self.look(object);
                 self.look(body);
             }
-            // Nested functions, classes, and what only TypeScript has.
+            // Nested functions, classes, and TypeScript-only statements.
             _ => {}
         }
     }
 
-    /// Whether `expr` itself is JSX or the call of a hook. What is in it is left to be looked at.
+    /// True if `expr` itself is JSX or a hook call. Its children are queued.
     fn calls_hooks_or_creates_jsx_in_expr(&mut self, expr: Expr<'a>) -> bool {
         match expr.kind() {
             ExprKind::Jsx(_) => return true,
@@ -366,7 +368,7 @@ impl<'a> Search<'a> {
             ExprKind::Object(properties) => {
                 for property in properties {
                     match property.kind() {
-                        // The keys are not looked at, nor the parameters of a method.
+                        // Keys aren't checked, and neither are a method's parameters.
                         PropKind::Method | PropKind::Getter | PropKind::Setter => {
                             self.look_all(
                                 property
@@ -395,13 +397,13 @@ impl<'a> Search<'a> {
             | ExprKind::AsConst(inner)
             | ExprKind::NonNull(inner)
             | ExprKind::Instantiation { expr: inner, .. } => self.look(inner),
-            // Nested functions, classes, `import()`, and what has nothing in it.
+            // Nested functions, classes, `import()`, and expressions without children.
             _ => {}
         }
         false
     }
 
-    /// The defaults of the parameters, and those in their patterns.
+    /// Queues the parameters' defaults, including those inside their patterns.
     fn calls_hooks_or_creates_jsx_in_params(&mut self, func: Func<'a>) {
         for param in func.params() {
             self.look_all(param.default());
@@ -430,9 +432,9 @@ impl<'a> Search<'a> {
 
 // ───────────────────────────── parameters ─────────────────────────────
 
-/// Check if a parameter's type annotation is valid for a React component prop. Returns false for primitive type annotations
-/// that indicate this is NOT a component. A type in parentheses is a node of its own for oxc and for Babel, which is not among
-/// them. A template with substitutions is a `TSLiteralType` for Babel.
+/// Check if a parameter's type annotation is valid for a React component prop. Returns false for primitive type
+/// annotations that indicate this is NOT a component. Both oxc and Babel have a separate node for a parenthesized type,
+/// and it isn't one of them. For Babel, a template with substitutions is a `TSLiteralType`.
 fn is_valid_props_annotation(type_annotation: Option<TypeNode<'_>>, flavor: Flavor) -> bool {
     let Some(annotation) = type_annotation else {
         return true;
@@ -462,8 +464,8 @@ fn is_valid_props_annotation(type_annotation: Option<TypeNode<'_>>, flavor: Flav
 /// Check if the function parameters are valid for a React component. Components can have 0 params, 1 param (props), or 2 params
 /// (props + ref).
 ///
-/// In Babel's tree `this: T` is the first of the parameters, and one with a default is an `AssignmentPattern`, which has no
-/// annotation and is no identifier.
+/// In Babel's tree `this: T` is the first parameter, and a parameter with a default is an `AssignmentPattern`, which
+/// has no annotation and isn't an identifier.
 fn is_valid_component_params(func: Func<'_>, flavor: Flavor) -> bool {
     let this_param = match flavor {
         Flavor::Oxlint => None,
@@ -542,8 +544,8 @@ fn get_component_or_hook_like<'a>(
 
 /// Extract the callee name from a CallExpression if it's a React API call (forwardRef, memo, React.forwardRef, React.memo).
 ///
-/// The plugin's `isReactAPI` does not ask whether the property is computed, so `React[memo]` is one too. `React?.memo` is none
-/// there, an `OptionalMemberExpression`.
+/// The plugin's `isReactAPI` doesn't check whether the property is computed, so `React[memo]` counts too. `React?.memo`
+/// doesn't count there, because it's an `OptionalMemberExpression`.
 fn get_callee_name_if_react_api(callee: Expr<'_>, flavor: Flavor) -> Option<Name<'_>> {
     const NAMES: [&str; 2] = ["forwardRef", "memo"];
     if is_parenthesized_expression(callee, flavor) {
@@ -565,7 +567,7 @@ fn get_callee_name_if_react_api(callee: Expr<'_>, flavor: Flavor) -> Option<Name
         .then_some(name)
 }
 
-/// The plugin's `isMemoCallback` and `isForwardRefCallback`: the function is itself an argument of the call.
+/// The plugin's `isMemoCallback` and `isForwardRefCallback`: the function is a direct argument of the call.
 fn get_callee_name_if_react_api_callback(func: Func<'_>) -> Option<Name<'_>> {
     let Node::Expr(parent) = func.owner().parent() else {
         return None;
@@ -576,8 +578,8 @@ fn get_callee_name_if_react_api_callback(func: Func<'_>) -> Option<Name<'_>> {
 
 // ───────────────────────────── errors ─────────────────────────────
 
-/// oxc's `FunctionNode::diagnostic_span`: the name of the function if it has one of its own, otherwise its head, to the `{` of
-/// the body or to where the expression starts that is the body.
+/// oxc's `FunctionNode::diagnostic_span`: the function's own name if it has one. Otherwise its head, through the body's
+/// `{` or up to the start of the body expression.
 pub(crate) fn diagnostic_span(func: Func<'_>) -> Span {
     if let Some(id) = func.name() {
         return id.span();
@@ -592,7 +594,8 @@ pub(crate) fn diagnostic_span(func: Func<'_>) -> Span {
     Span::new(span.start, end.min(span.end))
 }
 
-/// Push a failed compilation attempt's diagnostics onto the accumulator. oxc's `with_fallback_label` is left to who renders them.
+/// Push a failed compilation attempt's diagnostics onto the accumulator. oxc's `with_fallback_label` is left to the
+/// renderer.
 fn log_error(err: Vec<Finding>, fn_span: Option<Span>, diagnostics: &mut Vec<Finding>) {
     diagnostics.extend(err.into_iter().map(|diagnostic| Finding {
         function_span: fn_span,
@@ -600,14 +603,14 @@ fn log_error(err: Vec<Finding>, fn_span: Option<Span>, diagnostics: &mut Vec<Fin
     }));
 }
 
-/// With `panic_threshold: none`, only an error in the configuration is one that ends the run.
+/// With `panic_threshold: none`, only a configuration error ends the run.
 fn should_panic(diagnostics: &[Finding]) -> bool {
     diagnostics
         .iter()
         .any(|diagnostic| diagnostic.category == ErrorCategory::Config)
 }
 
-/// oxc's `CompileResult::Fatal`: no other function is compiled. What has been said so far is reported all the same.
+/// oxc's `CompileResult::Fatal`: no further function is compiled. The diagnostics so far are still reported.
 struct Fatal;
 
 fn handle_error(
@@ -622,7 +625,7 @@ fn handle_error(
 
 // ───────────────────────────── one function ─────────────────────────────
 
-/// What of oxc's `ProgramContext` is used where nothing is emitted.
+/// The parts of oxc's `ProgramContext` that are used when nothing is emitted.
 struct ProgramContext<'a> {
     flavor: Flavor,
     compiler: Compiler<'a>,
@@ -630,7 +633,7 @@ struct ProgramContext<'a> {
     diagnostics: Vec<Finding>,
 }
 
-/// Attempt to compile a single function. `Err`: the diagnostics of the failed attempt.
+/// Attempt to compile a single function. `Err` has the failed attempt's diagnostics.
 fn try_compile_function<'a>(
     source: &CompileSource<'a>,
     context: &mut ProgramContext<'a>,
@@ -649,14 +652,14 @@ fn try_compile_function<'a>(
         .compile_fn(source.fn_node, source.fn_type, &mut context.diagnostics)
 }
 
-/// Process a single function: check directives, attempt compilation, handle results. Where nothing is emitted, all that
-/// `"use no memo"` changes is that an error in the configuration does not end the run: what the compiler says of the function is
-/// reported like that of any other.
+/// Process a single function: check directives, attempt compilation, handle results. When nothing is emitted, the only
+/// effect of `"use no memo"` is that a configuration error doesn't end the run. The function's diagnostics are reported
+/// like any other's.
 fn process_fn<'a>(
     source: &CompileSource<'a>,
     context: &mut ProgramContext<'a>,
 ) -> Result<(), Fatal> {
-    // The plugin drops a diagnostic that has no place of its own.
+    // The plugin drops a diagnostic that has no location.
     let diagnostic_span = match context.flavor {
         Flavor::Oxlint => Some(diagnostic_span(source.fn_node)),
         Flavor::Eslint => None,
@@ -695,7 +698,7 @@ fn get_declarator_name(decl: VarDecl<'_>) -> Option<Name<'_>> {
     decl.pat().as_ident()
 }
 
-/// The expression of a key that is computed from more than a literal.
+/// The expression of a key that's computed from more than a literal.
 fn computed_key(key: Option<Key<'_>>) -> Option<Expr<'_>> {
     match key?.kind() {
         KeyKind::Computed(expression) => Some(expression),
@@ -703,26 +706,28 @@ fn computed_key(key: Option<Key<'_>>) -> Option<Expr<'_>> {
     }
 }
 
-/// What a [`DiscoveryWalker`] does next.
+/// A [`DiscoveryWalker`]'s next step.
 enum Step<'a> {
     /// A statement, an expression or a binding pattern.
     Walk(Node<'a>),
-    /// A function that is the initializer of a declarator, and the name of that.
+    /// A function that's a declarator's initializer, and the declarator's name.
     WalkFunction(Func<'a>, Option<Name<'a>>),
     PopParentCallee,
 }
 
-/// Walks the file to find compilable functions, in the order of the source.
+/// Walks the file to find compilable functions, in source order.
 ///
-/// Compiled functions have their bodies skipped. Other functions are descended to find nested components and hooks. Not walked:
-/// classes, namespaces, enums, `export =`, `import()`, the targets of assignments and of `for`-`in` and `for`-`of`, and the
-/// patterns of declarators and of `catch`. Of these the plugin leaves out only classes: see [`DiscoveryWalker::traverse`].
+/// Compiled functions have their bodies skipped. Other functions are descended to find nested components and hooks. Not
+/// walked: classes, namespaces, enums, `export =`, `import()`, the targets of assignments and of `for`-`in` and
+/// `for`-`of`, and the patterns of declarators and of `catch`. Of these, the plugin only skips classes: see
+/// [`DiscoveryWalker::traverse`].
 struct DiscoveryWalker<'a> {
     search: Search<'a>,
     queue: Vec<CompileSource<'a>>,
-    /// For each call and each function around what is walked: the name if it is a call of `memo` or `forwardRef`.
+    /// One entry per call and function enclosing the current node: the callee's name if it's a `memo` or `forwardRef`
+    /// call.
     parent_callee_stack: Vec<Option<Name<'a>>>,
-    /// The next is the last.
+    /// A stack: the next step is the last.
     steps: Vec<Step<'a>>,
 }
 
@@ -740,7 +745,7 @@ impl<'a> DiscoveryWalker<'a> {
         self.parent_callee_stack.last().copied().flatten()
     }
 
-    /// After what has been added in this step.
+    /// Queues `node` after whatever this step has already queued.
     fn walk(&mut self, node: impl Into<Node<'a>>) {
         self.steps.push(Step::Walk(node.into()));
     }
@@ -772,16 +777,16 @@ impl<'a> DiscoveryWalker<'a> {
         }
     }
 
-    /// The plugin's `findFunctionsToCompile`: Babel's `traverse` goes everywhere but into classes and into the functions that are
-    /// queued. Types are left out, where no function is written.
+    /// The plugin's `findFunctionsToCompile`. Babel's `traverse` goes everywhere except into classes and into queued
+    /// functions. Types are skipped too, because they can't contain a function.
     fn traverse(&mut self, node: Node<'a>) {
-        let is_left_out = match node {
+        let is_skipped = match node {
             Node::Class(_) | Node::Type(_) | Node::TypeParam(_) => true,
             Node::Stmt(stmt) => matches!(stmt.tag(), StmtTag::Interface | StmtTag::TypeAlias),
             _ => false,
         };
         match node {
-            _ if is_left_out => {}
+            _ if is_skipped => {}
             Node::Func(func) if is_function(func) => {
                 self.walk_function(func, declarator_name_for(func))
             }
@@ -895,7 +900,7 @@ impl<'a> DiscoveryWalker<'a> {
             let Some(init) = declarator.init() else {
                 continue;
             };
-            // The name is that of a function which is all of the initializer, in parentheses or not.
+            // The declarator's name only applies if the function is the whole initializer, parenthesized or not.
             match init.as_fn() {
                 Some(func) => self
                     .steps
@@ -905,8 +910,8 @@ impl<'a> DiscoveryWalker<'a> {
         }
     }
 
-    /// oxc's `walk_function` and `walk_arrow`. `inferred_name`: the name from the enclosing variable declarator. A function
-    /// declaration has its own name, a function expression never.
+    /// oxc's `walk_function` and `walk_arrow`. `inferred_name` is the name from the enclosing variable declarator. A
+    /// function declaration uses its own name, a function expression never does.
     fn walk_function(&mut self, func: Func<'a>, inferred_name: Option<Name<'a>>) {
         let name = match func.kind() {
             FnKind::Decl => func.name().map(Ident::name),
@@ -940,8 +945,8 @@ impl<'a> DiscoveryWalker<'a> {
         match expr.kind() {
             ExprKind::Fn(func) => self.walk_function(func, None),
             ExprKind::Call(call) => {
-                // oxc's `walk_chain_element`: the call that is the whole of an optional chain says nothing of its arguments, which
-                // are taken for those of the call around it.
+                // oxc's `walk_chain_element`: a call that's a whole optional chain pushes no callee, so its arguments
+                // are treated as those of the enclosing call.
                 let is_chain_element = call.chain() != Chain::No && expr.is_chain_root();
                 if !is_chain_element {
                     self.parent_callee_stack
@@ -1008,7 +1013,7 @@ impl<'a> DiscoveryWalker<'a> {
     fn walk_object_property(&mut self, prop: Prop<'a>) {
         self.walk_all(computed_key(prop.key()));
         match prop.func() {
-            // A method or an accessor is not queued itself, and is no boundary for `memo` / `forwardRef` context.
+            // A method or accessor isn't queued itself, and it isn't a boundary for `memo` / `forwardRef` context.
             Some(func) => {
                 self.walk_formal_parameters(func);
                 self.walk_all(func.body_statements().into_iter().flatten());
@@ -1031,17 +1036,18 @@ fn find_functions_to_compile<'a>(file: &'a File<'a>, search: Search<'a>) -> Vec<
     walker.queue
 }
 
-/// A function is queued for a directive, or for a hook that it calls or JSX that it creates. `false`: the file has none of these,
-/// or the plugin does not get to compile it.
+/// A function is queued because of a directive, a hook call or JSX. Returns false if the file has none of these, or if
+/// the plugin never gets to compile it.
 pub(crate) fn may_have_react_code(file: &File, flavor: Flavor) -> bool {
-    let has_react_code = file.mentions_name_of_hook()
+    let has_react_code = file.mentions_hook_name()
         || file.has_exprs([ExprTag::Jsx])
         || file.mentions_any(&OPT_IN_DIRECTIVES);
     let path = file.path();
     has_react_code
         && match flavor {
             Flavor::Oxlint => true,
-            // Its `sources`. And it has all of the text parsed as a program, of which the scripts of these are a part.
+            // The plugin's `sources` option. It also parses the whole text as a program, and in these files the scripts
+            // are only a part of the text.
             Flavor::Eslint => {
                 !strings::contains(path, b"node_modules")
                     && ![".vue", ".svelte", ".astro"]
@@ -1051,12 +1057,12 @@ pub(crate) fn may_have_react_code(file: &File, flavor: Flavor) -> bool {
         }
 }
 
-/// The plugin's `mayContainReactCode`, without which it does nothing. It looks at the statements at the top level only, so it
+/// The plugin's `mayContainReactCode`, without which it does nothing. It only looks at top-level statements, so it
 /// misses a file whose components are all nested, wrapped in `memo()` or opted in by a directive.
 fn may_contain_react_code<'a>(file: &'a File<'a>) -> bool {
     let is_name = |name: Name<'a>| is_component_name(name.bytes()) || is_hook_name(name.bytes());
     file.body().iter().any(|node| match node.kind() {
-        // Without a body it is a `TSDeclareFunction`.
+        // Without a body it's a `TSDeclareFunction`.
         StmtKind::Fn(func) if func.has_body() => match func.name() {
             Some(id) => is_name(id.name()),
             None => true,
@@ -1078,7 +1084,7 @@ fn may_have_functions_to_compile<'a>(file: &'a File<'a>, search: &mut Search<'a>
         return false;
     }
 
-    // forwardRef/memo wrappers. Discovery matches the names of callees, not bindings.
+    // forwardRef/memo wrappers. Discovery matches callee names, not bindings.
     let is_wrapper_call = |call: Expr<'a>| {
         call.callee()
             .is_some_and(|callee| get_callee_name_if_react_api(callee, flavor).is_some())
@@ -1110,12 +1116,13 @@ fn declarator_name_for(func: Func<'_>) -> Option<Name<'_>> {
 
 // ───────────────────────────── the second parse ─────────────────────────────
 
-/// The plugin does not compile the tree that ESLint has. It parses the text once more, that of a `.ts` or `.tsx` file with
-/// Babel and its plugins `typescript` and `jsx`, any other with hermes-parser, and reports nothing if that throws.
+/// The plugin doesn't compile ESLint's tree. It parses the text again, a `.ts` or `.tsx` file with Babel and its
+/// `typescript` and `jsx` plugins, anything else with hermes-parser, and reports nothing if that throws.
 ///
-/// This knows what a program without errors can have that these refuse: @babel/parser 7.29, hermes-parser 0.25. Of what only
-/// TypeScript has, which hermes-parser is given in a `.mts` or `.cts` file and reads as Flow, it knows a part.
-fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
+/// This covers the syntax that a valid program can have and these parsers reject: @babel/parser 7.29, hermes-parser
+/// 0.25. TypeScript-only syntax, which hermes-parser gets in a `.mts` or `.cts` file and reads as Flow, is only partly
+/// covered.
+fn second_parser_rejects<'a>(file: &'a File<'a>) -> bool {
     #[derive(Copy, Clone, PartialEq, Eq)]
     enum Parser {
         Babel,
@@ -1127,7 +1134,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
         false => Parser::Hermes,
     };
 
-    let refused_modifiers = match parser {
+    let rejected_modifiers = match parser {
         Parser::Babel => Flags::ACCESSOR,
         Parser::Hermes => {
             Flags::ACCESSOR
@@ -1141,50 +1148,51 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
                 | Flags::OVERRIDE
         }
     };
-    let refuses_class = |class: Class<'a>| {
+    let rejects_class = |class: Class<'a>| {
         class.decorators().next().is_some()
-            || class.flags().intersects(refused_modifiers)
+            || class.flags().intersects(rejected_modifiers)
             || class.members().iter().any(|member| {
                 member.decorators().next().is_some()
-                    || member.flags().intersects(refused_modifiers)
+                    || member.flags().intersects(rejected_modifiers)
                     || (parser == Parser::Hermes && member.kind() == MemberKind::StaticBlock)
                     || member.func().is_some_and(|func| {
                         (func.params().iter()).any(|param| param.decorators().next().is_some())
                     })
             })
     };
-    if file.has_classes() && file.classes().any(refuses_class) {
+    if file.has_classes() && file.classes().any(rejects_class) {
         return true;
     }
 
-    // Babel takes `with { .. }` after a module specifier and not the older `assert { .. }`, hermes-parser the other way round.
-    let refused_keyword: &[u8] = match parser {
+    // Babel accepts `with { .. }` after a module specifier but not the older `assert { .. }`. hermes-parser is the
+    // other way round.
+    let rejected_keyword: &[u8] = match parser {
         Parser::Babel => b"assert",
         Parser::Hermes => b"with",
     };
-    let is_refused_name = |name: Ident<'a>| parser == Parser::Hermes && name.is_string();
-    let refuses_import_or_export = |stmt: Stmt<'a>| {
+    let is_rejected_name = |name: Ident<'a>| parser == Parser::Hermes && name.is_string();
+    let rejects_import_or_export = |stmt: Stmt<'a>| {
         (stmt.import_attributes())
-            .is_some_and(|attributes| file.slice(attributes.keyword_span()) == refused_keyword)
+            .is_some_and(|attributes| file.slice(attributes.keyword_span()) == rejected_keyword)
             || match stmt.kind() {
                 StmtKind::Import(import) => {
                     import.phase().is_some()
-                        || (import.named().iter()).any(|it| is_refused_name(it.imported()))
+                        || (import.named().iter()).any(|it| is_rejected_name(it.imported()))
                 }
                 StmtKind::ExportNamed(export) => (export.items().iter())
-                    .any(|it| is_refused_name(it.local()) || is_refused_name(it.exported())),
-                StmtKind::ExportStar { alias, .. } => alias.is_some_and(is_refused_name),
+                    .any(|it| is_rejected_name(it.local()) || is_rejected_name(it.exported())),
+                StmtKind::ExportStar { alias, .. } => alias.is_some_and(is_rejected_name),
                 _ => false,
             }
     };
-    if file.body().iter().any(refuses_import_or_export) {
+    if file.body().iter().any(rejects_import_or_export) {
         return true;
     }
 
     let is_outermost = |func: &Func<'a>| func.has_body() && func.enclosing().is_none();
     let mut outermost: Vec<Span> = file.funcs().filter(is_outermost).map(Func::span).collect();
     outermost.sort_unstable();
-    let is_in_no_function = |at: Span| {
+    let is_outside_functions = |at: Span| {
         let after = outermost.partition_point(|span| span.start <= at.start);
         let before = after.checked_sub(1).and_then(|it| outermost.get(it));
         before.is_none_or(|span| span.end <= at.start)
@@ -1195,7 +1203,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
         .exprs_of_kind(ExprTag::As)
         .chain(file.exprs_of_kind(ExprTag::AsConst)))
     .any(Expr::is_angle_bracket_assertion)
-        || (file.stmts_of_kind(StmtTag::Return)).any(|it| is_in_no_function(it.span()))
+        || (file.stmts_of_kind(StmtTag::Return)).any(|it| is_outside_functions(it.span()))
     {
         return true;
     }
@@ -1216,7 +1224,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
     };
     let awaits_in_no_function = |stmt: Stmt<'a>| {
         matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. })
-            && is_in_no_function(stmt.span())
+            && is_outside_functions(stmt.span())
     };
     let has_type_arguments = |expr: Expr<'a>| {
         expr.as_call_like()
@@ -1226,7 +1234,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
         || file
             .exprs_of_kind(ExprTag::Jsx)
             .any(is_attribute_without_braces)
-        || (file.exprs_of_kind(ExprTag::Await)).any(|it| is_in_no_function(it.span()))
+        || (file.exprs_of_kind(ExprTag::Await)).any(|it| is_outside_functions(it.span()))
         || file
             .stmts_of_kind(StmtTag::ForOf)
             .any(awaits_in_no_function)
@@ -1243,8 +1251,8 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
 
 // ───────────────────────────── the file ─────────────────────────────
 
-/// Whether the program already imports the `c` memo-cache helper from `module_name`: the file has already been compiled and must
-/// be skipped. The plugin takes an import of the type for one too, and one in a `declare module`.
+/// True if the program already imports the `c` memo-cache helper from `module_name`, which means the file has already
+/// been compiled and must be skipped. The plugin also counts a type-only import, and one inside a `declare module`.
 fn has_memo_cache_function_import<'a>(
     file: &'a File<'a>,
     module_name: &str,
@@ -1269,10 +1277,11 @@ fn has_memo_cache_function_import<'a>(
         }
 }
 
-/// oxc's `lint()`: all diagnostics of the file, in oxc's order. That is `run_compiler` and `compile_program`. For
-/// [`Flavor::Eslint`], the `CompileError` events of the plugin's `runReactCompiler` that its rules do not drop for a comment.
+/// oxc's `lint()`, i.e. `run_compiler` and `compile_program`: all of the file's diagnostics, in oxc's order. For
+/// [`Flavor::Eslint`], the `CompileError` events from the plugin's `runReactCompiler` that its rules don't drop because
+/// of a comment.
 ///
-/// A `"use no memo"` at the top of the file changes nothing where nothing is emitted.
+/// A `"use no memo"` at the top of the file has no effect when nothing is emitted.
 pub(crate) fn compile_program<'a>(
     file: &'a File<'a>,
     flavor: Flavor,
@@ -1289,14 +1298,15 @@ pub(crate) fn compile_program<'a>(
         return Vec::new();
     }
     let queue = find_functions_to_compile(file, search);
-    if queue.is_empty() || (flavor == Flavor::Eslint && second_parser_refuses(file)) {
+    if queue.is_empty() || (flavor == Flavor::Eslint && second_parser_rejects(file)) {
         return Vec::new();
     }
 
     let mut context = ProgramContext {
         flavor,
         compiler: Compiler::new(file, flavor, wanted),
-        // The plugin validates hooks and the dependencies of memoization itself, with which the compiler looks for no comment.
+        // The plugin validates hooks and memoization dependencies itself, and in that mode the compiler doesn't look
+        // for suppression comments.
         suppressions: match flavor {
             Flavor::Oxlint => find_program_suppressions(file, &ESLINT_SUPPRESSION_RULES),
             Flavor::Eslint => ProgramSuppressions::default(),
@@ -1309,7 +1319,7 @@ pub(crate) fn compile_program<'a>(
         }
     }
     if flavor == Flavor::Eslint {
-        remove_what_flow_suppresses(file, &mut context.diagnostics);
+        remove_flow_suppressed(file, &mut context.diagnostics);
     }
     context.diagnostics
 }

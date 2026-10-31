@@ -1,0 +1,10 @@
+let sum = 0;
+const number = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }), date = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }), collator = new Intl.Collator("de"), plural = new Intl.PluralRules("en"), relative = new Intl.RelativeTimeFormat("en"), list = new Intl.ListFormat("en"), segmenter = new Intl.Segmenter("en", { granularity: "word" });
+for (let i = 0; i < 10000; i++) sum += number.format(i * 1.5).length + date.format(i * 86400000).length + plural.select(i).length;
+for (let i = 0; i < 3333; i++) sum += relative.format(-i, "day").length + list.format(["a", "b", "c" + i]).length;
+const words = Array.from({ length: 20000 }, (_, i) => "wörd" + ((i * 7919) % 20000)); words.sort(collator.compare); sum += words[10].length;
+for (let i = 0; i < 333; i++) sum += [...segmenter.segment("The quick brown fox jumps over the lazy dog " + i)].length;
+for (let i = 0; i < 3333; i++) sum += (i * 1234.5).toLocaleString("de-DE").length + new Date(i * 1e7).toLocaleDateString("en-GB", { timeZone: "UTC" }).length;
+for (let i = 0; i < 333; i++) sum += new Intl.NumberFormat("fr", { maximumFractionDigits: i % 4 }).format(i / 3).length;
+for (let i = 0; i < 33333; i++) sum += "ÀÉÎõü".toLowerCase().length + "straße".toUpperCase().length + "a".localeCompare("b") + "é".normalize("NFD").length;
+console.log("intl", sum);

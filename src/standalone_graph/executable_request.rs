@@ -192,11 +192,36 @@ pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphByte
     )
 }
 
-/// `[u64 LE length][graph]`: what the section of an executable holds.
-pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
-    let graph = graph_bytes(request)?;
+pub struct PlaceOfProgram<'a> {
+    pub mapped_at: u64,
+    pub first_below: Option<FirstProgramBelow<'a>>,
+}
+
+pub struct FirstProgramBelow<'a> {
+    pub image: &'a [u8],
+    pub file: Fd,
+    pub offset: u64,
+}
+
+pub fn to_graph_bytes(
+    request: &GraphRequest<'_>,
+    place: Option<&PlaceOfProgram<'_>>,
+) -> crate::Result<Vec<u8>> {
+    let mut graph = graph_bytes(request)?;
     if graph.bytes.is_empty() {
         return Err(crate::Error::CorruptedCompiledProgram);
+    }
+    if let (Some(image), Some(place)) = (graph.image, place) {
+        let address = place.mapped_at + size_of::<u64>() as u64;
+        crate::executable_file::relocate_images(&mut graph.bytes, image, address);
+        let written = &graph.bytes[image.offset as usize..(image.offset + image.length) as usize];
+        if let Some(first) = &place.first_below
+            && let Some((offset, headers)) =
+                bun_aot::engine::place_of_string_headers_behind(first.image, written)
+        {
+            let offset = (first.offset + offset as u64) as i64;
+            let _ = bun_sys::File::borrow(&first.file).pwrite_all(&written[headers], offset);
+        }
     }
     let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
     bytes.extend_from_slice(&(graph.bytes.len() as u64).to_le_bytes());

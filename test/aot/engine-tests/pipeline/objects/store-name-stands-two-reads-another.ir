@@ -238,10 +238,10 @@ function f3 name="Made" module=m0 position=228 kind=BaseConstructor flags=[HasNe
   b0(v0: anything):
     Jump -> next b1() @228
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @222
-    v2 = NewObject v1 layout=L0 @222
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @222
-    Return v3 @222
+    v1 = GetConstructPrototype v0 layout=L0 @228
+    v2 = NewObject v1 layout=L0 @228
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @228
+    Return v3 @228
 }
 function f4 module=m0 position=876 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -292,7 +292,7 @@ runtimefunction id=FunctionPrototypeApply function=f9
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v4: 300 = Integer integer=300
 # CHECK-NEXT: v5: boolean = Less v2, v4
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b38()
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b32()
 # CHECK-NEXT: b2(v6: int[0, 299]):
 # CHECK-NEXT: v7: "o0." = String string="o0."
 # CHECK-NEXT: v8: string = Add v7, v6
@@ -312,166 +312,144 @@ runtimefunction id=FunctionPrototypeApply function=f9
 # CHECK-NEXT: Jump -> next b5(v12)
 # CHECK-NEXT: b5(v18: null|L2):
 # CHECK-NEXT: v19: boolean = IsSlotFilled v12 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v19 -> taken b6(), notTaken b17()
-# CHECK-NEXT: b6() handler=b36():
+# CHECK-NEXT: Branch v19 -> taken b6(), notTaken b15()
+# CHECK-NEXT: b6() handler=b30():
 # CHECK-NEXT: v20: L2 = RequireObjectCoercible v18 name="n"
 # CHECK-NEXT: v21: boolean = IsSlotFilled v20 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b21(v20)
-# CHECK-NEXT: b7(v22: guard) handler=b36():
+# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b19(v20)
+# CHECK-NEXT: b7(v22: guard) handler=b30():
 # CHECK-NEXT: v23: int[-2147483643, 2147483647] = GetSlot v20, v22 key="n" receivers=[L2] level=Expected accessSite=7 [holdsDeclaredType]
 # CHECK-NEXT: v24: 3 = Integer integer=3
 # CHECK-NEXT: v25: int[-2147483640, 2147483650] = Add v23, v24
 # CHECK-NEXT: v26: boolean = TypeTest v25 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v26 -> taken b8(), notTaken b20()
-# CHECK-NEXT: b8() handler=b36():
+# CHECK-NEXT: Branch v26 -> taken b8(), notTaken b18()
+# CHECK-NEXT: b8() handler=b30():
 # CHECK-NEXT: PutSlot v12, v11, v12 key="a" receivers=[L2] level=Expected accessSite=27
 # CHECK-NEXT: v28: "s." = String string="s."
 # CHECK-NEXT: v29: string = Add v28, v6
 # CHECK-NEXT: v30: boolean = IsSlotFilled v12 key="a" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v30 -> taken b9(| 0), notTaken b13()
-# CHECK-NEXT: b9(v31: guard) handler=b36():
+# CHECK-NEXT: Branch v30 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v31: guard) handler=b30():
 # CHECK-NEXT: PutSlot v12, v31, v12 key="a" receivers=[L2] level=Expected accessSite=27
-# CHECK-NEXT: v33: i32 = StringBuilderCheckpoint v1
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() handler=b12():
-# CHECK-NEXT: v34: "s." = String string="s."
-# CHECK-NEXT: StringBuilderAppend v1, v29, v34, v6
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() handler=b36():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b12() role=CleanupHandler frequency=Rare handler=b36():
-# CHECK-NEXT: v36: exception = CatchException
-# CHECK-NEXT: StringBuilderRollBack v1, v33
-# CHECK-NEXT: Rethrow v36
-# CHECK-NEXT: b13() frequency=Unlikely handler=b36():
+# CHECK-NEXT: v33: "s." = String string="s."
+# CHECK-NEXT: v34: string = Add v33, v6
+# CHECK-NEXT: Jump -> next b11(v34)
+# CHECK-NEXT: b10() frequency=Unlikely handler=b30():
 # CHECK-NEXT: PropSet v12, v12 key="a" accessSite=27 receivers=[L2, ..]
-# CHECK-NEXT: v39: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=28 receivers=[L2, ..]
-# CHECK-NEXT: v40: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v39 provenType=undefined|int
-# CHECK-NEXT: v41: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=30 receivers=[L2, ..]
+# CHECK-NEXT: v36: "s." = String string="s."
+# CHECK-NEXT: v37: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=28 receivers=[L2, ..]
+# CHECK-NEXT: v38: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v37 provenType=undefined|int
+# CHECK-NEXT: v39: string = Add v36, v38
+# CHECK-NEXT: v40: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=30 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b11(v39)
+# CHECK-NEXT: b11(v41: string) handler=b30():
 # CHECK-NEXT: v42: i32 = StringBuilderCheckpoint v1
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14() frequency=Unlikely handler=b16():
-# CHECK-NEXT: v43: "s." = String string="s."
-# CHECK-NEXT: StringBuilderAppend v1, v29, v43, v40
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15() frequency=Unlikely handler=b36():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b16() role=CleanupHandler frequency=Rare handler=b36():
-# CHECK-NEXT: v45: exception = CatchException
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b14():
+# CHECK-NEXT: StringBuilderAppend v1, v29, v41
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() handler=b30():
+# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b14() role=CleanupHandler frequency=Rare handler=b30():
+# CHECK-NEXT: v44: exception = CatchException
 # CHECK-NEXT: StringBuilderRollBack v1, v42
-# CHECK-NEXT: Rethrow v45
-# CHECK-NEXT: b17() frequency=Unlikely handler=b36():
-# CHECK-NEXT: v47: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=4 receivers=[L2]
-# CHECK-NEXT: v48: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=5 receivers=[L2]
-# CHECK-NEXT: v49: L2 = RequireObjectCoercible v18 name="n"
-# CHECK-NEXT: v50: boolean = IsSlotFilled v49 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v50 -> taken b18(| 0), notTaken b21(v49)
-# CHECK-NEXT: b18(v51: guard) frequency=Unlikely handler=b36():
-# CHECK-NEXT: v52: int[-2147483643, 2147483647] = GetSlot v49, v51 key="n" receivers=[L2] level=Expected accessSite=7 [holdsDeclaredType]
-# CHECK-NEXT: v53: 3 = Integer integer=3
-# CHECK-NEXT: v54: int[-2147483640, 2147483650] = Add v52, v53
-# CHECK-NEXT: v55: boolean = TypeTest v54 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v55 -> taken b19(), notTaken b20()
-# CHECK-NEXT: b19() frequency=Unlikely handler=b36():
-# CHECK-NEXT: v56: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=25 receivers=[L2, ..]
+# CHECK-NEXT: Rethrow v44
+# CHECK-NEXT: b15() frequency=Unlikely handler=b30():
+# CHECK-NEXT: v46: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=4 receivers=[L2]
+# CHECK-NEXT: v47: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=5 receivers=[L2]
+# CHECK-NEXT: v48: L2 = RequireObjectCoercible v18 name="n"
+# CHECK-NEXT: v49: boolean = IsSlotFilled v48 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v49 -> taken b16(| 0), notTaken b19(v48)
+# CHECK-NEXT: b16(v50: guard) frequency=Unlikely handler=b30():
+# CHECK-NEXT: v51: int[-2147483643, 2147483647] = GetSlot v48, v50 key="n" receivers=[L2] level=Expected accessSite=7 [holdsDeclaredType]
+# CHECK-NEXT: v52: 3 = Integer integer=3
+# CHECK-NEXT: v53: int[-2147483640, 2147483650] = Add v51, v52
+# CHECK-NEXT: v54: boolean = TypeTest v53 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v54 -> taken b17(), notTaken b18()
+# CHECK-NEXT: b17() frequency=Unlikely handler=b30():
+# CHECK-NEXT: v55: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=25 receivers=[L2, ..]
 # CHECK-NEXT: PutSlot v12, v11, v12 key="a" receivers=[L2] level=Expected accessSite=27
-# CHECK-NEXT: v58: "s." = String string="s."
-# CHECK-NEXT: v59: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=28 receivers=[L2, ..]
-# CHECK-NEXT: v60: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v59 provenType=undefined|int
-# CHECK-NEXT: v61: string = Add v58, v60
-# CHECK-NEXT: v62: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=30 receivers=[L2, ..]
-# CHECK-NEXT: Jump -> next b23(v61)
-# CHECK-NEXT: b20() frequency=Unlikely handler=b36():
-# CHECK-NEXT: Jump -> next b22()
-# CHECK-NEXT: b21(v63: L2) frequency=Unlikely handler=b36():
-# CHECK-NEXT: v64: anything ~ int[-2147483643, 2147483647] = PropGet v63 key="n" accessSite=7 receivers=[L2]
-# CHECK-NEXT: v65: anything ~ int[-2147483643, 2147483647] = PropGet v63 key="n" accessSite=9 receivers=[L2]
-# CHECK-NEXT: Jump -> next b22()
-# CHECK-NEXT: b22() frequency=Unlikely handler=b36():
-# CHECK-NEXT: v66: undefined = CallDirect v12 function=f18
-# CHECK-NEXT: v67: i32 = ResultAt v66
-# CHECK-NEXT: v68: string = ResultAt v66 index=1
-# CHECK-NEXT: Switch v67 cases=[1] -> case b39(), otherwise b40()
-# CHECK-NEXT: b23(v69: string):
-# CHECK-NEXT: v70: boolean = IsSlotFilled v12 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v70 -> taken b24(| 0), notTaken b30()
-# CHECK-NEXT: b24(v71: guard):
-# CHECK-NEXT: v72: boolean = IsSlotFilled v12 key="a" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v72 -> taken b25(| 0), notTaken b31()
-# CHECK-NEXT: b25(v73: guard) handler=b36():
-# CHECK-NEXT: PutSlot v12, v73, v12 key="a" receivers=[L2] level=Expected accessSite=27
-# CHECK-NEXT: v75: "s." = String string="s."
-# CHECK-NEXT: v76: int[-2147483643, 2147483647] = GetSlot v12, v71 key="n" receivers=[L2] level=Expected accessSite=28 [holdsDeclaredType]
-# CHECK-NEXT: v77: string = Add v75, v76
-# CHECK-NEXT: v78: 3 = Integer integer=3
-# CHECK-NEXT: v79: int[-2147483640, 2147483650] = Add v76, v78
-# CHECK-NEXT: v80: boolean = TypeTest v79 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v80 -> taken b26(), notTaken b32(v77)
-# CHECK-NEXT: b26() handler=b36():
-# CHECK-NEXT: v81: string = Upcast v69 castType=string
-# CHECK-NEXT: v82: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v57: "s." = String string="s."
+# CHECK-NEXT: v58: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=28 receivers=[L2, ..]
+# CHECK-NEXT: v59: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v58 provenType=undefined|int
+# CHECK-NEXT: v60: string = Add v57, v59
+# CHECK-NEXT: v61: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=30 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b21(v60)
+# CHECK-NEXT: b18() frequency=Unlikely handler=b30():
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b19(v62: L2) frequency=Unlikely handler=b30():
+# CHECK-NEXT: v63: anything ~ int[-2147483643, 2147483647] = PropGet v62 key="n" accessSite=7 receivers=[L2]
+# CHECK-NEXT: v64: anything ~ int[-2147483643, 2147483647] = PropGet v62 key="n" accessSite=9 receivers=[L2]
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b20() frequency=Unlikely handler=b30():
+# CHECK-NEXT: v65: undefined = CallDirect v12 function=f18
+# CHECK-NEXT: v66: i32 = ResultAt v65
+# CHECK-NEXT: v67: string = ResultAt v65 index=1
+# CHECK-NEXT: Switch v66 cases=[1] -> case b33(), otherwise b34()
+# CHECK-NEXT: b21(v68: string):
+# CHECK-NEXT: v69: boolean = IsSlotFilled v12 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v69 -> taken b22(| 0), notTaken b24()
+# CHECK-NEXT: b22(v70: guard):
+# CHECK-NEXT: v71: boolean = IsSlotFilled v12 key="a" receivers=[L2] level=Expected
+# CHECK-NEXT: Branch v71 -> taken b23(| 0), notTaken b25()
+# CHECK-NEXT: b23(v72: guard) handler=b30():
+# CHECK-NEXT: PutSlot v12, v72, v12 key="a" receivers=[L2] level=Expected accessSite=27
+# CHECK-NEXT: v74: "s." = String string="s."
+# CHECK-NEXT: v75: int[-2147483643, 2147483647] = GetSlot v12, v70 key="n" receivers=[L2] level=Expected accessSite=28 [holdsDeclaredType]
+# CHECK-NEXT: v76: string = Add v74, v75
+# CHECK-NEXT: Jump -> next b26(v76)
+# CHECK-NEXT: b24() frequency=Unlikely handler=b30():
+# CHECK-NEXT: v77: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=25 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b25() frequency=Unlikely handler=b30():
+# CHECK-NEXT: PropSet v12, v12 key="a" accessSite=27 receivers=[L2, ..]
+# CHECK-NEXT: v79: "s." = String string="s."
+# CHECK-NEXT: v80: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=28 receivers=[L2, ..]
+# CHECK-NEXT: v81: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v80 provenType=undefined|int
+# CHECK-NEXT: v82: string = Add v79, v81
+# CHECK-NEXT: v83: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=30 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b26(v82)
+# CHECK-NEXT: b26(v84: string) handler=b30():
+# CHECK-NEXT: v85: string = Upcast v68 castType=string
+# CHECK-NEXT: v86: i32 = StringBuilderCheckpoint v1
 # CHECK-NEXT: Jump -> next b27()
 # CHECK-NEXT: b27() handler=b29():
-# CHECK-NEXT: StringBuilderAppend v1, v81, v77
+# CHECK-NEXT: StringBuilderAppend v1, v85, v84
 # CHECK-NEXT: Jump -> next b28()
-# CHECK-NEXT: b28() handler=b36():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b29() role=CleanupHandler frequency=Rare handler=b36():
-# CHECK-NEXT: v84: exception = CatchException
-# CHECK-NEXT: StringBuilderRollBack v1, v82
-# CHECK-NEXT: Rethrow v84
-# CHECK-NEXT: b30() frequency=Unlikely handler=b36():
-# CHECK-NEXT: v86: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=25 receivers=[L2, ..]
+# CHECK-NEXT: b28() handler=b30():
 # CHECK-NEXT: Jump -> next b31()
-# CHECK-NEXT: b31() frequency=Unlikely handler=b36():
-# CHECK-NEXT: PropSet v12, v12 key="a" accessSite=27 receivers=[L2, ..]
-# CHECK-NEXT: v88: "s." = String string="s."
-# CHECK-NEXT: v89: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=28 receivers=[L2, ..]
-# CHECK-NEXT: v90: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v89 provenType=undefined|int
-# CHECK-NEXT: v91: string = Add v88, v90
-# CHECK-NEXT: v92: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="n" accessSite=30 receivers=[L2, ..]
-# CHECK-NEXT: Jump -> next b32(v91)
-# CHECK-NEXT: b32(v93: string) frequency=Unlikely handler=b36():
-# CHECK-NEXT: v94: string = Upcast v69 castType=string
-# CHECK-NEXT: v95: i32 = StringBuilderCheckpoint v1
-# CHECK-NEXT: Jump -> next b33()
-# CHECK-NEXT: b33() frequency=Unlikely handler=b35():
-# CHECK-NEXT: StringBuilderAppend v1, v94, v93
-# CHECK-NEXT: Jump -> next b34()
-# CHECK-NEXT: b34() frequency=Unlikely handler=b36():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b35() role=CleanupHandler frequency=Rare handler=b36():
-# CHECK-NEXT: v97: exception = CatchException
-# CHECK-NEXT: StringBuilderRollBack v1, v95
-# CHECK-NEXT: Rethrow v97
-# CHECK-NEXT: b36() role=CatchHandler:
-# CHECK-NEXT: v99: anything = CatchValue
-# CHECK-NEXT: v100: anything = PropGet v99 key="name" accessSite=17
-# CHECK-NEXT: v101: anything = PropGet v100 key="length" accessSite=18
-# CHECK-NEXT: v102: "" = String string=""
-# CHECK-NEXT: v103: string = Add v102, v101
-# CHECK-NEXT: StringBuilderAppend v1, v103
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b37():
-# CHECK-NEXT: v105: int[1, 300] = Increment v6
-# CHECK-NEXT: Jump -> next b1(v105)
-# CHECK-NEXT: b38():
-# CHECK-NEXT: v106: int[0, 2147483647] = StringBuilderLength v1
-# CHECK-NEXT: v107: -20 = Integer integer=-20
-# CHECK-NEXT: v108: undefined = StringRange v106, v107
-# CHECK-NEXT: v109: int[0, 2147483647] = ResultAt v108
-# CHECK-NEXT: v110: int[0, 2147483647] = ResultAt v108 index=1
-# CHECK-NEXT: v111: string = StringBuilderFinish v1
-# CHECK-NEXT: v112: string = Substring v111, v109, v110
-# CHECK-NEXT: v113: undefined = CallBuiltin -, v106, v112 overload=ConsoleLog/0 accessSite=24
-# CHECK-NEXT: v114: undefined = Undefined
-# CHECK-NEXT: Return v114
-# CHECK-NEXT: b39() frequency=Unlikely handler=b36():
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b40() frequency=Rare handler=b36():
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b41() frequency=Unlikely handler=b36():
-# CHECK-NEXT: Jump -> next b23(v68)
+# CHECK-NEXT: b29() role=CleanupHandler frequency=Rare handler=b30():
+# CHECK-NEXT: v88: exception = CatchException
+# CHECK-NEXT: StringBuilderRollBack v1, v86
+# CHECK-NEXT: Rethrow v88
+# CHECK-NEXT: b30() role=CatchHandler:
+# CHECK-NEXT: v90: anything = CatchValue
+# CHECK-NEXT: v91: anything = PropGet v90 key="name" accessSite=17
+# CHECK-NEXT: v92: anything = PropGet v91 key="length" accessSite=18
+# CHECK-NEXT: v93: "" = String string=""
+# CHECK-NEXT: v94: string = Add v93, v92
+# CHECK-NEXT: StringBuilderAppend v1, v94
+# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v96: int[1, 300] = Increment v6
+# CHECK-NEXT: Jump -> next b1(v96)
+# CHECK-NEXT: b32():
+# CHECK-NEXT: v97: int[0, 2147483647] = StringBuilderLength v1
+# CHECK-NEXT: v98: -20 = Integer integer=-20
+# CHECK-NEXT: v99: undefined = StringRange v97, v98
+# CHECK-NEXT: v100: int[0, 2147483647] = ResultAt v99
+# CHECK-NEXT: v101: int[0, 2147483647] = ResultAt v99 index=1
+# CHECK-NEXT: v102: string = StringBuilderFinish v1
+# CHECK-NEXT: v103: string = Substring v102, v100, v101
+# CHECK-NEXT: v104: undefined = CallBuiltin -, v97, v103 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: v105: undefined = Undefined
+# CHECK-NEXT: Return v105
+# CHECK-NEXT: b33() frequency=Unlikely handler=b30():
+# CHECK-NEXT: Jump -> next b35()
+# CHECK-NEXT: b34() frequency=Rare handler=b30():
+# CHECK-NEXT: Jump -> next b35()
+# CHECK-NEXT: b35() frequency=Unlikely handler=b30():
+# CHECK-NEXT: Jump -> next b21(v67)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="link"
 # CHECK: module=m0 position=343 role=ResultWrapper flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|int|L2|f5 flags=[IsExpected]}, {type=undefined|int|L2|f4|f5}, {type=undefined|int|L2|f5}] results=[{type=L2}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f11 layout=L2} inlineFrames=[{}, {callee=f11 callPosition=343 module=m0}] {

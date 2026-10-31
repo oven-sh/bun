@@ -682,7 +682,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="titleOr"
-# CHECK: module=m0 position=974 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="ab" site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=974 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="ab" site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type="ab" site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: "ab"):
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
@@ -741,7 +741,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Card"
-# CHECK: module=m0 position=2048 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] constructedClass=L0 inlineFrames=[{}, {callee=f30 callPosition=4294967295 module=m0}] {
+# CHECK: module=m0 position=2048 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] constructedClass=L0 inlineFrames=[{}, {callee=f30 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 # CHECK-NEXT: v3: null|object = GetSuperBase v0
 # CHECK-NEXT: v4: object ~ L0 = SuperConstructList v3, v1, v2 layout=L0 accessSite=41

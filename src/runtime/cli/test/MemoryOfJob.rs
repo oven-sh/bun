@@ -29,11 +29,11 @@ fn read_number(path: &[u8]) -> Option<u64> {
     strings::parse_int::<u64>(text.trim_ascii(), 10).ok()
 }
 
-/// The least limit among the control group of the process and those above it, and the folder of the group that has it.
+/// The least limit among the control group of the process and those above it.
 #[cfg(target_os = "linux")]
-pub(crate) fn limit_of_control_groups() -> Option<(u64, Vec<u8>)> {
+fn limit_of_control_groups() -> Option<u64> {
     let groups = File::read_from(Fd::cwd(), b"/proc/self/cgroup").ok()?;
-    let mut least: Option<(u64, Vec<u8>)> = None;
+    let mut least: Option<u64> = None;
     for line in strings::split(&groups, b"\n") {
         // "0::/user.slice/run.scope", and in the older form "9:memory:/docker/abc".
         let Some((_, rest)) = strings::split_once_char(line, b':') else {
@@ -50,11 +50,8 @@ pub(crate) fn limit_of_control_groups() -> Option<(u64, Vec<u8>)> {
         let mut group = group.trim_ascii_end();
         loop {
             group = group.strip_suffix(b"/").unwrap_or(group);
-            if let Some(limit) = read_number(&[root, group, file].concat())
-                && least.as_ref().is_none_or(|(least, _)| limit < *least)
-            {
-                least = Some((limit, [root, group].concat()));
-            }
+            let limit = read_number(&[root, group, file].concat());
+            least = [least, limit].into_iter().flatten().min();
             let Some(slash) = strings::last_index_of_char(group, b'/') else {
                 break;
             };
@@ -73,7 +70,7 @@ fn free_memory_of_machine() -> Option<u64> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn limit_of_control_groups() -> Option<(u64, Vec<u8>)> {
+fn limit_of_control_groups() -> Option<u64> {
     None
 }
 
@@ -87,6 +84,6 @@ pub(crate) fn find(told: Option<u64>) -> u64 {
     told.unwrap_or_else(|| {
         let free =
             free_memory_of_machine().unwrap_or_else(|| bun_core::get_total_memory_size() as u64);
-        limit_of_control_groups().map_or(free, |(limit, _)| limit.min(free))
+        limit_of_control_groups().map_or(free, |limit| limit.min(free))
     })
 }

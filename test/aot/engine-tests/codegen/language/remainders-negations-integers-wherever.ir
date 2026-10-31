@@ -3836,48 +3836,56 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v3: int ~ i32 = Upcast v1 castType=int
 # CHECK-NEXT: Jump -> next b1(v2, v3)
 # CHECK-NEXT: b1(v4: int ~ i32, v5: int ~ i32):
-# CHECK-NEXT: Jump -> next b2(v4, v5)
-# CHECK-NEXT: b2(v6: int ~ i32, v7: int|whole ~ i32):
+# CHECK-NEXT: v6: int ~ i32 = Upcast v5 castType=int|whole
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=i32
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b7(v6, v7)
-# CHECK-NEXT: b3(v10: i32):
-# CHECK-NEXT: v11: boolean = ToBoolean v10
-# CHECK-NEXT: Branch v11 -> taken b4(), notTaken b6()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v12: boolean ~ true = TypeTest v6 testedType=i32
-# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b9(v6, v10)
-# CHECK-NEXT: b5(v13: i32):
-# CHECK-NEXT: v14: int[-2147483647, 2147483647]|whole = Mod v13, v10
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=i32
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b8(v4, v6)
+# CHECK-NEXT: b2(v9: i32):
+# CHECK-NEXT: v10: boolean = ToBoolean v9
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b7(v4)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v11: boolean ~ true = TypeTest v4 testedType=i32
+# CHECK-NEXT: Branch v11 -> taken b4(v9 | 0), notTaken b10(v4, v9)
+# CHECK-NEXT: b4(v12: i32, v13: i32):
+# CHECK-NEXT: v14: int[-2147483647, 2147483647]|whole = Mod v13, v12
 # CHECK-NEXT: v15: int[-2147483647, 2147483647]|whole ~ int[-2147483647, 2147483647] = Upcast v14 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v10, v15)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b7(v16: int|whole ~ i32, v17: int|whole ~ i32) frequency=Rare:
-# CHECK-NEXT: v18: boolean = ToBoolean v17
-# CHECK-NEXT: Branch v18 -> taken b8(), notTaken b15()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: Jump -> next b9(v16, v17)
-# CHECK-NEXT: b9(v19: int|whole ~ i32, v20: int|whole ~ i32) frequency=Rare:
-# CHECK-NEXT: v21: int|whole ~ int[-2147483647, 2147483647]|whole = Mod v19, v20
-# CHECK-NEXT: v22: int|whole ~ i32 = Upcast v20 castType=int|whole
-# CHECK-NEXT: v23: int|whole ~ int[-2147483647, 2147483647] = Upcast v21 castType=int|whole
-# CHECK-NEXT: v24: boolean ~ true = TypeTest v22 testedType=i32
-# CHECK-NEXT: Branch v24 -> taken b10(| 0), notTaken b13()
-# CHECK-NEXT: b10(v25: i32) frequency=Rare:
-# CHECK-NEXT: v26: boolean ~ true = TypeTest v23 testedType=i32
-# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b12()
-# CHECK-NEXT: b11(v27: i32 ~ int[-2147483647, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v25, v27)
-# CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v16: i32 = Upcast v12 castType=int
+# CHECK-NEXT: v17: int[-2147483647, 2147483647]|whole ~ int[-2147483647, 2147483647] = Upcast v15 castType=int|whole
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b7(v22, v23)
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v17 testedType=i32
+# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b8(v16, v17)
+# CHECK-NEXT: b5(v20: int[-2147483647, 2147483647]):
+# CHECK-NEXT: v21: boolean = ToBoolean v20
+# CHECK-NEXT: Branch v21 -> taken b6(), notTaken b7(v16)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Jump -> next b4(v20, v16)
+# CHECK-NEXT: b7(v22: int ~ i32):
+# CHECK-NEXT: Return v22
+# CHECK-NEXT: b8(v23: int|whole ~ i32, v24: int|whole ~ i32) frequency=Rare:
+# CHECK-NEXT: v25: boolean = ToBoolean v24
+# CHECK-NEXT: Branch v25 -> taken b9(), notTaken b16()
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: Jump -> next b10(v23, v24)
+# CHECK-NEXT: b10(v26: int|whole ~ i32, v27: int|whole ~ i32) frequency=Rare:
+# CHECK-NEXT: v28: int|whole ~ int[-2147483647, 2147483647]|whole = Mod v26, v27
+# CHECK-NEXT: v29: int|whole ~ i32 = Upcast v27 castType=int|whole
+# CHECK-NEXT: v30: int|whole ~ int[-2147483647, 2147483647] = Upcast v28 castType=int|whole
+# CHECK-NEXT: v31: boolean ~ true = TypeTest v29 testedType=i32
+# CHECK-NEXT: Branch v31 -> taken b11(| 0), notTaken b14()
+# CHECK-NEXT: b11(v32: i32) frequency=Rare:
+# CHECK-NEXT: v33: boolean ~ true = TypeTest v30 testedType=i32
+# CHECK-NEXT: Branch v33 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v34: i32 ~ int[-2147483647, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v32, v34)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b8(v29, v30)
+# CHECK-NEXT: b16() frequency=Rare:
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Holder"
 # CHECK: module=m0 position=830 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f8 callPosition=830 module=m0}] {

@@ -136,10 +136,10 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
-/// BunCompiledModules.cpp. Zero: there is no such file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__stampOfFile(path: &bun_core::String) -> u64 {
-    let Ok(stat) = bun_sys::stat(&bun_core::ZBox::from_bytes(path.to_utf8().slice())) else {
+pub unsafe extern "C" fn Bun__AOT__stampOfFile(path: *const u8, length: usize) -> u64 {
+    // SAFETY: see above.
+    let Ok(stat) = bun_sys::stat(unsafe { bun_core::ZStr::from_raw(path, length) }) else {
         return 0;
     };
     let stat = bun_sys::PosixStat::init(&stat);

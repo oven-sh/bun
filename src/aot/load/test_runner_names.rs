@@ -21,6 +21,11 @@ const MODULES_OF_TEST_RUNNERS: [&[u8]; 3] = [MODULE, b"@jest/globals", b"vitest"
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
 
+/// `jest` for the name that stands in its place in a file that got the import, as a message quotes it. Any other name unchanged.
+pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
+    name.strip_prefix(LOCAL_NAME_PREFIX).unwrap_or(name)
+}
+
 fn loads_test_runner(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -> bool {
     let mut sites = request.analysis.import_sites.iter();
     sites.any(|site| match site.specifier {

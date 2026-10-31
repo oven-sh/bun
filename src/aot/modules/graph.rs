@@ -21,7 +21,7 @@ use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::SymbolId;
+use bun_sema::bind::{MemberStores, SymbolId};
 use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
@@ -29,6 +29,7 @@ use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 use core::ops::Range;
+use std::sync::OnceLock;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum StoredSiteAnswer {
@@ -63,6 +64,8 @@ pub struct ModuleGraph {
     pub(super) wrapped: WrappedModules,
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
+    /// By file.
+    pub(super) member_stores: Vec<OnceLock<MemberStores>>,
 }
 
 const fn assert_send_and_sync<T: Send + Sync + 'static>() {}

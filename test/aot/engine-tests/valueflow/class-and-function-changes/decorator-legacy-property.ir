@@ -213,7 +213,7 @@ runtimefunction id=DecoratorsDecorateProperty function=f10
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
 # CHECK-NEXT: v1: f2 = GetModuleVariable variable=g0
 # CHECK-NEXT: v2: f2 = FinishClass v1 layout=L0
-# CHECK-NEXT: v3: Array<f1, Contiguous> = NewArray v0 contents=f1 allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v3: Array<f1, Contiguous> = NewArray v0 contents=f1 allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v4: Array<f1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<f1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v5: anything = PropGet v2 key="prototype" accessSite=0
 # CHECK-NEXT: v6: object = AssumeType v5 provenType=object

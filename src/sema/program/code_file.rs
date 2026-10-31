@@ -52,6 +52,7 @@ pub(super) struct LoadInputs<'a, 's> {
     pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
+    pub(super) texts_of_data_files: &'a [TextOfDataFile],
 }
 
 pub(super) fn load_code_file<'s, 'r>(
@@ -59,7 +60,7 @@ pub(super) fn load_code_file<'s, 'r>(
     arena: &'s Arena,
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
-    inputs: LoadInputs<'_, 's>,
+    inputs: &LoadInputs<'_, 's>,
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -67,12 +68,13 @@ pub(super) fn load_code_file<'s, 'r>(
         ref atoms,
         ..
     } = context;
-    let LoadInputs {
+    let &LoadInputs {
         is_called_before_it_runs,
         stored_by_mocks,
         is_only_imported,
         imported_requires,
         imported_constants,
+        texts_of_data_files,
     } = inputs;
     let key = target.key;
     let path = key.path;
@@ -82,6 +84,8 @@ pub(super) fn load_code_file<'s, 'r>(
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
     tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
+    tree.hir.texts_of_data_files =
+        ArenaFew::from_iter_in(texts_of_data_files.iter().copied(), arena);
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,

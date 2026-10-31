@@ -651,6 +651,7 @@ pub(super) fn link_units(
         projects: *projects,
         limits: &limits,
         reports_type_mismatches: false,
+        has_programs_below: false,
         in_parallel,
         beside: &run_one_after_the_other,
     })

@@ -161,7 +161,7 @@ impl Resolver<'_, '_> {
     pub(super) fn expose_commonjs_variable(&mut self, variable: CommonJsVariable) {
         if let Some(path) = self.commonjs.get(variable) {
             self.exposes_own_module_object |= path.id == BuiltinId::ModuleObject;
-            self.output.mentioned.push(path.id);
+            self.mention(path.id);
             self.expose(path.id);
         }
     }

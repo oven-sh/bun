@@ -53,6 +53,7 @@ fn lower_files(files: &[(&str, &str)]) -> LoweredFiles {
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
+        imports_are_untyped: false,
     };
     LoweredFiles(lower_program(files, options))
 }

@@ -21,7 +21,7 @@ use bun_sema::import_sites::{
 };
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId};
-use bun_sema::resolve::ExternalKind;
+use bun_sema::resolve::{ExternalKind, is_declaration_file_name};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::TextLocator;
 use bun_sema_driver::host::to_native;
@@ -68,6 +68,34 @@ pub(crate) struct WorkerFile {
 }
 
 impl WorkerFile {
+    /// `require(require("./config.json").plugin)`: a file of code that the program names by a path which stands in a file of data.
+    pub(crate) fn named_by_data(
+        paths: &PathOptions,
+        loaders: &[(Vec<u8>, Loader)],
+        runs_in_place: bool,
+        path: &[u8],
+    ) -> Option<WorkerFile> {
+        let is_code = loader_named_by_path(loaders, path)
+            .is_some_and(|loader| script_kind_of(loader).is_some());
+        if !is_code || is_host_path(path) || is_declaration_file_name(path) {
+            return None;
+        }
+        let native_path = to_native(path);
+        let name = compute_relative_path(&paths.root_directory, native_path)?;
+        Some(WorkerFile {
+            source_path: source_path_of(path),
+            embedded_path: match runs_in_place {
+                true => native_path.to_vec(),
+                false => [&paths.module_prefix[..], &name[..]].concat(),
+            },
+            is_guess: false,
+            has_options: false,
+            started_at: None,
+            text: None,
+            is_named_by_path: true,
+        })
+    }
+
     pub(crate) fn entry_text(&self) -> Option<EntryText> {
         let (contents, loader) = self.text.clone()?;
         let is_loader = |it: &&Loader| **it as u8 == loader;
@@ -1834,6 +1862,13 @@ impl Walk<'_, '_> {
         }
         match (name, self.is_url(file, object)) {
             (b"href", true) => self.find_text(file, object),
+            // As it is written in the URL: what stands there as `%20` stands so in the path too.
+            (b"pathname", true) => {
+                let url = self.find_text(file, object)?;
+                let written = url.strip_prefix(b"file://")?;
+                let is_whole = strings::index_of_any(written, b"?#").is_none();
+                (written.starts_with(b"/") && is_whole).then(|| written.to_vec())
+            }
             _ => None,
         }
     }

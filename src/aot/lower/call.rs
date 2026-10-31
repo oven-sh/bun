@@ -18,7 +18,8 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::{Intrinsic, Resolved, builtin_value_of};
 use crate::ir::generated::{BlockFrequency, TypeSiteKind};
 use crate::ir::{
-    DeclaredType, ExpectedResultId, PropertyKeyId, StringId, Type, TypeTable, ValueId,
+    DeclaredType, ExpectedResultId, Mapped, PositionFlags, PropertyKeyId, StringId, Type,
+    TypeTable, ValueId,
 };
 
 pub(in crate::lower) use self::callee::PrintedOperators;
@@ -434,6 +435,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     position: self.file.hir[call].pos,
                 };
                 self.file.create_position(target.result, origin)
+            }
+            Ok(None) | Err(_) if self.file.expects_int32_from_untyped_import(call) => {
+                let int32 = Mapped::checked(TypeTable::INT32);
+                DeclaredType::new(int32, None, PositionFlags::default())
             }
             Ok(None) | Err(_) => DeclaredType::untyped(),
         }

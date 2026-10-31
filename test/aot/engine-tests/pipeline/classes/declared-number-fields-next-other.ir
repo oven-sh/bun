@@ -138,7 +138,7 @@ layout L2 kind=Instance name="Alone" module=m0 position=1036 base=L0 constructor
 layout L3 kind=Instance name="WithList" module=m0 position=1138 base=L0 constructor=f5 fields=[{key="list" declared={type=undefined|null|Array<number> site=w9 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="n" declared={type=number site=w10} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=2
 layout L4 kind=Instance name="WithPrivate" module=m0 position=1510 base=L0 constructor=f6 fields=[{key=#"#"@L4 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L4 declared={type=number site=w13} flags=[IsRequired, IsPrivate]}, {key="n" declared={type=number site=w14} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=3
 layout L5 kind=Instance name="WithComputed" module=m0 position=1804 constructor=f8 fields=[{key="n" declared={type=number site=w19} flags=[IsRequired]}, {key=symbol("key")@m0:5 declared={type=number site=w20} flags=[IsRequired]}] ownFieldCount=2
-layout L6 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w35}}] ownFieldCount=1
+layout L6 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w35} variableName="made"}] ownFieldCount=1
 layout L7 kind=Instance name="WithCounter" module=m0 position=1320 base=L0 constructor=f9 fields=[{key="order" declared={type=number site=w28} flags=[IsRequired]}, {key="n" declared={type=number site=w29} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=2
 data d0 root=Array{contents=number} module=m0
 variable g0 name="Base" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
@@ -651,7 +651,7 @@ function f16 module=m0 position=1320 kind=Initializer flags=[HasThis, IsChecked,
     v15 = Undefined @1320
     Return v15 @1320
 }
-function f17 name="on" module=m0 position=1708 kind=Arrow flags=[IsChecked] captures=[{type=L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w43}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f17 name="on" module=m0 position=1708 kind=Arrow flags=[IsChecked] captures=[{type=L1 flags=[IsFromCompiler] variableName="this"}] thisType={type=anything} results=[{type=number site=w43}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L1):
     Jump -> next b1() @1708
   b1():
@@ -685,65 +685,65 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: int[0, 9007199254740992] ~ int[0, 2147483647] = GetModuleVariable fact=v12 variable=g9
 # CHECK-NEXT: v14: int[0, 9007199254740992] ~ int[0, 2147483647] = ToNumeric v13
 # CHECK-NEXT: v15: boolean ~ true = TypeTest v14 testedType=i32
-# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b2(v3, v4, v11, v14 | 0)
+# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b2(v3, v4, v11 | 0)
 # CHECK-NEXT: b1(v16: int[0, 2147483647]):
 # CHECK-NEXT: v17: int[1, 2147483648] = Increment v16
 # CHECK-NEXT: PutModuleVariable v17 variable=g9
 # CHECK-NEXT: v19: int[0, 2147483647] = Add v4, v16
 # CHECK-NEXT: v20: int[0, 6442450942] = Add v11, v19
 # CHECK-NEXT: Jump -> next b3(v20, v3, v4, v17)
-# CHECK-NEXT: b2(v21: int[0, 99], v22: int[0, 15], v23: int|whole, v24: int[0, 9007199254740992] ~ int[0, 2147483647], v25: int[2147483648, 9007199254740992]) frequency=Rare:
-# CHECK-NEXT: v26: int|whole = Increment v25
-# CHECK-NEXT: v27: int[1, 9007199254740992] = AssumeType v26 provenType=int[1, 9007199254740992]
-# CHECK-NEXT: PutModuleVariable v27 variable=g9
-# CHECK-NEXT: v29: int|whole ~ int[0, 2147483662] = Add v22, v24
-# CHECK-NEXT: v30: int|whole = Add v23, v29
-# CHECK-NEXT: Jump -> next b3(v30, v21, v22, v27)
-# CHECK-NEXT: b3(v31: int|whole ~ int[0, 6442450942], v32: int[0, 99] ~ 0, v33: int[0, 15] ~ 0, v34: int[1, 9007199254740992] ~ int[1, 2147483647]):
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[1, 16] ~ 1 = Add v33, v35
-# CHECK-NEXT: v37: int|whole ~ int[1, 6442450943] = Add v31, v36
-# CHECK-NEXT: v38: int[0, 30] ~ 0 = Add v33, v33
-# CHECK-NEXT: v39: int|whole ~ int[1, 6442450943] = Add v37, v38
-# CHECK-NEXT: v40: int|whole ~ int[2, 6442450944] = Add v39, v36
-# CHECK-NEXT: v41: int[1, 100] ~ 1 = Increment v32
-# CHECK-NEXT: v42: int[1, 9007199254740992] ~ int[1, 2147483647] = Upcast v34 castType=int[0, 9007199254740992]
-# CHECK-NEXT: Jump -> next b4(v40, v41, v42)
-# CHECK-NEXT: b4(v43: int|whole, v44: int[1, 100], v45: int[1, 9007199254740992] ~ int[1, 2147483647]):
+# CHECK-NEXT: b2(v21: int[0, 99], v22: int[0, 15], v23: int|whole, v24: int[2147483648, 9007199254740992]) frequency=Rare:
+# CHECK-NEXT: v25: int|whole = Increment v24
+# CHECK-NEXT: v26: int[1, 9007199254740992] = AssumeType v25 provenType=int[1, 9007199254740992]
+# CHECK-NEXT: PutModuleVariable v26 variable=g9
+# CHECK-NEXT: v28: int|whole = Add v22, v24
+# CHECK-NEXT: v29: int|whole = Add v23, v28
+# CHECK-NEXT: Jump -> next b3(v29, v21, v22, v26)
+# CHECK-NEXT: b3(v30: int|whole ~ int[0, 6442450942], v31: int[0, 99] ~ 0, v32: int[0, 15] ~ 0, v33: int[1, 9007199254740992] ~ int[1, 2147483647]):
+# CHECK-NEXT: v34: 1 = Integer integer=1
+# CHECK-NEXT: v35: int[1, 16] ~ 1 = Add v32, v34
+# CHECK-NEXT: v36: int|whole ~ int[1, 6442450943] = Add v30, v35
+# CHECK-NEXT: v37: int[0, 30] ~ 0 = Add v32, v32
+# CHECK-NEXT: v38: int|whole ~ int[1, 6442450943] = Add v36, v37
+# CHECK-NEXT: v39: int|whole ~ int[2, 6442450944] = Add v38, v35
+# CHECK-NEXT: v40: int[1, 100] ~ 1 = Increment v31
+# CHECK-NEXT: v41: int[1, 9007199254740992] ~ int[1, 2147483647] = Upcast v33 castType=int[0, 9007199254740992]
+# CHECK-NEXT: Jump -> next b4(v39, v40, v41)
+# CHECK-NEXT: b4(v42: int|whole, v43: int[1, 100], v44: int[1, 9007199254740992] ~ int[1, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v47: 100 = Integer integer=100
-# CHECK-NEXT: v48: boolean = Less v44, v47
-# CHECK-NEXT: Branch v48 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v49: int[1, 99]):
-# CHECK-NEXT: v50: 15 = Integer integer=15
-# CHECK-NEXT: v51: int[0, 15] = BitAnd v49, v50
-# CHECK-NEXT: v52: int|whole = Add v43, v51
-# CHECK-NEXT: v53: Array<int[0, 15], Int32> = NewArray v51 contents=int[0, 15] allocationSite=14 arrayStorage=Int32 [contentsAreProven]
-# CHECK-NEXT: v54: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v55: 1 = Integer integer=1
-# CHECK-NEXT: v56: int[0, 4294967295] = CallBuiltin v54 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v57: int[0, 4294967310] = Add v51, v56
-# CHECK-NEXT: v58: int|whole = Add v52, v57
-# CHECK-NEXT: v59: int[1, 9007199254740992] ~ int[1, 2147483647] = ToNumeric v45
-# CHECK-NEXT: v60: boolean ~ true = TypeTest v59 testedType=i32
-# CHECK-NEXT: Branch v60 -> taken b6(| 0), notTaken b2(v49, v51, v58, v59 | 0)
-# CHECK-NEXT: b6(v61: int[1, 2147483647]):
-# CHECK-NEXT: v62: int[2, 2147483648] = Increment v61
-# CHECK-NEXT: PutModuleVariable v62 variable=g9
-# CHECK-NEXT: v64: int[1, 2147483662] = Add v51, v61
-# CHECK-NEXT: v65: int|whole = Add v58, v64
-# CHECK-NEXT: v66: 1 = Integer integer=1
-# CHECK-NEXT: v67: int[1, 16] = Add v51, v66
-# CHECK-NEXT: v68: int|whole = Add v65, v67
-# CHECK-NEXT: v69: int[0, 30] = Add v51, v51
-# CHECK-NEXT: v70: int|whole = Add v68, v69
-# CHECK-NEXT: v71: int|whole = Add v70, v67
-# CHECK-NEXT: v72: int[2, 100] = Increment v49
-# CHECK-NEXT: Jump -> next b4(v71, v72, v62)
+# CHECK-NEXT: v46: 100 = Integer integer=100
+# CHECK-NEXT: v47: boolean = Less v43, v46
+# CHECK-NEXT: Branch v47 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v48: int[1, 99]):
+# CHECK-NEXT: v49: 15 = Integer integer=15
+# CHECK-NEXT: v50: int[0, 15] = BitAnd v48, v49
+# CHECK-NEXT: v51: int|whole = Add v42, v50
+# CHECK-NEXT: v52: Array<int[0, 15], Int32> = NewArray v50 contents=int[0, 15] allocationSite=14 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v53: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v52 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v54: 1 = Integer integer=1
+# CHECK-NEXT: v55: int[0, 4294967295] = CallBuiltin v53 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v56: int[0, 4294967310] = Add v50, v55
+# CHECK-NEXT: v57: int|whole = Add v51, v56
+# CHECK-NEXT: v58: int[1, 9007199254740992] ~ int[1, 2147483647] = ToNumeric v44
+# CHECK-NEXT: v59: boolean ~ true = TypeTest v58 testedType=i32
+# CHECK-NEXT: Branch v59 -> taken b6(| 0), notTaken b2(v48, v50, v57 | 0)
+# CHECK-NEXT: b6(v60: int[1, 2147483647]):
+# CHECK-NEXT: v61: int[2, 2147483648] = Increment v60
+# CHECK-NEXT: PutModuleVariable v61 variable=g9
+# CHECK-NEXT: v63: int[1, 2147483662] = Add v50, v60
+# CHECK-NEXT: v64: int|whole = Add v57, v63
+# CHECK-NEXT: v65: 1 = Integer integer=1
+# CHECK-NEXT: v66: int[1, 16] = Add v50, v65
+# CHECK-NEXT: v67: int|whole = Add v64, v66
+# CHECK-NEXT: v68: int[0, 30] = Add v50, v50
+# CHECK-NEXT: v69: int|whole = Add v67, v68
+# CHECK-NEXT: v70: int|whole = Add v69, v66
+# CHECK-NEXT: v71: int[2, 100] = Increment v48
+# CHECK-NEXT: Jump -> next b4(v70, v71, v61)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v73: undefined = CallBuiltin -, v43 overload=ConsoleLog/0 accessSite=27
-# CHECK-NEXT: v74: undefined = Undefined
-# CHECK-NEXT: Return v74
+# CHECK-NEXT: v72: undefined = CallBuiltin -, v42 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v73: undefined = Undefined
+# CHECK-NEXT: Return v73
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeWithCounter"
 # CHECK: module=m0 position=1260 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=f9 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

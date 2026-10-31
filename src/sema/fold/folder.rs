@@ -258,6 +258,7 @@ impl<'s> Folder<'_, 's> {
                 expr,
                 constant,
                 checks_dead_zone,
+                is_known_to_bun_run: self.is_folded_by_bun_run(expr),
             });
         }
         constants

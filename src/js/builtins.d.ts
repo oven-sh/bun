@@ -288,11 +288,11 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
-declare function $requireCacheCompiledEntry(key?: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
+declare function $requireCacheCompiledEntry(key: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
 declare function $requireCacheDidDelete(key: string, requirer?: JSCommonJSModule): void;
 declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
 /** Without a key: does this process hide any file from require.cache? */
-declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;
+declare function $isHiddenFromRequireCache(key?: string | symbol): boolean | undefined;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;

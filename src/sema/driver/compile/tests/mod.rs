@@ -4,6 +4,7 @@ mod check;
 mod code_imports;
 mod file_walk;
 mod finish_and_order;
+mod first_look;
 mod governing_projects;
 mod inference_order;
 mod left_out_bodies;

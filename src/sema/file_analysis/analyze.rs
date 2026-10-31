@@ -117,6 +117,8 @@ fn create_analysis<'s>(
         answers_of_resolvers: scan.answers_of_resolvers,
         names_of_workers: scan.names_of_workers,
         paths_of_changed_files: scan.paths_of_changed_files,
+        asked_of_data_files: scan.asked_of_data_files,
+        names_out_of_data_files: scan.names_out_of_data_files,
         keys_stored_in_caches: scan.keys_stored_in_caches,
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,

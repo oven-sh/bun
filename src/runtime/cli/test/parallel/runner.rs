@@ -20,7 +20,6 @@ use super::coordinator::{Coordinator, StopReason, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::Parts;
-use super::reservation::Reservation;
 use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
@@ -105,12 +104,6 @@ pub(crate) fn run_as_coordinator(
         });
     }
     let runs_compiled_code = splits_files || crate::cli::run_compiled::runs_compiled_code();
-    let reservation = (ctx.test_options.aot_memory_limit)
-        .filter(|_| runs_compiled_code)
-        .map(|limit| Reservation::new(limit, k as usize));
-    if let (Some(reservation), Some(timings)) = (&reservation, reporter.timings.as_mut()) {
-        timings.heavy_over = reservation.share_of_worker();
-    }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
@@ -211,8 +204,6 @@ pub(crate) fn run_as_coordinator(
     let room_beside_heavy_files = (reporter.timings.as_ref()).map_or(0, |t| {
         t.growth_of_average_files(&sorted, k.saturating_sub(1))
     });
-    let growth_of_running_light_file =
-        (reporter.timings.as_ref()).map_or(0, |t| t.growth_of_running_light_file(&sorted));
     let heavy_files_to_hand_out = (reporter.timings.as_ref()).map_or(0, |t| {
         sorted
             .iter()
@@ -236,13 +227,10 @@ pub(crate) fn run_as_coordinator(
         workers: &mut workers,
         parallel_limit: k,
         keeps_heavy_files_apart: runs_compiled_code,
-        // With a limit as well: what a file without a record takes says what the next one may take.
         children_of_workers: (cfg!(target_os = "linux")
-            && (ctx.test_options.update_timings || reservation.is_some())
+            && ctx.test_options.update_timings
             && runs_compiled_code)
             .then(Default::default),
-        reservation,
-        growth_of_running_light_file,
         room_for_heavy_files,
         room_beside_heavy_files,
         heavy_files_to_hand_out,
@@ -686,7 +674,6 @@ impl WorkerCommands {
             wf.u32(growth.of_worker);
             wf.u32(growth.largest_child);
             wf.u32(growth.peak);
-            wf.u32(growth.rest);
             wf.u32(match vm.exit_handler.exit_code {
                 code if code == file.exit_code_before => 0,
                 code => u32::from(code) + 1,
@@ -765,6 +752,9 @@ impl<'a> WorkerLoop<'a> {
         self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
+            // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
+            let mut waits_for_command = bun_io::KeepAlive::init();
+            waits_for_command.ref_(bun_io::js_vm_ctx());
             while self.cmds.pending_file.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
                 if self.cmds.pending_file.is_some() || self.cmds.done {
@@ -772,6 +762,7 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop_ref().auto_tick();
             }
+            waits_for_command.unref(bun_io::js_vm_ctx());
             let Some(PendingFile {
                 idx,
                 exit_code,
@@ -891,8 +882,6 @@ struct Growth {
     largest_child: u32,
     /// The highest resident size of this process so far.
     peak: u32,
-    /// What the worker holds of its own now that the file has ended.
-    rest: u32,
 }
 
 /// Sets the highest resident size that the kernel remembers back to the present one, and answers that. A compiled run asks; only
@@ -922,8 +911,8 @@ fn start_measuring_growth() -> Option<ResidentAtStart> {
 /// for all pages alike. What the file touched of the images is taken off: a file loads its modules first and grows then.
 fn growth_since(at_start: ResidentAtStart) -> Growth {
     #[cfg(target_os = "linux")]
-    if let Some([highest, own, of_files, of_shared_memory]) =
-        read_kilobytes([b"VmHWM:", b"RssAnon:", b"RssFile:", b"RssShmem:"])
+    if let Some([highest, of_files, of_shared_memory]) =
+        read_kilobytes([b"VmHWM:", b"RssFile:", b"RssShmem:"])
     {
         // A build that a test starts as a process of its own takes as much as one inside the worker. When a child starts its
         // program, the kernel sets the child's highest size to that of the process it came from, so a child says something about
@@ -936,7 +925,6 @@ fn growth_since(at_start: ResidentAtStart) -> Growth {
             of_worker: megabytes(highest.saturating_sub(at_start.all + more_shared)),
             largest_child: megabytes(child),
             peak: megabytes(crate::cli::run_compiled::record_peak_rss_kb(highest)),
-            rest: megabytes(own),
         };
     }
     let _ = at_start;

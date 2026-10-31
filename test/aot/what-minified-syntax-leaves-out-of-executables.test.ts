@@ -1,9 +1,10 @@
 // Under --minify-syntax `bun build` leaves out an unused `new Map([..])`, `new Set([..])` and the like. An executable built with --aot leaves out the same.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
 

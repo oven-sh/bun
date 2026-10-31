@@ -69,7 +69,8 @@ test("a mock of bun:wrap", async () => {
       });`,
   });
   const seen = async (env: Record<string, string | undefined>, ...flags: string[]) => {
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
+    const command = [bunExe(), "test", "--timeout=60000", "--isolate", ...flags];
+    const { stdout, stderr, exitCode } = await run(command, String(dir), env);
     if (exitCode !== 0) console.error(stderr);
     // The parts of a run end in any order.
     return {

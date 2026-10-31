@@ -4325,9 +4325,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.context_checking.checks[checking].assigned_parameter_count = f.params.len();
+        let lacks_first_look = self.expected == Requested::Types
+            && self.task.file == Some(file)
+            && !self.context_checked_here.contains(&(file, func));
         if contextual_signature.is_some()
             && f.ret.is_none()
-            && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
+            && (lacks_first_look
+                || (self.p.fn_return_types.get(&self.task, &(file, func))).is_none())
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);

@@ -859,6 +859,30 @@
     "typed": 133.4,
     "untyped": 133.5
   },
+  "everyday-collections/set-spread-as-arguments-behind-one": {
+    "typed": 322.3,
+    "untyped": 322.1
+  },
+  "everyday-collections/set-spread-behind-an-element": {
+    "typed": 182.1,
+    "untyped": 181.9
+  },
+  "everyday-collections/set-spread-in-front-of-an-element": {
+    "typed": 188.2,
+    "untyped": 188.2
+  },
+  "everyday-collections/set-spread-of-forty-behind-an-element": {
+    "typed": 575.9,
+    "untyped": 576.3
+  },
+  "everyday-collections/set-spread-of-texts-behind-a-text": {
+    "typed": 186.2,
+    "untyped": 186.1
+  },
+  "everyday-collections/set-spread-of-two-sets": {
+    "typed": 244.3,
+    "untyped": 244.3
+  },
   "everyday-collections/set-union-method": {
     "typed": 1340.7,
     "untyped": 1340.8
@@ -1080,7 +1104,7 @@
     "untyped": 120.9
   },
   "everyday-copies-of-lists-of-every-kind/spread.fractions-parsed": {
-    "typed": 175,
+    "typed": 157.3,
     "untyped": 164.4
   },
   "everyday-copies-of-lists-of-every-kind/spread.fractions-with-a-hole": {
@@ -1096,7 +1120,7 @@
     "untyped": 120.7
   },
   "everyday-copies-of-lists-of-every-kind/spread.whole-parsed": {
-    "typed": 174.7,
+    "typed": 157,
     "untyped": 156.3
   },
   "everyday-copies-of-lists-of-every-kind/spread.whole-pushed": {
@@ -3456,8 +3480,8 @@
     "untyped": 68746
   },
   "everyday-objects/many-keys-in-front-of-a-field-created-late-go-one-by-one-and-come-again": {
-    "typed": 1122,
-    "untyped": 965.6
+    "typed": 959.4,
+    "untyped": 951.9
   },
   "everyday-objects/method-in-a-literal": {
     "typed": 8,
@@ -4782,6 +4806,14 @@
   "everyday-strings/locale-compare": {
     "typed": 68.5,
     "untyped": 68.5
+  },
+  "everyday-strings/lower-case-of-a-page": {
+    "typed": 7705.6,
+    "untyped": 7700.9
+  },
+  "everyday-strings/lower-case-of-a-page-with-accented-letters": {
+    "typed": 11299.7,
+    "untyped": 11320.6
   },
   "everyday-strings/match-all": {
     "typed": 4374.5,

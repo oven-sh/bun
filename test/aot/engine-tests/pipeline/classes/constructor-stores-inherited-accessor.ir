@@ -749,77 +749,76 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b20(v65)
 # CHECK-NEXT: b20(v66: undefined|int ~ 1):
 # CHECK-NEXT: v67: undefined = CallBuiltin -, v66 overload=ConsoleLog/0 accessSite=20
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectDefineProperty
-# CHECK-NEXT: v69: anything = PropGet v1 key="prototype" accessSite=21
-# CHECK-NEXT: v70: object = AssumeType v69 provenType=object
-# CHECK-NEXT: v71: object ~ L2|L6 = Upcast v70 castType=anything
-# CHECK-NEXT: v72: "width" = String string="width"
-# CHECK-NEXT: v73: 7 = Integer integer=7
-# CHECK-NEXT: v74: false = Boolean
-# CHECK-NEXT: v75: L9 = NewObject -, v73, v74 layout=L9 fields=[4, 5] allocationSite=14 allocationClass=8
-# CHECK-NEXT: v76: L9 = FinishObject v75
-# CHECK-NEXT: v77: object ~ L2|L6 = CallBuiltin -, v71, v72, v76 overload=ObjectDefineProperty/0 accessSite=23
-# CHECK-NEXT: v78: L6 = NewObject layout=L6 allocationClass=6
+# CHECK-NEXT: v68: anything = PropGet v1 key="prototype" accessSite=21
+# CHECK-NEXT: v69: object = AssumeType v68 provenType=object
+# CHECK-NEXT: v70: object ~ L2|L6 = Upcast v69 castType=anything
+# CHECK-NEXT: v71: "width" = String string="width"
+# CHECK-NEXT: v72: 7 = Integer integer=7
+# CHECK-NEXT: v73: false = Boolean
+# CHECK-NEXT: v74: L9 = NewObject -, v72, v73 layout=L9 fields=[4, 5] allocationSite=14 allocationClass=8
+# CHECK-NEXT: v75: L9 = FinishObject v74
+# CHECK-NEXT: v76: object ~ L2|L6 = CallBuiltin -, v70, v71, v75 overload=ObjectDefineProperty/0 accessSite=23
+# CHECK-NEXT: v77: L6 = NewObject layout=L6 allocationClass=6
 # CHECK-NEXT: Jump -> next b21()
 # CHECK-NEXT: b21() handler=b22():
-# CHECK-NEXT: v79: 0 = Integer
-# CHECK-NEXT: PropSet v78, v79 key="width" accessSite=65 receivers=[L6]
-# CHECK-NEXT: v81: "stored" = String string="stored"
-# CHECK-NEXT: v82: undefined = CallBuiltin -, v81 overload=ConsoleLog/0 accessSite=68
+# CHECK-NEXT: v78: 0 = Integer
+# CHECK-NEXT: PropSet v77, v78 key="width" accessSite=65 receivers=[L6]
+# CHECK-NEXT: v80: "stored" = String string="stored"
+# CHECK-NEXT: v81: undefined = CallBuiltin -, v80 overload=ConsoleLog/0 accessSite=68
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b22() role=CatchHandler:
-# CHECK-NEXT: v83: anything = CatchValue
-# CHECK-NEXT: v84: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v85: anything = PropGet v83 key="constructor" accessSite=71
-# CHECK-NEXT: v86: anything = PropGet v85 key="name" accessSite=72
-# CHECK-NEXT: v87: undefined = CallBuiltin v84, v86 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=73
+# CHECK-NEXT: v82: anything = CatchValue
+# CHECK-NEXT: v83: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v84: anything = PropGet v82 key="constructor" accessSite=71
+# CHECK-NEXT: v85: anything = PropGet v84 key="name" accessSite=72
+# CHECK-NEXT: v86: undefined = CallBuiltin v83, v85 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=73
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b23():
-# CHECK-NEXT: v88: 1 = Integer integer=1
-# CHECK-NEXT: PutSlot v78, -, v88 key="width" receivers=[L6] level=Proven accessSite=91
-# CHECK-NEXT: v90: boolean = IsSlotFilled v78 key="width" receivers=[L6] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v90 -> taken b25(v88), notTaken b24()
+# CHECK-NEXT: v87: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v77, -, v87 key="width" receivers=[L6] level=Proven accessSite=91
+# CHECK-NEXT: v89: boolean = IsSlotFilled v77 key="width" receivers=[L6] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v89 -> taken b25(v87), notTaken b24()
 # CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: v91: anything = SuperGet v78, v78 key="width" accessSite=27
-# CHECK-NEXT: v92: undefined|int = AssumeType v91 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b25(v92)
-# CHECK-NEXT: b25(v93: undefined|int ~ 1):
-# CHECK-NEXT: v94: undefined = CallBuiltin -, v93 overload=ConsoleLog/0 accessSite=28
-# CHECK-NEXT: v95: 0 = Integer
-# CHECK-NEXT: PutModuleVariable v95 variable=g1
-# CHECK-NEXT: v97: L8 = NewObject layout=L8 allocationClass=7
-# CHECK-NEXT: v98: 0 = Integer
-# CHECK-NEXT: PropSet v97, v98 key="level" accessSite=76 receivers=[L3, L8]
-# CHECK-NEXT: v100: 1 = Integer integer=1
-# CHECK-NEXT: PutSlot v97, -, v100 key="level" receivers=[L8] level=Proven accessSite=92
-# CHECK-NEXT: v102: boolean = IsSlotFilled v97 key="level" receivers=[L8] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v102 -> taken b27(v100), notTaken b26()
+# CHECK-NEXT: v90: anything = SuperGet v77, v77 key="width" accessSite=27
+# CHECK-NEXT: v91: undefined|int = AssumeType v90 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b25(v91)
+# CHECK-NEXT: b25(v92: undefined|int ~ 1):
+# CHECK-NEXT: v93: undefined = CallBuiltin -, v92 overload=ConsoleLog/0 accessSite=28
+# CHECK-NEXT: v94: 0 = Integer
+# CHECK-NEXT: PutModuleVariable v94 variable=g1
+# CHECK-NEXT: v96: L8 = NewObject layout=L8 allocationClass=7
+# CHECK-NEXT: v97: 0 = Integer
+# CHECK-NEXT: PropSet v96, v97 key="level" accessSite=76 receivers=[L3, L8]
+# CHECK-NEXT: v99: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v96, -, v99 key="level" receivers=[L8] level=Proven accessSite=92
+# CHECK-NEXT: v101: boolean = IsSlotFilled v96 key="level" receivers=[L8] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v101 -> taken b27(v99), notTaken b26()
 # CHECK-NEXT: b26() frequency=Unlikely:
-# CHECK-NEXT: v103: anything = SuperGet v97, v97 key="level" accessSite=32
-# CHECK-NEXT: v104: undefined|int = AssumeType v103 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b27(v104)
-# CHECK-NEXT: b27(v105: undefined|int ~ 1):
-# CHECK-NEXT: v106: int|whole = GetModuleVariable variable=g1
-# CHECK-NEXT: v107: undefined = CallBuiltin -, v105, v106 overload=ConsoleLog/0 accessSite=33
-# CHECK-NEXT: v108: 0 = Integer
-# CHECK-NEXT: PropSet v97, v108 key="level" accessSite=76 receivers=[L3, L8]
-# CHECK-NEXT: v110: boolean = IsSlotFilled v97 key="level" receivers=[L8] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v110 -> taken b28(| 0), notTaken b29()
-# CHECK-NEXT: b28(v111: guard):
-# CHECK-NEXT: v112: int[-2147483643, 2147483647] = GetSlot v97, v111 key="level" receivers=[L8] level=Expected accessSite=38 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b30(v112)
+# CHECK-NEXT: v102: anything = SuperGet v96, v96 key="level" accessSite=32
+# CHECK-NEXT: v103: undefined|int = AssumeType v102 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b27(v103)
+# CHECK-NEXT: b27(v104: undefined|int ~ 1):
+# CHECK-NEXT: v105: int|whole = GetModuleVariable variable=g1
+# CHECK-NEXT: v106: undefined = CallBuiltin -, v104, v105 overload=ConsoleLog/0 accessSite=33
+# CHECK-NEXT: v107: 0 = Integer
+# CHECK-NEXT: PropSet v96, v107 key="level" accessSite=76 receivers=[L3, L8]
+# CHECK-NEXT: v109: boolean = IsSlotFilled v96 key="level" receivers=[L8] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v109 -> taken b28(| 0), notTaken b29()
+# CHECK-NEXT: b28(v110: guard):
+# CHECK-NEXT: v111: int[-2147483643, 2147483647] = GetSlot v96, v110 key="level" receivers=[L8] level=Expected accessSite=38 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b30(v111)
 # CHECK-NEXT: b29() frequency=Unlikely:
-# CHECK-NEXT: v113: anything = SuperGet v97, v97 key="level" accessSite=38
-# CHECK-NEXT: v114: undefined|int = AssumeType v113 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b30(v114)
-# CHECK-NEXT: b30(v115: undefined|int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v116: int|whole = GetModuleVariable variable=g1
-# CHECK-NEXT: v117: undefined = CallBuiltin -, v115, v116 overload=ConsoleLog/0 accessSite=39
-# CHECK-NEXT: v118: int|whole = Increment v116
-# CHECK-NEXT: PutModuleVariable v118 variable=g1
-# CHECK-NEXT: v120: undefined = CallBuiltin -, v118 overload=ConsoleLog/0 accessSite=43
-# CHECK-NEXT: v121: undefined = Undefined
-# CHECK-NEXT: Return v121
+# CHECK-NEXT: v112: anything = SuperGet v96, v96 key="level" accessSite=38
+# CHECK-NEXT: v113: undefined|int = AssumeType v112 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b30(v113)
+# CHECK-NEXT: b30(v114: undefined|int ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v115: int|whole = GetModuleVariable variable=g1
+# CHECK-NEXT: v116: undefined = CallBuiltin -, v114, v115 overload=ConsoleLog/0 accessSite=39
+# CHECK-NEXT: v117: int|whole = Increment v115
+# CHECK-NEXT: PutModuleVariable v117 variable=g1
+# CHECK-NEXT: v119: undefined = CallBuiltin -, v117 overload=ConsoleLog/0 accessSite=43
+# CHECK-NEXT: v120: undefined = Undefined
+# CHECK-NEXT: Return v120
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Counted"
 # CHECK: module=m0 position=142 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L4 flags=[IsFromCompiler]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

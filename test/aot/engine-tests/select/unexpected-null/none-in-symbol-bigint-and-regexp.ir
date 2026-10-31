@@ -192,7 +192,7 @@ function f5 name="attempt" module=m0 position=96 flags=[IsChecked, HasExplicitNa
     v24 = Undefined @207
     Return v24 @207
 }
-function f6 module=m0 position=643 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m0 position=643 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null):
     Jump -> next b1() @643
   b1():
@@ -201,7 +201,7 @@ function f6 module=m0 position=643 kind=Arrow flags=[IsChecked] captures=[{type=
     v3 = Call v1, -, v2 calleeName="describe" @649
     ReturnCall v3 casts=[{declared={type=undefined|null|string site=w25 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}}] @649
 }
-function f7 module=m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=undefined|null|bigint site=w13 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f7 module=m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=undefined|null|bigint site=w13 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null):
     Jump -> next b1() @691
   b1():
@@ -210,7 +210,7 @@ function f7 module=m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=
     v3 = Call v1, -, v2 calleeName="double" @697
     ReturnCall v3 casts=[{declared={type=undefined|null|bigint site=w26 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|bigint site=w13 flags=[OmitsNull, OmitsUndefined]}}] @697
 }
-function f8 module=m0 position=737 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=boolean site=w14}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f8 module=m0 position=737 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=boolean site=w14}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null):
     Jump -> next b1() @737
   b1():
@@ -219,7 +219,7 @@ function f8 module=m0 position=737 kind=Arrow flags=[IsChecked] captures=[{type=
     v3 = Call v1, -, v2 calleeName="matches" @743
     ReturnCall v3 casts=[{declared={type=boolean site=w27}}, {declared={type=boolean site=w14}}] @743
 }
-function f9 module=m0 position=782 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=number site=w15}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f9 module=m0 position=782 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=number site=w15}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null):
     Jump -> next b1() @782
   b1():
@@ -511,33 +511,32 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK: module=m0 position=525 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Date<pristine[Storage, Names]> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|null|Date<pristine[Storage, Names]>):
 # CHECK-NEXT: v1: Date<pristine[Storage, Names]> = RequireObjectCoercible v0 name="getTime"
-# CHECK-NEXT: InitializeBuiltin builtin=DatePrototypeGetTime
-# CHECK-NEXT: v3: number = CallBuiltin v1 overload=DatePrototypeGetTime/0 accessSite=12 @572 tail
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v2: number = CallBuiltin v1 overload=DatePrototypeGetTime/0 accessSite=12 @572 tail
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=96 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="bigint"|"date"|"regexp"|"symbol" site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7|f8|f9|f10|f11|f12|f13 site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f6 module=
-# CHECK: m0 position=643 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=649 isTailCall=true module=m0}] {
+# CHECK: m0 position=643 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=649 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null):
 # CHECK-NEXT: v1: never = RequireObjectCoercible v0 name="description"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
-# CHECK: m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=bigint site=w13 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=697 isTailCall=true module=m0}] {
+# CHECK: m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=bigint site=w13 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=697 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null):
 # CHECK-NEXT: v1: bigint = BigInt digits="2"
 # CHECK-NEXT: v2: never = Mul v0, v1
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
-# CHECK: m0 position=737 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=boolean site=w14}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=743 isTailCall=true module=m0}] {
+# CHECK: m0 position=737 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=boolean site=w14}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=743 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null):
 # CHECK-NEXT: v1: never = RequireObjectCoercible v0 name="test"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
-# CHECK: m0 position=782 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10}] thisType={type=anything} results=[{type=number site=w15}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=788 isTailCall=true module=m0}] {
+# CHECK: m0 position=782 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null site=w10 variableName="none"}] thisType={type=anything} results=[{type=number site=w15}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=788 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null):
 # CHECK-NEXT: v1: never = RequireObjectCoercible v0 name="getTime"
 # CHECK-NEXT: Unreachable
@@ -582,9 +581,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: v0: 5 = Integer integer=5
 # CHECK-NEXT: v1: Date = CallBuiltin -, v0 overload=Date/2 accessSite=32
 # CHECK-NEXT: v2: Date<pristine[Storage, Names]> = AssumeType v1 provenType=Date<pristine[Storage, Names]>
-# CHECK-NEXT: InitializeBuiltin builtin=DatePrototypeGetTime
-# CHECK-NEXT: v4: number = CallBuiltin v2 overload=DatePrototypeGetTime/0 accessSite=12 @572:1 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v3: number = CallBuiltin v2 overload=DatePrototypeGetTime/0 accessSite=12 @572:1 tail
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=96 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="bigint"|"date"|"regexp"|"symbol" site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7|f8|f9|f10|f11|f12|f13}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f5} {

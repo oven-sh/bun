@@ -1,6 +1,5 @@
 // The idiom of a leak test: `x = null; gc(); expect(ref.deref()).toBeUndefined()`. An object whose last name was a local that the function has set to null or undefined is collected while that function still runs.
 // Prints what the compiler saves: objects that are collected earlier
-// Todo under ASAN: Not every time: row 3695: `x = null` prints KEPT: red in CI's round 7, green in round 6 on the same engine
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

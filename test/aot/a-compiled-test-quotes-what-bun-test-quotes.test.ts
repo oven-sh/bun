@@ -35,6 +35,14 @@ function deleted(o: any) {
   delete o[k];
 }
 function tested(o: any) { const k = "e"; return k in o; }
+function tagged() { const b: any = null; return b\`t\`; }
+function taggedParameter(b: any) { return b\`t\`; }
+function taggedMember(o: any) { return o.tag\`t\${1}u\${\`v\${o}\`}w\`; }
+function called() { const b: any = undefined; return b(); }
+function calledWith() { const b: any = undefined; return b(1, 2); }
+function constructed() { const b: any = undefined; return new b(); }
+function constructedWith() { const b: any = undefined; return new b(1, 2); }
+function chosen(c: boolean) { const b = c ? { x: 1 } : null; return (true && b)!.x; }
 test("quotes", () => {
   tell("initializer", () => initializer(null));
   tell("initializerOnLines", () => initializerOnLines(null));
@@ -48,6 +56,14 @@ test("quotes", () => {
   tell("stored", () => stored(null));
   tell("deleted", () => deleted(null));
   tell("tested", () => tested(null));
+  tell("tagged", () => tagged());
+  tell("taggedParameter", () => taggedParameter(undefined));
+  tell("taggedMember", () => taggedMember({}));
+  tell("called", () => called());
+  tell("calledWith", () => calledWith());
+  tell("constructed", () => constructed());
+  tell("constructedWith", () => constructedWith());
+  tell("chosen", () => chosen(false));
   console.log(told.join("\\n"));
 });
 `,
@@ -61,6 +77,11 @@ test("a compiled test quotes what bun test quotes where the transpiler prints so
   expect(plain.stdout).toContain("initializer: null is not an object (evaluating 'lookup(x).value')");
   expect(plain.stdout).toContain("base: null is not an object (evaluating 'null.value')");
   expect(plain.stdout).toContain("parameterKey: undefined is not an object (evaluating 'o[k]')");
+  expect(plain.stdout).toContain("tagged: null is not a function (near '...null`t`...')");
+  expect(plain.stdout).toContain(
+    "calledWith: (void 0) is not a function. (In '(void 0)(1, 2)', '(void 0)' is undefined)",
+  );
+  expect(plain.stdout).toContain("constructed: undefined is not a constructor (evaluating 'new (void 0)')");
   const lines = (output: string) => output.split("\n").filter(line => line.includes(": "));
   expect(lines(compiled.stdout)).toEqual(lines(plain.stdout));
   expect(compiled.exitCode).toBe(0);

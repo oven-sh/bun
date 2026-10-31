@@ -83,10 +83,11 @@ for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
   test(`a test run runs the file of each Worker compiled (${words})`, async () => {
     using dir = tempDir("aot-worker-named-by-a-url", { ...files, ...testFiles });
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
-    const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), env);
+    const ran = await run([bunExe(), "test", "--timeout=60000", "--aot", "--isolate"], String(dir), env);
     const seen = ran.stdout.split("\n").filter(line => line.startsWith("SEEN "));
     const expected = Object.keys(ways).map((name, index) => `SEEN ${name} | w${index + 1} 42`);
-    expect({ seen, exitCode: ran.exitCode }).toEqual({ seen: expected, exitCode: 0 });
+    const said = ran.exitCode === 0 ? "" : ran.stderr;
+    expect({ seen, exitCode: ran.exitCode, said }).toEqual({ seen: expected, exitCode: 0, said: "" });
   }, 120_000);
 }
 

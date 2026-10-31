@@ -30,6 +30,7 @@ use crate::RoundReport;
 use crate::{CompilerOption, Diagnostic, Incomplete, Libs, Progress};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::{DiagnosticClass, Effect, FileOrigin, LeftOutBodies};
+use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::{
@@ -37,6 +38,8 @@ use bun_sema::program::{
 };
 use bun_sema::resolve::{CodeFailure, CodeOptions};
 use bun_sema::session::SessionSlot;
+use bun_sema::util::SharedSort;
+use bun_threading::Guarded;
 use std::cell::UnsafeCell;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,6 +77,8 @@ pub struct LoadedProgram<'s> {
     /// For `renew_checker`, when trees have gone.
     node_counts: bun_sema::check::NodeCounts,
     is_checker_freed: AtomicBool,
+    cycles_entered: Guarded<Vec<(u32, u32, usize, CyclesEntered)>>,
+    has_checked_for_roles: AtomicBool,
     origins: Vec<FileOrigin>,
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
@@ -166,6 +171,42 @@ impl<'s> LoadedProgram<'s> {
             let program = Program::with_node_counts(session, self.files, &self.node_counts);
             self.program.get().write(program);
         }
+    }
+
+    pub(crate) fn note_check_for_roles(&self) {
+        self.has_checked_for_roles.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn has_checked_for_roles(&self) -> bool {
+        self.has_checked_for_roles.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn note_cycles_entered(
+        &self,
+        first_round: u32,
+        file: FileId,
+        cycles: CyclesEntered,
+    ) {
+        if !cycles.is_empty() {
+            let mut noted = self.cycles_entered.lock();
+            let noted_before = noted.len();
+            noted.push((
+                first_round,
+                self.files.rank_of_file(file),
+                noted_before,
+                cycles,
+            ));
+        }
+    }
+
+    pub(crate) fn cycles_entered(&self) -> CyclesEntered {
+        let mut noted = self.cycles_entered.lock();
+        noted.shared_sort_by_key(|&(stage, rank, noted_before, _)| (stage, rank, noted_before));
+        let mut all = CyclesEntered::default();
+        for (_, _, _, cycles) in noted.iter() {
+            all.append(cycles.clone());
+        }
+        all
     }
 
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {
@@ -276,6 +317,8 @@ pub(crate) struct FileWork<'a, 's> {
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
     /// Nobody reads a tree once the files of this pass are final.
     pub is_last_pass: &'a (dyn Fn() -> bool + Sync),
+    pub note_cycles_entered: Option<&'a (dyn Fn(FileId, CyclesEntered) + Sync)>,
+    pub cycles_entered_before: &'a (dyn Fn() -> CyclesEntered + Sync),
     pub first_round: u32,
     pub left_out_bodies: Option<&'a LeftOutBodies>,
 }

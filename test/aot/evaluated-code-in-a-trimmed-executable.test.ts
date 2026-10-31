@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { slot, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const program = `const make = (async function () {}).constructor;

@@ -137,6 +137,12 @@ const GENERIC_KEY: u8 = 0x80;
 /// In place of the relation in a `Key`: the entry is the answer to a question of `aot::Queries` whether the first type is assignable to the second.
 const QUESTION_KEY: u8 = 3;
 
+#[derive(Copy, Clone)]
+pub(super) struct Question {
+    entries: i32,
+    literal: Option<(FileId, u32, u32)>,
+}
+
 impl Key {
     /// True if the hash includes a task-local id. Another task hashes the same two references differently, so the entry
     /// is useless to it.
@@ -1201,6 +1207,7 @@ impl<'p, 's> Checker<'p, 's> {
                 missed,
                 is_trial,
                 entries_for_query,
+                STATE_NONE,
             );
             self.is_comparing_for_query = around;
             return is_related;
@@ -1221,8 +1228,9 @@ impl<'p, 's> Checker<'p, 's> {
         missed: Option<(Key, bool)>,
         is_trial: bool,
         entries_for_query: Option<i32>,
+        state: u8,
     ) -> bool {
-        let question = Key(source, target, QUESTION_KEY);
+        let question = Key(source, target, QUESTION_KEY | state << 4);
         if entries_for_query.is_some()
             && let Some(entry) = self.p.relations.get(&self.task, &question)
         {
@@ -1234,7 +1242,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.frames.first().map_or(0, |frame| frame.serial),
         );
         if cuts != 0 && !is_trial {
-            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+            let (key, _) = self.relation_key(source, target, relation, state, false);
             if let Some(&(under, is_related)) = self.relations_cut_short.get(&key)
                 && under == outermost
             {
@@ -1259,7 +1267,20 @@ impl<'p, 's> Checker<'p, 's> {
         r.top_key = missed;
         r.stores_failures_locally = is_trial;
         let scope = entries_for_query.map(|_| self.begin_scope());
-        let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
+        let question_around = self.question_in_progress;
+        let relations_of_question_around = match (entries_for_query, question_around) {
+            (Some(_), Some(_)) => {
+                let own = self.spare_relations_of_query.pop().unwrap_or_default();
+                Some(std::mem::replace(&mut self.relations_of_query, own))
+            }
+            _ => None,
+        };
+        if let Some(entries) = entries_for_query {
+            let literal = self.span_of_object_literal(source);
+            self.question_in_progress = Some(Question { entries, literal });
+        }
+        let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, state);
+        self.question_in_progress = question_around;
         let stored = scope.and_then(|scope| self.end_scope(scope).ok());
         let is_for_query = std::mem::take(&mut r.is_for_query);
         let overflow = r.overflow;
@@ -1315,6 +1336,10 @@ impl<'p, 's> Checker<'p, 's> {
         let is_related = !overflow && result.holds();
         if is_for_query {
             self.forget_relations_of_query();
+            if let Some(around) = relations_of_question_around {
+                let own = std::mem::replace(&mut self.relations_of_query, around);
+                self.spare_relations_of_query.push(own);
+            }
             // Where the native stack runs low, or a cycle is found, depends on more than the two types.
             if let Some(stored) = stored
                 && self.cuts() == cuts
@@ -1331,11 +1356,62 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkTypeRelatedToEx` records an overflow "such that we don't attempt the overflowing operation
         // again". Where these limits are hit depends on the caller, so the record is private to this checker.
         if self.cuts() != cuts && !is_trial {
-            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+            let (key, _) = self.relation_key(source, target, relation, state, false);
             self.relations_cut_short
                 .insert(key, (outermost, is_related));
         }
         is_related
+    }
+
+    fn span_of_object_literal(&self, ty: TypeId) -> Option<(FileId, u32, u32)> {
+        let (file, literal) = match *self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, literal, ..),
+                ..
+            } => (file, literal),
+            TypeData::Synth(ref shape) => {
+                let (file, _, literal) = shape.symbol_declared_at?;
+                (file, literal)
+            }
+            _ => return None,
+        };
+        let literal = self.hir(file).exprs.get(literal.idx())?;
+        Some((file, literal.pos, literal.end))
+    }
+
+    fn ask_about_nested_literal(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        target: TypeId,
+        state: u8,
+    ) -> Option<Ternary> {
+        let Question { entries, literal } = self.question_in_progress?;
+        let (file, pos, end) = self.span_of_object_literal(source)?;
+        if let Some(around) = literal
+            && !(file == around.0
+                && around.1 <= pos
+                && end <= around.2
+                && (pos, end) != (around.1, around.2))
+        {
+            return None;
+        }
+        r.relation_count -= 1;
+        let too_complex_around = std::mem::replace(&mut self.relation_too_complex, false);
+        let is_related = self.check_type_related_to(
+            source,
+            target,
+            r.relation,
+            None,
+            false,
+            Some(entries),
+            state,
+        );
+        if std::mem::replace(&mut self.relation_too_complex, too_complex_around) {
+            r.overflow = true;
+            return Some(Ternary::FALSE);
+        }
+        Some(Ternary::of(is_related))
     }
 
     /// `isSimpleTypeRelatedTo`. `sd` and `td` are the `TypeData` of `s` and `t`.
@@ -3099,6 +3175,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let source_is_structured_or_instantiable = is_structured_or_instantiable_kind(sd);
         if source_is_structured_or_instantiable || is_structured_or_instantiable_kind(td) {
+            if !REPORT
+                && r.is_for_query
+                && state & !STATE_REGULAR == 0
+                && is_object_literal_kind(sd)
+                && let Some(answer) = self.ask_about_nested_literal(r, source, target, state)
+            {
+                return answer;
+            }
             if state & (STATE_TARGET | STATE_REGULAR) == 0
                 && is_fresh_object_literal_kind(sd)
                 && self.has_excess_properties::<REPORT>(r, source, target)
@@ -3320,6 +3404,7 @@ impl<'p, 's> Checker<'p, 's> {
                             let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
+                            self.move_message_site(r.error_node);
                         }
                         self.report_unknown_jsx_attribute(r, prop, error_target);
                         return true;
@@ -3332,6 +3417,7 @@ impl<'p, 's> Checker<'p, 's> {
                             let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let (hir, prop_node) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, prop_node.pos, self.end_of_prop_name(file, p));
+                            self.move_message_site(r.error_node);
                             matches!(prop_node.key, PropKey::Name(_))
                                 && !matches!(
                                     hir.text.get(prop_node.pos as usize),

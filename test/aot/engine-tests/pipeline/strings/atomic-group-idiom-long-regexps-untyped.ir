@@ -321,7 +321,7 @@ function f1 name="long" module=m0 position=120 flags=[HasExplicitName] length=2 
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 7592, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 7672, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
 # CHECK-NEXT: Int64 b@22 = Load(b@21, offset = 24, ControlDependent|Reads:AOTInstance_stringCells, v2:String)
 # CHECK-NEXT: Void b@24 = Branch(b@22, Terminal, v2:String)
 # CHECK-NEXT: Successors: Then:#2, Else:Rare:#3
@@ -355,7 +355,7 @@ function f1 name="long" module=m0 position=120 flags=[HasExplicitName] length=2 
 # CHECK-NEXT: BB#10: ; frequency = 1.000000
 # CHECK-NEXT: Predecessors: #9, #8
 # CHECK-NEXT: Int64 b@50 = Phi(ReadsLocalState, v4:String)
-# CHECK-NEXT: Int64 b@53 = Load(b@10, offset = 7608, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v5:Strcat)
+# CHECK-NEXT: Int64 b@53 = Load(b@10, offset = 7688, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v5:Strcat)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
 # CHECK-NEXT: Int32 b@16 = Const32(1, v5:Strcat)
 # CHECK-NEXT: Int64 b@15 = Shl(b@18, $1(b@16), v5:Strcat)
@@ -443,5 +443,5 @@ function f1 name="long" module=m0 position=120 flags=[HasExplicitName] length=2 
 # CHECK-NEXT: b@50: dereferenceableBytes = 16
 # CHECK-NEXT: b@65: dereferenceableBytes = 16
 # CHECK-NEXT: b@67: dereferenceableBytes = 16
-# CHECK-NEXT: b@92: dereferenceableBytes = 8
+# CHECK-NEXT: b@92: dereferenceableBytes = 16
 # CHECK-NEXT: end of function f1

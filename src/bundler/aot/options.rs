@@ -225,7 +225,12 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
         (input.aot.entry_points_only_imported_from_above.iter())
             .map(|path| from_native(path))
             .collect();
-    code.tsconfig_override = (options.tsconfig_override.as_ref())
+    code.entry_points_required_from_above = (input.aot.entry_points_required_from_above.iter())
+        .map(|path| from_native(path))
+        .collect();
+    let tsconfig_override = options.tsconfig_override.as_ref();
+    code.tsconfig_override = tsconfig_override
+        .or(input.aot.missing_tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
     let orders = &options.extension_order;

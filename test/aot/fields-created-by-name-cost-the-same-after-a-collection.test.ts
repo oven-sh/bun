@@ -74,10 +74,18 @@ test.skipIf(skipped)(
     const aStore = async (when: string, more: Record<string, string> = {}) => {
       const costs: number[] = [];
       for (const rounds of [few, many]) {
-        const run = await measureCommand(String(dir), [executable, String(rounds), when], 120_000, { ...env, ...more });
-        expect(run.stdout).toBe("0\n");
-        if (run.instructions === undefined) return undefined;
-        costs.push(run.instructions);
+        // macOS counts the kernel as well, and what the kernel does beside other processes only ever adds: one command read 742.2 and 765.6 a round.
+        let least = Infinity;
+        for (let reading = 0; reading < 3; reading++) {
+          const run = await measureCommand(String(dir), [executable, String(rounds), when], 120_000, {
+            ...env,
+            ...more,
+          });
+          expect(run.stdout).toBe("0\n");
+          if (run.instructions === undefined) return undefined;
+          least = Math.min(least, run.instructions);
+        }
+        costs.push(least);
       }
       return (costs[1] - costs[0]) / (many - few);
     };

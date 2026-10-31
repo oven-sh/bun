@@ -4,7 +4,7 @@
 
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
 use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
-use super::parameters::{find_values_passed_for, is_exported};
+use super::parameters::{find_values_passed_for_pattern, is_exported};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
 };
@@ -23,11 +23,13 @@ use crate::hir::{
 };
 use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell, RefCell};
 
 const MOST_ALTERNATIVES: usize = 64;
 const MOST_EXPRESSIONS_FOLLOWED: u32 = 4096;
 const DEEPEST_EXPRESSION: u32 = 64;
+
+const PATH_MODULES: [&[u8]; 4] = [b"path", b"node:path", b"path/posix", b"node:path/posix"];
 
 #[derive(Clone, PartialEq, Debug)]
 struct Text {
@@ -35,6 +37,7 @@ struct Text {
     /// `None`: `start` is all of it.
     end: Option<Vec<u8>>,
     starts_at_own_directory: bool,
+    is_file_url: bool,
 }
 
 impl Text {
@@ -43,6 +46,7 @@ impl Text {
             start: text.to_vec(),
             end: None,
             starts_at_own_directory: false,
+            is_file_url: false,
         }
     }
 
@@ -51,12 +55,22 @@ impl Text {
             start: Vec::new(),
             end: Some(Vec::new()),
             starts_at_own_directory: false,
+            is_file_url: false,
         }
     }
 
     fn push(&mut self, next: &Text) {
         if self.end.is_none() && self.start.is_empty() {
             self.clone_from(next);
+            return;
+        }
+        if self.end.is_none()
+            && self.start == b"file://"
+            && next.starts_at_own_directory
+            && !next.is_file_url
+        {
+            self.clone_from(next);
+            self.is_file_url = true;
             return;
         }
         let next = match next.starts_at_own_directory {
@@ -96,6 +110,11 @@ enum Held {
     /// What `node:os` exports, and a function of it.
     Os,
     FunctionOfOs(Atom),
+    Data {
+        specifier: Atom,
+        path: Vec<u8>,
+        is_namespace: bool,
+    },
     /// Something else that is no text.
     Other,
     /// Whatever the variable holds, whose values are being looked for: a function hands it to itself.
@@ -141,9 +160,23 @@ impl WrittenNames {
     }
 }
 
+#[derive(Default)]
+pub(super) struct AskedOfDataFiles(RefCell<Vec<(Atom, Atom)>>);
+
+impl AskedOfDataFiles {
+    pub(super) fn take(&self) -> Vec<(Atom, Atom)> {
+        let mut asked = self.0.take();
+        asked.shared_sort_unstable_by_key(|it| (it.0.0, it.1.0));
+        asked.dedup();
+        asked
+    }
+}
+
 struct Follower<'i, 'a, 's> {
     inputs: &'i ScanInputs<'a, 's>,
     written_names: &'i WrittenNames,
+    asked_of_data_files: &'i AskedOfDataFiles,
+    has_read_data_file: Cell<bool>,
     /// The variables whose lists and objects are taken to stay as they are written.
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
@@ -161,17 +194,21 @@ pub(super) struct Found {
     pub(super) start_at_own_directory: bool,
     /// Each is the name that a resolver is asked for, where the program hands on what it answers.
     pub(super) resolved_form: Option<ResolvedForm>,
+    pub(super) is_out_of_data_file: bool,
 }
 
 impl<'i, 'a, 's> Follower<'i, 'a, 's> {
     fn new(
         inputs: &'i ScanInputs<'a, 's>,
         written_names: &'i WrittenNames,
+        asked_of_data_files: &'i AskedOfDataFiles,
         follows_key: bool,
     ) -> Follower<'i, 'a, 's> {
         Follower {
             inputs,
             written_names,
+            asked_of_data_files,
+            has_read_data_file: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
             not_kept_as_written: FxHashSet::default(),
@@ -187,12 +224,18 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
 pub(super) fn find_texts_of_key(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
+    asked_of_data_files: &AskedOfDataFiles,
     key: ExprId,
 ) -> Option<Vec<ImportSpecifier>> {
-    let values = Follower::new(inputs, written_names, true).values_of_argument(key)?;
+    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, true);
+    let values = follower.values_of_argument(key)?;
+    if follower.has_read_data_file.get() {
+        return None;
+    }
     let mut texts: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::with_capacity(values.len());
     for value in values {
         let mut text = match value {
+            Held::Text(text) if text.is_file_url => return None,
             Held::Text(text) | Held::Resolved(text, _) => text,
             Held::Primitive(_) => continue,
             _ => return None,
@@ -222,14 +265,22 @@ pub(super) fn find_texts_of_key(
 pub(super) fn find_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
+    asked_of_data_files: &AskedOfDataFiles,
     argument: ExprId,
 ) -> Option<Found> {
-    let mut follower = Follower::new(inputs, written_names, false);
+    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false);
     let values = follower.values_of_argument(argument)?;
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
     let mut forms: Vec<Option<ResolvedForm>> = Vec::with_capacity(values.len());
     for value in values {
         let (text, form) = match value {
+            Held::Text(text) if text.is_file_url => {
+                let is_plain = |part: &[u8]| !part.iter().any(|byte| b"%?#".contains(byte));
+                if !is_plain(&text.start) || !text.end.as_deref().is_none_or(is_plain) {
+                    return None;
+                }
+                (text, Some(ResolvedForm::Url))
+            }
             Held::Text(text) => (text, None),
             Held::Resolved(text, form) => (text, Some(form)),
             Held::Primitive(_) | Held::Other => continue,
@@ -282,6 +333,7 @@ pub(super) fn find_alternatives(
         alternatives: alternatives.collect(),
         start_at_own_directory,
         resolved_form,
+        is_out_of_data_file: follower.has_read_data_file.get(),
     })
 }
 
@@ -325,7 +377,20 @@ impl Follower<'_, '_, '_> {
         match value {
             Held::Text(text) => Some(text.clone()),
             Held::Primitive(constant) => self.text_of(*constant),
-            Held::Itself(_) | Held::BelowItself(_) => None,
+            Held::Itself(_) | Held::BelowItself(_) | Held::Data { .. } => None,
+            Held::Resolved(name, form) if name.end.is_none() && name.start.ends_with(b"/") => {
+                let start = match name.start.starts_with(b"./") {
+                    true => name.start.clone(),
+                    false if name.start.starts_with(b"../") => [b"./", &name.start[..]].concat(),
+                    false => return Some(Text::unknown()),
+                };
+                Some(Text {
+                    start,
+                    end: None,
+                    starts_at_own_directory: true,
+                    is_file_url: *form != ResolvedForm::Path,
+                })
+            }
             _ => Some(Text::unknown()),
         }
     }
@@ -357,6 +422,7 @@ impl Follower<'_, '_, '_> {
             hir,
             bound,
             decisions,
+            atoms,
             ..
         } = self.inputs;
         let e = hir.skip_type_assertions(e);
@@ -374,6 +440,21 @@ impl Follower<'_, '_, '_> {
         }
         if is_process(hir, bound, e, &[known::globalThis, known::global]) {
             return Some(vec![Held::Process]);
+        }
+        let may_be_export = matches!(
+            expr_kind(hir, e),
+            Some(
+                ExprKind::Ident(_)
+                    | ExprKind::Dot {
+                        chain: Chain::No,
+                        ..
+                    }
+            )
+        );
+        if may_be_export
+            && (self.find_export_of_path(e)).is_some_and(|name| atoms.bytes(name) == b"sep")
+        {
+            return Some(vec![Held::Text(Text::whole(b"/"))]);
         }
         if self.follows_key && is_free_name(hir, bound, e, &[known::undefined]) {
             return Some(vec![Held::Primitive(Constant::Undefined)]);
@@ -619,9 +700,15 @@ impl Follower<'_, '_, '_> {
                     let written = written_names.find(hir, name).iter();
                     written.map(|it| it.1).collect()
                 };
-                match find_values_passed_for(hir, bound, self.inputs.decisions, name, &find_written)
-                {
-                    Some(passed) => self.values_of_any(passed),
+                let decisions = self.inputs.decisions;
+                match find_values_passed_for_pattern(hir, bound, decisions, name, &find_written) {
+                    Some((passed, path)) => self.values_of_any(passed).and_then(|mut values| {
+                        for &key in &path {
+                            let key = self.inputs.atoms.bytes(key).to_vec();
+                            values = self.read_member(&values, Some(&[key]), Chain::No)?;
+                        }
+                        Some(values)
+                    }),
                     None => self.values_handed_by_walk(symbol),
                 }
             }
@@ -639,6 +726,19 @@ impl Follower<'_, '_, '_> {
                 Some((specifier, None)) if self.is_os_module(specifier) => Some(vec![Held::Os]),
                 Some((specifier, Some(export))) if self.is_os_module(specifier) => {
                     Some(vec![Held::FunctionOfOs(export)])
+                }
+                Some((specifier, export)) => {
+                    let namespace = (specifier, &[][..], true);
+                    Some(vec![match export {
+                        Some(export) => {
+                            self.read_data_file(namespace, self.inputs.atoms.bytes(export))
+                        }
+                        None => Held::Data {
+                            specifier,
+                            path: Vec::new(),
+                            is_namespace: true,
+                        },
+                    }])
                 }
                 _ => None,
             },
@@ -1190,6 +1290,14 @@ impl Follower<'_, '_, '_> {
                     names.map(Held::FunctionOfOs).collect()
                 }
                 Held::Process => self.read_member_of_process(keys?)?,
+                Held::Data {
+                    specifier,
+                    path,
+                    is_namespace,
+                } => match keys? {
+                    [key] => vec![self.read_data_file((*specifier, path, *is_namespace), key)],
+                    _ => return None,
+                },
                 Held::Resolved(name, ResolvedForm::UrlObject) => match keys? {
                     [key] if key == b"href" => {
                         vec![Held::Resolved(name.clone(), ResolvedForm::Url)]
@@ -1210,6 +1318,42 @@ impl Follower<'_, '_, '_> {
             }
         }
         Some(values)
+    }
+
+    fn read_data_file(
+        &self,
+        (specifier, path, is_namespace): (Atom, &[u8], bool),
+        key: &[u8],
+    ) -> Held {
+        if is_namespace && key == b"default" {
+            return Held::Data {
+                specifier,
+                path: path.to_vec(),
+                is_namespace: false,
+            };
+        }
+        let path = match path {
+            [] => key.to_vec(),
+            _ => [path, b"\0", key].concat(),
+        };
+        let &ScanInputs { hir, atoms, .. } = self.inputs;
+        let name = atoms.intern(&path);
+        self.asked_of_data_files
+            .0
+            .borrow_mut()
+            .push((specifier, name));
+        let mut known = hir.texts_of_data_files.iter();
+        match known.find(|it| it.specifier == specifier && it.path == name) {
+            Some(known) => {
+                self.has_read_data_file.set(true);
+                Held::Text(Text::whole(atoms.bytes(known.text)))
+            }
+            None => Held::Data {
+                specifier,
+                path,
+                is_namespace: false,
+            },
+        }
     }
 
     fn read_member_of_process(&self, keys: &[Vec<u8>]) -> Option<Values> {
@@ -1309,10 +1453,15 @@ impl Follower<'_, '_, '_> {
             return None;
         }
         if let Some(module) = self.find_required_module(e) {
-            return match is_process_module(module) {
-                true => Some(vec![Held::Process]),
-                false => self.is_os_module(module).then(|| vec![Held::Os]),
-            };
+            return Some(vec![match is_process_module(module) {
+                true => Held::Process,
+                false if self.is_os_module(module) => Held::Os,
+                false => Held::Data {
+                    specifier: module,
+                    path: Vec::new(),
+                    is_namespace: false,
+                },
+            }]);
         }
         if let Some((name, form)) = self.find_name_asked_of_resolver(e) {
             return self.values_answered_by_resolver(name, form);
@@ -1331,7 +1480,12 @@ impl Follower<'_, '_, '_> {
             return Some(values);
         }
         if let Some(function) = self.find_path_joining_function(callee) {
-            let below_folder = self.values_of_path_below_folder(call.args, function == known::join);
+            let takes_one_path = function != known::join && function != known::resolve;
+            if takes_one_path && call.args.len() != 1 {
+                return None;
+            }
+            let is_join = function != known::resolve;
+            let below_folder = self.values_of_path_below_folder(call.args, is_join);
             return match below_folder {
                 None if self.follows_key => self.values_of_path_below_some_folder(call.args),
                 below_folder => below_folder,
@@ -1397,8 +1551,25 @@ impl Follower<'_, '_, '_> {
     }
 
     fn find_path_joining_function(&self, callee: ExprId) -> Option<Atom> {
-        let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
-        (self.find_export_of(callee, &[b"path", b"node:path"])).filter(joins_paths)
+        let atoms = self.inputs.atoms;
+        let joins_paths = |member: &Atom| {
+            *member == known::join
+                || *member == known::resolve
+                || atoms.bytes(*member) == b"normalize"
+        };
+        self.find_export_of_path(callee).filter(joins_paths)
+    }
+
+    fn find_export_of_path(&self, e: ExprId) -> Option<Atom> {
+        let &ScanInputs { hir, atoms, .. } = self.inputs;
+        if let Some(name) = self.find_export_of(e, &PATH_MODULES) {
+            return Some(name);
+        }
+        let (object, MemberKey::Name(name)) = hir.member_key(e)? else {
+            return None;
+        };
+        let object = self.find_export_of(hir.skip_type_assertions(object), &PATH_MODULES)?;
+        (atoms.bytes(object) == b"posix").then_some(name)
     }
 
     /// The name of the export that `callee` is, of the module that goes by `names`.
@@ -1589,7 +1760,7 @@ impl Follower<'_, '_, '_> {
             };
         }
         let of_url = self.find_export_of(callee, &[b"url", b"node:url"]);
-        let of_path = || self.find_export_of(callee, &[b"path", b"node:path"]);
+        let of_path = || self.find_export_of_path(callee);
         let function = atoms.bytes(of_url.or_else(of_path)?);
         let convert: fn(Held) -> Option<Held> = match (of_url.is_some(), function) {
             (true, b"fileURLToPath") => |value| match value {
@@ -1598,7 +1769,7 @@ impl Follower<'_, '_, '_> {
             },
             (true, b"pathToFileURL") => |value| match value {
                 Held::Resolved(name, Path) => Some(Held::Resolved(name, UrlObject)),
-                Held::Text(name) if name.starts_at_own_directory => {
+                Held::Text(name) if name.starts_at_own_directory && !name.is_file_url => {
                     Some(Held::Resolved(name, UrlObject))
                 }
                 _ => None,
@@ -1637,7 +1808,7 @@ impl Follower<'_, '_, '_> {
             let Held::Text(folder) = folder else {
                 return None;
             };
-            if !folder.starts_at_own_directory {
+            if !folder.starts_at_own_directory || folder.is_file_url {
                 return None;
             }
             // `./lib`, a folder below that of the file, is that folder and `lib`.
@@ -1648,6 +1819,7 @@ impl Follower<'_, '_, '_> {
                 },
                 end: folder.end.clone(),
                 starts_at_own_directory: false,
+                is_file_url: false,
             }]);
         }
         // Where the folder is only what the variable itself holds, the parts are looked at all the same.
@@ -1729,6 +1901,7 @@ impl Follower<'_, '_, '_> {
                     start: Vec::new(),
                     end: Some(end),
                     starts_at_own_directory: false,
+                    is_file_url: false,
                 }),
             );
         }
@@ -1956,6 +2129,10 @@ fn name_from_url_of_folder(folder: &[u8], text: &Text) -> Option<Text> {
         return None;
     }
     let mut name = text.clone();
+    let last = name.start.rsplit(|&byte| byte == b'/').next();
+    if name.end.is_none() && matches!(last, Some(b"." | b"..")) {
+        name.start.push(b'/');
+    }
     if folder == b"./" && name.start.starts_with(b"../") {
         return Some(name);
     }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, withoutAsanQuarantine } from "harness";
 import { join } from "node:path";
 
 // Regression: doRenderStream allocates a ResponseStream.JSSink on the heap
@@ -12,7 +12,7 @@ import { join } from "node:path";
 test("HTTPResponseSink is destroyed after a sync pull() that ends later", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-response-stream-sink-leak-fixture.ts")],
-    env: bunEnv,
+    env: withoutAsanQuarantine(bunEnv),
     stdout: "pipe",
     stderr: "pipe",
   });

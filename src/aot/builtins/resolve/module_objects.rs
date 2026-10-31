@@ -100,7 +100,7 @@ impl Resolver<'_, '_> {
     }
 
     // Whoever reads the result learns whether there is an object, and does not get the object.
-    fn is_only_tested(&self, e: ExprId) -> bool {
+    pub(super) fn is_only_tested(&self, e: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut node = e;
         loop {

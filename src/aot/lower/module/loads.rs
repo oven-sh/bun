@@ -2,14 +2,14 @@ use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl};
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{self, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
-    ResolvedForm, find_module_printed_as_require, find_own_require, find_require_call,
-    holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
-    is_name_read_by_transpiler, is_require_made_for_own_file, may_require_get_members,
-    may_still_be_undefined,
+    ResolvedForm, ResolvedFrom, find_module_printed_as_require, find_own_require,
+    find_require_call, holds_import_meta_require, is_create_require_behind_get_builtin_module,
+    is_made_require, is_name_read_by_transpiler, is_require_made_for_own_file,
+    may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
@@ -364,7 +364,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         options: Option<ValueId>,
     ) -> ValueId {
-        if let Some(object) = find_object_replacing_namespace(self.file.hir, arguments, module) {
+        let decisions = self.file.decisions();
+        if let Some(object) =
+            find_object_replacing_namespace(self.file.hir, decisions, arguments, module)
+        {
             let value = self.emit_builtin_import(object, None);
             return self.emit_settled_promise(BuiltinId::PromiseResolve, value);
         }
@@ -410,9 +413,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             return self.try_lower_choice_of_builtin_modules(call, id, chain_exit);
         };
-        let resolved_from = analysis.path_to_resolve_from(site).and_then(|path| {
-            let queries = &self.file.queries;
-            queries.files().by_path.get(queries.atom_bytes(path))
+        let path_to_resolve_from = analysis.path_to_resolve_from(site);
+        let resolved_from = path_to_resolve_from.and_then(|from| match from {
+            ResolvedFrom::File(path) => {
+                let queries = &self.file.queries;
+                queries.files().by_path.get(queries.atom_bytes(path))
+            }
+            ResolvedFrom::PathFromOwnFolder(_) => None,
         });
         let site = analysis.import_sites[site];
         if has_spread_argument(hir, arguments) {
@@ -429,7 +436,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .binary_search(&(BuiltinId::NodeModuleCreateRequire as u32))
             .is_ok()
             && matches!(site.kind, ImportSiteKind::Require(_))
-            && find_own_require(hir, bound, decisions, made) == Some(OwnRequire::Made)
+            && matches!(
+                find_own_require(hir, bound, decisions, made),
+                Some(OwnRequire::Made | OwnRequire::MadeForPath(_))
+            )
             && !is_made_by_imported_name(hir, bound, made)
         {
             return None;
@@ -440,6 +450,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules = self.file.inputs.modules;
         let answer = modules.site_answer(self.file.file, site.kind);
         let operation = find_operation(&site, answer, given.len())?;
+        // No module of the program stands for the folder that `createRequire` was given: what is looked for at run time is left to what it made.
+        if matches!(
+            path_to_resolve_from,
+            Some(ResolvedFrom::PathFromOwnFolder(_))
+        ) && !matches!(answer, SiteAnswer::Module(_))
+        {
+            return None;
+        }
         // `bun run` answers a `require` of this module by a call of `Bun.jest`.
         if matches!(site.kind, ImportSiteKind::Require(_))
             && matches!(
@@ -500,7 +518,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 CalleeKnowledge::Unresolved => {
                     match find_own_require(hir, bound, decisions, callee)? {
                         OwnRequire::OfFile => CalleeTest::Expected(BuiltinId::ModuleRequire),
-                        OwnRequire::OfOtherFile(_) | OwnRequire::Made => CalleeTest::IsFilled,
+                        OwnRequire::OfOtherFile(_)
+                        | OwnRequire::Made
+                        | OwnRequire::MadeForPath(_) => CalleeTest::IsFilled,
                     }
                 }
                 CalleeKnowledge::Bound => {
@@ -722,7 +742,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder.strict_eq(receiver, expected_receiver)
             }
             // Nothing else stores to the binding that holds it, and where that is still empty the read of the method has thrown.
-            OwnRequire::Made | OwnRequire::OfOtherFile(_) => self.builder.boolean(true),
+            OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::OfOtherFile(_) => {
+                self.builder.boolean(true)
+            }
         };
         self.builder.write_variable(is_followed, is_require);
         self.jump(decided);
@@ -1957,17 +1979,17 @@ struct PathTest {
     written: StringId,
 }
 
-// `bun run` loads the module when the specifier is anything but a string literal.
+// `bun run` loads the module wherever its transpiler does not read the name: `Decisions::is_constant_in_bun_run`.
 fn find_object_replacing_namespace(
     hir: &hir::File<'_>,
+    decisions: &Decisions<'_>,
     arguments: IdList<ExprId>,
     module: ModuleRef,
 ) -> Option<BuiltinId> {
-    let first = (arguments.len() > 0).then(|| hir[hir.id_at(arguments, 0)].kind);
-    match (module, first) {
-        (ModuleRef::Runtime(module), Some(ExprKind::String(_))) => {
-            table::object_replacing_namespace(module)
-        }
+    let first = (arguments.len() > 0).then(|| hir.skip_type_assertions(hir.id_at(arguments, 0)));
+    let is_name_read = first.is_some_and(|name| decisions.is_constant_in_bun_run(hir, name));
+    match (module, is_name_read) {
+        (ModuleRef::Runtime(module), true) => table::object_replacing_namespace(module),
         (
             ModuleRef::Runtime(_)
             | ModuleRef::File(_)

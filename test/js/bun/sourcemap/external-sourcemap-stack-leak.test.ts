@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, MAX_PATH_BYTES, tempDir } from "harness";
+import { bunEnv, bunExe, MAX_PATH_BYTES, tempDir, withoutAsanQuarantine } from "harness";
 import { join } from "node:path";
 
 // Formatting a stack trace hands one ZigStackFrame per frame to
@@ -112,7 +112,7 @@ describe.concurrent("error.stack with an external source map does not leak the r
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "main.js", mode],
         cwd: String(dir),
-        env: bunEnv,
+        env: withoutAsanQuarantine(bunEnv),
         stdout: "pipe",
         stderr: "pipe",
       });

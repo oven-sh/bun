@@ -191,7 +191,7 @@ export default b.declarations(
   // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
     args: { holder: b.object, except: b.object, receiver: b.any.optional },
-    returns: b.instance("Array").fresh.dense,
+    returns: newArrayOf(b.union(b.string, b.symbol, b.callable)).dense,
     capability: "js",
     throws: true,
     uses: {

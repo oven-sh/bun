@@ -674,3 +674,9 @@ async function makeTwoHundredValues(first) {
 await makeThirtyValues({ first: 1 });
 await makeSixtyValues({ first: 2 });
 await makeTwoHundredValues({ first: 3 });
+// What is printed follows from the program. Plain Bun now and then finds an object still there that nobody reaches.
+/* Output:
+thirty values: collected -1442821383
+sixty values: collected -1138648096
+two hundred values: collected 232279193
+*/

@@ -23,7 +23,8 @@ use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
 };
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
-use crate::load::sources::parsed_source;
+use crate::load::sources::{SourceKind, parsed_source};
+use crate::modules::evicted::find_whole_paths_changed_on_disk;
 use crate::statistics::{LimitId, LimitValues};
 
 // `module` is what `name` stands for, and `name` is one of the values of `argument`, the first argument of a load.
@@ -233,6 +234,31 @@ pub(crate) fn loads_by_unknown_path(application: &Files<'_>) -> bool {
     };
     loads_by_unknown_name(application)
         || application.compiled_files().iter().any(names_unknown_path)
+}
+
+/// `writeFileSync(require.resolve("./a.cjs"), text); delete require.cache[path]; require("./a.cjs")` in a test: the run writes a file with code of the program anew.
+/// The run time compares such a file with the disk before it loads it, and reads the new text. Nobody has read what that text imports and calls.
+pub(crate) fn writes_own_code_anew(application: &Files<'_>, working_directory: &[u8]) -> bool {
+    let is_code = |&file: &FileId| {
+        let kind = parsed_source(application, file).map(|source| source.kind);
+        matches!(kind, Some(SourceKind::Program | SourceKind::EvaluatedText))
+    };
+    let writers = application
+        .compiled_files()
+        .iter()
+        .filter(|&file| is_code(file));
+    let written: Vec<(Vec<u8>, bool)> = writers
+        .flat_map(|&file| find_whole_paths_changed_on_disk(application, file, working_directory))
+        .collect();
+    let is_written = |name: &[u8]| {
+        written.iter().any(|(path, reaches_below)| {
+            let below = name.strip_prefix(&path[..]);
+            below.is_some_and(|rest| rest.is_empty() || (*reaches_below && rest[0] == b'/'))
+        })
+    };
+    !written.is_empty()
+        && (application.compiled_files().iter())
+            .any(|file| is_code(file) && is_written(application.module(*file).file_name()))
 }
 
 /// A path where the program may lay a file before it loads it. What a package looks for and does without, `require("./build/Release/addon.node")`, is none.
@@ -875,6 +901,7 @@ mod tests {
                 serves_unseen_code: false,
                 is_served_by_other_images: false,
                 holds_test_files_alone: false,
+                working_directory_of_test_run: None,
             };
             let roots =
                 collect_runtime_roots(input.files, &runtime_modules, input.platform, further);
@@ -884,6 +911,34 @@ mod tests {
             };
             RuntimeModule::ALL.into_iter().filter(is_root).collect()
         })
+    }
+
+    #[test]
+    fn a_run_writes_its_own_code_anew() {
+        let writes_code = |files: &[(&str, &str)]| {
+            with_bind_input(files, &default_settings(), |input| {
+                super::writes_own_code_anew(input.files, input.working_directory)
+            })
+        };
+        let writes = |path: &str| {
+            format!(
+                "import fs from 'node:fs'; import './m.cjs'; import './data.json'; fs.writeFileSync({path}, text);"
+            )
+        };
+        let files_with = |main: &str| {
+            writes_code(&[
+                ("main.ts", main),
+                ("m.cjs", "exports.a = 1;"),
+                ("data.json", "{}"),
+            ])
+        };
+        assert!(files_with(&writes("import.meta.dir + '/m.cjs'")));
+        assert!(files_with(&writes("require.resolve('./m.cjs')")));
+        // No code lies there, or nothing of the program, or nobody knows where it writes.
+        assert!(!files_with(&writes("import.meta.dir + '/data.json'")));
+        assert!(!files_with(&writes("import.meta.dir + '/m.cjs.txt'")));
+        assert!(!files_with(&writes("somewhere")));
+        assert!(!files_with("import './m.cjs'; import './data.json';"));
     }
 
     #[track_caller]

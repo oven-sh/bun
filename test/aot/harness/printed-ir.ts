@@ -3,10 +3,11 @@
 // shell/tools.ts says where testaot is looked for.
 //
 // `test` and `describe` are those of ../supported.ts, and skip where there is no testaot either.
-import { describe as describeAnywhere, expect, test as testAnywhere } from "bun:test";
+import { describe as describeAnywhere, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { spawned } from "./commands";
+import { test as testAnywhere } from "./default-timeout";
 import { testaot, toolEnv } from "../shell/tools";
 import { alwaysSkipped, unsupported } from "../supported";
 import { compileCommand, withProgramOutput } from "./flags";

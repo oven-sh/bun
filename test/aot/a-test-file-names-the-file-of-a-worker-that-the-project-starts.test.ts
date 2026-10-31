@@ -87,7 +87,9 @@ const asWritten = Object.keys(ways).map((name, index) => `SEEN ${name} | w${inde
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-named-by-a-test-file", files);
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  const command = [bunExe(), "test", "--timeout=60000", ...flags, "--isolate"];
+  const ran = await run(command, String(dir), { ...bunEnv, ...env });
+  if (ran.exitCode !== 0) console.error(ran.stderr);
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [

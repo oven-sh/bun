@@ -157,6 +157,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let file = &*self.file;
         let node = file.skip_type_syntax(side);
         let node = self.find_kept_typeof(node).unwrap_or(node);
+        if let Some(operand) = file.find_operand_of_typeof_helper(node) {
+            return Some(operand);
+        }
         let ExprKind::Unary {
             op: UnOp::Typeof,
             operand,

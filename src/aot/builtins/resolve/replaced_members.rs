@@ -1,19 +1,22 @@
 //! Where a file of a test run replaces a member of a built-in object under a name that it spells:
 //! `String.prototype.at = f`, `delete Array.from`, `spyOn(Map.prototype, "get")`, `Object.defineProperty(Buffer, "from", d)`, `Object.assign(Date, { now })`.
 //! And where it may: a built-in object beside the name of one of its members, as operands of a call or in a literal,
-//! `stub(Array.prototype, "join")`, `[Map.prototype, "get"]`, `{ holder: Object, key: "assign" }`. A helper or a loop over a table does the rest.
+//! `stub(Array.prototype, "join")`, `swap(Date, { now: () => 0 })`, `[Map.prototype, "get"]`, `{ holder: Object, key: "assign" }`. A helper or a loop over a table does the rest.
 //! A member too many costs a test where it is used. One that is missed here stays locked, and the test that writes it gets a TypeError.
 
 use super::imports::has_source;
 use super::resolver::{ExprState, Resolver};
 use super::{ObjectSpelled, ReplacedMembersSought, WriteOnImport};
 use crate::builtins::table::{
-    self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability, RuntimeModule, Scope,
+    self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
+    Prototype, RuntimeModule, Scope,
 };
-use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingInitializer};
+use bun_sema::atom::{Atom, known};
+use bun_sema::bind::{Binding, BindingInitializer, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, NodeData, PropKey, UnOp};
+use bun_sema::hir::{
+    BinOp, ExprId, ExprKind, MemberKey, NodeData, PropKey, StmtId, StmtKind, UnOp,
+};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
@@ -76,6 +79,31 @@ pub fn find_member_written_behind<'a>(
         }
     }
     find_locked_member_of(holder, table::find_name(key)?)
+}
+
+// The objects above `holder`, its `prototype`, and the objects above that.
+fn find_builtins_around(holder: BuiltinId) -> Vec<BuiltinId> {
+    let prototype =
+        table::find_name(b"prototype").and_then(|name| match table::member(holder, name) {
+            MemberLookup::Found(member) => Some(table::canonical_id(member)),
+            MemberLookup::Unknown | MemberLookup::Absent => None,
+        });
+    let mut around = Vec::new();
+    for start in [Some(holder), prototype].into_iter().flatten() {
+        let mut current = start;
+        loop {
+            if current != holder && !around.contains(&current) {
+                around.push(current);
+            }
+            match table::entry(current).prototype {
+                Prototype::Builtin(above) if !around.contains(&table::canonical_id(above)) => {
+                    current = table::canonical_id(above);
+                }
+                Prototype::Builtin(_) | Prototype::Unknown | Prototype::Null => break,
+            }
+        }
+    }
+    around
 }
 
 impl Resolver<'_, '_> {
@@ -160,6 +188,217 @@ impl Resolver<'_, '_> {
         })
     }
 
+    /// An object, a function or a symbol, on every platform. `RegExp.prototype.flags` is "" and `Array.prototype.length` 0.
+    fn is_there_and_not_falsy(member: BuiltinId) -> bool {
+        let entry = table::entry(member);
+        let is_object = match entry.kind {
+            BuiltinKind::Namespace
+            | BuiltinKind::Constructor
+            | BuiltinKind::Function
+            | BuiltinKind::Prototype
+            | BuiltinKind::Method => true,
+            BuiltinKind::Accessor
+            | BuiltinKind::DataProperty
+            | BuiltinKind::Constant
+            | BuiltinKind::NativeBinding => table::well_known_symbol(member).is_some(),
+        };
+        is_object && entry.platforms == Platforms::all()
+    }
+
+    /// Nothing but the member: read off its holder or off `(_c = Symbol)`, `(_a = Symbol.dispose)`, or `filled`.
+    fn reads_member(&self, value: ExprId, member: BuiltinId, filled: SymbolId) -> bool {
+        let hir = self.input.hir;
+        let value = hir.skip_type_assertions(value);
+        let reads_off_stored_holder = || {
+            let (object, MemberKey::Name(name)) = hir.member_key(value)? else {
+                return None;
+            };
+            let ExprKind::Assign {
+                op: None,
+                value: holder,
+                ..
+            } = hir[hir.skip_type_assertions(object)].kind
+            else {
+                return None;
+            };
+            let holder = table::canonical_id(self.value_of(holder)?.path.id);
+            let found = self.find_locked_member(holder, self.input.names.get(name)?)?;
+            Some(table::canonical_id(found) == member)
+        };
+        match hir[value].kind {
+            ExprKind::Assign {
+                op: None, value, ..
+            } => self.reads_member(value, member, filled),
+            ExprKind::Ident(_) if filled != SymbolId::NONE => {
+                self.input.bound.symbol_of_expr(value) == filled
+            }
+            _ => match self.value_of(value) {
+                Some(exact) => table::canonical_id(exact.path.id) == member,
+                None => reads_off_stored_holder() == Some(true),
+            },
+        }
+    }
+
+    /// `_a` in `(_a = Symbol.dispose) !== null`: what stands to the right of that in the same test reads the member out of it.
+    fn find_variable_filled_with_member(&self, test: ExprId, member: BuiltinId) -> SymbolId {
+        let hir = self.input.hir;
+        let ExprKind::Binary { left, right, .. } = hir[hir.skip_type_assertions(test)].kind else {
+            return SymbolId::NONE;
+        };
+        let filled = [left, right].into_iter().find_map(|operand| {
+            let ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } = hir[hir.skip_type_assertions(operand)].kind
+            else {
+                return None;
+            };
+            let is_variable = matches!(hir[target].kind, ExprKind::Ident(_));
+            (is_variable && self.reads_member(value, member, SymbolId::NONE))
+                .then(|| self.input.bound.symbol_of_expr(target))
+        });
+        filled.unwrap_or(SymbolId::NONE)
+    }
+
+    /// What a test answers where `member` is there and is not falsy. `filled`: a variable that holds it.
+    fn find_answer_where_member_is_there(
+        &self,
+        test: ExprId,
+        member: BuiltinId,
+        filled: SymbolId,
+    ) -> Option<bool> {
+        let (hir, decisions) = (self.input.hir, self.input.decisions);
+        let test = hir.skip_type_assertions(test);
+        if self.reads_member(test, member, filled) {
+            return Some(true);
+        }
+        let answer = |test: ExprId| self.find_answer_where_member_is_there(test, member, filled);
+        let answer_behind = |left: ExprId, right: ExprId| {
+            let filled = match self.find_variable_filled_with_member(left, member) {
+                SymbolId::NONE => filled,
+                filled => filled,
+            };
+            self.find_answer_where_member_is_there(right, member, filled)
+        };
+        let says_missing = |value: ExprId, with: ExprId| {
+            let (value, with) = (
+                hir.skip_type_assertions(value),
+                hir.skip_type_assertions(with),
+            );
+            match (hir[value].kind, decisions.constant(hir, with)) {
+                (
+                    ExprKind::Unary {
+                        op: UnOp::Typeof,
+                        operand,
+                    },
+                    FoldedValue::Constant(Constant::String(text)),
+                ) => text == known::undefined && self.reads_member(operand, member, filled),
+                (_, FoldedValue::Constant(Constant::Undefined | Constant::Null)) => {
+                    self.reads_member(value, member, filled)
+                }
+                _ => false,
+            }
+        };
+        match hir[test].kind {
+            ExprKind::Unary {
+                op: UnOp::Not,
+                operand,
+            } => answer(operand).map(|it| !it),
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                right,
+            } => match (answer(left), answer_behind(left, right)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            },
+            ExprKind::Binary {
+                op: BinOp::Or,
+                left,
+                right,
+            } => match (answer(left), answer_behind(left, right)) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            },
+            ExprKind::Binary {
+                op: op @ (BinOp::EqEq | BinOp::EqEqEq | BinOp::NotEq | BinOp::NotEqEq),
+                left,
+                right,
+            } => (says_missing(left, right) || says_missing(right, left))
+                .then_some(matches!(op, BinOp::NotEq | BinOp::NotEqEq)),
+            ExprKind::Binary {
+                op: BinOp::In,
+                left,
+                right,
+            } => {
+                let name = self.input.names.get(self.constant_key(left)?)?;
+                let found = self.find_locked_member(self.find_builtin(right)?, name)?;
+                (table::canonical_id(found) == member).then_some(true)
+            }
+            _ => None,
+        }
+    }
+
+    /// `Symbol.dispose || (Symbol.dispose = f)`, `if (typeof Symbol.dispose === "undefined") Symbol.dispose = f`, and `Symbol.dispose ??= f` as a compiler
+    /// writes it for an older engine, `(_a = (_c = Symbol).dispose) !== null && _a !== void 0 ? _a : (_c.dispose = f)`: as `??=` in find_write().
+    fn is_behind_test_that_finds_member_missing(&self, write: ExprId, member: BuiltinId) -> bool {
+        #[derive(Copy, Clone)]
+        enum Node {
+            Expr(ExprId),
+            Stmt(StmtId),
+        }
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut node = Node::Expr(write);
+        loop {
+            let parent = match node {
+                Node::Expr(expr) => bound.parent_of_expr(expr),
+                Node::Stmt(stmt) => bound.parent_of_stmt(stmt),
+            };
+            // The test around the node, and the answer with which the node is passed over.
+            let passed_over_by = match (parent, node) {
+                (Parent::Expr(parent), Node::Expr(child)) => match hir[parent].kind {
+                    ExprKind::Cond { test, branches } if child == hir.branches(branches).yes => {
+                        Some((test, false))
+                    }
+                    ExprKind::Cond { test, branches } if child == hir.branches(branches).no => {
+                        Some((test, true))
+                    }
+                    ExprKind::Binary {
+                        op: BinOp::Or | BinOp::Nullish,
+                        left,
+                        right,
+                    } if child == right => Some((left, true)),
+                    ExprKind::Binary {
+                        op: BinOp::And,
+                        left,
+                        right,
+                    } if child == right => Some((left, false)),
+                    _ => None,
+                },
+                (Parent::Stmt(parent), Node::Stmt(child)) => match hir[parent].kind {
+                    StmtKind::If { test, yes, .. } if child == yes => Some((test, false)),
+                    StmtKind::If { test, no, .. } if child == no => Some((test, true)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((test, answer)) = passed_over_by
+                && self.find_answer_where_member_is_there(test, member, SymbolId::NONE)
+                    == Some(answer)
+            {
+                return true;
+            }
+            node = match parent {
+                Parent::Expr(parent) => Node::Expr(parent),
+                Parent::Stmt(parent) => Node::Stmt(parent),
+                _ => return false,
+            };
+        }
+    }
+
     /// The key itself, what a constant holds, an element of the list that a loop walks, what the calls of a function of the file pass for it:
     /// `function plant(name) { Object.defineProperty(Object.prototype, name, d); }`, `plant("polluted")`.
     pub(super) fn find_keys_spelled_for(&self, key: ExprId) -> Vec<Atom> {
@@ -227,6 +466,23 @@ impl Resolver<'_, '_> {
                 }
             }
             _ => values.push(value),
+        }
+    }
+
+    /// The keys of an object literal, which may stand in a constant: `const members = { now: () => 0 }`.
+    fn push_keys_of_literal(&self, value: ExprId, keys: &mut Vec<Atom>) {
+        let hir = self.input.hir;
+        for value in self.find_values_spelled_for(value) {
+            let ExprKind::Object(properties) = hir[hir.skip_type_assertions(value)].kind else {
+                continue;
+            };
+            for property in properties.iter() {
+                match hir[property].key {
+                    PropKey::Name(name) => keys.push(name),
+                    PropKey::Computed(key) => keys.extend(self.find_keys_spelled_for(key)),
+                    PropKey::None | PropKey::Private(_) => {}
+                }
+            }
         }
     }
 
@@ -302,6 +558,7 @@ impl Resolver<'_, '_> {
     fn find_members_named_by(&self, expr: ExprId, found: &mut Found) {
         let hir = self.input.hir;
         let mut values = Vec::new();
+        let mut keys = Vec::new();
         match hir[expr].kind {
             // What a function of the table does with its operands is known: `Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")` writes nothing.
             ExprKind::Call(call) | ExprKind::New(call) => {
@@ -309,6 +566,7 @@ impl Resolver<'_, '_> {
                     // `wrap(Map.prototype, ["set", "get"])`
                     for operand in hir.ids(hir[call].args) {
                         self.push_values_of_literal(operand, 1, &mut values);
+                        self.push_keys_of_literal(operand, &mut keys);
                     }
                 }
             }
@@ -320,6 +578,16 @@ impl Resolver<'_, '_> {
         // A text in a table may be a label. An operand of a helper beside the object is taken for a name: `plant(Object.prototype, "polluted")`.
         let names_before = found.names.len();
         self.find_members_named_beside_holders(&values, found);
+        // `swap(Date, { now: () => 0 })`: the helper stores what it is handed under the names that it is handed it under.
+        if !keys.is_empty() {
+            let holders = values.iter();
+            let holders = holders.flat_map(|&value| self.find_builtins_spelled_for(value));
+            for holder in holders.collect::<Vec<BuiltinId>>() {
+                for &key in &keys {
+                    self.note_write(holder, key, found);
+                }
+            }
+        }
         if !matches!(hir[expr].kind, ExprKind::Call(_)) {
             found.names.truncate(names_before);
         }
@@ -427,6 +695,14 @@ impl Resolver<'_, '_> {
                 KeyOfWrite::Name(_) => Vec::new(),
                 KeyOfWrite::Computed(key) => self.find_symbols_spelled_for(key),
             };
+            if let ([holder], [key], []) = (&holders[..], &written[..], &symbols[..])
+                && let Some(name) = self.input.names.get(*key)
+                && let Some(member) = self.find_locked_member(*holder, name)
+                && Self::is_there_and_not_falsy(member)
+                && self.is_behind_test_that_finds_member_missing(expr, table::canonical_id(member))
+            {
+                continue;
+            }
             // A name behind a dot on an object of the program's own says nothing.
             if holders.is_empty() && matches!(write.key, KeyOfWrite::Computed(_)) {
                 keys.extend_from_slice(&written);
@@ -474,6 +750,23 @@ impl Resolver<'_, '_> {
                 true => self.find_builtins_reached_without_names(write.object),
                 false => Vec::new(),
             };
+            // Only a member that is there counts, and only where a function is put in its place.
+            if holders.is_empty()
+                && sought == ReplacedMembersSought::WrittenOrNamed
+                && self.puts_a_function_there(expr)
+            {
+                let names = written.iter().filter_map(|&key| self.input.names.get(key));
+                let names: Vec<_> = names.chain(symbols.iter().copied()).collect();
+                let guessed = match names.is_empty() {
+                    true => Vec::new(),
+                    false => self.find_builtins_guessed_widely(write.object),
+                };
+                for holder in guessed {
+                    let members = names.iter();
+                    (found.members)
+                        .extend(members.filter_map(|&name| self.find_locked_member(holder, name)));
+                }
+            }
             // What another file hands out: who reads all the files puts the two together.
             if holders.is_empty() && sought == ReplacedMembersSought::WrittenOrNamed {
                 let keys = written.iter();
@@ -485,6 +778,16 @@ impl Resolver<'_, '_> {
                     true => Vec::new(),
                     false => self.find_imports_behind(write.object),
                 };
+                // A helper of another file may answer what stands above its operand, or the operand's `prototype`:
+                // `above(Uint8Array).prototype.fill = f`, `protoOf(Array).join = f`. Only a member that is there counts: a new name on an
+                // object that stands above others would be opened for all of them.
+                let reached = unnamed.iter().filter(|_| !imports.is_empty());
+                for around in reached.flat_map(|&it| find_builtins_around(it)) {
+                    let names = keys.iter().filter_map(|&key| self.input.names.get(key));
+                    let names = names.chain(symbols.iter().copied());
+                    (found.members)
+                        .extend(names.filter_map(|name| self.find_locked_member(around, name)));
+                }
                 for (import, path) in imports {
                     writes_on_imports.extend(keys.iter().map(|&key| WriteOnImport {
                         import,
@@ -543,5 +846,6 @@ impl Resolver<'_, '_> {
         self.output.holders_named_from_outside = named_from_outside;
         self.output.writes_on_imports = writes_on_imports;
         self.output.builtins_handed_out = self.find_builtins_handed_out();
+        self.output.builtins_exported = self.find_builtins_exported();
     }
 }

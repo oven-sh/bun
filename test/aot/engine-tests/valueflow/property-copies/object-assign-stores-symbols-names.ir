@@ -825,14 +825,13 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: L0|L1|L2|L3 = AssumeType v4 provenType=L0|L1|L2|L3
 # CHECK-NEXT: v6: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v7: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: v13: int[0, 4294967295] = GetArrayLength v1
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 4294967296] = Add v14, v13
-# CHECK-NEXT: v9: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, Contiguous> = NewArray v5 contents=undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17 capacity=v15 allocationSite=40 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v10: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v10, v1
-# CHECK-NEXT: v12: anything = CallList v7, v6, v10 calleeName="Object.assign" accessSite=60 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: v12: int[0, 4294967295] = GetArrayLength v1
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int[1, 4294967296] = Add v13, v12
+# CHECK-NEXT: v8: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, Contiguous> = NewArray v5 contents=undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17 capacity=v14 allocationSite=40 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v9: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v9, v1
+# CHECK-NEXT: v11: anything = CallList v7, v6, v9 calleeName="Object.assign" accessSite=60 callees=[builtin(ObjectAssign)]
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithField"
@@ -851,14 +850,13 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v3: L11 = NewObject -, v9, v10 layout=L11 fields=[0, 1] allocationSite=43 allocationClass=11
-# CHECK-NEXT: v11: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v12: 1 = Integer integer=1
-# CHECK-NEXT: v13: int[1, 4294967296] = Add v12, v11
-# CHECK-NEXT: v4: Array<undefined|L6|L7|L9|L10|L11, Contiguous> = NewArray v3 contents=undefined|L6|L7|L9|L10|L11 capacity=v13 allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v3: L11 = NewObject -, v8, v9 layout=L11 fields=[0, 1] allocationSite=43 allocationClass=11
+# CHECK-NEXT: v10: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: int[1, 4294967296] = Add v11, v10
+# CHECK-NEXT: v4: Array<undefined|L6|L7|L9|L10|L11, Contiguous> = NewArray v3 contents=undefined|L6|L7|L9|L10|L11 capacity=v12 allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v7: Array<undefined|L6|L7|L9|L10|L11, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<undefined|L6|L7|L9|L10|L11, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: AppendElements v7, v0
 # CHECK-NEXT: v6: anything = CallList v2, v1, v7 calleeName="Object.assign" accessSite=66 callees=[builtin(ObjectAssign)]
@@ -868,8 +866,7 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 position=1521 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=L0}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f76 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: v3: L0 = CallBuiltin -, v1 overload=ObjectAssign/0 accessSite=60
+# CHECK-NEXT: v2: L0 = CallBuiltin -, v1 overload=ObjectAssign/0 accessSite=60
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f18 module=
@@ -904,88 +901,80 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: v4: object = NewDictionary
-# CHECK-NEXT: v5: Object = AssumeType v4 provenType=Object
-# CHECK-NEXT: v6: f39 = NewClosure function=f39 allocationSite=58
-# CHECK-NEXT: DefineGetter v5, v6 key="other"
-# CHECK-NEXT: v12: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v13: 1 = Integer integer=1
-# CHECK-NEXT: v14: int[1, 4294967296] = Add v13, v12
-# CHECK-NEXT: v8: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v5 contents=undefined|L6|L7|L9|L10|Object capacity=v14 allocationSite=59 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v9: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v9, v0
-# CHECK-NEXT: v11: anything = CallList v2, v1, v9 calleeName="Object.assign" accessSite=81 callees=[builtin(ObjectAssign)]
-# CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
+# CHECK-NEXT: v3: object = NewDictionary
+# CHECK-NEXT: v4: Object = AssumeType v3 provenType=Object
+# CHECK-NEXT: v5: f39 = NewClosure function=f39 allocationSite=58
+# CHECK-NEXT: DefineGetter v4, v5 key="other"
+# CHECK-NEXT: v11: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[1, 4294967296] = Add v12, v11
+# CHECK-NEXT: v7: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v4 contents=undefined|L6|L7|L9|L10|Object capacity=v13 allocationSite=59 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v8, v0
+# CHECK-NEXT: v10: anything = CallList v2, v1, v8 calleeName="Object.assign" accessSite=81 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=2314 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=undefined|L6|L7|L9|L10|Object}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectCreate
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: L17 = NewObject -, v5 layout=L17 fields=[0] allocationSite=60 allocationClass=17
-# CHECK-NEXT: v7: Object = CallBuiltin -, v6 overload=ObjectCreate/0
-# CHECK-NEXT: v8: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: int[1, 4294967296] = Add v9, v8
-# CHECK-NEXT: v11: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v7 contents=undefined|L6|L7|L9|L10|Object capacity=v10 allocationSite=62 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v12: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v12, v0
-# CHECK-NEXT: v14: anything = CallList v2, v1, v12 calleeName="Object.assign" accessSite=82 callees=[builtin(ObjectAssign)]
-# CHECK-NEXT: ReturnCall v14 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: L17 = NewObject -, v3 layout=L17 fields=[0] allocationSite=60 allocationClass=17
+# CHECK-NEXT: v5: Object = CallBuiltin -, v4 overload=ObjectCreate/0
+# CHECK-NEXT: v6: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: int[1, 4294967296] = Add v7, v6
+# CHECK-NEXT: v9: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v5 contents=undefined|L6|L7|L9|L10|Object capacity=v8 allocationSite=62 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v10: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v10, v0
+# CHECK-NEXT: v12: anything = CallList v2, v1, v10 calleeName="Object.assign" accessSite=82 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
 # CHECK: m0 position=2673 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=undefined|L6|L7|L9|L10|Object}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectCreate
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: L17 = NewObject -, v5 layout=L17 fields=[0] allocationSite=70 allocationClass=17
-# CHECK-NEXT: v7: Object = CallBuiltin -, v6 overload=ObjectCreate/0
-# CHECK-NEXT: v8: Object = CallBuiltin -, v7 overload=ObjectCreate/0
-# CHECK-NEXT: v9: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: int[1, 4294967296] = Add v10, v9
-# CHECK-NEXT: v12: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v8 contents=undefined|L6|L7|L9|L10|Object capacity=v11 allocationSite=73 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v13: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v13, v0
-# CHECK-NEXT: v15: anything = CallList v2, v1, v13 calleeName="Object.assign" accessSite=86 callees=[builtin(ObjectAssign)]
-# CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: L17 = NewObject -, v3 layout=L17 fields=[0] allocationSite=70 allocationClass=17
+# CHECK-NEXT: v5: Object = CallBuiltin -, v4 overload=ObjectCreate/0
+# CHECK-NEXT: v6: Object = CallBuiltin -, v5 overload=ObjectCreate/0
+# CHECK-NEXT: v7: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: int[1, 4294967296] = Add v8, v7
+# CHECK-NEXT: v10: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v6 contents=undefined|L6|L7|L9|L10|Object capacity=v9 allocationSite=73 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v11, v0
+# CHECK-NEXT: v13: anything = CallList v2, v1, v11 calleeName="Object.assign" accessSite=86 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=3019 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=undefined|L6|L7|L9|L10|Object}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectCreate
-# CHECK-NEXT: v5: null = Null
-# CHECK-NEXT: v6: Object = CallBuiltin -, v5 overload=ObjectCreate/0
-# CHECK-NEXT: v7: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: int[1, 4294967296] = Add v8, v7
-# CHECK-NEXT: v10: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v6 contents=undefined|L6|L7|L9|L10|Object capacity=v9 allocationSite=81 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v11: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v11, v0
-# CHECK-NEXT: v13: anything = CallList v2, v1, v11 calleeName="Object.assign" accessSite=91 callees=[builtin(ObjectAssign)]
-# CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
+# CHECK-NEXT: v3: null = Null
+# CHECK-NEXT: v4: Object = CallBuiltin -, v3 overload=ObjectCreate/0
+# CHECK-NEXT: v5: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: int[1, 4294967296] = Add v6, v5
+# CHECK-NEXT: v8: Array<undefined|L6|L7|L9|L10|Object, Contiguous> = NewArray v4 contents=undefined|L6|L7|L9|L10|Object capacity=v7 allocationSite=81 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v9: Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined|L6|L7|L9|L10|Object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v9, v0
+# CHECK-NEXT: v11: anything = CallList v2, v1, v9 calleeName="Object.assign" accessSite=91 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|L6|L7|L9|L10|Object} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=3097 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=undefined|L6|L7|L9|L10|f41}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
 # CHECK-NEXT: v3: f41 = NewClosure function=f41 allocationSite=82
-# CHECK-NEXT: v9: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: int[1, 4294967296] = Add v10, v9
-# CHECK-NEXT: v4: Array<undefined|L6|L7|L9|L10|f41, Contiguous> = NewArray v3 contents=undefined|L6|L7|L9|L10|f41 capacity=v11 allocationSite=83 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: int[1, 4294967296] = Add v9, v8
+# CHECK-NEXT: v4: Array<undefined|L6|L7|L9|L10|f41, Contiguous> = NewArray v3 contents=undefined|L6|L7|L9|L10|f41 capacity=v10 allocationSite=83 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v7: Array<undefined|L6|L7|L9|L10|f41, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<undefined|L6|L7|L9|L10|f41, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: AppendElements v7, v0
 # CHECK-NEXT: v6: anything = CallList v2, v1, v7 calleeName="Object.assign" accessSite=92 callees=[builtin(ObjectAssign)]
@@ -996,16 +985,15 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: Array<undefined|L6|L7|L9|L10, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v2: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: v4: Array = NewArray contents=anything allocationSite=84
-# CHECK-NEXT: v9: int[0, 4294967295] = GetArrayLength v0
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: int[1, 4294967296] = Add v10, v9
-# CHECK-NEXT: v5: Array<undefined|L6|L7|L9|L10|Array, Contiguous> = NewArray v4 contents=undefined|L6|L7|L9|L10|Array capacity=v11 allocationSite=85 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v6: Array<undefined|L6|L7|L9|L10|Array, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<undefined|L6|L7|L9|L10|Array, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v6, v0
-# CHECK-NEXT: v8: anything = CallList v2, v1, v6 calleeName="Object.assign" accessSite=93 callees=[builtin(ObjectAssign)]
-# CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|L6|L7|L9|L10|Array} resolution=Assume}]
+# CHECK-NEXT: v3: Array = NewArray contents=anything allocationSite=84
+# CHECK-NEXT: v8: int[0, 4294967295] = GetArrayLength v0
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: int[1, 4294967296] = Add v9, v8
+# CHECK-NEXT: v4: Array<undefined|L6|L7|L9|L10|Array, Contiguous> = NewArray v3 contents=undefined|L6|L7|L9|L10|Array capacity=v10 allocationSite=85 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v5: Array<undefined|L6|L7|L9|L10|Array, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<undefined|L6|L7|L9|L10|Array, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v5, v0
+# CHECK-NEXT: v7: anything = CallList v2, v1, v5 calleeName="Object.assign" accessSite=93 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|L6|L7|L9|L10|Array} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Body"
 # CHECK: module=m0 position=3783 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[3, 9]}, {type="ccc"|"dd"|"yyy"|"zzzz"}] results=[{type=L5 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
@@ -1042,7 +1030,7 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="other"
-# CHECK: module=m0 position=2221 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
+# CHECK: module=m0 position=2221 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: Return v0
@@ -1066,14 +1054,13 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v9: L0|L1|L2|L3 = AssumeType v8 provenType=L0|L1|L2|L3
 # CHECK-NEXT: v10: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v11: builtin(ObjectAssign) = Builtin builtin=ObjectAssign
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
-# CHECK-NEXT: v13: int[0, 4294967295] = GetArrayLength v4
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 4294967296] = Add v14, v13
-# CHECK-NEXT: v16: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, Contiguous> = NewArray v9 contents=undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17 capacity=v15 allocationSite=40 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v17: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElements v17, v4
-# CHECK-NEXT: v19: anything = CallList v11, v10, v17 calleeName="Object.assign" accessSite=60 callees=[builtin(ObjectAssign)]
+# CHECK-NEXT: v12: int[0, 4294967295] = GetArrayLength v4
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int[1, 4294967296] = Add v13, v12
+# CHECK-NEXT: v15: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, Contiguous> = NewArray v9 contents=undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17 capacity=v14 allocationSite=40 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v16: Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|L0|L1|L2|L3|L6|L7|L9|L10|L17, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElements v16, v4
+# CHECK-NEXT: v18: anything = CallList v11, v10, v16 calleeName="Object.assign" accessSite=60 callees=[builtin(ObjectAssign)]
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Plain"

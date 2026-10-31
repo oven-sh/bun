@@ -2194,6 +2194,7 @@ impl<'f, 's> Binder<'f, 's> {
         }
         (
             self.b.flow_depth,
+            self.b.flow_depth_added_by_loops,
             self.b.has_loop_types_that_depend_on_order,
         ) = measure_flow(&self.b.flow, &self.b.flow_edges, &self.b.flow_shared);
         // `collectExternalModuleReferences`

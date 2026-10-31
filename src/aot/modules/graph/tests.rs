@@ -104,6 +104,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         wrapped: WrappedModules::default(),
         commonjs_exports: CommonJsExports::default(),
         plan: Plan::new(OrderParts::without_sites(file_count), Vec::new()),
+        member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
     }
 }
 

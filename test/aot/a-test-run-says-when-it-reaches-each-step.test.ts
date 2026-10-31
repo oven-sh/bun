@@ -45,6 +45,8 @@ test("each step of a run over layers is logged once, in order, with its time", a
     "2 test files are to run",
     "the coordinator is set up",
     "the build begins: the packages that test files share",
+    // While that build runs.
+    "the files of the project are read for the builds above the packages",
     "the build has ended: the packages that test files share",
     // It begins beside the build below and waits for it.
     "the build begins: what computed imports reach",

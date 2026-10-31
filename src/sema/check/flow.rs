@@ -151,10 +151,6 @@ impl PartialEq for Reference {
 /// overwriting what a nested computation for the same node assigned.
 #[derive(Default)]
 pub(super) struct FlowMemo {
-    /// Built by `index_narrowing_subjects`, in field order: the file the index is for; by symbol,
-    /// the first flow node with a test, `switch` or assignment that concerns it (empty if the file
-    /// has no such filter); one bit per symbol, set while some call statement that mentions it
-    /// isn't known to be idle; those calls, by symbol.
     narrowing_index_file: Option<FileId>,
     first_narrowing_node: Vec<u32>,
     in_call_statements: Vec<u64>,
@@ -164,6 +160,7 @@ pub(super) struct FlowMemo {
     max_antecedent: Vec<u32>,
     /// The same for a lower bound, up to the start of its function.
     min_antecedent: Vec<u32>,
+    deepest_walk_from: Vec<u32>,
     /// The flow nodes at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<(u32, ResolvesKey)>,
     /// The call statements and the clauses of a `switch (true)` with a union
@@ -5392,13 +5389,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Not in tsgo. Indexes the symbols of `file` that some node of its flow graph refers to: a
-    /// condition (`note_test`, as for `is_test_about`), a `switch`, an assignment target, a
-    /// `for in` expression. Nothing else can change the type of a reference rooted at a name,
-    /// except an assertion call (see `FlowMemo::in_call_statements`). The index is left empty if
-    /// some backward path through the graph may take `MAX_FLOW_DEPTH` invocations, because the walk
-    /// that detects that has to report it. The same nodes resolve the names of keys
-    /// (`FlowMemo::computed_key_nodes`).
     #[inline(never)]
     fn index_narrowing_subjects(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -5548,7 +5538,11 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if longest >= MAX_FLOW_DEPTH {
-            first_nodes.clear();
+            for length in &mut lengths {
+                *length = length.saturating_add(bound.flow_depth_added_by_loops);
+            }
+        } else {
+            lengths.clear();
         }
         for &(symbol, _) in &call_statements_by_symbol {
             mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
@@ -5563,6 +5557,7 @@ impl<'p, 's> Checker<'p, 's> {
         ) = (first_nodes, mentioned_in_calls, call_statements_by_symbol);
         (memo.max_antecedent, memo.declaration_node) = (highest, declaration_node);
         (memo.min_antecedent, memo.computed_key_nodes) = (lowest, computed_key_nodes);
+        memo.deepest_walk_from = lengths;
         memo.union_nodes = union_nodes;
         memo.finally_blocks = finally_blocks;
         finally_block_ends.sort_unstable();
@@ -5863,6 +5858,10 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let memo = &self.flow_memo;
         let flow = bound.flow_of_expr(e);
+        let deepest_walk = memo.deepest_walk_from.get(flow.idx());
+        if deepest_walk.is_some_and(|&deepest| deepest >= MAX_FLOW_DEPTH) {
+            return false;
+        }
         // Nothing matches `f()["a"]` or `a[i]`, and an assignment to `a` leaves `a[i]` as declared.
         let matches_nothing =
             |step: &Step| step.name.get() == AccessedName::None && step.variable == Root::Other;

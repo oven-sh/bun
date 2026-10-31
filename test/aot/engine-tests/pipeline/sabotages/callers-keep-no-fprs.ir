@@ -1,0 +1,6 @@
+# sabotage=CallersKeepNoFPRs: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls sabotage=CallersKeepNoFPRs
+# CHECK-NOT: 186300
+# PROGRAM-OF: callers-keep-no-fprs-left-alone.ir

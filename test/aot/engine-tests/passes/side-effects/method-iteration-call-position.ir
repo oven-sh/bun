@@ -1386,7 +1386,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: v4: 2 = Integer integer=2
 # CHECK-NEXT: v5: Map<1, 2> = NewMapFromData data=d5
-# CHECK-NEXT: v6: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v6: Map<int, int, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Map<int, int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v7: undefined = CallDirect v2, v0, v6 function=f56 accessSite=1
 # CHECK-NEXT: v8: "array" = String string="array"
 # CHECK-NEXT: v9: 1 = Integer integer=1
@@ -1418,7 +1418,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v35: 1 = Integer integer=1
 # CHECK-NEXT: v36: 2 = Integer integer=2
 # CHECK-NEXT: v37: Map<1, 2> = NewMapFromData data=d5
-# CHECK-NEXT: v38: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v37 provenType=Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v38: Map<int, int, proven, pristine[Storage, Names]> = AssumeType v37 provenType=Map<int, int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v39: undefined = CallDirect v34, v1, v38 function=f56 accessSite=1
 # CHECK-NEXT: v40: "array" = String string="array"
 # CHECK-NEXT: v41: 1 = Integer integer=1
@@ -1450,8 +1450,8 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: Return v66
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="iterateEntries"
-# CHECK: module=m0 position=400 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object}] results=[{type=int|whole}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object):
+# CHECK: module=m0 position=400 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object}] results=[{type=int|whole}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v2 -> taken b3(| 0), notTaken b1()
@@ -1470,7 +1470,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: v12: never = Call v11, v10 calleeKey="entries" calleeName="r.entries" accessSite=21 callees=[f7, f8, builtin(ArrayPrototypeEntries), builtin(MapPrototypeEntries)]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5(v13: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object):
+# CHECK-NEXT: b5(v13: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object):
 # CHECK-NEXT: v14: boolean = TypeTest v13 testedType=Array
 # CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b17(| 0)
 # CHECK-NEXT: b6(v15: Array<int[1, 3]>):
@@ -1515,10 +1515,10 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v43: undefined|int|f7|f8|builtin(ArrayPrototypeEntries)|builtin(MapPrototypeEntries) = AssumeType v42 provenType=undefined|int|f7|f8|builtin(ArrayPrototypeEntries)|builtin(MapPrototypeEntries)
 # CHECK-NEXT: v44: anything = Call v43, v15 calleeKey="entries" calleeName="r.entries" accessSite=21 callees=[f7, f8, builtin(ArrayPrototypeEntries), builtin(MapPrototypeEntries)]
 # CHECK-NEXT: Jump -> next b23(v44)
-# CHECK-NEXT: b17(v45: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object):
+# CHECK-NEXT: b17(v45: Map<int, int, proven, pristine[Storage, Names]>|Object):
 # CHECK-NEXT: v46: boolean = TypeTest v45 testedType=Map
 # CHECK-NEXT: Branch v46 -> taken b18(| 0), notTaken b24(| 0)
-# CHECK-NEXT: b18(v47: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>>):
+# CHECK-NEXT: b18(v47: Map<int, int>):
 # CHECK-NEXT: v48: boolean = IsPristine v47 builtinClass=Map aspects=[Names]
 # CHECK-NEXT: Branch v48 -> taken b19(), notTaken b22()
 # CHECK-NEXT: b19():
@@ -1571,8 +1571,8 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: Jump -> next b26(v82)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="iterateValues"
-# CHECK: module=m0 position=510 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object}] results=[{type=int|whole}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object):
+# CHECK: module=m0 position=510 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object}] results=[{type=int|whole}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v2 -> taken b3(| 0), notTaken b1()
@@ -1591,7 +1591,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: v12: never = Call v11, v10 calleeKey="values" calleeName="r.values" accessSite=23 callees=[f7, f8, builtin(ArrayPrototypeValues), builtin(MapPrototypeValues)]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5(v13: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object):
+# CHECK-NEXT: b5(v13: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object):
 # CHECK-NEXT: v14: boolean = TypeTest v13 testedType=Array
 # CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b17(| 0)
 # CHECK-NEXT: b6(v15: Array<int[1, 3]>):
@@ -1636,10 +1636,10 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v43: undefined|int|f7|f8|builtin(ArrayPrototypeValues)|builtin(MapPrototypeValues) = AssumeType v42 provenType=undefined|int|f7|f8|builtin(ArrayPrototypeValues)|builtin(MapPrototypeValues)
 # CHECK-NEXT: v44: anything = Call v43, v15 calleeKey="values" calleeName="r.values" accessSite=23 callees=[f7, f8, builtin(ArrayPrototypeValues), builtin(MapPrototypeValues)]
 # CHECK-NEXT: Jump -> next b23(v44)
-# CHECK-NEXT: b17(v45: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object):
+# CHECK-NEXT: b17(v45: Map<int, int, proven, pristine[Storage, Names]>|Object):
 # CHECK-NEXT: v46: boolean = TypeTest v45 testedType=Map
 # CHECK-NEXT: Branch v46 -> taken b18(| 0), notTaken b24(| 0)
-# CHECK-NEXT: b18(v47: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>>):
+# CHECK-NEXT: b18(v47: Map<int, int>):
 # CHECK-NEXT: v48: boolean = IsPristine v47 builtinClass=Map aspects=[Names]
 # CHECK-NEXT: Branch v48 -> taken b19(), notTaken b22()
 # CHECK-NEXT: b19():
@@ -1692,7 +1692,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: Jump -> next b26(v82)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=628 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type="array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method"}, {type=f2|f3}, {type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=628 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type="array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method"}, {type=f2|f3}, {type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="withGetter"
 # CHECK: module=m0 position=1004 kind=Arrow length=1 thisType={type=anything} parameters=[{type=f9}] results=[{type=Object}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f9):
@@ -1755,8 +1755,8 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: Throw v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=628 role=CalleeVersion flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type="array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method"}, {type=f2|f3}, {type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f4} {
-# CHECK-NEXT: b0(v0: "array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method", v1: f2|f3, v2: L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Object) handler=b4():
+# CHECK: module=m0 position=628 role=CalleeVersion flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type="array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method"}, {type=f2|f3}, {type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f4} {
+# CHECK-NEXT: b0(v0: "array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method", v1: f2|f3, v2: L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object) handler=b4():
 # CHECK-NEXT: v3: ": returned " = String string=": returned "
 # CHECK-NEXT: v4: string = Add v0, v3
 # CHECK-NEXT: v5: boolean = TypeTest v1 testedType=f2

@@ -7,7 +7,7 @@ description: "What behaves differently in an executable built with bun compile, 
 
 Most programs behave the same under [`bun compile`](/compiler/aot) as under `bun run`. The language, every `node:` and `bun:` module, Workers, native addons, macros, `Bun.build` plugins and nearly all npm packages work. A value that doesn't match its TypeScript type [is slower, not wrong](/compiler/types#when-a-value-doesnt-match-its-type).
 
-What differs: [built-in objects are read-only](#built-in-objects-are-read-only), [code from a string is interpreted](#code-from-strings), [a dynamic import only finds what the build found](#dynamic-imports), [nothing can hook the module loader](#loader-hooks-and-the-module-cache), [packages are bundled](#packages), and [a store to `undefined` or `null` throws before its key is converted](#a-store-to-undefined-or-null). The build also checks your types, and [a type error stops it](/compiler/aot#type-errors-stop-the-build).
+What differs: [built-in objects are read-only](#built-in-objects-are-read-only), [code from a string is interpreted](#code-from-strings), [a dynamic import only finds what the build found](#dynamic-imports), [nothing can hook the module loader](#loader-hooks-and-the-module-cache), [a file that your code reads has to be embedded](#files-beside-your-code), [packages are bundled](#packages), and [a store to `undefined` or `null` throws before its key is converted](#a-store-to-undefined-or-null). The build also checks your types, and [a type error stops it](/compiler/aot#type-errors-stop-the-build).
 
 ## Built-in objects are read-only
 
@@ -29,13 +29,40 @@ Compiled code calls `push` directly. It doesn't check first whether something re
 - You can't add anything to `Object.prototype`, `Function.prototype`, `Promise.prototype` or `RegExp.prototype`.
 - You can't put anything at an index of `Array.prototype`, such as a setter at `Array.prototype[0]`, or change what `Array.prototype` inherits from. A store to `list[0]` never looks for one. A subclass can have one: `class List extends Array {}`.
 - The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are read-only. Write a subclass: `class Upper extends Response {}`.
-- What a program reads to find out which runtime it is on is read-only: `process.isBun`, `process.versions`, `process.release`, `process.versions.node`, `process.versions.bun` and `process.release.name`. The build replaces those reads with their values, so a branch for another runtime is not compiled. Under `bun test --aot` a test can still store to `process.versions.node` and `process.versions.bun`.
+- What a program reads to find out which runtime it is on is read-only: `process.isBun`, `process.versions`, `process.release`, `process.versions.node`, `process.versions.bun` and `process.release.name`. The build replaces those reads with their values, so a branch for another runtime is not compiled. Under `bun test --aot` they are read when the code runs, and a test can replace each of them.
 
-What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. Under [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) a test can replace most other methods too. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
+What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. Under [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) a test can replace most other methods too, [but not all](#what-a-test-cant-replace). So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
 
 The build has to see the code that replaces them. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws the same `TypeError` unless compiled code assigns to `Date.now` too.
 
 The build reports the assignments it can see as `TS100014`. The others throw when they run, and the stack trace points at the line. If that line is in a package, look it up in [Packages that don't work](/compiler/libraries#packages-that-dont-work).
+
+### What a test can't replace
+
+[`bun test --aot`](/compiler/debugging#run-your-tests-compiled) lets a test replace most built-in methods. What the language looks up by itself stays read-only there too.
+
+```js patched.test.js icon="/icons/javascript.svg"
+Array.prototype.values = fake; // works
+spyOn(String.prototype, "split"); // works
+Array.prototype[Symbol.iterator] = fake; // TypeError
+Object.prototype[0] = "polluted"; // TypeError
+```
+
+In a test run, compiled code checks for a replacement before it calls a method that your tests replace. It has no such check for what it never calls by name: it doesn't ask an array for its `Symbol.iterator` before a `for...of`, or for its `constructor` before `map()`.
+
+|                     | Throws a `TypeError`                                                                                                                                                                                                                                         | Works, as in `bun test`                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Iteration           | `Symbol.iterator` of `Array`, `String`, the typed arrays and `Iterator.prototype`, or one added to `Object.prototype`. `next` of a generator and of the iterators of arrays, `Map`, `Set`, strings and `matchAll()`. A `return` added to the array iterator. | `Symbol.iterator` of `Map` and `Set`. The methods that return an iterator: `values`, `keys`, `entries`.                                     |
+| What a method makes | `Symbol.species` of `Array`, `Promise`, `RegExp`, `ArrayBuffer` and the typed arrays. `constructor` on their prototypes and on `Object.prototype`.                                                                                                           | The methods themselves: `map`, `slice`, `concat`, `Array.from`, `then`, `catch`, `finally`, `Promise.resolve`.                              |
+| Regular expressions | `Symbol.match`, `matchAll`, `replace`, `search` and `split` of `RegExp.prototype`, or one of them added to `String.prototype` or `Object.prototype`.                                                                                                         | `exec`, `test`, `toString`, `source`, `flags` and the getter of each flag. `match`, `replace`, `split` and `indexOf` of `String.prototype`. |
+| Indexes             | Anything at an index of `Object.prototype`, `Array.prototype`, `String.prototype` or a typed array's prototype: a value, a getter, a setter.                                                                                                                 | A property with a name on `Object.prototype`, also a getter or a setter, also `length`.                                                     |
+| Conversions         | `Symbol.toStringTag`, `Symbol.toPrimitive` and `Symbol.isConcatSpreadable` on a built-in prototype, changed or added. `Array[Symbol.hasInstance]`.                                                                                                           | `toString` and `valueOf`, on `Object.prototype` too. `Error.prototype.name`. A `toJSON` added to `Object.prototype`.                        |
+| Promises            | A `then` added to `Object.prototype`.                                                                                                                                                                                                                        | `Promise.prototype.then`.                                                                                                                   |
+| Prototype chains    | `Object.setPrototypeOf()` on `Array`, `Array.prototype`, `Promise.prototype`, `RegExp.prototype` or the prototype of an iterator.                                                                                                                            | A subclass: `class List extends Array {}`.                                                                                                  |
+
+It makes no difference how the test does it: an assignment, a helper that takes the object and the key, `Object.defineProperty()` or `Reflect.defineProperty()`. The write throws, and the run lists it again when it ends, with the test file that was running.
+
+A test of how your code copes with one of these, such as a patched array iterator or an index on `Object.prototype`, has to run under `bun test`.
 
 ## Code from strings
 
@@ -132,6 +159,61 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 - `require.cache["fs"] = { exports: fake }` makes `require("fs")` answer with `fake`, as in `bun run`, if the build can read the key. Under a computed key that turns out to be `"fs"`, the store throws.
 - `Bun.main = path` changes what `require.main`, `require.main === module` and `import.meta.main` answer, as in `bun run`, if the build can see the assignment. One that it can't see throws a `TypeError`: `Bun[key] = path` with a computed key, or `Bun.main = path` in [code from a string](#code-from-strings).
 
+## Paths of the running file
+
+Every compiled file keeps a path of its own under `/$bunfs/root`, laid out like your sources, so what a file asks about itself answers as in Node.js. An executable built with `--no-aot` is one bundle, and there every file gets the bundle's answer.
+
+| In `lib/inner.js`                               | `bun compile`                                   | With `--no-aot`                                  |
+| ----------------------------------------------- | ----------------------------------------------- | ------------------------------------------------ |
+| `import.meta.url`                               | `file:///$bunfs/root/lib/inner.js`              | The executable's own, the same in every file     |
+| `import.meta.dirname`, `import.meta.dir`        | `/$bunfs/root/lib`                              | `/$bunfs/root` in every file                     |
+| `process.argv[1]`, `Bun.main`                   | `/$bunfs/root/cli.js`, your entry point         | `/$bunfs/root/` and the executable's name        |
+| `createRequire(import.meta.url)("./data.json")` | Works, also for a package and with `.resolve()` | `MODULE_NOT_FOUND`                               |
+| `require.main`, `process.mainModule`            | The module of your entry point                  | `undefined`, so `require.main.filename` throws   |
+| `module.paths`, `module.parent`                 | As in Node.js                                   | `undefined`                                      |
+| `module.filename`, `module.path`, `module.id`   | As in Node.js, under `/$bunfs/root`             | `"inner.js"`, `"lib/inner.js"`, `"lib/inner.js"` |
+| `require.main === module`, `import.meta.main`   | `true` in your entry point                      | The same                                         |
+| `__dirname`, `__filename`                       | Where the file was when you built               | The same                                         |
+
+Packages rely on the first column. `@babel/core`, `@nestjs/common` and `@nuxt/kit` load files with `createRequire(import.meta.url)`, `sass` finds your project through `require.main.filename`, and `dd-trace` walks `module.paths`.
+
+A usage line made from `path.basename(process.argv[1])` names your entry point's file, as it does under `bun run`. For the name of the executable use `process.argv0` or `process.execPath`.
+
+### Files beside your code
+
+```js render.js icon="/icons/javascript.svg"
+const template = fs.readFileSync(new URL("./template.html", import.meta.url));
+const { version } = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "../package.json")));
+```
+
+These paths are inside the executable, so the read only finds a file that's in there too. The build embeds what you `import` or `require()`, not what you read. That's the same with `--no-aot`.
+
+Embed the file with [`--asset`](/compiler/executables#embed-directories). It keeps its relative path, so the same line finds it, in a package too:
+
+```bash terminal icon="terminal"
+bun compile ./app.ts --asset ./template.html --asset ./package.json
+```
+
+`__dirname` and `__filename` are [the paths on the machine that built the executable](/compiler/executables#embed-directories). A read through them finds the file there, and the embedded one anywhere else.
+
+Some packages load their own code that way, by a name they put together when the program runs. The build can't see those files either:
+
+| Package             | In an executable                                                               | Do this                                                              |
+| ------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `moment`            | `moment.locale("fr")` stays `"en"`, with no error                              | `import "moment/locale/fr"`                                          |
+| `express`           | `app.set("view engine", "ejs")` throws `Cannot find package 'ejs'` on a render | `app.engine("ejs", require("ejs").__express)`, and `--asset ./views` |
+| `require-directory` | Throws `ENOENT`                                                                | Pass the folder's files as entry points                              |
+| `pino`              | `pino.transport()` fails to start its worker                                   | Pass the three files below as entry points, or log without a worker  |
+
+```bash terminal icon="terminal"
+bun compile ./app.ts './routes/*.js'
+bun compile ./app.ts ./node_modules/thread-stream/lib/worker.js ./node_modules/pino/lib/worker.js ./node_modules/pino/file.js
+```
+
+`pino(pino.destination(1))` writes the same lines without a worker. For another transport, pass its main file in place of `pino/file.js`.
+
+With `--no-aot` these four fail too. The changes to your code fix them there, and the extra entry points don't.
+
 ## Packages
 
 An executable is a bundle, so two fields of a `package.json` mean what they mean to `bun build`. `bun run` treats them differently. That's the same with `--no-aot`.
@@ -226,7 +308,7 @@ bun compile  TypeError: null is not an object (evaluating 'o.a.c')
 bun compile  TypeError: null is not an object (evaluating 'null.c')  without the text
 ```
 
-`bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, `const r = f(x); return r.y` reads `f(x).y`, and a callback in the arguments of a call is reformatted. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source, without its types and without what `bun build` removes: a branch that never runs, such as `if (false)`, is empty, and a name that `--define` replaces reads as its value. It keeps your line breaks, spaces and parentheses, and isn't laid out as the bundler prints it. The quote is shorter or missing where what's called isn't a name or a path of names, such as `f()()`, `o["a" + "b"]()` or a tagged template. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
+`bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, `const r = f(x); return r.y` reads `f(x).y`, and a callback in the arguments of a call is reformatted. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source, without its types and without what `bun build` removes: a branch that never runs, such as `if (false)`, is empty, and a name that `--define` replaces reads as its value. It keeps your line breaks, spaces and parentheses, and isn't laid out as the bundler prints it. The quote is shorter or missing where what's called isn't a name or a path of names, such as `f()()` or `o["a" + "b"]()`. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 

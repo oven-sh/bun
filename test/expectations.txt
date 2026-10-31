@@ -62,6 +62,10 @@
 [ ASAN ] test/aot/parallel/errors/what-a-program-can-ask-about-a-stack.mjs [ SKIP ] # TODO: with AddressSanitizer and assertions a frame of a built-in that is written in JavaScript has the position 1:11 in the executable, and its own (17:41) in plain Bun
 [ ASAN ] test/aot/parallel/external-data/json-parse-type-argument-recursive.ts [ SKIP ] # 2,000 levels do not fit the larger stack frames, and the bound of one second is for builds without AddressSanitizer
 [ ASAN ] test/aot/parallel/external-data/json-parse-type-argument-texts-broken.ts [ SKIP ] # the bound of one second is for builds without AddressSanitizer
+[ ASAN ] test/aot/parallel/gc/list-or-literal-made-for-one-call-lets-go-of-a-temporary-where-nothing-is-inlined.ts [ SKIP ] # it says what is still alive, and there a stale copy of the pointer lies in a word of a frame that has ended on some runs and not on others
+[ ASAN ] test/aot/parallel/gc/list-or-literal-made-for-one-call-lets-go-of-a-temporary.ts [ SKIP ] # it says what is still alive, and there a stale copy of the pointer, saved from a register at the call that makes the WeakRef, lies in a word of a frame that has ended
+[ ASAN ] test/aot/parallel/gc/list-or-literal-made-for-one-call-lets-go-where-nothing-is-inlined.ts [ SKIP ] # it says what is still alive, and there a stale copy of the pointer lies in a word of a frame that has ended on some runs and not on others
+[ ASAN ] test/aot/parallel/gc/list-or-literal-made-for-one-call-lets-go.ts [ SKIP ] # it says what is still alive, and there a stale copy of the pointer lies in a word of a frame that has ended on some runs and not on others
 [ ASAN ] test/aot/parallel/host-classes/class-private-methods-stands-host.js [ SKIP ] # TODO: a build with assertions stops in the interpreter, in set_private_brand: baseValue.isObject()
 [ ASAN ] test/aot/parallel/host-classes/process-env-read-fast-every-variable.js [ SKIP ] # a clock
 [ ASAN ] test/aot/parallel/language/code-nested-2500-levels-deep.js [ SKIP ] # 2,500 levels do not fit the larger stack frames of the compiler: the build says that the code is nested too deeply

@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBuildReport } from "./harness/build-report";
@@ -75,7 +75,9 @@ describe("compile/aot/runtime-counts-file", () => {
     const lines = text.split("\n");
     expect(lines.pop()).toBe("");
     const isCount = (line: string) =>
-      /^\d+\t(counter|exit|limit|operation|refilled|made|branch|flattened|hashed|decoded):\S+$/.test(line);
+      /^\d+\t(counter|exit|limit|operation|refilled|made|branch|flattened|hashed|decoded|sought|held|room):\S+$/.test(
+        line,
+      );
     // Behind the counts: what was made and learned, by its description, and the places that allocate.
     const isDescribed = (line: string) =>
       /^\d+\t(structures|plans dropped by collections|keys of plans|pairs of layouts|named):\S.*$/.test(line);
@@ -98,6 +100,17 @@ describe("compile/aot/runtime-counts-file", () => {
       expect.arrayContaining(limits.filter(limit => limit.stage === "RunTime").map(limit => limit.name)),
     );
     expect(namesOf("branch")).toEqual([]);
+    // In KB: the pages of its own that the run time holds, by part, and the room of each part.
+    expect(namesOf("held")).toEqual(namesOf("room"));
+    expect(namesOf("held")).toContain("SiteCaches");
+    const sizeOf = (name: string) => entries.find(entry => entry.name === name)!.count;
+    expect(namesOf("held").filter(part => sizeOf("held:" + part) > sizeOf("room:" + part))).toEqual([]);
+    expect(sizeOf("room:AllPages")).toBeGreaterThan(0);
+    if (isLinux) {
+      expect(sizeOf("held:AllPages")).toBeGreaterThan(0);
+      const parts = namesOf("held").filter(part => part !== "AllPages");
+      expect(parts.reduce((sum, part) => sum + sizeOf("held:" + part), 0)).toBeLessThanOrEqual(sizeOf("held:AllPages"));
+    }
     expect(entries.filter(entry => entry.name.startsWith("operation:operationAOT") && entry.count > 0)).not.toEqual([]);
 
     const counts = new Map(entries.map(entry => [entry.name, entry.count]));

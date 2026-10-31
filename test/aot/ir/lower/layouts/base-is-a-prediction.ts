@@ -6,7 +6,7 @@
 // BASE-NOT: layout {{*}}name="B"{{*}}supertypes=
 
 function mixin(c: any): any {
-  return c;
+  return [c][0];
 }
 
 class A {}

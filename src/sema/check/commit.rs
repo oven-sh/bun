@@ -82,9 +82,9 @@
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};
-use super::{Checker, Program, Spare};
+use super::{Checker, Program, Query, Spare};
 use crate::local::{Log, node_word};
-use crate::program::{FileId, Sym};
+use crate::program::{FileId, Files, ReadingNoTrees, Sym};
 use crate::session::Arena;
 use crate::table::Publish;
 use crate::util::{FxHashMap, SharedSort};
@@ -783,6 +783,75 @@ impl<'s> Checker<'_, 's> {
         self.leaves_depth_limit_unreported
     }
 
+    pub fn record_cycles_entered(&mut self, records: bool) {
+        self.records_cycles_entered.set(records);
+        self.cycles_entered.get_mut().clear();
+    }
+
+    pub fn take_cycles_entered(&mut self) -> CyclesEntered {
+        CyclesEntered(std::mem::take(self.cycles_entered.get_mut()))
+    }
+
+    pub fn enter_cycles_again(&mut self, cycles: &CyclesEntered) {
+        debug_assert!(self.stack.is_empty());
+        for &entry in &cycles.0 {
+            let has_tree = |file: FileId| {
+                let module = self.files().module(file);
+                !module.is_leaf || module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty()
+            };
+            if !entry.file_that_names_it().is_some_and(has_tree) {
+                continue;
+            }
+            match entry {
+                Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) => {
+                    self.type_of_expr(file, e);
+                }
+                Query::Call(file, call) => {
+                    self.resolved_signature(file, call);
+                }
+                Query::Symbol(sym) => {
+                    self.type_of_symbol(sym);
+                }
+                Query::Declared(sym) => {
+                    self.declared_type(sym);
+                }
+                Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                    self.return_type_of_fn(file, func);
+                }
+                Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                    self.type_of_pat(file, pat);
+                }
+                Query::LiteralProp(file, prop) => {
+                    self.type_of_literal_prop(file, prop);
+                }
+                Query::TypeNode(file, node) | Query::WriteType(file, node) => {
+                    self.type_from_node(file, node);
+                }
+                Query::Enum(file, member) => {
+                    self.enum_member_value(file, member);
+                }
+                Query::Bases(sym) => {
+                    self.base_types(sym);
+                }
+                Query::BaseConstructor(class) => {
+                    self.base_constructor_type_of_class(class);
+                }
+                Query::AliasTarget(_)
+                | Query::InitializerIsUndefined(..)
+                | Query::ReturnOfSignature(_)
+                | Query::Shape(_)
+                | Query::Properties(_)
+                | Query::Constraint(_)
+                | Query::InferredConstraint(_)
+                | Query::MappedProp(..)
+                | Query::Cond(..)
+                | Query::TypeArguments(_)
+                | Query::Comparison(_) => {}
+            }
+            self.take_ran_out_of_stack();
+        }
+    }
+
     /// Call before `check_file`. See `Task::set_first_in_order`.
     pub fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
         (self.task).set_first_in_order(is_first, is_first_in_component);
@@ -927,6 +996,32 @@ impl<'p, 's> Checker<'p, 's> {
         spare.apparent_types_of_intersections.clear();
         spare.aot_answers.clear();
         spare
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CyclesEntered(Vec<Query>);
+
+impl CyclesEntered {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn append(&mut self, mut later: CyclesEntered) {
+        self.0.append(&mut later.0);
+    }
+
+    pub fn retain_within_reach_of(&mut self, files: &Files<'_>, visited: &[FileId]) {
+        let _reading = ReadingNoTrees::begin();
+        let is_reached = files.reached_from(visited.to_vec());
+        self.0.retain(|entry| {
+            let file = entry.file_that_names_it();
+            file.is_some_and(|file| is_reached[file.idx()] || !files.module(file).is_closed)
+        });
     }
 }
 

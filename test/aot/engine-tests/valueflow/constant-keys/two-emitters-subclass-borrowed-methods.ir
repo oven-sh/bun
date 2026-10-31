@@ -326,114 +326,96 @@ runtimefunction id=ObjectsToLocaleString function=f34
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=744 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2|L3 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything @JSValue):
-# CHECK-NEXT: v1: undefined|int|bigint|"failure"|"request"|"tick"|L2 @JSValue = AssumeType v0 provenType=undefined|int|bigint|"failure"|"request"|"tick"|L2
-# CHECK-NEXT: v2: int|bigint|"failure"|"request"|"tick"|L2 @JSValue = RequireObjectCoercible v1 name="method"
-# CHECK-NEXT: v3: boolean @Boolean = TypeTest v2 testedType=L2
-# CHECK-NEXT: TestAndBranch v3 -> taken b2(), notTaken b1(| 0)
-# CHECK-NEXT: b1(v4: int|bigint|"failure"|"request"|"tick" @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v8: undefined @Void = PropGetPair v4 key="method" secondKey="url" readOrigin={position=4294967295} accessSite=35 receivers=[L2] secondAccessSite=36
-# CHECK-NEXT: v6: anything @JSValue = ResultAt v8 index=1
-# CHECK-NEXT: v5: anything @JSValue = ResultAt v8
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v7: "Request undefined undefined" @Cell = String string="Request undefined undefined"
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v1: undefined|int @JSValue = AssumeType v0 provenType=undefined|int
+# CHECK-NEXT: v2: int @JSValue = RequireObjectCoercible v1 name="method"
+# CHECK-NEXT: v3: anything @JSValue = PropGet v2 key="method" accessSite=35 receivers=[] siteCache=0
+# CHECK-NEXT: v4: anything @JSValue = PropGet v2 key="url" accessSite=36 receivers=[] siteCache=1
+# CHECK-NEXT: v5: "Request undefined undefined" @Cell = String string="Request undefined undefined"
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="listen"
 # CHECK: module=m0 position=1081 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: L0|L4 @Cell):
-# CHECK-NEXT: v1: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="on"}, {layout=L4 key="on"}, {kind=MemberNotHidden layout=L0 key="on"}, {kind=MemberNotHidden layout=L4 key="on"}] guardBit=10
+# CHECK-NEXT: v1: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="on"}, {layout=L4 key="on"}] guardBit=7
 # CHECK-NEXT: TestAndBranch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: anything @JSValue = PropGet v0 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v3: undefined|L6|Object @JSValue = AssumeType v2 provenType=undefined|L6|Object
-# CHECK-NEXT: v4: L6|Object @JSValue = RequireObjectCoercible v3 nullishAccess=Write
-# CHECK-NEXT: v5: f17 @Cell = CallDirect function=f58
-# CHECK-NEXT: PropSet v4, v5 key="request" accessSite=45
+# CHECK-NEXT: v2: Object @Cell = GetSlot v0 key="events" receivers=[L0, L4] level=Proven accessSite=44 fieldAccess=0
+# CHECK-NEXT: v3: f17 @Cell = CallDirect function=f59
+# CHECK-NEXT: PropSet v2, v3 key="request" accessSite=45
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: anything @JSValue = PropGet v0 key="on" accessSite=38 receivers=[L0, L4]
-# CHECK-NEXT: v8: undefined|f7 @JSValue = AssumeType v7 provenType=undefined|f7
-# CHECK-NEXT: v9: boolean @Boolean = TypeTest v8 testedType=f7
-# CHECK-NEXT: TestAndBranch v9 -> taken b3(), notTaken b15()
+# CHECK-NEXT: v5: anything @JSValue = PropGet v0 key="on" accessSite=38 receivers=[L0, L4]
+# CHECK-NEXT: v6: undefined|f7 @JSValue = AssumeType v5 provenType=undefined|f7
+# CHECK-NEXT: v7: boolean @Boolean = TypeTest v6 testedType=f7
+# CHECK-NEXT: TestAndBranch v7 -> taken b3(), notTaken b15()
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v10: anything @JSValue = PropGet v0 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v11: undefined|L6|Object @JSValue = AssumeType v10 provenType=undefined|L6|Object
-# CHECK-NEXT: v12: L6|Object @JSValue = RequireObjectCoercible v11 nullishAccess=Write
-# CHECK-NEXT: v13: f17 @Cell = CallDirect function=f58
-# CHECK-NEXT: PropSet v12, v13 key="request" accessSite=45
+# CHECK-NEXT: v8: Object @Cell = GetSlot v0 key="events" receivers=[L0, L4] level=Proven accessSite=44 fieldAccess=0
+# CHECK-NEXT: v9: f17 @Cell = CallDirect function=f59
+# CHECK-NEXT: PropSet v8, v9 key="request" accessSite=45
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v15: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="on"}, {layout=L4 key="on"}, {kind=MemberNotHidden layout=L0 key="on"}, {kind=MemberNotHidden layout=L4 key="on"}] guardBit=10
-# CHECK-NEXT: TestAndBranch v15 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v11: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="on"}, {layout=L4 key="on"}] guardBit=7
+# CHECK-NEXT: TestAndBranch v11 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v16: anything @JSValue = PropGet v0 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v17: undefined|L6|Object @JSValue = AssumeType v16 provenType=undefined|L6|Object
-# CHECK-NEXT: v18: L6|Object @JSValue = RequireObjectCoercible v17 nullishAccess=Write
-# CHECK-NEXT: v19: f18 @Cell = CallDirect function=f59
-# CHECK-NEXT: PropSet v18, v19 key="failure" accessSite=45
+# CHECK-NEXT: v12: Object @Cell = GetSlot v0 key="events" receivers=[L0, L4] level=Proven accessSite=44 fieldAccess=0
+# CHECK-NEXT: v13: f18 @Cell = CallDirect function=f60
+# CHECK-NEXT: PropSet v12, v13 key="failure" accessSite=45
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v21: anything @JSValue = PropGet v0 key="on" accessSite=40 receivers=[L0, L4]
-# CHECK-NEXT: v22: undefined|f7 @JSValue = AssumeType v21 provenType=undefined|f7
-# CHECK-NEXT: v23: boolean @Boolean = TypeTest v22 testedType=f7
-# CHECK-NEXT: TestAndBranch v23 -> taken b7(), notTaken b14()
+# CHECK-NEXT: v15: anything @JSValue = PropGet v0 key="on" accessSite=40 receivers=[L0, L4]
+# CHECK-NEXT: v16: undefined|f7 @JSValue = AssumeType v15 provenType=undefined|f7
+# CHECK-NEXT: v17: boolean @Boolean = TypeTest v16 testedType=f7
+# CHECK-NEXT: TestAndBranch v17 -> taken b7(), notTaken b14()
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v24: anything @JSValue = PropGet v0 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v25: undefined|L6|Object @JSValue = AssumeType v24 provenType=undefined|L6|Object
-# CHECK-NEXT: v26: L6|Object @JSValue = RequireObjectCoercible v25 nullishAccess=Write
-# CHECK-NEXT: v27: f18 @Cell = CallDirect function=f59
-# CHECK-NEXT: PropSet v26, v27 key="failure" accessSite=45
+# CHECK-NEXT: v18: Object @Cell = GetSlot v0 key="events" receivers=[L0, L4] level=Proven accessSite=44 fieldAccess=0
+# CHECK-NEXT: v19: f18 @Cell = CallDirect function=f60
+# CHECK-NEXT: PropSet v18, v19 key="failure" accessSite=45
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v29: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="on"}, {layout=L4 key="on"}, {kind=MemberNotHidden layout=L0 key="on"}, {kind=MemberNotHidden layout=L4 key="on"}] guardBit=10
-# CHECK-NEXT: TestAndBranch v29 -> taken b9(), notTaken b10()
+# CHECK-NEXT: v21: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="on"}, {layout=L4 key="on"}] guardBit=7
+# CHECK-NEXT: TestAndBranch v21 -> taken b9(), notTaken b10()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v30: anything @JSValue = PropGet v0 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v31: undefined|L6|Object @JSValue = AssumeType v30 provenType=undefined|L6|Object
-# CHECK-NEXT: v32: L6|Object @JSValue = RequireObjectCoercible v31 nullishAccess=Write
-# CHECK-NEXT: v33: f19 @Cell = CallDirect function=f60
-# CHECK-NEXT: PropSet v32, v33 key="tick" accessSite=45
+# CHECK-NEXT: v22: Object @Cell = GetSlot v0 key="events" receivers=[L0, L4] level=Proven accessSite=44 fieldAccess=0
+# CHECK-NEXT: v23: f19 @Cell = CallDirect function=f61
+# CHECK-NEXT: PropSet v22, v23 key="tick" accessSite=45
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v35: anything @JSValue = PropGet v0 key="on" accessSite=42 receivers=[L0, L4]
-# CHECK-NEXT: v36: undefined|f7 @JSValue = AssumeType v35 provenType=undefined|f7
-# CHECK-NEXT: v37: boolean @Boolean = TypeTest v36 testedType=f7
-# CHECK-NEXT: TestAndBranch v37 -> taken b11(), notTaken b13()
+# CHECK-NEXT: v25: anything @JSValue = PropGet v0 key="on" accessSite=42 receivers=[L0, L4]
+# CHECK-NEXT: v26: undefined|f7 @JSValue = AssumeType v25 provenType=undefined|f7
+# CHECK-NEXT: v27: boolean @Boolean = TypeTest v26 testedType=f7
+# CHECK-NEXT: TestAndBranch v27 -> taken b11(), notTaken b13()
 # CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v38: anything @JSValue = PropGet v0 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v39: undefined|L6|Object @JSValue = AssumeType v38 provenType=undefined|L6|Object
-# CHECK-NEXT: v40: L6|Object @JSValue = RequireObjectCoercible v39 nullishAccess=Write
-# CHECK-NEXT: v41: f19 @Cell = CallDirect function=f60
-# CHECK-NEXT: PropSet v40, v41 key="tick" accessSite=45
+# CHECK-NEXT: v28: Object @Cell = GetSlot v0 key="events" receivers=[L0, L4] level=Proven accessSite=44 fieldAccess=0
+# CHECK-NEXT: v29: f19 @Cell = CallDirect function=f61
+# CHECK-NEXT: PropSet v28, v29 key="tick" accessSite=45
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v43: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v43
+# CHECK-NEXT: v31: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v44: undefined @JSValue = Undefined
-# CHECK-NEXT: v45: "tick" @JSValue = String string="tick"
-# CHECK-NEXT: v46: f19 @Cell = CallDirect function=f60
-# CHECK-NEXT: v47: never @JSValue = Call v44, v0, v45, v46 calleeKey="on" calleeName="emitter.on" accessSite=43 callees=[f7]
+# CHECK-NEXT: v32: undefined @JSValue = Undefined
+# CHECK-NEXT: v33: "tick" @JSValue = String string="tick"
+# CHECK-NEXT: v34: f19 @Cell = CallDirect function=f61
+# CHECK-NEXT: v35: never @JSValue = Call v32, v0, v33, v34 calleeKey="on" calleeName="emitter.on" accessSite=43 callees=[f7]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v48: undefined @JSValue = Undefined
-# CHECK-NEXT: v49: "failure" @JSValue = String string="failure"
-# CHECK-NEXT: v50: f18 @Cell = CallDirect function=f59
-# CHECK-NEXT: v51: never @JSValue = Call v48, v0, v49, v50 calleeKey="on" calleeName="emitter.on" accessSite=41 callees=[f7]
+# CHECK-NEXT: v36: undefined @JSValue = Undefined
+# CHECK-NEXT: v37: "failure" @JSValue = String string="failure"
+# CHECK-NEXT: v38: f18 @Cell = CallDirect function=f60
+# CHECK-NEXT: v39: never @JSValue = Call v36, v0, v37, v38 calleeKey="on" calleeName="emitter.on" accessSite=41 callees=[f7]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v52: undefined @JSValue = Undefined
-# CHECK-NEXT: v53: "request" @JSValue = String string="request"
-# CHECK-NEXT: v54: f17 @Cell = CallDirect function=f58
-# CHECK-NEXT: v55: never @JSValue = Call v52, v0, v53, v54 calleeKey="on" calleeName="emitter.on" accessSite=39 callees=[f7]
+# CHECK-NEXT: v40: undefined @JSValue = Undefined
+# CHECK-NEXT: v41: "request" @JSValue = String string="request"
+# CHECK-NEXT: v42: f17 @Cell = CallDirect function=f59
+# CHECK-NEXT: v43: never @JSValue = Call v40, v0, v41, v42 calleeKey="on" calleeName="emitter.on" accessSite=39 callees=[f7]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Response"
 # CHECK: module=m0 position=606 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L2 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
 # CHECK-NEXT: b0(v0: anything @JSValue):
 # CHECK-NEXT: v1: f5 @JSValue = AssumeType v0 provenType=f5
-# CHECK-NEXT: v2: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}] guardBit=5
+# CHECK-NEXT: v2: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}] guardBit=3
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: L2 @Cell = NewObject layout=L2 allocationSite=23 allocation=2 allocationClass=2
@@ -448,55 +430,79 @@ runtimefunction id=ObjectsToLocaleString function=f34
 # CHECK: m0 position=235 flags=[HasThis] length=2 thisType={type=L0|L4|L5 flags=[IsExpected]} parameters=[{type=undefined|"failure"|"request"|"tick"}, {type=undefined|f10|f14|f15|f17|f18|f19}] results=[{type=undefined|null|L5 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything @JSValue, v1: undefined|"failure"|"request"|"tick" @LiteralString, v2: undefined|f10|f14|f15|f17|f18|f19 @JSValue):
 # CHECK-NEXT: v3: L0|L4|L5 @JSValue = AssumeType v0 provenType=L0|L4|L5
-# CHECK-NEXT: v4: boolean @Boolean = IsSlotFilled v3 key="events" receivers=[L0, L4, L5] level=Expected fieldAccess=2
-# CHECK-NEXT: TestAndBranch v4 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v5: guard @Void):
-# CHECK-NEXT: v6: object @JSValue = GetSlot v3, v5 key="events" receivers=[L0, L4, L5] level=Expected accessSite=44 fieldAccess=2
-# CHECK-NEXT: v7: L6|Object @JSValue = AssumeType v6 provenType=undefined|L6|Object
-# CHECK-NEXT: Jump -> next b2(v7)
-# CHECK-NEXT: b2(v8: undefined|L6|Object @JSValue):
-# CHECK-NEXT: v9: L6|Object @JSValue = RequireObjectCoercible v8 nullishAccess=Write
-# CHECK-NEXT: ElemSet v9, v1, v2 accessSite=45
+# CHECK-NEXT: v4: boolean @Boolean = TypeTest v3 testedType=L5
+# CHECK-NEXT: TestAndBranch v4 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b1(v5: L5 @Cell):
+# CHECK-NEXT: v6: boolean @Boolean = IsSlotFilled v5 key="events" receivers=[L5] level=Expected fieldAccess=3
+# CHECK-NEXT: TestAndBranch v6 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: b2(v7: guard @Void):
+# CHECK-NEXT: v8: L6 @JSValue = GetSlot v5, v7 key="events" receivers=[L5] level=Expected accessSite=44 fieldAccess=3
+# CHECK-NEXT: Jump -> next b5(v8)
+# CHECK-NEXT: b3(v9: L0|L4 @Cell):
+# CHECK-NEXT: v10: boolean @Boolean = IsSlotFilled v9 key="events" receivers=[L0, L4] level=Expected fieldAccess=0
+# CHECK-NEXT: TestAndBranch v10 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v11: guard @Void):
+# CHECK-NEXT: v12: Object @Cell = GetSlot v9, v11 key="events" receivers=[L0, L4] level=Expected accessSite=44 fieldAccess=0
+# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: b5(v13: L6|Object @JSValue):
+# CHECK-NEXT: Jump -> next b7(v13)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v14: anything @JSValue = PropGet v3 key="events" accessSite=44 receivers=[L0, L4, L5]
+# CHECK-NEXT: v15: undefined|L6|Object @JSValue = AssumeType v14 provenType=undefined|L6|Object
+# CHECK-NEXT: Jump -> next b7(v15)
+# CHECK-NEXT: b7(v16: undefined|L6|Object @JSValue):
+# CHECK-NEXT: v17: L6|Object @JSValue = RequireObjectCoercible v16 nullishAccess=Write
+# CHECK-NEXT: ElemSet v17, v1, v2 accessSite=45
 # CHECK-NEXT: Return v3
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v11: anything @JSValue = PropGet v3 key="events" accessSite=44 receivers=[L0, L4, L5]
-# CHECK-NEXT: v12: undefined|L6|Object @JSValue = AssumeType v11 provenType=undefined|L6|Object
-# CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
-# CHECK: m0 position=338 flags=[HasThis] length=3 thisType={type=L0|L4|L5 flags=[IsExpected]} parameters=[{type=undefined|int|bigint|"alias"|"failure"|"request"|"tick"|L2}, {type=undefined|int|bigint|"failure"|"request"|"tick"|L2}, {type=undefined|int|bigint|"failure"|"request"|"tick"|L2}] results=[{type=true}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything @JSValue, v1: undefined|int|bigint|"alias"|"failure"|"request"|"tick"|L2 @JSValue, v2: undefined|int|bigint|"failure"|"request"|"tick"|L2 @JSValue, v3: undefined|int|bigint|"failure"|"request"|"tick"|L2 @JSValue):
+# CHECK: m0 position=338 flags=[HasThis] length=3 thisType={type=L0|L4|L5 flags=[IsExpected]} parameters=[{type=undefined|bigint|"alias"|"failure"|"request"|"tick"|L2}, {type=undefined|int|bigint|"request"|L2}, {type=undefined|int|bigint|"request"|L2}] results=[{type=true}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything @JSValue, v1: undefined|bigint|"alias"|"failure"|"request"|"tick"|L2 @JSValue, v2: undefined|int|bigint|"request"|L2 @JSValue, v3: undefined|int|bigint|"request"|L2 @JSValue):
 # CHECK-NEXT: v4: L0|L4|L5 @JSValue = AssumeType v0 provenType=L0|L4|L5
-# CHECK-NEXT: v5: boolean @Boolean = IsSlotFilled v4 key="events" receivers=[L0, L4, L5] level=Expected fieldAccess=2
-# CHECK-NEXT: TestAndBranch v5 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v6: guard @Void):
-# CHECK-NEXT: v7: object @JSValue = GetSlot v4, v6 key="events" receivers=[L0, L4, L5] level=Expected accessSite=46 fieldAccess=2
-# CHECK-NEXT: v8: L6|Object @JSValue = AssumeType v7 provenType=undefined|L6|Object
-# CHECK-NEXT: Jump -> next b2(v8)
-# CHECK-NEXT: b2(v9: undefined|L6|Object @JSValue):
-# CHECK-NEXT: v10: anything @JSValue = ElemGet v9, v1 accessSite=47
-# CHECK-NEXT: v11: undefined|null|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = AssumeType v10 provenType=undefined|null|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v12: f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = RequireObjectCoercible v11 name="call"
-# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="call" accessSite=48 siteCache=0
-# CHECK-NEXT: v14: undefined|builtin(FunctionPrototypeCall) @JSValue = AssumeType v13 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v15: anything @JSValue = Call v14, v12, v4, v2, v3 calleeKey="call" calleeName="handler.call" accessSite=49 callees=[builtin(FunctionPrototypeCall)]
-# CHECK-NEXT: v16: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: Return v16
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v17: anything @JSValue = PropGet v4 key="events" accessSite=46 receivers=[L0, L4, L5]
-# CHECK-NEXT: v18: undefined|L6|Object @JSValue = AssumeType v17 provenType=undefined|L6|Object
-# CHECK-NEXT: Jump -> next b2(v18)
+# CHECK-NEXT: v5: boolean @Boolean = TypeTest v4 testedType=L5
+# CHECK-NEXT: TestAndBranch v5 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b1(v6: L5 @Cell):
+# CHECK-NEXT: v7: boolean @Boolean = IsSlotFilled v6 key="events" receivers=[L5] level=Expected fieldAccess=3
+# CHECK-NEXT: TestAndBranch v7 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: b2(v8: guard @Void):
+# CHECK-NEXT: v9: L6 @JSValue = GetSlot v6, v8 key="events" receivers=[L5] level=Expected accessSite=46 fieldAccess=3
+# CHECK-NEXT: Jump -> next b5(v9)
+# CHECK-NEXT: b3(v10: L0|L4 @Cell):
+# CHECK-NEXT: v11: boolean @Boolean = IsSlotFilled v10 key="events" receivers=[L0, L4] level=Expected fieldAccess=0
+# CHECK-NEXT: TestAndBranch v11 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v12: guard @Void):
+# CHECK-NEXT: v13: Object @Cell = GetSlot v10, v12 key="events" receivers=[L0, L4] level=Expected accessSite=46 fieldAccess=0
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b5(v14: L6|Object @JSValue):
+# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v15: anything @JSValue = PropGet v4 key="events" accessSite=46 receivers=[L0, L4, L5]
+# CHECK-NEXT: v16: undefined|L6|Object @JSValue = AssumeType v15 provenType=undefined|L6|Object
+# CHECK-NEXT: Jump -> next b7(v16)
+# CHECK-NEXT: b7(v17: undefined|L6|Object @JSValue):
+# CHECK-NEXT: v18: anything @JSValue = ElemGet v17, v1 accessSite=47
+# CHECK-NEXT: v19: undefined|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = AssumeType v18 provenType=undefined|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v20: f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = RequireObjectCoercible v19 name="call"
+# CHECK-NEXT: v21: anything @JSValue = PropGet v20 key="call" accessSite=48 siteCache=2
+# CHECK-NEXT: v22: undefined|builtin(FunctionPrototypeCall) @JSValue = AssumeType v21 provenType=undefined|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v23: anything @JSValue = Call v22, v20, v4, v2, v3 calleeKey="call" calleeName="handler.call" accessSite=49 callees=[builtin(FunctionPrototypeCall)]
+# CHECK-NEXT: v24: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: Return v24
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
-# CHECK: m0 position=1614 length=2 thisType={type=anything} parameters=[{type=undefined|null|L1|L2|L3 flags=[IsExpected]}, {type=undefined|null|L1|L2|L3 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything @JSValue, v1: anything @JSValue):
-# CHECK-NEXT: v2: undefined @JSValue = CallDirect v0 function=f55
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK: m0 position=1614 length=2 thisType={type=anything} parameters=[{type=undefined|null|L1|L2|L3 flags=[IsExpected]}, {type=undefined}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: anything @JSValue, v1: undefined @JSValue):
+# CHECK-NEXT: v2: undefined|int @JSValue = AssumeType v0 provenType=undefined|int
+# CHECK-NEXT: v3: int @JSValue = RequireObjectCoercible v2 name="method"
+# CHECK-NEXT: v4: anything @JSValue = PropGet v3 key="method" accessSite=35 receivers=[] siteCache=4
+# CHECK-NEXT: v5: anything @JSValue = PropGet v3 key="url" accessSite=36 receivers=[] siteCache=5
+# CHECK-NEXT: v6: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="emit"
-# CHECK: module=m0 position=1921 kind=Method flags=[HasThis, HasExplicitName] length=3 thisType={type=L4} parameters=[{type=undefined|int|"alias"|"failure"|"request"|"tick"}, {type=undefined|int|"failure"|"tick"|L2}, {type=undefined|int}] results=[{type=true}] functionTypes=[f20] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L4 @Cell, v1: undefined|int|"alias"|"failure"|"request"|"tick" @JSValue, v2: undefined|int|"failure"|"tick"|L2 @JSValue, v3: undefined|int @OptionalInt64):
-# CHECK-NEXT: v4: true @Boolean = CallDirect v0, v2, v3 function=f56
+# CHECK: module=m0 position=1921 kind=Method flags=[HasThis, HasExplicitName] length=3 thisType={type=L4} parameters=[{type="alias"|"failure"|"request"|"tick"}, {type=int|L2}, {type=undefined|int}] results=[{type=true}] functionTypes=[f20] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L4 @Cell, v1: "alias"|"failure"|"request"|"tick" @LiteralString, v2: int|L2 @JSValue, v3: undefined|int @OptionalInt64):
+# CHECK-NEXT: v4: true @Boolean = CallDirect v0, v2, v3 function=f55
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Response"
@@ -509,54 +515,42 @@ runtimefunction id=ObjectsToLocaleString function=f34
 # CHECK: module=m0 position=606 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L2} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f5} constructedClass=L2
 # CHECK-LABEL: function {{*}}name="emit"
 # CHECK: module=m0 position=1921 kind=Method role=GenericEntrypoint flags=[HasThis] length=3 captures=[{type=f12}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12} creator=Entrypoint{target=f12 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f12 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue, v4: anything @JSValue) frequency=Rare:
-# CHECK-NEXT: v5: object @Cell = NewRuntimeError runtimeError=LeftOutOfExecutable
-# CHECK-NEXT: Throw v5
+# CHECK-NEXT: b0(v0: f12 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue, v4: anything @JSValue):
+# CHECK-NEXT: v5: L4 @JSValue = AssumeType v1 provenType=L4
+# CHECK-NEXT: v6: int|L2 @JSValue = AssumeType v3 provenType=int|L2
+# CHECK-NEXT: v7: undefined|int @JSValue = AssumeType v4 provenType=undefined|int
+# CHECK-NEXT: v8: true @Boolean = CallDirect v5, v6, v7 function=f55 @1921 tail
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="emit"
-# CHECK: module=m0 position=1921 kind=Method flags=[HasThis, HasExplicitName] length=3 thisType={type=L4} parameters=[{type=undefined|int|"failure"|"tick"|L2}, {type=undefined|int}] results=[{type=true}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f12 parameterMap=[{original=0}, {original=2}, {original=3}]} inlineFrames=[{}, {callee=f8 callPosition=4294967295 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: L4 @Cell, v1: undefined|int|"failure"|"tick"|L2 @JSValue, v2: undefined|int @OptionalInt64):
-# CHECK-NEXT: v3: f11 @Cell = GetModuleVariable variable=g9
-# CHECK-NEXT: v4: null|object @JSValue = GetSuperBase v3 homeKind=ClassPrototype
-# CHECK-NEXT: v5: object @JSValue = AssumeType v4 provenType=object
-# CHECK-NEXT: v6: "request" @JSValue = String string="request"
-# CHECK-NEXT: v7: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="emit"}, {layout=L0 side=Static key="prototype"}] guardBit=12
-# CHECK-NEXT: TestAndBranch v7 -> taken b1(), notTaken b7()
+# CHECK: module=m0 position=1921 kind=Method flags=[HasThis, HasExplicitName] length=3 thisType={type=L4} parameters=[{type=int|L2}, {type=undefined|int}] results=[{type=true}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f12 parameterMap=[{original=0}, {original=2}, {original=3}]} inlineFrames=[{}, {callee=f8 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: L4 @Cell, v2: int|L2 @JSValue, v3: undefined|int @OptionalInt64):
+# CHECK-NEXT: v4: f11 @Cell = GetModuleVariable variable=g9
+# CHECK-NEXT: v5: null|object @JSValue = GetSuperBase v4 homeKind=ClassPrototype
+# CHECK-NEXT: v6: object @JSValue = AssumeType v5 provenType=object
+# CHECK-NEXT: v7: "request" @JSValue = String string="request"
+# CHECK-NEXT: v8: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="emit"}, {layout=L0 side=Static key="prototype"}] guardBit=8
+# CHECK-NEXT: TestAndBranch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v8: boolean @Boolean = IsSlotFilled v0 key="events" receivers=[L4] level=Expected fieldAccess=1
-# CHECK-NEXT: TestAndBranch v8 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v9: guard @Void):
-# CHECK-NEXT: v10: object @JSValue = GetSlot v0, v9 key="events" receivers=[L4] level=Expected accessSite=46 fieldAccess=1
-# CHECK-NEXT: v11: L6|Object @JSValue = AssumeType v10 provenType=undefined|L6|Object
-# CHECK-NEXT: v12: boolean @Boolean = TypeTest v11 testedType=L6
-# CHECK-NEXT: TestAndBranch v12 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: v9: Object @Cell = GetSlot v0 key="events" receivers=[L4] level=Proven accessSite=46 fieldAccess=2
+# CHECK-NEXT: v10: anything @JSValue = PropGet v9 key="request" accessSite=47 siteCache=8
+# CHECK-NEXT: v11: undefined|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = AssumeType v10 provenType=undefined|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v12: f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = RequireObjectCoercible v11 name="call"
+# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="call" accessSite=48 siteCache=9
+# CHECK-NEXT: v14: undefined|builtin(FunctionPrototypeCall) @JSValue = AssumeType v13 provenType=undefined|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v15: anything @JSValue = Call v14, v12, v0, v3, v2 calleeKey="call" calleeName="handler.call" accessSite=49 callees=[builtin(FunctionPrototypeCall)]
+# CHECK-NEXT: v16: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v17: anything @JSValue = SuperGet v6, v0 key="emit" accessSite=52
+# CHECK-NEXT: v18: undefined|f8 @JSValue = AssumeType v17 provenType=undefined|f8
+# CHECK-NEXT: v19: boolean @Boolean = TypeTest v18 testedType=f8
+# CHECK-NEXT: TestAndBranch v19 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v13: undefined @JSValue = Undefined
-# CHECK-NEXT: Jump -> next b6(v13)
-# CHECK-NEXT: b4(v14: Object @JSValue):
-# CHECK-NEXT: v15: anything @JSValue = PropGet v14 key="request" accessSite=47 siteCache=2
-# CHECK-NEXT: v16: undefined|null|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = AssumeType v15 provenType=undefined|null|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Jump -> next b6(v16)
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v17: undefined|null|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = CallDirect v0 function=f61
-# CHECK-NEXT: Jump -> next b6(v17)
-# CHECK-NEXT: b6(v18: undefined|null|f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue):
-# CHECK-NEXT: v19: f10|f14|f15|f17|f18|f19|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) @JSValue = RequireObjectCoercible v18 name="call"
-# CHECK-NEXT: v20: anything @JSValue = PropGet v19 key="call" accessSite=48 siteCache=3
-# CHECK-NEXT: v21: undefined|builtin(FunctionPrototypeCall) @JSValue = AssumeType v20 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v22: anything @JSValue = Call v21, v19, v0, v2, v1 calleeKey="call" calleeName="handler.call" accessSite=49 callees=[builtin(FunctionPrototypeCall)]
-# CHECK-NEXT: v23: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: Return v23
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v24: anything @JSValue = SuperGet v5, v0 key="emit" accessSite=52
-# CHECK-NEXT: v25: undefined|f8 @JSValue = AssumeType v24 provenType=undefined|f8
-# CHECK-NEXT: v26: boolean @Boolean = TypeTest v25 testedType=f8
-# CHECK-NEXT: TestAndBranch v26 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v27: true @Boolean = CallDirect v0, v6, v2, v1 function=f8 accessSite=53
-# CHECK-NEXT: ReturnCall v27 casts=[{declared={type=true} resolution=Assume}]
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v28: undefined @JSValue = Undefined
-# CHECK-NEXT: v29: never @JSValue = Call v28, v0, v6, v2, v1 calleeName="super.emit" accessSite=53 callees=[f8] @0 tail
+# CHECK-NEXT: v20: true @Boolean = CallDirect v0, v7, v3, v2 function=f8 accessSite=53
+# CHECK-NEXT: ReturnCall v20 casts=[{declared={type=true} resolution=Assume}]
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v21: undefined @JSValue = Undefined
+# CHECK-NEXT: v22: never @JSValue = Call v21, v0, v7, v3, v2 calleeName="super.emit" accessSite=53 callees=[f8] @0 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

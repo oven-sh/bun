@@ -34,6 +34,7 @@ mod evaluated_text;
 mod exposure;
 mod folding;
 mod imports;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod parts_of_a_file;

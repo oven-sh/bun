@@ -609,22 +609,28 @@ function f81 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v0: "3" = String string="3"
 # CHECK-NEXT: v1: L11 = NewObject layout=L11 allocationSite=21 allocationClass=6
 # CHECK-NEXT: v2: L0 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L0 key="len"}]
+# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L0 key="len"}, {layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: anything ~ number = CallDirect v2 function=f21 accessSite=40
 # CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number|bigint} resolution=Assume}]
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: anything = PropGet v2 key="len" accessSite=39 receivers=[L0]
-# CHECK-NEXT: v6: undefined|f21 = AssumeType v5 provenType=undefined|f21
-# CHECK-NEXT: v7: boolean = TypeTest v6 testedType=f21
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 key="len"}]
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v8: anything ~ number = CallDirect v2 function=f21 accessSite=40
-# CHECK-NEXT: ReturnCall v8 casts=[{declared={type=number|bigint} resolution=Assume}]
+# CHECK-NEXT: v6: anything ~ number = CallDirect v2 function=f21 accessSite=40
+# CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number|bigint} resolution=Assume}]
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: never = Call v9, v2 calleeKey="len" calleeName="len" accessSite=40 callees=[f21] @0 tail
+# CHECK-NEXT: v7: anything = PropGet v2 key="len" accessSite=39 receivers=[L0]
+# CHECK-NEXT: v8: undefined|f21 = AssumeType v7 provenType=undefined|f21
+# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=f21
+# CHECK-NEXT: Branch v9 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v10: anything ~ number = CallDirect v2 function=f21 accessSite=40
+# CHECK-NEXT: ReturnCall v10 casts=[{declared={type=number|bigint} resolution=Assume}]
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: v12: never = Call v11, v2 calleeKey="len" calleeName="len" accessSite=40 callees=[f21] @0 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=

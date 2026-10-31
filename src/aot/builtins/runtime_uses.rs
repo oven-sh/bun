@@ -440,21 +440,14 @@ pub fn reaches_unknown_module_loader(
     collector.has_unknown_module_loader
 }
 
-/// Whether code that names `mentioned` and lets `exposed` out of sight can get at the table of loaded modules: `require.cache`, `Module._cache`.
-pub fn reaches_module_cache(
-    mentioned: &[BuiltinId],
-    exposed: &[BuiltinId],
-    platform: Platforms,
-) -> bool {
+/// Whether code that lets `exposed` out of sight can get at the table of loaded modules: `require.cache`, `Module._cache`.
+pub fn reaches_module_cache(exposed: &[BuiltinId], platform: Platforms) -> bool {
     let tables = [
         BuiltinId::ModuleRequireCache,
         BuiltinId::ModuleRequirePrototypeCache,
         BuiltinId::NodeModule_cache,
     ]
     .map(table::canonical_id);
-    if (mentioned.iter()).any(|&id| tables.contains(&table::canonical_id(id))) {
-        return true;
-    }
     if exposed.is_empty() {
         return false;
     }

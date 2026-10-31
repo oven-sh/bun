@@ -25,10 +25,14 @@
 // least that it was seen to take: what a build needs it takes every time. For the growth, size 0 keeps the least of all the shapes of the file that are the
 // same program there.
 //
-// One more build has all the shapes as its entry points, on four threads. The stages of a build run one after another, and a stage takes the memory that
+// Two more builds have many shapes as their entry points, on four threads. The stages of a build run one after another, and a stage takes the memory that
 // the stage before it has freed, so the build needs what its largest stage needs. On one thread that is so by itself. On several threads it also takes
 // an allocator that hands what one thread has freed to the others, or back to the system. Only its memory is held against the budget, with less slack:
 // it wavers by a twentieth.
+//
+// A shape that becomes an entry point of such a build takes from a budget that was taken without it: twenty of them, one after another, took the first build
+// from 530 MB to its bound, where it passed or failed by the run. So the file says for how many shapes a number was taken, and a build of another
+// number fails. A new shape is kept out (`isExcludedFromCombinedBuild`), or the number of that build is taken anew.
 //
 // A step that takes time and no memory shows in the instructions alone. A shape may name statistics of the build's report that count the steps of such
 // work (`counts`): they are exact, the same on every machine, and their growth is held to the same bound.
@@ -74,6 +78,8 @@ interface Budget {
   millionInstructions?: number;
   millionInstructionsWithMusl?: number;
   megabytes: number;
+  /** Of a build of many shapes: how many they were when the number was taken. */
+  shapes?: number;
   /** Only where it is over `mostGrowth` today. */
   growth?: Growth;
 }
@@ -164,14 +170,21 @@ async function measureOneLine(carrier: string[]): Promise<Cost> {
   );
 }
 
-const allShapesTogether = "all shapes as the entry points of one build, on four threads";
-const slackOfAllShapesTogether = 1.15;
+const slackOfShapesTogether = 1.15;
+const shapesBuiltTogether = shapes.filter(
+  shape =>
+    !shape.isRefused && !shape.isBundledFirst && !shape.flags && !shape.isExcludedFromCombinedBuild && !shape.isTestRun,
+);
+const combinedBuilds = {
+  "all shapes as the entry points of one build, on four threads": shapesBuiltTogether.filter(
+    shape => !shape.isInSecondCombinedBuild,
+  ),
+  "the shapes that came later as the entry points of one build, on four threads": shapesBuiltTogether.filter(
+    shape => shape.isInSecondCombinedBuild,
+  ),
+};
 
-async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
-  const built = shapes.filter(
-    shape =>
-      !shape.isRefused && !shape.isBundledFirst && !shape.flags && !shape.isExcludedFromCombinedBuild && !shape.isTestRun,
-  );
+async function measureShapesTogether(built: Shape[], carrier: string[]): Promise<Cost> {
   const files = built.flatMap((shape, index) =>
     Object.entries(shape.write(shape.size * factor)).map(([path, text]) => [`shape-${index}/${path}`, text]),
   );
@@ -243,7 +256,7 @@ export const buildScaling = (part: number, parts: number) =>
           budgetsPath,
           JSON.stringify(
             Object.fromEntries(
-              [oneLine, ...shapes.map(shape => shape.name), allShapesTogether].flatMap(name =>
+              [oneLine, ...shapes.map(shape => shape.name), ...Object.keys(combinedBuilds)].flatMap(name =>
                 budgets[name] ? [[name, budgets[name]]] : [],
               ),
             ),
@@ -252,25 +265,34 @@ export const buildScaling = (part: number, parts: number) =>
           ) + "\n",
         );
     });
-    for (const [name, slackOfRow, measureMegabytes] of [
-      [oneLine, slack, async () => inMillions((await slot(() => measureOneLine(carrier))).peakBytes)],
-      [
-        allShapesTogether,
-        slackOfAllShapesTogether,
-        async () => {
-          const [nothing, all] = await Promise.all([
-            slot(() => measureOneLine(carrier)),
-            slot(() => measureAllShapesTogether(carrier)),
-          ]);
-          return judgedMegabytes(nothing, all);
-        },
-      ],
+    for (const [name, slackOfRow, numberOfShapes, measureMegabytes] of [
+      [oneLine, slack, undefined, async () => inMillions((await slot(() => measureOneLine(carrier))).peakBytes)],
+      ...Object.entries(combinedBuilds).map(
+        ([name, built]) =>
+          [
+            name,
+            slackOfShapesTogether,
+            built.length,
+            async () => {
+              const [nothing, all] = await Promise.all([
+                slot(() => measureOneLine(carrier)),
+                slot(() => measureShapesTogether(built, carrier)),
+              ]);
+              return judgedMegabytes(nothing, all);
+            },
+          ] as const,
+      ),
     ] as const)
       if (name.includes(wanted) && part === parts)
         test.skipIf(!holdsBudgets).concurrent(
           name,
           async () => {
             const budget = budgets[name];
+            if (budget && mode !== "accept")
+              expect(
+                numberOfShapes,
+                "A shape has joined or left this build. Keep a new one out (isExcludedFromCombinedBuild), or take the number anew (AOT_BUDGETS=accept).",
+              ).toBe(budget.shapes);
             const megabytes = await measureUntilWithinBounds(
               name,
               measureMegabytes,
@@ -278,7 +300,7 @@ export const buildScaling = (part: number, parts: number) =>
             );
             console.error(`SCALING ${name}: ${megabytes} MB`);
             if (mode === "accept" || !budget) {
-              budgets[name] = { megabytes };
+              budgets[name] = { megabytes, shapes: numberOfShapes };
               expect(["accept", "lower"]).toContain(mode);
               return;
             }

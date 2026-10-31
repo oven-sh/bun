@@ -53,8 +53,7 @@ One run tests one way to build. Several runs side by side, each with different o
 
 Every executable that exits normally is run a second time with `BUN_JSC_validateAOTRuntime=1`, which turns on the run-time checks; `--run-once` skips that.
 
-With an AddressSanitizer build, pass `--bun <path> --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"`. Without `Malloc=1`, ASan does not see WTF's allocations (strings,
-vectors, hash tables). To test several builds of Bun on the same programs, start one run per build with the same `--seed`.
+With an AddressSanitizer build, pass `--bun <path> --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"`. To test several builds of Bun on the same programs, start one run per build with the same `--seed`.
 
 Some sources need their own settings to be useful:
 

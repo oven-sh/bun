@@ -309,22 +309,21 @@ function f2 name="fill" module=m0 position=248 flags=[HasExplicitName] length=2 
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: module=m0 position=129 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="fill"
-# CHECK: module=m0 position=248 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int}, {type=undefined|string}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int @Int64, v1: undefined|string @JSValue):
+# CHECK: module=m0 position=248 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int}, {type=string}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int @Int64, v1: string @Cell):
 # CHECK-NEXT: v2: "|[" @Cell = String string="|["
-# CHECK-NEXT: v3: string @Cell = Add v1, v2 form=StringAndPrimitive
+# CHECK-NEXT: v3: string @Cell = Add v1, v2 form=Strings
 # CHECK-NEXT: v4: "a" @Cell = String string="a"
-# CHECK-NEXT: v5: string @JSValue = RequireObjectCoercible v1 name="length"
-# CHECK-NEXT: v6: int[0, 2147483647] @Int32 = GetStringLength v5
-# CHECK-NEXT: v7: int|whole @Double = Sub v0, v6 form=CheckedIntegers
-# CHECK-NEXT: v8: 7 @Double = Integer integer=7
-# CHECK-NEXT: v9: int|whole @Double = Sub v7, v8 form=Numbers
-# CHECK-NEXT: TryCallInline v4, v9 inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0 accessSite=29 -> done b1(), miss b2()
-# CHECK-NEXT: b1(v10: string @Cell):
-# CHECK-NEXT: v11: "]{9}~" @Cell = String string="]{9}~"
-# CHECK-NEXT: v12: string @Cell = Strcat v3, v10, v11
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v5: int[0, 2147483647] @Int32 = GetStringLength v1
+# CHECK-NEXT: v6: int|whole @Double = Sub v0, v5 form=CheckedIntegers
+# CHECK-NEXT: v7: 7 @Double = Integer integer=7
+# CHECK-NEXT: v8: int|whole @Double = Sub v6, v7 form=Numbers
+# CHECK-NEXT: TryCallInline v4, v8 inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0 accessSite=29 -> done b1(), miss b2()
+# CHECK-NEXT: b1(v9: string @Cell):
+# CHECK-NEXT: v10: "]{9}~" @Cell = String string="]{9}~"
+# CHECK-NEXT: v11: string @Cell = Strcat v3, v9, v10
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v13: string @JSValue = CallBuiltin v4, v9 overload=StringPrototypeRepeat/0 accessSite=29
-# CHECK-NEXT: Jump -> next b1(v13)
+# CHECK-NEXT: v12: string @JSValue = CallBuiltin v4, v8 overload=StringPrototypeRepeat/0 accessSite=29
+# CHECK-NEXT: Jump -> next b1(v12)
 # CHECK-NEXT: }

@@ -1276,29 +1276,28 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f45
 # CHECK: module=m0 position=3057 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Int32Array site=w36 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w37}] results=[{type=undefined|null|string site=w38 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f22 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: Int32Array, v1: number) handler=b4():
 # CHECK-NEXT: v2: int[-2147483648, 4294967295] = CallBuiltin -, v0, v1 overload=AtomicsLoad/0 accessSite=194 @0:2 tail
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v4: whole = Double number=-0
-# CHECK-NEXT: v5: boolean = CallBuiltin -, v2, v4 overload=ObjectIs/0 accessSite=94
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v3: whole = Double number=-0
+# CHECK-NEXT: v4: boolean = CallBuiltin -, v2, v3 overload=ObjectIs/0 accessSite=94
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v6: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: v5: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b3(v5)
 # CHECK-NEXT: b2() handler=b4():
-# CHECK-NEXT: v7: string = CallBuiltin -, v2 overload=String/0 accessSite=95
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: string):
-# CHECK-NEXT: Jump -> next b5(v8) @0 tail
+# CHECK-NEXT: v6: string = CallBuiltin -, v2 overload=String/0 accessSite=95
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b3(v7: string):
+# CHECK-NEXT: Jump -> next b5(v7) @0 tail
 # CHECK-NEXT: b4() role=CatchHandler:
-# CHECK-NEXT: v9: anything = CatchValue
-# CHECK-NEXT: v10: anything ~ undefined|null|Error = Upcast v9 castType=anything
-# CHECK-NEXT: v11: anything = PropGet v10 key="constructor" accessSite=96
-# CHECK-NEXT: v12: anything ~ undefined|null|function = Expect v11 expectedType=undefined|null|function
-# CHECK-NEXT: v13: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v12 name="name"
-# CHECK-NEXT: v14: anything = PropGet v13 key="name" accessSite=97
-# CHECK-NEXT: v15: anything ~ undefined|null|string = Expect v14 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b5(v15) @0 tail
-# CHECK-NEXT: b5(v16: anything ~ undefined|null|string):
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v8: anything = CatchValue
+# CHECK-NEXT: v9: anything ~ undefined|null|Error = Upcast v8 castType=anything
+# CHECK-NEXT: v10: anything = PropGet v9 key="constructor" accessSite=96
+# CHECK-NEXT: v11: anything ~ undefined|null|function = Expect v10 expectedType=undefined|null|function
+# CHECK-NEXT: v12: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v11 name="name"
+# CHECK-NEXT: v13: anything = PropGet v12 key="name" accessSite=97
+# CHECK-NEXT: v14: anything ~ undefined|null|string = Expect v13 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b5(v14) @0 tail
+# CHECK-NEXT: b5(v15: anything ~ undefined|null|string):
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="floats"
 # CHECK: module=m0 position=3266 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Float64Array<anything, pristine[Storage, Names]> site=w43 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w44 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

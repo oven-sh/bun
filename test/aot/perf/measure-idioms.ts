@@ -127,6 +127,7 @@ export async function planOf(
 /**
  * Writes every idiom's sources into `folder`: the TypeScript into one folder with a tsconfig.json, the JavaScript into another without. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
  * `inVeryLargeProgram` compiles each idiom as the same text would be compiled inside a very large program, and the idioms of ./everyday find turn() at run time.
+ * `inColdFunction` is that, and turn() stays a function of its own in typed text too: see ./everyday-idioms.ts.
  * `jit: false` leaves out the runs under the JIT, and the warming up that only they need. `together` names the idioms that will be measured: they are the entry points of a few executables, each compiled as it is when it is built alone.
  */
 export function idiomsAgainstTheJit(
@@ -136,10 +137,12 @@ export function idiomsAgainstTheJit(
     collections = true,
     buildFlags = [] as string[],
     inVeryLargeProgram = false,
+    inColdFunction = false,
     jit: measuresJit = true,
     together = undefined as string[] | undefined,
   } = {},
 ) {
+  inVeryLargeProgram ||= inColdFunction;
   if (inVeryLargeProgram) buildFlags = [...flagsOfVeryLargeProgram, ...buildFlags];
   const sources = { typed: join(folder, "idioms"), untyped: join(folder, "untyped-idioms") };
   const environment = {
@@ -307,7 +310,7 @@ export function idiomsAgainstTheJit(
       .map(String)
       .filter(path => path.endsWith(".ts") && path !== "host.ts")
       .map(path => path.slice(0, -3).replaceAll("\\", "/")),
-    ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram),
+    ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram, inColdFunction),
   ].sort();
   for (let first = 0; first < (together?.length ?? 0); first += idiomsInOneExecutable)
     for (const form of ["typed", "untyped"] as const) executableOfMany(form, together![first]).catch(() => {});

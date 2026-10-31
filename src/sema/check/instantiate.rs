@@ -94,7 +94,36 @@ struct Activation {
     /// Unique, and never 0. Entries of `recent_instantiations` made under it are tagged with it.
     serial: u32,
     /// The type parameters instantiated under it.
-    params: SmallVec<[TypeId; 4]>,
+    params: SeenParams,
+}
+
+#[derive(Default)]
+struct SeenParams {
+    few: SmallVec<[TypeId; 4]>,
+    many: Option<Box<crate::util::FxHashSet<TypeId>>>,
+}
+
+impl SeenParams {
+    const MOST_IN_LIST: usize = 16;
+
+    #[inline]
+    fn insert(&mut self, param: TypeId) -> bool {
+        if let Some(many) = &mut self.many {
+            return many.insert(param);
+        }
+        if self.few.contains(&param) {
+            return false;
+        }
+        if self.few.len() == Self::MOST_IN_LIST {
+            cold_path();
+            let mut many: crate::util::FxHashSet<TypeId> = self.few.drain(..).collect();
+            many.insert(param);
+            self.many = Some(Box::new(many));
+        } else {
+            self.few.push(param);
+        }
+        true
+    }
 }
 
 impl ActiveMappers {
@@ -122,7 +151,7 @@ impl ActiveMappers {
         self.mappers.push(mapper);
         self.activations.push(Activation {
             serial: self.pushed,
-            params: SmallVec::new(),
+            params: SeenParams::default(),
         });
     }
 
@@ -654,13 +683,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let active = self.active_mappers.find(mapper);
         if class == InstantiationClass::TypeParameter {
-            match active.map(|at| &mut self.active_mappers.activations[at].params) {
-                Some(seen) if seen.contains(&ty) => {}
-                Some(seen) => {
-                    seen.push(ty);
-                    self.instantiation_count += 1;
-                }
-                None => self.instantiation_count += 1,
+            let seen = active.map(|at| &mut self.active_mappers.activations[at].params);
+            if seen.is_none_or(|seen| seen.insert(ty)) {
+                self.instantiation_count += 1;
             }
             return self.types().map(mapper, ty).unwrap_or(ty);
         }
@@ -1763,5 +1788,20 @@ impl<'p, 's> Checker<'p, 's> {
             self.types().mapper_of(&first),
             self.types().mapper_of(&second),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_type_parameter_is_new_once_however_many_were_seen() {
+        let mut seen = SeenParams::default();
+        for round in 0..2 {
+            for number in 1..=10 * SeenParams::MOST_IN_LIST as u32 {
+                assert_eq!(seen.insert(TypeId(number)), round == 0);
+            }
+        }
     }
 }

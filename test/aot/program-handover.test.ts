@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { registry } from "./harness/registry";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
@@ -162,16 +163,15 @@ test.concurrent.skipIf(!canMount).each(["noexec", "size=64k"])(
   },
 );
 
-// What the test files import waits in deleted files, which every process of the run maps: ./test-run-in-parts.test.ts. What a build
-// prints goes to a file of the same directory.
+// What the test files import waits in deleted files, which every process of the run maps: ./test-run-in-parts.test.ts.
 describe.skipIf(!canMount)("a temporary directory without room for what the test files import", () => {
-  const runTests = (dir: string, kind?: string) =>
+  const runTests = (dir: string, kind?: string, word = "", fill = "") =>
     run(
       [
         ...inOwnMounts,
         "sh",
         "-c",
-        `mount -t tmpfs -o size=1m tmpfs "$BUN_TMPDIR" && exec "$@"`,
+        `mount -t tmpfs -o size=1m tmpfs "$BUN_TMPDIR" && { ${fill} exec "$@"; }`,
         "sh",
         bunExe(),
         "test",
@@ -181,8 +181,9 @@ describe.skipIf(!canMount)("a temporary directory without room for what the test
       {
         ...bunEnv,
         BUN_TMPDIR: join(dir, "tmp"),
-        BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1",
+        BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" + word,
         BUN_DEBUG_TEST_AOT_PROGRAM_FILE: kind,
+        BUN_ENABLE_CRASH_REPORTING: "0",
       },
     );
   const about = (stderr: string, word: string) => stderr.split("\n").filter(line => line.includes(word));
@@ -203,8 +204,29 @@ describe.skipIf(!canMount)("a temporary directory without room for what the test
     using dir = tempDir("aot-program-handover", files);
     const { stderr, exitCode } = await runTests(String(dir), "deleted");
     expect(about(stderr, "could not")).toEqual([
+      expect.stringMatching(/^error: --aot could not write the compiled program to a temporary file: ENOSPC: /),
       "error: what the test files import could not be compiled: neither memory nor the temporary directory has room for the program, in the build of the packages. None of the 2 test files ran",
     ]);
     expect(exitCode).toBe(1);
   });
+
+  test.concurrent.skipIf(!registry().sabotages?.includes("ProgramPassFailsAssertion"))(
+    "a build that fails where not a byte is free says why",
+    async () => {
+      using dir = tempDir("aot-program-handover", files);
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        undefined,
+        ",sabotage=ProgramPassFailsAssertion",
+        `head -c 2097152 /dev/zero > "$BUN_TMPDIR/filled" 2> /dev/null;`,
+      );
+      expect(about(stderr, "Stopped while compiling")).toHaveLength(1);
+      expect(about(stderr, "could not")).toEqual([
+        expect.stringMatching(
+          /^error: what the test files import could not be compiled: .*, in the build of the packages\. None of the 2 test files ran$/,
+        ),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
 });

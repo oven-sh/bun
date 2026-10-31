@@ -182,7 +182,7 @@ function f5 module=m0 position=186 kind=Initializer flags=[HasThis, IsHiddenInSt
 # CHECK-NEXT: Void b@140 = Return(b@20, Terminal)
 # CHECK-NEXT: BB#26: ; frequency = 0.000196
 # CHECK-NEXT: Predecessors: #24
-# CHECK-NEXT: Int64 b@129 = Patchpoint(b@112:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000097(children), ControlDependent, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@129 = Patchpoint(b@112:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000098(children), ControlDependent, v10:PutTypedArrayElement)
 # CHECK-NEXT: Int32 b@130 = Trunc(b@129, v10:PutTypedArrayElement)
 # CHECK-NEXT: Void b@131 = Upsilon(b@130, ^133, WritesLocalState, v10:PutTypedArrayElement)
 # CHECK-NEXT: Void b@132 = Jump(Terminal, v10:PutTypedArrayElement)

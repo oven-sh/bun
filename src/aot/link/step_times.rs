@@ -1,9 +1,11 @@
-use crate::statistics::{Counters, StatisticId};
+use crate::statistics::{Counters, Stage, StatisticId, StepClock, logs_stages};
 use std::time::Instant;
 
 pub(super) struct StepTimes {
     pub counters: Counters,
     started: Instant,
+    // With the stages: a line for each step.
+    log: StepClock,
 }
 
 impl StepTimes {
@@ -11,6 +13,7 @@ impl StepTimes {
         StepTimes {
             counters: Counters::default(),
             started: Instant::now(),
+            log: StepClock::new(Stage::LinkAndEmit, "link"),
         }
     }
 
@@ -19,6 +22,9 @@ impl StepTimes {
         let nanoseconds = now.duration_since(self.started).as_nanos();
         self.counters
             .count(step, u64::try_from(nanoseconds).unwrap_or(u64::MAX));
+        if logs_stages() {
+            self.log.end(&format!("{step:?}"));
+        }
         self.started = now;
     }
 }

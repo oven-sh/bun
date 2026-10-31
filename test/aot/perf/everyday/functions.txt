@@ -433,3 +433,11 @@ function serious(errors: Problem[]): Problem[] {
 function turn(i: number): number {
   return serious(problems[i % 3]).length + (problems[(i + 1) % 3].some(e => e.weight > 2) ? 1 : 0);
 }
+//// object-of-closures.used-in-a-loop-of-its-caller
+function cursor(list: number[]) { let at = -1; return { step() { return ++at < list.length; }, value() { return list[at]; } }; }
+const list = [1, 2, 3, 4];
+function turn(i: number): number { const c = cursor(list); let sum = i; while (c.step()) sum += c.value(); return sum; }
+//// object-of-closures.kept-and-used-at-once
+function counter(start: number) { let n = start; return { add(by: number) { return (n += by); }, get() { return n; }, reset() { n = start; } }; }
+const kept: any[] = [];
+function turn(i: number): number { const c = counter(i & 7); kept[i & 3] = c; c.add(2); c.add(3); return c.get(); }

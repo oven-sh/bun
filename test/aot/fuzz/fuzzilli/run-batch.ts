@@ -788,29 +788,34 @@ const withoutNamesOfFunctions = (output: string) =>
   removeDetailsOfErrors(output).replace(/\[(\w*Function|class)\b[^\]]*\]/g, "[$1]");
 const opensAFunctionOrAClass =
   /\bfunction\b|\bclass\b|^\s*static \{$|^\s*(?!(?:if|for|while|switch|catch|with)\b)(?:(?:static|async|get|set)\s+)*\*?\s*(?:[\w$#]+|"[^"]*"|\[.*\])\s*\(.*\{$/;
-/** `text` with `undefined` for `this` outside every function and class. In a module that is `undefined` in an executable and `null` under `bun run`. */
-function withUndefinedAsThisOfTheModule(text: string) {
-  const blocks: { indent: number; hasItsOwnThis: boolean }[] = [];
-  return text
-    .split("\n")
-    .map(line => {
-      const indent = line.search(/\S/);
-      if (indent < 0) return line;
-      while (blocks.length && blocks.at(-1)!.indent >= indent) blocks.pop();
-      const isOfTheModule = !blocks.some(block => block.hasItsOwnThis);
-      const opens = opensAFunctionOrAClass.test(line);
-      if (line.endsWith("{")) blocks.push({ indent, hasItsOwnThis: opens });
-      if (!isOfTheModule) return line;
-      if (!opens) return line.replace(/\bthis\b/g, "undefined");
-      // The computed key of a method belongs to the code around the method.
-      return line.replace(
-        /^(\s*(?:(?:async|get|set)\s+)*\*?\s*\[)(.*)(\]\s*\()/,
-        (_, before, key, after) => before + key.replace(/\bthis\b/g, "undefined") + after,
-      );
-    })
-    .join("\n");
+/** A parameter or a key named `this`, and the `this` of `this is T`, are no values. */
+const isAValue = (text: string, at: number) =>
+  !/^this\s+is\b/.test(text.slice(at, at + 16)) &&
+  !(/^this\s*:/.test(text.slice(at, at + 16)) && /[({,]\s*$/.test(text.slice(Math.max(0, at - 80), at)));
+/**
+ * `text` with `undefined` for `this` of the module, which is `undefined` in an executable and `null` under `bun run`.
+ * The transpiler of `bun run` says which those are: it writes `null` for them and leaves the `this` of every function and class.
+ * A text that it refuses with a member read from each `this` comes back as it is.
+ */
+function withUndefinedAsThisOfTheModule(text: string, extension: string) {
+  const withEach = (replace: (mark: string) => string) => {
+    let count = 0;
+    return text.replace(/(?<![$#.\w])this(?![$\w])/g, (found, at) =>
+      isAValue(text, at) ? replace(`__this${count++}__`) : found,
+    );
+  };
+  let transpiled: string;
+  try {
+    transpiled = new Bun.Transpiler({ loader: extension.endsWith("ts") ? "ts" : "js" }).transformSync(
+      withEach(mark => "this." + mark),
+    );
+  } catch {
+    return text;
+  }
+  return withEach(mark => (transpiled.includes("null." + mark) ? "undefined" : "this"));
 }
-const readsThisOfTheModule = (text: string) => withUndefinedAsThisOfTheModule(text) !== text;
+const readsThisOfTheModule = (text: string, extension: string) =>
+  withUndefinedAsThisOfTheModule(text, extension) !== text;
 const withNullAsUndefined = (output: string) =>
   removeDetailsOfErrors(output)
     .replace(/\[Object: null prototype\] /g, "")
@@ -928,7 +933,7 @@ async function agreesWithUndefinedAsThisOfTheModule(
   text: string,
   { stdout }: Ended,
 ) {
-  layOut(folder, [withUndefinedAsThisOfTheModule(text)], extension, 1);
+  layOut(folder, [withUndefinedAsThisOfTheModule(text, extension)], extension, 1);
   const ran = await spawn("this", [bun, "run", `./programs/0${extension}`], folder, plainEnv, 30);
   return removeDetailsOfErrors(ran.stdout) === removeDetailsOfErrors(stdout);
 }
@@ -1010,10 +1015,34 @@ async function agreesButForFunctionsDeclaredInBlocks(
   return withoutThem(compiled.stdout) === withoutThem(reference.stdout);
 }
 
+/** Where the bracket that opens at `open` closes, or -1. Strings are passed over. */
+function closingBracket(text: string, open: number) {
+  let depth = 0;
+  for (let at = open; at < text.length; at++) {
+    const character = text[at];
+    if (character === '"' || character === "'" || character === "`") {
+      for (at++; at < text.length && text[at] !== character; at++) if (text[at] === "\\") at++;
+    } else if ("[({".includes(character)) depth++;
+    else if ("])}".includes(character) && --depth === 0) return character === "]" ? at : -1;
+  }
+  return -1;
+}
 /** `[key]: value` in an object literal. Not `[key: string]: value` in a type. */
 const computedKeyOfAValue = /(?<=[{,]\s*|^\s*)\[(?![\w$]+\??: )((?:[^\[\]\n]|\[[^\[\]\n]*\])+)\](?=: )/gm;
-const withKeysConvertedBeforeValues = (text: string) =>
-  text.replace(computedKeyOfAValue, "[Reflect.ownKeys({ [$1]: 0 })[0]]");
+/** A key can be an object of several lines, which the pattern doesn't follow. */
+function withKeysConvertedBeforeValues(text: string) {
+  let changed = "";
+  let from = 0;
+  for (const { index } of text.matchAll(/(?<=[{,]\s*|^\s*)\[(?=.*\n)/gm)) {
+    if (index < from) continue;
+    const end = closingBracket(text, index);
+    const key = text.slice(index + 1, end);
+    if (end < 0 || !key.includes("\n") || !text.startsWith(": ", end + 1)) continue;
+    changed += `${text.slice(from, index)}[Reflect.ownKeys({ [${key}]: 0 })[0]]`;
+    from = end + 1;
+  }
+  return (changed + text.slice(from)).replace(computedKeyOfAValue, "[Reflect.ownKeys({ [$1]: 0 })[0]]");
+}
 /** Whether `bun run` prints what the executable printed once it converts each computed key to a property key before it evaluates the value beside it. Lays the changed program out in `folder`. */
 async function agreesWithKeysConvertedBeforeValues(folder: string, extension: string, text: string, { stdout }: Ended) {
   layOut(folder, [withKeysConvertedBeforeValues(text)], extension, 1);
@@ -1467,7 +1496,11 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
         keepFind("validation", withoutWhatDiffersFromRunToRun(said), {
           ["program" + extension]: members[position] ?? "",
           "programs.txt": listed(members),
-          "report.txt": `validation, one of ${members.length} programs that an entry point imports with import statements, number ${position}\n${command}\n${said}\n`,
+          ...(entryPoints.length > 1 && {
+            "all-programs.txt": listed(texts),
+            "entry-points.json": JSON.stringify(entryPoints),
+          }),
+          "report.txt": `validation, one of ${members.length} programs that an entry point imports with import statements, number ${position}\n${command}\n${said}\n${entryPoints.length > 1 ? `The build saw ${texts.length} programs in ${entryPoints.length} entry points: all-programs.txt holds them, entry-points.json says which of them each entry point imports, and this is entry point ${entryPoint}\n` : ""}`,
           "compiled.stderr": ended.stderr,
         });
       }
@@ -1995,7 +2028,6 @@ for (
     ];
     const inOrdinary = ordinary.get(index);
     const says = (message: string) => second.stderr.includes(message) || second.stdout.includes(message);
-    const showsFunctionText = !hidesFunctionText && /function|=>|class /.test(referenceAgain.stdout + second.stdout);
     let kind =
       referenceAgain.end.startsWith("the process ended") &&
       !wasKilled(referenceAgain) &&
@@ -2022,7 +2054,7 @@ for (
                     deletesACharacterOfAString.test(texts[index]) ||
                     (second.end === referenceAgain.end &&
                       withNullAsUndefined(second.stdout) === withNullAsUndefined(referenceAgain.stdout) &&
-                      readsThisOfTheModule(texts[index])) ||
+                      readsThisOfTheModule(texts[index], extension)) ||
                     (second.end === referenceAgain.end &&
                       withoutNamesOfFunctions(second.stdout) === withoutNamesOfFunctions(referenceAgain.stdout) &&
                       hasALiteralAsComputedKey.test(texts[index])) ||
@@ -2040,7 +2072,7 @@ for (
                         ? "options of its own, and the executable without --aot does not start"
                         : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
                           ? "as an executable without --aot"
-                          : showsFunctionText || agreeButForLayout(second, referenceAgain)
+                          : agreeButForLayout(second, referenceAgain)
                             ? "function text"
                             : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
                               ? "an accessor defined twice"
@@ -2068,7 +2100,7 @@ for (
         kind = "documented difference";
       else if (!hidesFunctionText && (await printsFromTheTextOfFunctions(alone, extension))) kind = "function text";
       else if (
-        readsThisOfTheModule(texts[index]) &&
+        readsThisOfTheModule(texts[index], extension) &&
         (await agreesWithUndefinedAsThisOfTheModule(alone, extension, texts[index], second))
       )
         kind = "documented difference";

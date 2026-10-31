@@ -108,13 +108,25 @@ const RUNTIME_IDENTITY: [(&[&str], KnownValue); 7] = [
     (&["process", "release", "name"], KnownValue::Text("node")),
 ];
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum RuntimeIdentity {
+    IsLocked,
+    /// A program that runs in place, as a test does: a test replaces `process.versions`, `process.release` and `process.isBun`, or a member of the first two, to pose as
+    /// another runtime, as under plain `bun test`. Nothing under `process` is folded.
+    MayBeReplaced,
+}
+
 pub(crate) fn runtime_identity_defines<'s>(
+    identity: RuntimeIdentity,
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> Vec<Define<'s>> {
     let global_this = atoms.intern(b"globalThis");
     let mut defines = Vec::with_capacity(2 * RUNTIME_IDENTITY.len());
     for (names, known) in RUNTIME_IDENTITY {
+        if identity == RuntimeIdentity::MayBeReplaced && names.len() > 1 {
+            continue;
+        }
         let names: Vec<Atom> = names
             .iter()
             .map(|name| atoms.intern(name.as_bytes()))
@@ -196,7 +208,8 @@ mod tests {
     fn runtime_identity_is_listed_from_both_roots() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
-        let paths: Vec<Vec<&[u8]>> = runtime_identity_defines(session.arena(), &atoms)
+        let locked = RuntimeIdentity::IsLocked;
+        let paths: Vec<Vec<&[u8]>> = runtime_identity_defines(locked, session.arena(), &atoms)
             .iter()
             .map(|define| {
                 let DefineRoot::Global(root) = define.path.root else {
@@ -210,6 +223,11 @@ mod tests {
         assert_eq!(paths[..2], [vec![&b"Bun"[..]], vec![b"globalThis", b"Bun"]]);
         assert_eq!(paths[2], [&b"process"[..], b"isBun"]);
         assert_eq!(paths[3], [&b"globalThis"[..], b"process", b"isBun"]);
+        let open = RuntimeIdentity::MayBeReplaced;
+        assert_eq!(
+            runtime_identity_defines(open, session.arena(), &atoms).len(),
+            2
+        );
     }
 
     #[test]

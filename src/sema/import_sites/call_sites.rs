@@ -1,11 +1,14 @@
-use super::alternatives::{WrittenNames, find_alternatives, find_texts_of_key};
+use super::alternatives::{AskedOfDataFiles, WrittenNames, find_alternatives, find_texts_of_key};
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
     follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
     settled_symbol,
 };
-use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs};
+use super::{
+    Alternatives, ChangedPath, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm,
+    ResolvedFrom, ScanInputs,
+};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
 use crate::fold::{Decisions, FoldedValue, find_export_of_module};
@@ -55,12 +58,15 @@ fn has_fixed_callee(
     left: StepsLeft,
 ) -> bool {
     let Text { hir, bound, .. } = text;
+    let left = left.without_choices();
     let callee = hir.skip_type_assertions(callee);
     let holds_require = || !may_be_modified(hir, bound, CommonJsVariable::Require);
     match kind {
         ImportSiteKind::Require(_) => match follow_to_own_require(text, callee, left) {
             Some(OwnRequire::OfFile) => holds_require(),
-            Some(OwnRequire::Made | OwnRequire::OfOtherFile(_)) => true,
+            Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::OfOtherFile(_)) => {
+                true
+            }
             None => match hir.member_key(callee) {
                 Some((_, MemberKey::Name(name))) if name == known::require => holds_require(),
                 Some((object, _)) => {
@@ -152,7 +158,7 @@ fn follow_to_require_call(
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
         (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => return None,
     };
-    follow_to_own_require(text, require, left)?;
+    follow_to_own_require(text, require, left.without_choices())?;
     if name == known::call && args.len() > 1 {
         return Some(RequireCall {
             require,
@@ -236,7 +242,7 @@ fn find_call_site(
         if is_import_meta {
             return Some(create_site(ImportSiteKind::ImportMetaResolve(call), args));
         }
-        let is_require = follow_to_own_require(text, object, left).is_some();
+        let is_require = follow_to_own_require(text, object, left.without_choices()).is_some();
         return is_require.then(|| create_site(ImportSiteKind::RequireResolve(call), args));
     }
     if name == known::getBuiltinModule {
@@ -421,37 +427,67 @@ pub fn is_name_read_by_transpiler(
     };
     let text = Text::of(hir, bound, Some(decisions));
     args.len() == 1
-        && follow_to_own_require(text, callee, StepsLeft::ALL) == Some(OwnRequire::OfFile)
+        && follow_to_own_require(text, callee, StepsLeft::ALL.without_choices())
+            == Some(OwnRequire::OfFile)
 }
 
-// The path of the file whose `require` a call goes through, if the file imports that `require`.
-// A specifier that stands for a whole path starts at the folder of the file that writes it, whichever `require` gets it.
+struct UnreadPath;
+
+fn read_path_given_to_create_require(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    path: ExprId,
+) -> Result<Option<ResolvedFrom>, UnreadPath> {
+    let asked = AskedOfDataFiles::default();
+    let found = find_alternatives(inputs, written_names, &asked, path).ok_or(UnreadPath)?;
+    let ([ImportSpecifier::Constant(path)], true, false) = (
+        &found.alternatives[..],
+        found.start_at_own_directory,
+        found.is_out_of_data_file,
+    ) else {
+        return Err(UnreadPath);
+    };
+    let text = inputs.atoms.bytes(*path);
+    let Some(below) = text.strip_prefix(b"./") else {
+        return Ok(Some(ResolvedFrom::PathFromOwnFolder(*path)));
+    };
+    match below.rsplit(|&byte| byte == b'/').next() {
+        Some(b"." | b"..") => Err(UnreadPath),
+        Some(name) if name.len() == below.len() => Ok(None),
+        _ => Ok(Some(ResolvedFrom::PathFromOwnFolder(*path))),
+    }
+}
+
 fn find_path_to_resolve_from(
     inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
     call: ExprId,
     starts_at_own_directory: bool,
-) -> Option<Atom> {
+) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let &ScanInputs {
         hir,
         bound,
         decisions,
         ..
     } = inputs;
-    if hir.imported_requires.is_empty() || starts_at_own_directory {
-        return None;
-    }
     let Some(CallForm::Call { callee, .. }) = find_call_form(hir, call) else {
-        return None;
+        return Ok(None);
     };
     let callee = hir.skip_type_assertions(callee);
     let object = hir.member_key(callee).map(|(object, _)| object);
     let written = [Some(callee), object.map(|it| hir.skip_type_assertions(it))];
-    written.into_iter().flatten().find_map(|require| {
+    for require in written.into_iter().flatten() {
         match find_own_require(hir, bound, Some(decisions), require) {
-            Some(OwnRequire::OfOtherFile(path)) => Some(path),
-            Some(OwnRequire::OfFile | OwnRequire::Made) | None => None,
+            Some(OwnRequire::OfOtherFile(path)) if !starts_at_own_directory => {
+                return Ok(Some(ResolvedFrom::File(path)));
+            }
+            Some(OwnRequire::MadeForPath(path)) if !starts_at_own_directory => {
+                return read_path_given_to_create_require(inputs, written_names, path);
+            }
+            _ => {}
         }
-    })
+    }
+    Ok(None)
 }
 
 pub(super) struct ScannedCalls {
@@ -459,10 +495,12 @@ pub(super) struct ScannedCalls {
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
-    pub(super) paths_of_changed_files: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) paths_of_changed_files: Vec<ChangedPath>,
+    pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
+    pub(super) names_out_of_data_files: Vec<Atom>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
-    pub(super) requires_of_other_files: Vec<(u32, Atom)>,
+    pub(super) requires_of_other_files: Vec<(u32, ResolvedFrom)>,
 }
 
 pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite>) -> ScannedCalls {
@@ -491,10 +529,12 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             continue;
         }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
-            for path in find_operands_that_name_changed_files(inputs, callee, args) {
-                let specifier = call_specifier(inputs, path, &mut alternatives);
-                if specifier != ImportSpecifier::Unknown {
-                    paths_of_changed_files.push((path, specifier));
+            for mut changed in find_operands_that_name_changed_files(inputs, callee, args) {
+                let names = alternatives.names_out_of_data_files.len();
+                changed.path = call_specifier(inputs, changed.operand, &mut alternatives);
+                alternatives.names_out_of_data_files.truncate(names);
+                if changed.path != ImportSpecifier::Unknown {
+                    paths_of_changed_files.push(changed);
                 }
             }
         }
@@ -512,8 +552,11 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             let argument = site.specifier_node;
             let starts_at_own_directory = decisions.is_path_from_own_directory(argument)
                 || alternatives.paths_from_own_directory.last() == Some(&argument);
-            if let Some(path) = find_path_to_resolve_from(inputs, call, starts_at_own_directory) {
-                requires_of_other_files.push((sites.len() as u32, path));
+            let written_names = &alternatives.written_names;
+            match find_path_to_resolve_from(inputs, written_names, call, starts_at_own_directory) {
+                Ok(Some(path)) => requires_of_other_files.push((sites.len() as u32, path)),
+                Ok(None) => {}
+                Err(UnreadPath) => continue,
             }
             sites.push(site);
         }
@@ -529,6 +572,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
         paths_of_changed_files,
+        asked_of_data_files: alternatives.asked_of_data_files.take(),
+        names_out_of_data_files: alternatives.names_out_of_data_files,
         keys_stored_in_caches,
         module_require_objects,
         requires_of_other_files,
@@ -588,7 +633,12 @@ fn find_key_stored_in_cache(
     if decisions.is_dead_expr(entry) || !names_module_cache(inputs, table) {
         return None;
     }
-    let texts = find_texts_of_key(inputs, &alternatives.written_names, key)?;
+    let FoundAlternatives {
+        written_names,
+        asked_of_data_files,
+        ..
+    } = alternatives;
+    let texts = find_texts_of_key(inputs, written_names, asked_of_data_files, key)?;
     let text = match texts[..] {
         [only] => only,
         _ => {
@@ -700,6 +750,8 @@ struct FoundAlternatives {
     paths_from_own_directory: Vec<ExprId>,
     answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     written_names: WrittenNames,
+    asked_of_data_files: AskedOfDataFiles,
+    names_out_of_data_files: Vec<Atom>,
 }
 
 fn call_specifier(
@@ -714,9 +766,23 @@ fn call_specifier(
     if let ImportSpecifier::Constant(_) = folded {
         return folded;
     }
-    let Some(found) = find_alternatives(inputs, &alternatives.written_names, argument) else {
+    let found = find_alternatives(
+        inputs,
+        &alternatives.written_names,
+        &alternatives.asked_of_data_files,
+        argument,
+    );
+    let Some(found) = found else {
         return folded;
     };
+    if found.is_out_of_data_file {
+        let names = found.alternatives.iter().filter_map(|it| match *it {
+            ImportSpecifier::Constant(name) => Some(name),
+            _ => None,
+        });
+        alternatives.names_out_of_data_files.extend(names);
+        return folded;
+    }
     let only_pattern = match found.alternatives[..] {
         [pattern @ ImportSpecifier::Pattern { .. }] => Some(pattern),
         _ => None,
@@ -728,6 +794,7 @@ fn call_specifier(
     };
     if let Some(pattern) = only_pattern
         && folded != ImportSpecifier::Unknown
+        && found.resolved_form.is_none()
         && length_of_start(pattern) <= length_of_start(folded)
     {
         return folded;

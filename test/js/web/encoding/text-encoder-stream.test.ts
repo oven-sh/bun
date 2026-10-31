@@ -284,6 +284,7 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
   const CAP_MB = 4;
   const env = {
     ...bunEnv,
+    WebKitMallocForceEnabled: "1",
     // detect_leaks=0: natives owned only by a JSC cell are invisible to
     // LeakSanitizer's reachability scan and would be reported at exit.
     ASAN_OPTIONS: [

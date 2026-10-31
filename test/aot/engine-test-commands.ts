@@ -43,12 +43,8 @@ const limit = isASAN ? 480_000 : 290_000;
 const numberOfSchedules = 32;
 // These still answer otherwise under some of the orders. Each is owed a cure and goes out of the list with it. A test that is not listed and fails here has lost something: it is not added.
 const followTheOrderOfTheRules = [
-  "modules/children-of-a-module-object-are-what-the-module-requires.ir",
   "modules/parent-and-children-where-the-run-time-answers-the-require.ir",
-  "modules/parent-of-a-module-object-is-a-module-that-requires-it.ir",
-  "modules/read-of-process-under-a-key-nobody-knows-answers-the-main-module-where-a-way-is-named.ir",
   "placeholders/a-store-through-a-value-nobody-knows-writes-no-member-of-a-bun-that-escapes-later.ir",
-  "placeholders/class-above-an-escaped-instance-is-found-under-constructor-of-the-unknown-object.ir",
   "placeholders/realm-objects-stay-closed-without-unseen-code.ir",
   "results/a-literal-gets-fields-for-what-a-spread-source-that-unknown-code-holds-is-born-with.ir",
 ];

@@ -2,6 +2,7 @@
 
 use super::instantiate::PropInstantiation;
 use super::relate::Ternary;
+use super::shortcuts::task_fact;
 use super::*;
 use crate::atom::is_reserved_member_name;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
@@ -3913,8 +3914,13 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Synth(shape) => shape.literal.is_of_expression() && !shape.is_regular,
             _ => false,
         };
-        if is_fresh {
-            self.resolve_spread_symbols(ty, false);
+        if !is_fresh || self.task_facts.has(ty, task_fact::HAS_REGULAR_TYPE) {
+            return;
+        }
+        let before = self.non_cacheable_mark();
+        self.resolve_spread_symbols(ty, false);
+        if before == self.non_cacheable_mark() {
+            self.task_facts.add(ty, task_fact::HAS_REGULAR_TYPE);
         }
     }
 
@@ -8509,6 +8515,17 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         self.holder_of_apparent_type(ty, apparent)
+    }
+
+    pub(super) fn property_holder_for_every_name(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<PropertyHolder<'p>> {
+        let apparent = self.reduced_apparent_type(ty);
+        let depends_on_name = self.is_deferred(ty)
+            || self.is_intersection(apparent)
+            || matches!(self.data(apparent), TypeData::Ref { .. });
+        (!depends_on_name).then(|| self.holder_of_apparent_type(ty, apparent))
     }
 
     /// `apparent` is `getReducedApparentType(ty)`.

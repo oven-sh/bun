@@ -23,7 +23,7 @@ use bun_sema::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, to_native};
 
@@ -39,6 +39,8 @@ pub(super) struct EvictedModules {
     copies_name_any_file: bool,
     /// A file names the table, or lets go of something that leads there: it may get at the entry of a file, and store other `exports` in it.
     is_table_reached: bool,
+    /// A file may read what an entry of the table exports.
+    are_entries_read: bool,
     /// `writeFileSync(path, text)`: the files of the program at the paths that a file spells to a call which writes, moves or removes what is there.
     /// What loads from there is a text that nobody has read.
     changed_on_disk: FxHashSet<ModuleRef>,
@@ -55,6 +57,10 @@ impl EvictedModules {
 
     pub(super) fn is_table_reached(&self) -> bool {
         self.is_every_module || self.is_table_reached
+    }
+
+    pub(super) fn are_entries_read(&self) -> bool {
+        self.is_every_module || self.are_entries_read
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = ModuleRef> + '_ {
@@ -235,41 +241,72 @@ fn find_file_beside(
     })
 }
 
-/// The paths that a file spells to calls which write, move or remove what is there, each with whether it starts at the folder of the file, as `./a.js` in an import does.
+/// A path that a file spells to a call which writes, moves or removes what is there.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PathChangedOnDisk<Text> {
+    pub path: Text,
+    /// As `./a.js` in an import does. Any other starts at the working directory.
+    pub starts_at_own_directory: bool,
+    /// `ChangedPath::reaches_below`
+    pub reaches_below: bool,
+}
+
 /// A path that the file does not spell is none: a test writes where it likes, mostly into a folder of its own, and a build that took every such call for one on a
 /// file of the program would know nothing of any file.
 pub(crate) fn find_paths_changed_on_disk(
+    atoms: &bun_sema::atom::Interner<'_>,
     analysis: &bun_sema::file_analysis::FileAnalysis<'_>,
-) -> Vec<(Atom, bool)> {
+) -> Vec<PathChangedOnDisk<Atom>> {
     let mut paths = Vec::new();
-    for (argument, specifier) in analysis.paths_of_changed_files {
-        let starts_at_own_directory = analysis.is_path_from_own_directory(*argument)
-            || analysis.find_resolved_form(*argument).is_some();
-        for alternative in analysis.alternatives_of(specifier) {
-            if let ImportSpecifier::Constant(written) = *alternative {
-                paths.push((written, starts_at_own_directory));
+    for changed in analysis.paths_of_changed_files {
+        let starts_at_own_directory = analysis.is_path_from_own_directory(changed.operand)
+            || analysis.find_resolved_form(changed.operand).is_some();
+        for alternative in analysis.alternatives_of(&changed.path) {
+            // Nothing lies at the empty path: `createWriteStream("", { fd })`. Joined to a folder it would be the folder.
+            if let ImportSpecifier::Constant(path) = *alternative
+                && !atoms.bytes(path).is_empty()
+            {
+                paths.push(PathChangedOnDisk {
+                    path,
+                    starts_at_own_directory,
+                    reaches_below: changed.reaches_below,
+                });
             }
         }
     }
     paths
 }
 
-// `rmSync(folder, { recursive: true })`, `renameSync(folder, other)`: a path stands for the file there and for all that lies below it.
-fn find_files_at(by_path: &ReplacedModules<'_>, mut paths: Vec<Vec<u8>>) -> Vec<ModuleRef> {
-    let mut files: Vec<ModuleRef> = Vec::new();
-    paths.retain_mut(|path| match by_path.files.get(&path[..]) {
-        Some(&file) => {
-            files.push(ModuleRef::File(file));
-            false
-        }
-        None => {
-            path.push(b'/');
-            true
-        }
+/// `find_paths_changed_on_disk` of a file, each as a whole path, with `ChangedPath::reaches_below`.
+pub(crate) fn find_whole_paths_changed_on_disk(
+    files: &Files<'_>,
+    file: FileId,
+    working_directory: &[u8],
+) -> Vec<(Vec<u8>, bool)> {
+    let name = files.module(file).file_name();
+    let changed = find_paths_changed_on_disk(&files.atoms, files.analysis(file));
+    let whole = changed.into_iter().map(|changed| {
+        let folder = match changed.starts_at_own_directory {
+            true => &name[..last_index_of_char(name, b'/').unwrap_or(0)],
+            false => working_directory,
+        };
+        let path = from_argument(folder, files.atoms.bytes(changed.path));
+        (path, changed.reaches_below)
     });
-    if !paths.is_empty() {
+    whole.collect()
+}
+
+// The files at `paths`, and all that lie below `folders`, each of which ends in `/`.
+fn find_files_at(
+    by_path: &ReplacedModules<'_>,
+    paths: &[Vec<u8>],
+    folders: &[Vec<u8>],
+) -> Vec<ModuleRef> {
+    let at_paths = paths.iter().filter_map(|path| by_path.files.get(&path[..]));
+    let mut files: Vec<ModuleRef> = at_paths.map(|&file| ModuleRef::File(file)).collect();
+    if !folders.is_empty() {
         let below = by_path.files.iter().filter(|(name, _)| {
-            let mut folders = paths.iter();
+            let mut folders = folders.iter();
             folders.any(|folder| name.starts_with(folder))
         });
         files.extend(below.map(|(_, &file)| ModuleRef::File(file)));
@@ -355,13 +392,14 @@ pub(super) fn find_evicted_modules(
     let out_of_sight = input.files_that_tests_load.where_throws_are_caught.iter();
     let out_of_sight = out_of_sight.filter_map(|module| by_path.find(module));
     evicted.modules.extend(out_of_sight.filter(is_thrower));
-    // `rmSync(folder, { recursive: true })` in a test file that this build does not see.
+    // `rmSync(folder, { recursive: true })` in a test file that this build does not see: `ReplacedByTests::evicted_modules` has the folder with `/` at its end.
     let out_of_sight = input.evicted_modules.iter();
-    let mut paths_changed_on_disk: Vec<Vec<u8>> = out_of_sight
-        .filter(|module| by_path.find(module).is_none())
+    let mut folders_changed_on_disk: Vec<Vec<u8>> = out_of_sight
         .filter_map(ReplacedModule::file_path)
+        .filter(|path| path.ends_with(b"/"))
         .cloned()
         .collect();
+    let mut paths_changed_on_disk: Vec<Vec<u8>> = Vec::new();
     for &file in &modules.compiled_files {
         if !matches!(
             input.sources.kind(file),
@@ -395,15 +433,15 @@ pub(super) fn find_evicted_modules(
         }
         evicted.is_every_export_asked_for |= builtins.reaches_module_cache();
         evicted.is_table_reached |= builtins.reaches_module_cache();
+        evicted.are_entries_read |= builtins.reads_entries_of_module_cache();
         let (hir, bound) = (input.files.hir(file), input.files.bound(file));
         let (analysis, scan) = (input.files.analysis(file), scans.of(file));
-        for (written, starts_at_own_directory) in find_paths_changed_on_disk(analysis) {
-            let name = input.files.module(file).file_name();
-            let folder = match starts_at_own_directory {
-                true => &name[..last_index_of_char(name, b'/').unwrap_or(0)],
-                false => input.working_directory,
-            };
-            paths_changed_on_disk.push(from_argument(folder, input.files.atoms.bytes(written)));
+        let changed = find_whole_paths_changed_on_disk(input.files, file, input.working_directory);
+        for (path, reaches_below) in changed {
+            if reaches_below {
+                folders_changed_on_disk.push([&path[..], b"/"].concat());
+            }
+            paths_changed_on_disk.push(path);
         }
         // A CommonJS file whose body throws is out of the table, and the next `require()` runs it again.
         for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
@@ -451,7 +489,10 @@ pub(super) fn find_evicted_modules(
     }
     paths_changed_on_disk.shared_sort_unstable();
     paths_changed_on_disk.dedup();
-    let mut changed_on_disk = find_files_at(&by_path, paths_changed_on_disk);
+    folders_changed_on_disk.shared_sort_unstable();
+    folders_changed_on_disk.dedup();
+    let mut changed_on_disk =
+        find_files_at(&by_path, &paths_changed_on_disk, &folders_changed_on_disk);
     evicted.modules.extend(&changed_on_disk);
     for module in changed_on_disk.iter().filter(|_| logs_stages()) {
         if let ModuleRef::File(file) = *module {

@@ -890,7 +890,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: v16: anything = CallDirect function=f72 accessSite=24
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v17: boolean = TryPutByValDirect v3, v10, v13 arrayStorage=Int32
+# CHECK-NEXT: v17: boolean = TryPutByValDirect v3, v10, v13 length=v1 arrayStorage=Int32
 # CHECK-NEXT: Branch v17 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: Jump -> next b10()
@@ -955,7 +955,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: v17: anything = CallDirect function=f72 accessSite=24
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v18: boolean = TryPutByValDirect v4, v11, v14 arrayStorage=Int32
+# CHECK-NEXT: v18: boolean = TryPutByValDirect v4, v11, v14 length=v2 arrayStorage=Int32
 # CHECK-NEXT: Branch v18 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: Jump -> next b10()

@@ -1,0 +1,6 @@
+ [654ms]  bundle  1 modules
+[5.739s] compile  .exe
+        build id  5e9cab6edf63c10729d905d3b1f6fa24
+Built with developer options: --aot-limit=MaxEscapeAnalysisWork:0 --aot-check=verify-each-pass
+Untyped code works, but runs slower. Run with --explain to see what to fix.
+33.3% of property accesses are one load: 3 free, 3 tested, 3 by name (9)

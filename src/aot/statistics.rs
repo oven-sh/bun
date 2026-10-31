@@ -344,6 +344,49 @@ pub fn log_why_files_are_loaded_again(why: core::fmt::Arguments<'_>) {
     }
 }
 
+/// With the stages: what each step of a stage took, on the clock and of the processors, all threads together.
+pub struct StepClock {
+    stage: Stage,
+    of: &'static str,
+    started: Instant,
+    cpu_at_start: Duration,
+}
+
+impl StepClock {
+    /// `of`: what the stage works on, where it goes through its steps more than once.
+    pub fn new(stage: Stage, of: &'static str) -> StepClock {
+        StepClock {
+            stage,
+            of,
+            started: Instant::now(),
+            cpu_at_start: match logs_stages() {
+                true => process_info().0,
+                false => Duration::ZERO,
+            },
+        }
+    }
+
+    /// `step` has ended and the next one begins.
+    pub fn end(&mut self, step: &str) {
+        if !logs_stages() {
+            return;
+        }
+        let cpu = process_info().0;
+        bun_core::print_errorln!(
+            "AOT stage step | {} | {} | {} | wall {:.3} ms | cpu {} ms",
+            self.stage.name(),
+            self.of,
+            step,
+            self.started.elapsed().as_secs_f64() * 1000.0,
+            cpu.saturating_sub(self.cpu_at_start).as_millis(),
+        );
+        // What a thread prints is written when its buffer is full, in the middle of a line, and other threads write in between.
+        bun_core::Output::flush();
+        self.started = Instant::now();
+        self.cpu_at_start = cpu;
+    }
+}
+
 impl StageClock {
     pub fn new() -> StageClock {
         StageClock {

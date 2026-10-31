@@ -504,7 +504,7 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: true = Boolean boolean=true
+# CHECK-NEXT: v3: true = Boolean boolean=true @0:1
 # CHECK-NEXT: v4: L0 = NewObject -, v3 layout=L0 fields=[2] allocationSite=47 allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: b2() frequency=Rare:
@@ -549,13 +549,13 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b5(| 0)
 # CHECK-NEXT: b1(v2: L0):
-# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12 @0:1
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3() @0:1
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v4: f29 = NewClosure function=f29 allocationSite=48 storage=Frame
+# CHECK-NEXT: v4: f29 = NewClosure function=f29 allocationSite=48 storage=Frame @0:1
 # CHECK-NEXT: Jump -> next b4(v4)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v5: undefined = Undefined @0:1
 # CHECK-NEXT: Jump -> next b4(v5)
 # CHECK-NEXT: b4(v6: undefined|f29):
 # CHECK-NEXT: Jump -> next b6(v6)
@@ -565,8 +565,8 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b6(v9)
 # CHECK-NEXT: b6(v10: undefined|f29):
 # CHECK-NEXT: v11: f29 = RequireObjectCoercible v10 name="call"
-# CHECK-NEXT: v12: "other used with 1" = String string="other used with 1"
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v12: "other used with 1" = String string="other used with 1" @0:4
+# CHECK-NEXT: Return v12 @917:2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
 # CHECK: m0 position=1761 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2 site=w30 flags=[OmitsNull]}] results=[{type=string site=w31 flags=[OmitsNull]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f29 callPosition=4294967295 isTailCall=true module=m0}, {callee=f61 callPosition=917 parent=3 isTailCall=true module=m0}] {
@@ -574,16 +574,16 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
 # CHECK-NEXT: b1(v2: L0):
-# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: Branch v3 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12 @0:1
+# CHECK-NEXT: Branch v3 -> taken b3(), notTaken b4() @0:1
 # CHECK-NEXT: b2(v4: L1|L2) frequency=Unlikely:
 # CHECK-NEXT: v5: anything ~ undefined|f26 = PropGet v4 key="use" accessSite=17 receivers=[L1, L2]
 # CHECK-NEXT: v6: undefined|f29 = AssumeType v5 provenType=undefined|f29
 # CHECK-NEXT: v7: boolean = TypeTest v6 testedType=f29
 # CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v8: "no receiver used with 1" = String string="no receiver used with 1"
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v8: "no receiver used with 1" = String string="no receiver used with 1" @0:4
+# CHECK-NEXT: Return v8 @917:3
 # CHECK-NEXT: b4() frequency=Unlikely:
 # CHECK-NEXT: v9: undefined = Undefined
 # CHECK-NEXT: v10: 1 = Integer integer=1
@@ -591,57 +591,65 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
-# CHECK: m0 position=2038 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2 site=w36 flags=[OmitsNull]}] results=[{type=string site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f29 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=2038 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2 site=w36 flags=[OmitsNull]}] results=[{type=string site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f29 callPosition=4294967295 isTailCall=true module=m0}, {callee=f5 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: L0|L1|L2):
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
 # CHECK-NEXT: b1(v2: L0):
-# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: Branch v3 -> taken b3(), notTaken b12()
+# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12 @0:2
+# CHECK-NEXT: Branch v3 -> taken b3(), notTaken b15() @0:2
 # CHECK-NEXT: b2(v4: L1|L2) frequency=Unlikely:
 # CHECK-NEXT: v5: anything ~ undefined|f26 = PropGet v4 key="use" accessSite=20 receivers=[L1, L2]
 # CHECK-NEXT: v6: undefined|f29 = AssumeType v5 provenType=undefined|f29
 # CHECK-NEXT: v7: boolean = ToBoolean v6
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b12()
+# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b15()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v8: boolean = TypeTest v0 testedType=L2
 # CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b5(| 0)
 # CHECK-NEXT: b4(v9: L2):
 # CHECK-NEXT: v10: undefined|f26 = GetSlotOrUndefined v9 key="use" receivers=[L2] level=Proven accessSite=21
-# CHECK-NEXT: Jump -> next b9(v10)
+# CHECK-NEXT: Jump -> next b12(v10)
 # CHECK-NEXT: b5(v11: L0|L1) frequency=Unlikely:
 # CHECK-NEXT: v12: boolean = TypeTest v11 testedType=L0
-# CHECK-NEXT: Branch v12 -> taken b6(| 0), notTaken b7(| 0)
+# CHECK-NEXT: Branch v12 -> taken b6(| 0), notTaken b10(| 0)
 # CHECK-NEXT: b6(v13: L0) frequency=Unlikely:
-# CHECK-NEXT: v14: undefined|f29 = CallDirect v13 function=f5 accessSite=21
-# CHECK-NEXT: Jump -> next b8(v14)
-# CHECK-NEXT: b7(v15: L1) frequency=Unlikely:
-# CHECK-NEXT: v16: anything = PropGet v15 key="use" accessSite=21 receivers=[L1]
-# CHECK-NEXT: Jump -> next b8(v16)
-# CHECK-NEXT: b8(v17: anything) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v17)
-# CHECK-NEXT: b9(v18: anything ~ undefined|f26):
-# CHECK-NEXT: v19: undefined|f29 = AssumeType v18 provenType=undefined|f29
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: boolean = TypeTest v19 testedType=f29
-# CHECK-NEXT: Branch v21 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v22: L0 = AssumeType v0 provenType=undefined|L0|L4
-# CHECK-NEXT: v23: string = CallDirect v22, v20 function=f61
-# CHECK-NEXT: ReturnCall v23 casts=[{declared={type=undefined|null|string site=w76 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w37 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}] requirement=Allowed
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: v25: never = Call v24, v0, v20 calleeKey="use" calleeName="tool.use" accessSite=23 callees=[f29] @0 tail
+# CHECK-NEXT: v14: boolean = GetSlot v13 key="present" receivers=[L0] level=Proven accessSite=12 @0:4
+# CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8() @0:4
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v15: f29 = NewClosure function=f29 allocationSite=48 storage=Frame @0:4
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v16: undefined = Undefined @0:4
+# CHECK-NEXT: Jump -> next b9(v16)
+# CHECK-NEXT: b9(v17: undefined|f29) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b11(v17)
+# CHECK-NEXT: b10(v18: L1) frequency=Unlikely:
+# CHECK-NEXT: v19: anything = PropGet v18 key="use" accessSite=21 receivers=[L1]
+# CHECK-NEXT: Jump -> next b11(v19)
+# CHECK-NEXT: b11(v20: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b12(v20)
+# CHECK-NEXT: b12(v21: anything ~ undefined|f26):
+# CHECK-NEXT: v22: undefined|f29 = AssumeType v21 provenType=undefined|f29
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: boolean = TypeTest v22 testedType=f29
+# CHECK-NEXT: Branch v24 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v25: L0 = AssumeType v0 provenType=undefined|L0|L4
+# CHECK-NEXT: v26: string = CallDirect v25, v23 function=f61 @917:3
+# CHECK-NEXT: ReturnCall v26 casts=[{declared={type=undefined|null|string site=w76 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w37 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}] requirement=Allowed @917:3
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: v28: never = Call v27, v0, v23 calleeKey="use" calleeName="tool.use" accessSite=23 callees=[f29] @0 tail
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v26: "absent" = String string="absent"
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v29: "absent" = String string="absent"
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function f18 module=
 # CHECK: m0 position=2217 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2 site=w40 flags=[OmitsNull]}] results=[{type="default" site=w41 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f48] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0|L1|L2):
-# CHECK-NEXT: v1: "default" = CallDirect function=f92
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
+# CHECK-NEXT: v1: "default" = CallDirect function=f92 @2217
+# CHECK-NEXT: ReturnCall v1 requirement=Allowed @2217
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
 # CHECK: m0 position=2769 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -652,8 +660,8 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f24 module=
 # CHECK: m0 position=2813 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L1 site=w50 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f93 layout=L1} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L1 = NewObject layout=L1 allocationClass=1
-# CHECK-NEXT: Return v0
+# CHECK-NEXT: v0: L1 = NewObject layout=L1 allocationClass=1 @2813
+# CHECK-NEXT: Return v0 @2813
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=2851 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L2 site=w51 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -672,51 +680,51 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f29 module=
 # CHECK: m0 position=917 role=EntryChecks flags=[HasThis, IsChecked] length=1 thisType={type=undefined|L0|L4 site=w66 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=i32 site=w65 flags=[IsExpected]}] results=[{type=string site=w67 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f61 fallback=f62} {
 # CHECK-NEXT: b0(v0: undefined|L0|L4, v1: anything ~ i32):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32 @917
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2() @917
 # CHECK-NEXT: b1(v3: i32):
-# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f61
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f61 @917
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed @917
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: string = CallDirect v0, v1 function=f62
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: v5: string = CallDirect v0, v1 function=f62 @917
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed @917
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="use"
 # CHECK: module=m0 position=2559 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w78}] results=[{type=undefined|null|string site=w79 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Watched"
 # CHECK: module=m0 position=693 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0 = CallDirect v2 function=f4
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: v3: L0 = CallDirect v2 function=f4 @693
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed @693
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Watched"
 # CHECK: module=m0 position=693 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f4} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="use"
 # CHECK: module=m0 position=773 kind=Getter role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} inlineFrames=[{}, {callee=f5 callPosition=773 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f5, v1: anything):
-# CHECK-NEXT: v2: L0 = AssumeType v1 provenType=L0
-# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v2: L0 = AssumeType v1 provenType=L0 @773
+# CHECK-NEXT: v3: boolean = GetSlot v2 key="present" receivers=[L0] level=Proven accessSite=12 @0:1
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2() @0:1
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v4: f29 = NewClosure function=f29 allocationSite=48
+# CHECK-NEXT: v4: f29 = NewClosure function=f29 allocationSite=48 @0:1
 # CHECK-NEXT: Jump -> next b3(v4) @773 tail
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v5: undefined = Undefined @0:1
 # CHECK-NEXT: Jump -> next b3(v5) @773 tail
 # CHECK-NEXT: b3(v6: undefined|f29):
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: Return v6 @773
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Flickering"
 # CHECK: module=m0 position=1064 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f6}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6} creator=Entrypoint{target=f6 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f6, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L1 = CallDirect v2 function=f6
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: v3: L1 = CallDirect v2 function=f6 @1064
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed @1064
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Flickering"
 # CHECK: module=m0 position=1064 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f6} constructedClass=L1
 # CHECK-LABEL: function {{*}}name="use"
 # CHECK: module=m0 position=1131 kind=Getter role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f7, v1: anything):
-# CHECK-NEXT: v2: object = NewFunctionThatThrows v0 name="use"
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v2: object = NewFunctionThatThrows v0 name="use" @1131
+# CHECK-NEXT: Return v2 @1131
 # CHECK-NEXT: }

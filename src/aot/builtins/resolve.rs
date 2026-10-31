@@ -1,4 +1,5 @@
 mod aliases;
+mod builtins_of_files;
 mod evaluated_text;
 mod imports;
 mod mention_use;
@@ -32,6 +33,7 @@ use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ModuleFormat;
+use bun_sema::util::SharedSort;
 use core::ops::Range;
 use smallvec::SmallVec;
 
@@ -151,8 +153,26 @@ pub struct WriteOnImport {
     pub key: Atom,
 }
 
+/// A built-in that a file exports, and the names that lead to it from what `import * as` of the file gives:
+/// `export const { getPrototypeOf } = Object` has one under `getPrototypeOf`, `export default console` under `default`,
+/// `module.exports = { holder: Object }` and `export default { holder: Object }` under `default` and then `holder`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BuiltinExported {
+    pub path: SmallVec<[Atom; 2]>,
+    pub builtin: BuiltinId,
+}
+
+/// What a load of another file gives, as far as that file binds it to built-ins. Also of a module of Bun that is written in JavaScript.
+pub struct BuiltinsOfLoadedFile {
+    pub site: ImportSiteKind,
+    /// `require()` gives what stands under `default`, and a name that the file does not export is a property of that: a CommonJS file, a module of Bun.
+    pub object_is_default: bool,
+    pub exported: Vec<BuiltinExported>,
+}
+
 pub struct ImportTargets {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
+    loaded_files: Vec<BuiltinsOfLoadedFile>,
 }
 
 impl ImportTargets {
@@ -160,7 +180,20 @@ impl ImportTargets {
         debug_assert!(targets.is_sorted_by(|left, right| left.0 < right.0));
         ImportTargets {
             targets: targets.to_vec(),
+            loaded_files: Vec::new(),
         }
+    }
+
+    /// Only whoever reads the files of a test run ahead of its builds knows this much about another file. A build leaves it to the engine, which follows the values.
+    pub fn with_loaded_files(mut self, mut files: Vec<BuiltinsOfLoadedFile>) -> ImportTargets {
+        files.shared_sort_unstable_by_key(|file| file.site);
+        self.loaded_files = files;
+        self
+    }
+
+    fn loaded_file_at(&self, site: ImportSiteKind) -> Option<&BuiltinsOfLoadedFile> {
+        let at = (self.loaded_files).binary_search_by_key(&site, |file| file.site);
+        at.ok().map(|at| &self.loaded_files[at])
     }
 
     fn module_at(&self, site: ImportSiteKind) -> Option<RuntimeModule> {
@@ -251,6 +284,7 @@ pub struct ResolvedBuiltins {
     names_added: Box<[(BuiltinId, Atom)]>,
     holders_named_from_outside: Box<[BuiltinId]>,
     builtins_handed_out: Box<[BuiltinId]>,
+    builtins_exported: Box<[BuiltinExported]>,
     writes_on_imports: Box<[WriteOnImport]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
@@ -266,6 +300,7 @@ pub struct ResolvedBuiltins {
     hands_module_cache_on: bool,
     loses_sight_of_module_cache: bool,
     reaches_module_cache: bool,
+    reads_entries_of_module_cache: bool,
 }
 
 impl ResolvedBuiltins {
@@ -387,6 +422,11 @@ impl ResolvedBuiltins {
         &self.builtins_handed_out
     }
 
+    /// Of a file of a test run: the built-ins that it exports, each under a binding that nothing stores to.
+    pub fn builtins_exported(&self) -> &[BuiltinExported] {
+        &self.builtins_exported
+    }
+
     /// Where the file writes, under the name of a member of some built-in object, on what comes out of an import.
     pub fn writes_on_imports(&self) -> &[WriteOnImport] {
         &self.writes_on_imports
@@ -454,9 +494,16 @@ impl ResolvedBuiltins {
         self.hands_module_cache_on
     }
 
-    /// The file names the table, or lets go of something that leads there: it may read what the table lists.
+    /// The file gets at an entry of the table, or lets go of something that leads there: it may read what the entry exports, and store in it.
+    /// Whoever lists the keys, or compares what an entry exports with a value that he has, gets at none.
     pub fn reaches_module_cache(&self) -> bool {
         self.reaches_module_cache
+    }
+
+    /// The file may read what an entry of the table exports. Whoever takes an entry out, or stores one, reads none.
+    /// Neither does whoever lets go of something that leads to the table, a `module` or a `process`: that is said of nearly every program, and who gets it names the table himself.
+    pub fn reads_entries_of_module_cache(&self) -> bool {
+        self.reads_entries_of_module_cache
     }
 
     /// The table goes where this file does not follow it: whoever gets it may take any entry out.

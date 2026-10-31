@@ -640,5 +640,5 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f26
 # -- generated: f2
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 477, patchpoints: 127, rare instructions: 780, polls: 1
+# CHECK-NEXT: instructions: 484, patchpoints: 130, rare instructions: 944, polls: 1
 # CHECK-NEXT: end of function f2

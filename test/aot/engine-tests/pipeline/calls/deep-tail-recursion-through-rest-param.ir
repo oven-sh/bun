@@ -507,7 +507,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v13: "a" = String string="a"
 # CHECK-NEXT: v14: "b" = String string="b"
-# CHECK-NEXT: v15: Array<undefined|number|"a"|"b"|"v"> = NewArray v13, v14 contents=undefined|number|"a"|"b"|"v" storage=Frame
+# CHECK-NEXT: v15: Array<undefined|number|"a"|"b"|"v"> = NewArray v13, v14 contents=undefined|number|"a"|"b"|"v" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v16: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v17: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v18: string = CallDirect v17, v16 function=f6 accessSite=6
@@ -518,7 +518,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v21: "a" = String string="a"
 # CHECK-NEXT: v22: "b" = String string="b"
-# CHECK-NEXT: v23: Array<undefined|number|"a"|"b"|"v"> = NewArray v21, v22 contents=undefined|number|"a"|"b"|"v" storage=Frame
+# CHECK-NEXT: v23: Array<undefined|number|"a"|"b"|"v"> = NewArray v21, v22 contents=undefined|number|"a"|"b"|"v" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v24: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v25: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v26: string = CallDirect v25, v24 function=f7 accessSite=6
@@ -532,7 +532,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v32: "a" = String string="a"
 # CHECK-NEXT: v33: "b" = String string="b"
-# CHECK-NEXT: v34: Array<undefined|number|"a"|"b"|"v"> = NewArray v32, v33 contents=undefined|number|"a"|"b"|"v" storage=Frame
+# CHECK-NEXT: v34: Array<undefined|number|"a"|"b"|"v"> = NewArray v32, v33 contents=undefined|number|"a"|"b"|"v" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v35: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v36: 1000001 = Integer integer=1000001
 # CHECK-NEXT: v37: string = CallDirect v36, v35 function=f6 accessSite=12
@@ -543,7 +543,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v40: "a" = String string="a"
 # CHECK-NEXT: v41: "b" = String string="b"
-# CHECK-NEXT: v42: Array<undefined|number|"a"|"b"|"v"> = NewArray v40, v41 contents=undefined|number|"a"|"b"|"v" storage=Frame
+# CHECK-NEXT: v42: Array<undefined|number|"a"|"b"|"v"> = NewArray v40, v41 contents=undefined|number|"a"|"b"|"v" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v43: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v44: 1000001 = Integer integer=1000001
 # CHECK-NEXT: v45: string = CallDirect v44, v43 function=f7 accessSite=12
@@ -552,30 +552,30 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: v47: undefined = CallBuiltin -, v46 overload=ConsoleLog/0 accessSite=13
 # CHECK-NEXT: v48: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v49: "v" = String string="v"
-# CHECK-NEXT: v50: Array<undefined|int|whole|"v"> = NewArray v49 contents=undefined|int|whole|"v" storage=Frame
+# CHECK-NEXT: v50: Array<undefined|int|whole|"v"> = NewArray v49 contents=undefined|int|whole|"v" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v51: Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v52: string = CallDirect v48, v51 function=f1 accessSite=16
 # CHECK-NEXT: v53: undefined = CallBuiltin -, v52 overload=ConsoleLog/0 accessSite=17
 # CHECK-NEXT: v54: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v55: "n" = String string="n"
-# CHECK-NEXT: v56: Array<undefined|number|"n"> = NewArray v55 contents=undefined|number|"n" storage=Frame
+# CHECK-NEXT: v56: Array<undefined|number|"n"> = NewArray v55 contents=undefined|number|"n" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v57: Array<undefined|number|"n", proven, pristine[Storage, Names, Dense]> = AssumeType v56 provenType=Array<undefined|number|"n", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v58: string = CallDirect v54, v57 function=f2 accessSite=20
 # CHECK-NEXT: v59: undefined = CallBuiltin -, v58 overload=ConsoleLog/0 accessSite=21
 # CHECK-NEXT: v60: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v61: "s" = String string="s"
 # CHECK-NEXT: v62: 2 = Integer integer=2
-# CHECK-NEXT: v63: Array<undefined|int|whole|"s"> = NewArray v61 contents=undefined|int|whole|"s" storage=Frame
+# CHECK-NEXT: v63: Array<undefined|int|whole|"s"> = NewArray v61 contents=undefined|int|whole|"s" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v64: string = CallDirect v62, v60, v63 function=f3 accessSite=24
 # CHECK-NEXT: v65: undefined = CallBuiltin -, v64 overload=ConsoleLog/0 accessSite=25
 # CHECK-NEXT: v66: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v67: "p" = String string="p"
-# CHECK-NEXT: v68: Array<undefined|number|"p"> = NewArray v67 contents=undefined|number|"p" storage=Frame
+# CHECK-NEXT: v68: Array<undefined|number|"p"> = NewArray v67 contents=undefined|number|"p" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v69: Array<undefined|number|"p", proven, pristine[Storage, Names, Dense]> = AssumeType v68 provenType=Array<undefined|number|"p", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v70: string = CallDirect v66, v69 function=f4 accessSite=28
 # CHECK-NEXT: v71: undefined = CallBuiltin -, v70 overload=ConsoleLog/0 accessSite=29
 # CHECK-NEXT: v72: "l" = String string="l"
-# CHECK-NEXT: v73: Array<undefined|int|whole|"l", Contiguous> = NewArray v72 contents=undefined|int|whole|"l" allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v73: Array<undefined|int|whole|"l", Contiguous> = NewArray v72 contents=undefined|int|whole|"l" allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v74: Array<undefined|int|whole|"l", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v73 provenType=Array<undefined|int|whole|"l", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v75: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v76: string = CallDirect v74, v75 function=f5 accessSite=32

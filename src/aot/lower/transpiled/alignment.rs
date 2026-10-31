@@ -29,6 +29,11 @@ pub(in crate::lower) enum Rewrite {
     SwappedOperands,
     /// `x + "a" + "b"` is printed `x + "ab"`: the left operand, whose text has grown.
     JoinedWithLeftOperand,
+    /// `typeof a !== "undefined"` is printed `typeof a < "u"`: the expression itself, with another operator between its operands.
+    OtherOperator {
+        written: &'static [u8],
+        printed: &'static [u8],
+    },
 }
 
 #[derive(Default)]
@@ -892,6 +897,25 @@ impl<'a, 's> Alignment<'a, 's> {
                 }
                 self.push(left, printed_left);
                 self.push(right, printed_right);
+                true
+            }
+            (ExprKind::Binary { op, left, right }, ExprData::EBinary(printed))
+                if printed.op.binary_assign_target() == AssignTarget::None
+                    && self.may_be_printed_at(left, printed.left.loc)
+                    && self.may_be_printed_at(right, printed.right.loc) =>
+            {
+                let text_of = |op: OpCode| bun_ast::op::TABLE.get_ptr_const(op).text;
+                let (written, printed_operator) =
+                    (text_of(binary_op_code(op)), text_of(printed.op));
+                self.rewrites.insert(
+                    expression,
+                    Rewrite::OtherOperator {
+                        written,
+                        printed: printed_operator,
+                    },
+                );
+                self.push(left, printed.left);
+                self.push(right, printed.right);
                 true
             }
             (ExprKind::Assign { target, value, .. }, ExprData::EBinary(printed))

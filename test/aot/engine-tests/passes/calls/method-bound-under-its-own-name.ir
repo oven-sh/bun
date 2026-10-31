@@ -2015,7 +2015,7 @@ function f51 name="patched" module=m0 position=1995 flags=[HasThis, HasExplicitN
     v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @2027
     Return v4 @2027
 }
-function f52 module=m0 position=2378 kind=Arrow captures=[{type=L3|L14 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f52 module=m0 position=2378 kind=Arrow captures=[{type=L3|L14 flags=[IsFromCompiler] variableName="this"}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L3|L14):
     Jump -> next b1() @2378
   b1():
@@ -2769,7 +2769,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f52 module=
-# CHECK: m0 position=2378 kind=Arrow captures=[{type=L14 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=string}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=2378 kind=Arrow captures=[{type=L14 flags=[IsFromCompiler] variableName="this"}] thisType={type=anything} results=[{type=string}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L14):
 # CHECK-NEXT: v1: "arrow of the base " = String string="arrow of the base "
 # CHECK-NEXT: v2: int[-2147483643, 2147483647] = GetSlot v0 key="count" receivers=[L14] level=Proven accessSite=337
@@ -2794,7 +2794,7 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromSubclass"
-# CHECK: module=m0 position=5136 flags=[HasThis, HasExplicitName] thisType={type=undefined|null|number|string|symbol|bigint|L22 flags=[IsExpected]} results=[{type=string}] functionTypes=[f81] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
+# CHECK: module=m0 position=5136 flags=[HasThis, HasExplicitName] thisType={type=undefined|null|number|string|symbol|bigint|L22 flags=[IsExpected]} results=[{type=string}] functionTypes=[f81] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|number|string|symbol|bigint|L22):
 # CHECK-NEXT: v1: "subclass " = String string="subclass "
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L13|L20|L22

@@ -288,7 +288,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v31: boolean = TypeTest v1 testedType=undefined
 # CHECK-NEXT: Branch v31 -> taken b6(v26, v25, v28, v27, v29, v30), notTaken b4(| 0)
 # CHECK-NEXT: b4(v32: "/a"|"/b"|"/c"|"/d"):
-# CHECK-NEXT: v33: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="url"}]
+# CHECK-NEXT: v33: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=MemberPassedByStores layout=L0 key="url"}]
 # CHECK-NEXT: Branch v33 -> taken b5(), notTaken b7()
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v34: 2 = Integer integer=2

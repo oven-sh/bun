@@ -157,6 +157,8 @@ pub(super) struct Plan {
     lists_files_in_cache: bool,
     /// `EvictedModules::is_table_reached`
     reaches_entries_of_cache: bool,
+    /// `EvictedModules::are_entries_read`
+    reads_entries_of_cache: bool,
     /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
     may_be_evicted: Vec<bool>,
     /// `EvictedModules::changed_on_disk`
@@ -206,6 +208,7 @@ impl Plan {
             runs_tests: false,
             lists_files_in_cache: false,
             reaches_entries_of_cache: false,
+            reads_entries_of_cache: false,
             may_be_evicted: vec![false; order.numbers.len()],
             is_changed_on_disk_by_run: vec![false; order.numbers.len()],
             library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
@@ -262,6 +265,10 @@ impl Plan {
 
     pub(super) fn set_reaches_entries_of_cache(&mut self) {
         self.reaches_entries_of_cache = true;
+    }
+
+    pub(super) fn set_reads_entries_of_cache(&mut self) {
+        self.reads_entries_of_cache = true;
     }
 
     pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
@@ -658,6 +665,11 @@ impl ModuleGraph {
     /// A test run in which a file of the program may get at the entry of a file in `require.cache`.
     pub fn reaches_entries_of_cache(&self) -> bool {
         self.plan.reaches_entries_of_cache
+    }
+
+    /// A test run in which a file of the program may read what the entry of a file in `require.cache` exports.
+    pub fn reads_entries_of_cache(&self) -> bool {
+        self.plan.reads_entries_of_cache
     }
 
     /// `delete require.cache[path]` under a key that nobody spells: whichever file the path names, in this program or in one that is built above it.

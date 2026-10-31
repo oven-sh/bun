@@ -826,6 +826,40 @@ pub(super) struct FinishedRequests {
     pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
 }
 
+/// The modules that a mock names, and those that hand their names on by `export *`.
+fn find_modules_with_names_of_mocks(
+    scans: &Scans,
+    modules: &ModuleSet,
+    mocked_modules: &FxHashSet<ModuleRef>,
+) -> FxHashSet<ModuleRef> {
+    let mut found = mocked_modules.clone();
+    if found.is_empty() {
+        return found;
+    }
+    let mut files_with_star_over: FxHashMap<ModuleRef, Vec<FileId>> = FxHashMap::default();
+    for &file in &modules.record_files {
+        let requests = scans.find(file).map_or(&[][..], |scan| &scan.requests[..]);
+        for draft in requests.iter().filter(|draft| draft.is_star_export) {
+            files_with_star_over
+                .entry(draft.target)
+                .or_default()
+                .push(file);
+        }
+    }
+    let mut pending: Vec<ModuleRef> = found.iter().copied().collect();
+    while let Some(module) = pending.pop() {
+        for &file in files_with_star_over
+            .get(&module)
+            .map_or(&[][..], |files| &files[..])
+        {
+            if found.insert(ModuleRef::File(file)) {
+                pending.push(ModuleRef::File(file));
+            }
+        }
+    }
+    found
+}
+
 /// What a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
 pub(super) fn finish_requests(
     scans: &Scans,
@@ -833,9 +867,14 @@ pub(super) fn finish_requests(
     tables: &ExportTables,
     order: &EvaluationOrder,
     sites: &PlannedSites,
+    mocked_modules: &FxHashSet<ModuleRef>,
 ) -> FinishedRequests {
+    let has_names_of_mock = find_modules_with_names_of_mocks(scans, modules, mocked_modules);
     let finish_file = |&file: &FileId| {
-        let follows_every_star = tables.follows_every_star(file);
+        // The names of a mock that comes ahead of the load are the names of the module. Which of them a star hands on, beside what the other stars of the file have, is known when the mock has run.
+        let follows_every_star = tables.follows_every_star(file)
+            || (has_names_of_mock.contains(&ModuleRef::File(file))
+                && !mocked_modules.contains(&ModuleRef::File(file)));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
             is_dynamic_star_export: draft.is_star_export

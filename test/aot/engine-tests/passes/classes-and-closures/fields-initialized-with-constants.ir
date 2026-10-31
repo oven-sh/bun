@@ -1211,14 +1211,14 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f38
 runtimefunction id=ArrayTraversalTraverseArray function=f107 visibility=Private
 # -- generated: map set WithFunctions Derived f22 f24 generator
 # CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m0 position=1402 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Map<undefined|"k1"|"k2"|"v1"|"v2"|Array<"k1"|"k2"|"v1"|"v2", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|"k1"|"k2"|"v1"|"v2"|Array<"k1"|"k2"|"v1"|"v2", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=1402 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Map<"k1"|"k2", "v1"|"v2", proven, pristine[Storage, Names]> site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "k1" = String string="k1"
 # CHECK-NEXT: v1: "v1" = String string="v1"
 # CHECK-NEXT: v2: "k2" = String string="k2"
 # CHECK-NEXT: v3: "v2" = String string="v2"
-# CHECK-NEXT: v4: Map<string, string> = NewMapFromData data=d12
-# CHECK-NEXT: v5: Map<undefined|"k1"|"k2"|"v1"|"v2"|Array<"k1"|"k2"|"v1"|"v2", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|"k1"|"k2"|"v1"|"v2"|Array<"k1"|"k2"|"v1"|"v2", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Map<undefined|"k1"|"k2"|"v1"|"v2"|Array<"k1"|"k2"|"v1"|"v2", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|"k1"|"k2"|"v1"|"v2"|Array<"k1"|"k2"|"v1"|"v2", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Map<string, string> = NewMapFromData data=d9
+# CHECK-NEXT: v5: Map<"k1"|"k2", "v1"|"v2", proven, pristine[Storage, Names]> = AssumeType v4 provenType=Map<"k1"|"k2", "v1"|"v2", proven, pristine[Storage, Names]>
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="set"
@@ -1227,7 +1227,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f107 visibility=Private
 # CHECK-NEXT: v0: "m1" = String string="m1"
 # CHECK-NEXT: v1: "m2" = String string="m2"
 # CHECK-NEXT: v2: "m3" = String string="m3"
-# CHECK-NEXT: v3: Set<string> = NewSetFromData data=d13
+# CHECK-NEXT: v3: Set<string> = NewSetFromData data=d10
 # CHECK-NEXT: v4: Set<"m1"|"m2"|"m3", proven, pristine[Storage, Names]> = AssumeType v3 provenType=Set<"m1"|"m2"|"m3", proven, pristine[Storage, Names]>
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }

@@ -17,6 +17,8 @@ pub(super) struct UseInput<'a> {
     pub strings: &'a StringTable,
     /// The origin of each module, in a build that logs type mismatches.
     pub origins_in_logging_build: Option<&'a [ModuleOrigin]>,
+    /// Their code makes objects and fills them out of sight: a name that nothing here writes may be written there.
+    pub has_programs_below: bool,
     pub in_parallel: InParallel<'a>,
 }
 
@@ -164,7 +166,10 @@ pub(super) fn mark_unused_records(
             {
                 continue;
             }
-            field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
+            // The engine, which reads the programs below, asks their objects for the name if one of them has it.
+            if !input.has_programs_below {
+                field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
+            }
             field.flags |= FieldFlags::IS_NEVER_WRITTEN;
         }
     });

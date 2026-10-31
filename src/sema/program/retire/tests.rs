@@ -49,6 +49,45 @@ fn trees_go_while_a_file_is_left_to_lower_and_none_behind_the_last() {
 }
 
 #[test]
+fn trees_go_while_a_task_that_outlasts_the_others_runs() {
+    let _alone = ONE_TEST_AT_A_TIME.lock();
+    let host = StatementsHost {
+        files: &[
+            (
+                "/main.ts",
+                "import \"./first\"\nexport const main = [1, 2, 3]",
+            ),
+            ("/first.ts", "export const first = [1, 2, 3]"),
+        ],
+        ..StatementsHost::default()
+    };
+    let session = Session::new();
+    let files = load_files(&session, &TestBuild::new(&host, &["/main.ts"]));
+    let [main, first] =
+        [&b"/main.ts"[..], b"/first.ts"].map(|path| files.by_path.get(path).expect("it is loaded"));
+    let state_of = |file: FileId| files.modules[file.idx()].state.load(SeqCst);
+
+    files.let_trees_go_behind(&[main, first]);
+    let long_task = ReadingTask::begin();
+    // SAFETY: it has read nothing.
+    unsafe { ReadingTask::repin() };
+    {
+        let _task = ReadingTask::begin();
+        files.note_commit(first);
+    }
+    assert_eq!(state_of(first), HERE);
+
+    // SAFETY: as above.
+    unsafe { ReadingTask::repin() };
+    drop(ReadingTask::begin());
+    assert_eq!(state_of(first), GONE);
+
+    drop(long_task);
+    files.watch_no_more();
+    assert_eq!(AWAITED_COMMITS.load(SeqCst), 0);
+}
+
+#[test]
 fn a_watch_that_ends_early_awaits_no_commit() {
     let _alone = ONE_TEST_AT_A_TIME.lock();
     let host = StatementsHost {

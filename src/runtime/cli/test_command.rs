@@ -173,19 +173,23 @@ fn find_names_imported_for_jsx(vm: &mut VirtualMachine, file: &[u8]) -> Vec<Box<
     ]
 }
 
-// The names that each file imports, file by file. A file that is not in memory yet takes a millisecond to come, and there are tens of thousands: many are asked for at once.
-// In front of each name a byte: 1 behind `from` and `import`, 0 behind `require` and `module`.
 fn find_names_imported_by_and_how<Path: core::ops::Deref<Target = [u8]> + Sync>(
     files: &[Path],
 ) -> Vec<Vec<Box<[u8]>>> {
-    find_names_in(files, |text, visit| {
-        let mut marked = Vec::new();
-        for_each_imported_name_and_word(text, |name, word| {
-            marked.clear();
-            marked.push((word == b"from" || word == b"import") as u8);
-            marked.extend_from_slice(name);
-            visit(&marked);
-        })
+    find_names_in(files, for_each_imported_name_and_how)
+}
+
+fn for_each_imported_name_and_how(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    let mut marked = Vec::new();
+    for_each_imported_name_and_word(text, |name, word| {
+        marked.clear();
+        marked.push(match word {
+            b"from" | b"import" => 1,
+            b"require" => 2,
+            _ => 0,
+        });
+        marked.extend_from_slice(name);
+        visit(&marked);
     })
 }
 
@@ -194,6 +198,8 @@ fn find_names_imported_by_and_how<Path: core::ops::Deref<Target = [u8]> + Sync>(
 // find_files_imported_by() has read the files above and noted what they name in another way.
 static FILES_NAMED_OTHERWISE_THAN_BY_IMPORT: bun_threading::Guarded<Vec<Box<[u8]>>> =
     bun_threading::Guarded::new(Vec::new());
+static FILES_REQUIRED: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    bun_threading::Guarded::new(Vec::new());
 
 fn find_entry_points_only_imported(entry_points: &[Box<[u8]>]) -> Vec<Vec<u8>> {
     const EXTENSIONS: [&[u8]; 4] = [b".cjs", b".cts", b".mjs", b".mts"];
@@ -201,6 +207,17 @@ fn find_entry_points_only_imported(entry_points: &[Box<[u8]>]) -> Vec<Vec<u8>> {
     (entry_points.iter())
         .filter(|path| EXTENSIONS.iter().any(|extension| path.ends_with(extension)))
         .filter(|path| !named_otherwise.contains(path))
+        .map(|path| path.to_vec())
+        .collect()
+}
+
+fn find_entry_points_required(entry_points: &[Box<[u8]>]) -> Vec<Vec<u8>> {
+    let mut required = bun_collections::StringSet::new();
+    for path in FILES_REQUIRED.lock().iter() {
+        let _ = required.insert(path);
+    }
+    (entry_points.iter())
+        .filter(|path| required.contains(path))
         .map(|path| path.to_vec())
         .collect()
 }
@@ -248,6 +265,7 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
     }
     let mut found = Vec::new();
     let mut named_otherwise = Vec::new();
+    let mut required = Vec::new();
     for (test_file, names) in test_files
         .iter()
         .zip(find_names_imported_by_and_how(test_files))
@@ -255,10 +273,14 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
         let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
         for marked in names {
             let (is_behind_import, name) = (marked[0] == 1, &marked[1..]);
+            let is_behind_require = marked[0] == 2;
             if !is_behind_import {
                 let kind = bun_ast::ImportKind::Require;
                 if let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) {
                     named_otherwise.push(Box::from(result.path_pair.primary.text()));
+                    if is_behind_require {
+                        required.push(Box::from(result.path_pair.primary.text()));
+                    }
                 }
             }
             let kind = bun_ast::ImportKind::Stmt;
@@ -269,6 +291,9 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
             if !is_behind_import {
                 named_otherwise.push(Box::from(path));
             }
+            if is_behind_require {
+                required.push(Box::from(path));
+            }
             let is_code = bun_path::is_absolute(path)
                 && EXTENSIONS.iter().any(|extension| path.ends_with(extension));
             if is_code && !seen.contains(path) {
@@ -277,10 +302,15 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
             }
         }
     }
+    note_how_files_are_named(named_otherwise, required);
+    found
+}
+
+fn note_how_files_are_named(mut named_otherwise: Vec<Box<[u8]>>, mut required: Vec<Box<[u8]>>) {
     FILES_NAMED_OTHERWISE_THAN_BY_IMPORT
         .lock()
         .append(&mut named_otherwise);
-    found
+    FILES_REQUIRED.lock().append(&mut required);
 }
 
 // The files of packages that the test files reach through files that are in no package. What those import in turn the build finds itself.
@@ -339,6 +369,44 @@ fn find_files_of_packages_reached_from(
     (of_packages, others)
 }
 
+static FILES_TO_PLAN_LAYERS_FROM: bun_threading::Guarded<Option<Vec<Box<[u8]>>>> =
+    bun_threading::Guarded::new(None);
+
+pub(crate) fn plan_programs_of_project(
+    vm: &mut VirtualMachine,
+    memory_limit: Option<u64>,
+) -> Option<u32> {
+    let files = FILES_TO_PLAN_LAYERS_FROM.lock().take()?;
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut vm.transpiler.resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
+    let given = files.len();
+    let found = find_what_stands_behind_computed_imports(vm, files);
+    run_compiled::hand_lists_to_builds_of_layers(&[
+        &[Box::from(found.import_count.to_string().as_bytes())],
+        &found.files,
+        &found.of_packages,
+    ]);
+    if run_compiled::is_number_of_layers_given() {
+        return None;
+    }
+    let of_project = found.files;
+    let mut bytes_of_project = 0;
+    for path in &of_project[given..] {
+        let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path));
+        bytes_of_project += stat.map_or(0, |stat| stat.st_size as u64);
+    }
+    Some(run_compiled::plan_programs_of_project(
+        memory_limit,
+        bytes_of_project,
+    ))
+}
+
 // The modules of Bun's own code that the files, and all that they import, spell, and the built-ins for which native code loads one. None: one of the files
 // loads code under a name that its text does not spell, which may be the name of any module.
 fn find_library_modules_spelled_from(
@@ -369,27 +437,58 @@ fn find_library_modules_spelled_from(
             }
             let _ = spelled.insert(name);
         }
+        let started = find_files_that_workers_start_from(vm, &level);
         level = find_files_imported_by(vm, &level);
+        level.extend(started);
         level.retain(|path| !seen.contains(path));
     }
     Some(spelled)
 }
 
-// The names that make a file load another when it runs: those of its statements, but for what they say of types alone, and the
-// strings in `import()` and `require()`.
+fn find_files_that_workers_start_from(
+    vm: &mut VirtualMachine,
+    files: &[Box<[u8]>],
+) -> Vec<Box<[u8]>> {
+    let mut found = Vec::new();
+    for (file, names) in files
+        .iter()
+        .zip(find_names_in(files, for_each_name_that_build_follows))
+    {
+        let folder = resolve_path::dirname::<bun_path::platform::Auto>(file);
+        for marked in names.iter().filter(|marked| marked[0] == BY_WORKER) {
+            let kind = bun_ast::ImportKind::Stmt;
+            if let Ok(result) = vm.transpiler.resolver.resolve(folder, &marked[1..], kind) {
+                found.push(Box::from(result.path_pair.primary.text()));
+            }
+        }
+    }
+    found
+}
+
+const BY_STATEMENT: u8 = 1;
+const BY_IMPORT_CALL: u8 = 2;
+const BY_REQUIRE: u8 = 4;
+const BY_WORKER: u8 = 8;
+
+fn visit_with_way(visit: &mut dyn FnMut(&[u8]), way: u8, name: &[u8]) {
+    visit(&[&[way][..], name].concat());
+}
+
 fn for_each_name_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
-    for_each_name_in_statement(text, &mut *visit);
+    for_each_name_in_statement(text, |name| visit_with_way(visit, BY_STATEMENT, name));
     let mut at = 0;
     while let Some(found) = strings::index_of_char_usize(&text[at..], b'(') {
         let before = text[..at + found].trim_ascii_end();
         at += found + 1;
-        if !(before.ends_with(b"import") || before.ends_with(b"require")) {
-            continue;
-        }
+        let way = match before {
+            _ if before.ends_with(b"import") => BY_IMPORT_CALL,
+            _ if before.ends_with(b"require") => BY_REQUIRE,
+            _ => continue,
+        };
         if let Some((name, _)) = read_string(text, skip_space(text, at), b"\"'`")
             && !strings::contains(name, b"${")
         {
-            visit(name);
+            visit_with_way(visit, way, name);
         }
     }
 }
@@ -399,7 +498,9 @@ fn for_each_name_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
 fn for_each_name_that_build_follows(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
     const URL: &[u8] = b"new URL(";
     for_each_name_that_loads(text, &mut *visit);
-    for_each_pattern_that_loads(text, &mut *visit);
+    for_each_pattern_that_loads_and_way(text, &mut |pattern, way| {
+        visit_with_way(visit, way, pattern)
+    });
     let mut at = 0;
     while let Some(found) = strings::index_of(&text[at..], b"Worker(") {
         at += found + b"Worker(".len();
@@ -410,20 +511,26 @@ fn for_each_name_that_build_follows(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
         if let Some((name, _)) = read_string(text, start, b"\"'`")
             && !strings::contains(name, b"${")
         {
-            visit(name);
+            visit_with_way(visit, BY_WORKER, name);
         }
     }
 }
 
 // `import(`a/b/${name}.js`)`, and `require()` alike: what stands in front of the first `${`, a zero byte, and what stands behind the last `}`.
 fn for_each_pattern_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    for_each_pattern_that_loads_and_way(text, &mut |pattern, _| visit(pattern));
+}
+
+fn for_each_pattern_that_loads_and_way(text: &[u8], visit: &mut dyn FnMut(&[u8], u8)) {
     let mut at = 0;
     while let Some(found) = strings::index_of_char_usize(&text[at..], b'(') {
         let before = text[..at + found].trim_ascii_end();
         at += found + 1;
-        if !(before.ends_with(b"import") || before.ends_with(b"require")) {
-            continue;
-        }
+        let way = match before {
+            _ if before.ends_with(b"import") => BY_IMPORT_CALL,
+            _ if before.ends_with(b"require") => BY_REQUIRE,
+            _ => continue,
+        };
         let Some((template, _)) = read_string(text, skip_space(text, at), b"`") else {
             continue;
         };
@@ -432,7 +539,10 @@ fn for_each_pattern_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
         if let (Some(first), Some(last)) = (first, last)
             && first < last
         {
-            visit(&[&template[..first], b"\0", &template[last + 1..]].concat());
+            visit(
+                &[&template[..first], b"\0", &template[last + 1..]].concat(),
+                way,
+            );
         }
     }
 }
@@ -441,11 +551,13 @@ fn for_each_pattern_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
 fn find_folder_of_package(folder: &[u8], name: &[u8]) -> Option<Vec<u8>> {
     let mut ancestor = folder;
     loop {
-        let installed = [ancestor, b"/node_modules/", name].concat();
-        if bun_sys::directory_exists_at(Fd::cwd(), &bun_core::ZBox::from_bytes(&installed))
-            .unwrap_or(false)
-        {
-            return Some(installed);
+        let installed = bun_core::ZBox::from_bytes([ancestor, b"/node_modules/", name].concat());
+        if bun_sys::directory_exists_at(Fd::cwd(), &installed).unwrap_or(false) {
+            let mut real = bun_paths::path_buffer_pool::get();
+            return Some(match bun_sys::realpath(&installed, &mut real) {
+                Ok(real) => real.to_vec(),
+                Err(_) => installed.as_bytes().to_vec(),
+            });
         }
         let parent = resolve_path::dirname::<bun_path::platform::Auto>(ancestor);
         if parent.len() >= ancestor.len() || parent.is_empty() {
@@ -555,15 +667,23 @@ fn add_files_behind_pattern(
     }
 }
 
-// The files of packages that the imports with computed names in the texts of `above`, and of what those reach outside of packages,
-// stand for, but for those that a program below holds. A program of their own holds them: one import can stand for thousands of files.
-// What the texts do not show is compiled with the file that has the import. A file of the project goes with the files of the project.
-// Answers them, and every file outside of packages that `above` reach, `above` among them.
-fn find_files_of_packages_that_computed_imports_reach(
+struct BehindComputedImports {
+    import_count: usize,
+    files: Vec<Box<[u8]>>,
+    of_packages: Vec<Box<[u8]>>,
+}
+
+fn find_what_stands_behind_computed_imports(
     vm: &mut VirtualMachine,
     above: Vec<Box<[u8]>>,
-) -> (Vec<Box<[u8]>>, Vec<Box<[u8]>>) {
+) -> BehindComputedImports {
+    let named_otherwise = FILES_NAMED_OTHERWISE_THAN_BY_IMPORT.lock().len();
+    let required = FILES_REQUIRED.lock().len();
     let (_, files) = find_files_of_packages_reached_from(vm, above);
+    FILES_NAMED_OTHERWISE_THAN_BY_IMPORT
+        .lock()
+        .truncate(named_otherwise);
+    FILES_REQUIRED.lock().truncate(required);
     let mut found = Vec::new();
     let patterns_of_files = find_names_in(&files, for_each_pattern_that_loads);
     let mut import_count = 0;
@@ -579,6 +699,66 @@ fn find_files_of_packages_that_computed_imports_reach(
     found.retain(|path| strings::contains(path, b"/node_modules/"));
     found.sort_unstable();
     found.dedup();
+    BehindComputedImports {
+        import_count,
+        files,
+        of_packages: found,
+    }
+}
+
+fn take_what_run_found_behind_computed_imports(
+    above: &[Box<[u8]>],
+    why_not: &mut String,
+) -> Option<BehindComputedImports> {
+    fn sorted(paths: &[Box<[u8]>]) -> Vec<&[u8]> {
+        let mut paths: Vec<&[u8]> = paths.iter().map(|path| &**path).collect();
+        paths.sort_unstable();
+        paths
+    }
+    why_not.clear();
+    why_not.push_str("the run has handed over nothing");
+    let lists = run_compiled::take_lists_handed_by_run()?;
+    *why_not = format!("the run has handed over {} lists", lists.len());
+    let mut lists = lists.into_iter();
+    let (Some(import_count), Some(files), Some(of_packages), None) =
+        (lists.next(), lists.next(), lists.next(), lists.next())
+    else {
+        return None;
+    };
+    *why_not = format!(
+        "the run went out from other files than the {} of this build",
+        above.len(),
+    );
+    let of_run = &files[..above.len().min(files.len())];
+    if sorted(of_run) != sorted(above) {
+        return None;
+    }
+    why_not.clear();
+    why_not.push_str("the run has handed over no number of imports");
+    let import_count = bun_core::fmt::parse_int::<usize>(import_count.first()?, 10).ok()?;
+    Some(BehindComputedImports {
+        import_count,
+        files,
+        of_packages,
+    })
+}
+
+fn find_files_of_packages_that_computed_imports_reach(
+    vm: &mut VirtualMachine,
+    above: Vec<Box<[u8]>>,
+) -> (Vec<Box<[u8]>>, Vec<Box<[u8]>>) {
+    let mut why_not = String::new();
+    let BehindComputedImports {
+        import_count,
+        files,
+        of_packages: mut found,
+    } = match take_what_run_found_behind_computed_imports(&above, &mut why_not) {
+        Some(found) => found,
+        None => {
+            run_compiled::log_step_of_build(&format!("{why_not}: the files are read"));
+            find_what_stands_behind_computed_imports(vm, above)
+        }
+    };
     let all = found.len();
     found.retain(|path| !run_compiled::is_module_below_test_part(path));
     run_compiled::log_step_of_build(&format!(
@@ -599,9 +779,6 @@ fn begin_beside_build_of_what_computed_imports_reach(
     ctx: &crate::cli::command::ContextData,
     test_files: &[Box<[u8]>],
 ) {
-    // What a build holds when it has loaded its files and bound its modules, for each byte of source. Measured as
-    // `BYTES_HELD_FOR_A_BYTE_OF_SOURCE` is: 2,616 MB for the 207 MB of a large application's own files (10-30).
-    const BYTES_HELD_WHEN_MODULES_ARE_BOUND: u64 = 13;
     let above = test_files.iter().chain(&ctx.preloads).cloned().collect();
     let (guess, files) = find_files_of_packages_that_computed_imports_reach(vm, above);
     let bytes_of = |files: &mut dyn Iterator<Item = &Box<[u8]>>| -> u64 {
@@ -614,7 +791,7 @@ fn begin_beside_build_of_what_computed_imports_reach(
         test_files.iter().map(|path| &**path).collect();
     let needed_below = bytes_of(&mut guess.iter()) * run_compiled::BYTES_HELD_FOR_A_BYTE_OF_SOURCE;
     let needed_here = bytes_of(&mut files.iter().filter(|path| !test_files.contains(&***path)))
-        * BYTES_HELD_WHEN_MODULES_ARE_BOUND;
+        * run_compiled::BYTES_HELD_WHEN_MODULES_ARE_BOUND;
     let memory = crate::cli::test::memory_of_job::find(ctx.test_options.aot_memory_limit);
     run_compiled::log_step_of_build(&format!(
         "it begins beside the build below: that one may take {} MB, this one {} MB until it waits, the run can get {} MB",
@@ -626,6 +803,51 @@ fn begin_beside_build_of_what_computed_imports_reach(
     if needed_below + needed_here > memory {
         run_compiled::wait_for_program_below();
     }
+}
+
+fn note_files_that_require_loads(paths: &[Box<[u8]>], imports: &[Vec<u32>], ways: &[Vec<u8>]) {
+    let is_module = |file: usize| {
+        paths[file].ends_with(b".mjs")
+            || paths[file].ends_with(b".mts")
+            || ways[file].iter().any(|way| way & BY_STATEMENT != 0)
+    };
+    let mut is_named_otherwise = vec![false; paths.len()];
+    let mut is_required = vec![false; paths.len()];
+    let mut runs_inside_require = vec![false; paths.len()];
+    let mut to_visit: Vec<u32> = Vec::new();
+    for (imported, ways) in imports.iter().zip(ways) {
+        for (&target, &way) in imported.iter().zip(ways) {
+            let at = target as usize;
+            is_named_otherwise[at] |= way & (BY_REQUIRE | BY_WORKER) != 0;
+            if way & BY_REQUIRE == 0 {
+                continue;
+            }
+            is_required[at] = true;
+            if is_module(at) && !core::mem::replace(&mut runs_inside_require[at], true) {
+                to_visit.push(target);
+            }
+        }
+    }
+    while let Some(file) = to_visit.pop() {
+        for &target in &imports[file as usize] {
+            let at = target as usize;
+            is_named_otherwise[at] = true;
+            is_required[at] = true;
+            if !core::mem::replace(&mut runs_inside_require[at], true) {
+                to_visit.push(target);
+            }
+        }
+    }
+    let marked = |marks: Vec<bool>| {
+        let marked = paths.iter().zip(marks);
+        marked
+            .filter(|&(_, is_marked)| is_marked)
+            .map(|(path, _)| path.clone())
+    };
+    FILES_NAMED_OTHERWISE_THAN_BY_IMPORT
+        .lock()
+        .extend(marked(is_named_otherwise));
+    FILES_REQUIRED.lock().extend(marked(is_required));
 }
 
 // Of the files that `above` reach and that no program below holds, the lowest, for a program of their own. No program imports from one
@@ -652,6 +874,7 @@ fn find_lowest_files_reached_from(
     }
     let above_count = paths.len();
     let mut imports: Vec<Vec<u32>> = Vec::new();
+    let mut ways_of_imports: Vec<Vec<u8>> = Vec::new();
     while imports.len() < paths.len() {
         let first = imports.len();
         // What only a test file or a preload loads in another way than by a name is built with it, as where the files of the project
@@ -666,14 +889,18 @@ fn find_lowest_files_reached_from(
         for (file, names) in (first..).zip(names_of_level) {
             let folder = resolve_path::dirname::<bun_path::platform::Auto>(&paths[file]).to_vec();
             let mut imported: Vec<u32> = Vec::new();
+            let mut ways: Vec<u8> = Vec::new();
             let mut loaded: Vec<Box<[u8]>> = Vec::new();
-            for name in names {
-                if let Some((prefix, suffix)) = strings::split_once_char(&name, 0) {
+            let mut ways_of_loaded: Vec<u8> = Vec::new();
+            for marked in names {
+                let (way, name) = (marked[0], &marked[1..]);
+                if let Some((prefix, suffix)) = strings::split_once_char(name, 0) {
                     add_files_behind_pattern(&folder, prefix, suffix, &mut loaded);
+                    ways_of_loaded.resize(loaded.len(), way);
                     continue;
                 }
                 let kind = bun_ast::ImportKind::Stmt;
-                let Ok(result) = vm.transpiler.resolver.resolve(&folder, &name, kind) else {
+                let Ok(result) = vm.transpiler.resolver.resolve(&folder, name, kind) else {
                     continue;
                 };
                 let path = result.path_pair.primary.text();
@@ -681,9 +908,10 @@ fn find_lowest_files_reached_from(
                     && EXTENSIONS.iter().any(|extension| path.ends_with(extension))
                 {
                     loaded.push(Box::from(path));
+                    ways_of_loaded.push(way);
                 }
             }
-            for path in loaded {
+            for (path, way) in loaded.into_iter().zip(ways_of_loaded) {
                 let position = match position_of.get(&*path) {
                     Some(&position) => position,
                     None => {
@@ -698,16 +926,22 @@ fn find_lowest_files_reached_from(
                         position
                     }
                 };
-                if position != IS_BELOW
-                    && position as usize != file
-                    && !imported.contains(&position)
-                {
-                    imported.push(position);
+                if position == IS_BELOW || position as usize == file {
+                    continue;
+                }
+                match imported.iter().position(|&other| other == position) {
+                    Some(at) => ways[at] |= way,
+                    None => {
+                        imported.push(position);
+                        ways.push(way);
+                    }
                 }
             }
             imports.push(imported);
+            ways_of_imports.push(ways);
         }
     }
+    note_files_that_require_loads(&paths, &imports, &ways_of_imports);
     let size_of = |path: &[u8]| {
         bun_sys::stat(&bun_core::ZBox::from_bytes(path)).map_or(0, |stat| stat.st_size as u64)
     };
@@ -4039,8 +4273,10 @@ impl TestCommand {
                 entry_points.extend(ctx.preloads.iter().cloned());
                 let (of_packages, others) = find_files_of_packages_reached_from(vm, entry_points);
                 let only_imported = find_entry_points_only_imported(&of_packages);
+                let required = find_entry_points_required(&of_packages);
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.entry_points_only_imported_from_above = only_imported;
+                    aot.entry_points_required_from_above = required;
                 }
                 (entry_points, files_above) = (of_packages, Some(others));
                 run_compiled::log_step_of_build("the files of packages are found");
@@ -4101,12 +4337,20 @@ impl TestCommand {
                 // Each of them is an entry point: the programs above import them by name.
                 entry_points.extend(ctx.preloads.iter().cloned());
                 entry_points = find_lowest_files_reached_from(vm, entry_points, percent);
+                let only_imported = find_entry_points_only_imported(&entry_points);
+                let required = find_entry_points_required(&entry_points);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.entry_points_only_imported_from_above = only_imported;
+                    aot.entry_points_required_from_above = required;
+                }
             } else if builds_what_is_shared {
                 let test_files = keep_paths_for_the_build(entry_points);
                 entry_points = find_files_imported_by(vm, &test_files);
                 let only_imported = find_entry_points_only_imported(&entry_points);
+                let required = find_entry_points_required(&entry_points);
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.entry_points_only_imported_from_above = only_imported;
+                    aot.entry_points_required_from_above = required;
                 }
                 if names_what_is_used {
                     stand_in = Some(make_stand_in_that_names_what_tests_name(
@@ -4451,6 +4695,11 @@ impl TestCommand {
                 let files = files.chain(ctx.preloads.iter().cloned()).collect();
                 reach_more_source_than(vm, files, most)
             });
+        if splits_files {
+            let files = test_files.iter().map(|path| Box::from(&**path));
+            *FILES_TO_PLAN_LAYERS_FROM.lock() =
+                Some(files.chain(ctx.preloads.iter().cloned()).collect());
+        }
         if run_compiled::is_requested(ctx) && !test_files.is_empty() {
             run_compiled::log_form_of_test_run(ctx, test_files.len(), splits_files);
         }

@@ -2689,6 +2689,13 @@ pub struct ImportedConstant {
     pub value: crate::fold::Constant,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextOfDataFile {
+    pub specifier: Atom,
+    pub path: Atom,
+    pub text: Atom,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2715,6 +2722,7 @@ pub struct FileIn<S: Storage> {
     pub imported_requires: S::Few<ImportedRequire>,
     /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
     pub imported_constants: S::Few<ImportedConstant>,
+    pub texts_of_data_files: S::Few<TextOfDataFile>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3131,6 +3139,14 @@ impl<S: Storage> FileIn<S> {
         after > 0 && pos < self.jsdoc_comments[after - 1].1
     }
 
+    pub fn syntax_errors(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|it| {
+            it.kind == DiagnosticKind::Parse
+                && it.class == DiagnosticClass::EarlyError
+                && !self.is_in_jsdoc(it.start)
+        })
+    }
+
     /// `NodeFlagsHasJSDoc` for a node whose first token is at `token`. See `jsdoc_hosts`.
     pub fn jsdoc_host_at(&self, token: u32) -> Option<&JsDocHost> {
         let index = self
@@ -3396,6 +3412,7 @@ macro_rules! file_in_storage {
             is_script_with_code: $this.is_script_with_code,
             imported_requires: $few!($this.imported_requires),
             imported_constants: $few!($this.imported_constants),
+            texts_of_data_files: $few!($this.texts_of_data_files),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,

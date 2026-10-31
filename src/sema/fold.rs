@@ -128,6 +128,7 @@ struct FoldedConstant {
     expr: ExprId,
     constant: Constant,
     checks_dead_zone: bool,
+    is_known_to_bun_run: bool,
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -174,6 +175,19 @@ impl<'s> Decisions<'s> {
             Ok(entry) => FoldedValue::Constant(entry.constant),
             Err(_) => FoldedValue::Unknown,
         }
+    }
+
+    pub fn is_constant_in_bun_run(&self, hir: &File<'_>, expr: ExprId) -> bool {
+        let Some(node) = hir.exprs.get(expr.idx()) else {
+            return false;
+        };
+        if literal_constant(hir, node.kind).is_some() {
+            return true;
+        }
+        let found = self
+            .constants
+            .binary_search_by_key(&expr, |entry| entry.expr);
+        found.is_ok_and(|index| self.constants[index].is_known_to_bun_run)
     }
 
     pub fn specifier(&self, argument: ExprId) -> ImportSpecifier {

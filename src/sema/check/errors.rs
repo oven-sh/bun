@@ -4,7 +4,7 @@
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
 //! reported. A false negative is better than a false positive.
 
-use super::aot::{DiagnosticClass, DiagnosticSubject};
+use super::aot::{DiagnosticClass, DiagnosticSubject, is_in_outermost};
 use super::enclosing_declaration::Enclosing;
 use super::errors_aliases::Directives;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -13,10 +13,16 @@ use super::explain::{Explained, NOWHERE};
 use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
-use crate::program::SymbolTable;
+use crate::program::{ReadingNoTrees, SymbolTable};
 use crate::util::{PositionSet, SharedSort};
 use bun_core::current_work;
 use bun_core::strings;
+
+#[derive(Default)]
+pub(super) struct PlacesNobodyReads {
+    directives: Directives,
+    dead_code: FxHashMap<FileId, Vec<(u32, u32)>>,
+}
 
 /// The finalized diagnostics that `check_file` passes to `Program::finish_file`. Diagnostics reported inside a query
 /// are in their file's buffer instead.
@@ -303,9 +309,11 @@ impl Checker<'_, '_> {
         if self.emits_first() {
             let from = self.reported.len();
             self.is_emitting = true;
+            self.place_does_not_decide_at = Some(self.stack.len());
             self.mark_linked_references_recursively(file);
             self.mark_property_aliases_referenced(file);
             self.inline_const_enums(file);
+            self.place_does_not_decide_at = None;
             self.is_emitting = false;
             for d in self.reported.iter_mut().skip(from) {
                 d.by_emit = true;
@@ -444,6 +452,34 @@ impl Checker<'_, '_> {
         }
     }
 
+    pub(super) fn move_message_site(&mut self, to: super::related::FileSpan) {
+        if let Some(site) = &mut self.message_site
+            && site.2 == self.stack.len()
+        {
+            (site.0, site.1) = (to.0, to.1);
+        }
+    }
+
+    pub(super) fn prints_message_that_nobody_reads(&mut self) -> bool {
+        let Some((file, start, depth)) = self.message_site else {
+            return false;
+        };
+        if depth != self.stack.len() || !self.is_in_compile_build(file) {
+            return false;
+        }
+        let hir = self.hir(file);
+        if hir.check_directive == Some(false) || self.is_plain_js(file) {
+            return true;
+        }
+        let mut places = std::mem::take(&mut self.places_nobody_reads);
+        let dead_code = places.dead_code.entry(file);
+        let dead_code = dead_code.or_insert_with(|| self.dead_code_of(file));
+        let is_unread = is_in_outermost(dead_code, start)
+            || places.directives.preceding(file, hir, start) != NO_DIRECTIVE;
+        self.places_nobody_reads = places;
+        is_unread
+    }
+
     /// Fills in the fields of `d`, a diagnostic of `getBindAndCheckDiagnostics`, that need its file's HIR: its end, and
     /// the comment directive that suppresses it. Returns `None` if its file doesn't report it. Runs on the task's
     /// thread, before `d` leaves it.
@@ -513,6 +549,7 @@ impl Checker<'_, '_> {
         }
         // `typesPackageExists`, `packageBundlesTypes`
         let (types_package, atoms) = (cat!(b"@types/", mangled), self.atoms());
+        let _reading = ReadingNoTrees::begin();
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for &(name, is_declaration_file) in modules.flat_map(|it| it.resolved_packages.iter()) {

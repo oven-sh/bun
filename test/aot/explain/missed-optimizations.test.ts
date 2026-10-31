@@ -75,7 +75,9 @@ const interpreted = [
   "a WebAssembly function runs in the interpreter: it uses exceptions at partly.wasm:1",
   "a WebAssembly function runs in the interpreter: it uses tail calls at partly.wasm:1",
   "the WebAssembly module runs in the interpreter: it is not valid at broken.wasm:1",
-  expect.stringMatching(/^this regular expression runs in the interpreter \(reason \d+\) at interpreted\.ts:6$/),
+  expect.stringMatching(
+    /^this regular expression runs in the interpreter \(reason \d+\): its text depends on a parameter, and the compiler doesn't know every argument \(Parameter\) at \S*interpreted\.ts:\d+:\d+; the expression is made at \S*interpreted\.ts:6:\d+ at interpreted\.ts:6$/,
+  ),
 ];
 
 describe.concurrent("code that runs in the interpreter", () => {

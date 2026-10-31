@@ -532,7 +532,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f67 visibilit
 runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # -- generated: both make f31 Made f37 V
 # CHECK-LABEL: function {{*}}name="V"
-# CHECK: module=m0 position=260 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0|L13 flags=[IsExpected]} parameters=[{type=int}] results=[{type=undefined|L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0
+# CHECK: module=m0 position=260 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0|L13 flags=[IsExpected]} parameters=[{type=int[0, 7]}] results=[{type=undefined|L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="both"
 # CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=50}] results=[{type=int|whole}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="make"
@@ -549,31 +549,29 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK: m0 position=355 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=L0
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b5()
 # CHECK-NEXT: b1(v2: L0):
-# CHECK-NEXT: v3: boolean = IsSlotFilled v2 key="x" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v4: guard):
-# CHECK-NEXT: v5: int[-2147483643, 2147483647] = GetSlot v2, v4 key="x" receivers=[L0] level=Expected accessSite=46 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b4(v5)
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v6: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="x" accessSite=46 receivers=[L0, ..]
-# CHECK-NEXT: v7: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v6 provenType=undefined|int
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=i32
-# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v9: i32 ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: int[-2147483647, 2147483648] ~ int[-2147483642, 2147483648] = Add v9, v10
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v3: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = GetSlotOrUndefined v2 key="x" receivers=[L0] level=Expected accessSite=46
+# CHECK-NEXT: Jump -> next b2(v3)
+# CHECK-NEXT: b2(v4: undefined|int ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=i32
+# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v7: i32 ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v8: int[-2147483647, 2147483648] ~ int[-2147483642, 2147483648] = Add v7, v5
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v9: number ~ int[-2147483642, 2147483648] = Add v4, v5
+# CHECK-NEXT: v10: int|whole ~ int[-2147483642, 2147483648] = AssumeType v9 provenType=int|whole
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v12: 1 = Integer integer=1
-# CHECK-NEXT: v13: number ~ int[-2147483642, 2147483648] = Add v7, v12
-# CHECK-NEXT: v14: int|whole ~ int[-2147483642, 2147483648] = AssumeType v13 provenType=int|whole
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v11: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="x" accessSite=46 receivers=[L0, ..]
+# CHECK-NEXT: v12: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v11 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Made"
-# CHECK: module=m0 position=1992 flags=[HasThis, HasExplicitName] length=1 captures=[{type=env L14 flags=[IsFromCompiler]}] thisType={type=L15 flags=[IsExpected]} parameters=[{type=int}] results=[{type=L15}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L15 inlineFrames=[{}, {callee=f96 callPosition=4294967295 isConstruction=true module=m0}] {
-# CHECK-NEXT: b0(v0: env L14, v1: anything ~ L15, v2: int):
+# CHECK: module=m0 position=1992 flags=[HasThis, HasExplicitName] length=1 captures=[{type=env L14 flags=[IsFromCompiler]}] thisType={type=L15 flags=[IsExpected]} parameters=[{type=int[1, 2]}] results=[{type=L15}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L15 inlineFrames=[{}, {callee=f96 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0(v0: env L14, v1: anything ~ L15, v2: int[1, 2]):
 # CHECK-NEXT: v3: undefined|L15 ~ L15 = AssumeType v1 provenType=undefined|L15
 # CHECK-NEXT: v4: f36 = GetEnvironmentField v0 layout=L14
 # CHECK-NEXT: v5: boolean = InstanceOf v3, v4 writtenExpression="this instanceof Made"
@@ -595,30 +593,23 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1 parameter=2} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f1 callPosition=260 isConstruction=true module=m0}, {callee=f83 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v5: int = AssumeType v3 provenType=int
-# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v7: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v4, v4, v7 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropSet v4, v5 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v4: int[0, 7] = AssumeType v3 provenType=int[0, 7]
+# CHECK-NEXT: v5: L0 = NewObject -, v4 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers constructEntrypoint=f81} inlineFrames=[{}, {callee=f1 callPosition=260 isTailCall=true module=m0}, {callee=f83 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
-# CHECK-NEXT: v3: int = AssumeType v2 provenType=int
+# CHECK-NEXT: v3: int[0, 7] = AssumeType v2 provenType=int[0, 7]
 # CHECK-NEXT: v4: anything ~ L0|L13 = Upcast v1 castType=anything @260 tail
 # CHECK-NEXT: v5: fact = Entered function=f1 @260 tail
 # CHECK-NEXT: v6: undefined|L0 ~ L0 = AssumeType v4, v5 provenType=undefined|L0
 # CHECK-NEXT: v7: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=InstancePrototypeUnchanged layout=L0}]
 # CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v9: boolean ~ true = TypeTest v6 testedType=L0
-# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b11()
+# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v10: boolean ~ true = TypeTest v6 testedType=L0
 # CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b5()
@@ -629,53 +620,26 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() frequency=Rare:
 # CHECK-NEXT: v13: boolean = InstanceOf v6, v7 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v13 -> taken b6(), notTaken b11()
+# CHECK-NEXT: Branch v13 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v14: L0 = RequireObjectCoercible v6 nullishAccess=Write name="x"
-# CHECK-NEXT: v15: boolean = HasNoFieldOutsideSlot v14
-# CHECK-NEXT: Branch v15 -> taken b7(| 0), notTaken b9()
-# CHECK-NEXT: b7(v16: guard):
-# CHECK-NEXT: v17: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v18: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v14, v16, v18 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: PropSet v14, v3 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b15(v21) @260 tail
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v23: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v23 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v24: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v22, v22, v24 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: PropSet v22, v3 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: Jump -> next b15(v22) @260 tail
-# CHECK-NEXT: b15(v27: undefined|L0):
-# CHECK-NEXT: Return v27
+# CHECK-NEXT: PutSlotOrAdd v14, -, v3 key="x" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Jump -> next b8(v16) @260 tail
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v17: L0 = NewObject -, v3 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b8(v17) @260 tail
+# CHECK-NEXT: b8(v18: undefined|L0):
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
-# CHECK: module=m0 position=260 role=ConstructBody flags=[HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
-# CHECK-NEXT: b0(v0: int):
-# CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v1, v1, v3 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropSet v1, v0 key="x" accessSite=37 receivers=[L0]
+# CHECK: module=m0 position=260 role=ConstructBody flags=[HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
+# CHECK-NEXT: b0(v0: int[0, 7]):
+# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
-# CHECK: module=m0 position=260 role=BoundFunction length=1 captures=[{type=L0|L13 flags=[IsExpected]}, {type=f1}] thisType={type=anything} parameters=[{type=int}] results=[{type=undefined|L0}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=BoundFunction{target=f1 capturesTargetClosure=true}
+# CHECK: module=m0 position=260 role=BoundFunction length=1 captures=[{type=L0|L13 flags=[IsExpected]}, {type=f1}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=undefined|L0}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=BoundFunction{target=f1 capturesTargetClosure=true}
 # CHECK-LABEL: function {{*}}name="Made"
 # CHECK: module=m0 position=1992 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f36}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f36} creator=Entrypoint{target=f36 arguments=Registers constructEntrypoint=f95} {
 # CHECK-NEXT: b0(v0: f36, v1: anything, v2: anything) frequency=Rare:
@@ -689,8 +653,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: Throw v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Made"
-# CHECK: module=m0 position=1992 role=ConstructBody flags=[HasNewTarget, HasExplicitName, AllocatesOwnThis] length=1 captures=[{type=env L14 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int}] results=[{type=L15}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f36 parameterMap=[{original=0}, {}, {original=2}]} creator=Version{provenVersion=f36} constructedClass=L15 {
-# CHECK-NEXT: b0(v0: env L14, v1: anything, v2: int):
+# CHECK: module=m0 position=1992 role=ConstructBody flags=[HasNewTarget, HasExplicitName, AllocatesOwnThis] length=1 captures=[{type=env L14 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=L15}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f36 parameterMap=[{original=0}, {}, {original=2}]} creator=Version{provenVersion=f36} constructedClass=L15 {
+# CHECK-NEXT: b0(v0: env L14, v1: anything, v2: int[1, 2]):
 # CHECK-NEXT: v3: f36 = AssumeType v1 provenType=f36
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L15
 # CHECK-NEXT: v5: L15 = NewObject v4 layout=L15 allocationClass=2
@@ -704,15 +668,15 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK: module=m0 position=260 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f84}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f84} creator=Entrypoint{target=f84 arguments=Registers} inlineFrames=[{}, {callee=f84 callPosition=260 isTailCall=true module=m0}, {callee=f1 callPosition=260 parent=1 isTailCall=true module=m0}, {callee=f83 callPosition=4294967295 parent=2 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: f84, v1: anything, v2: anything):
 # CHECK-NEXT: v3: anything ~ L0|L13 = GetCapture v0 function=f84
-# CHECK-NEXT: v4: int = AssumeType v2 provenType=int
+# CHECK-NEXT: v4: int[0, 7] = AssumeType v2 provenType=int[0, 7]
 # CHECK-NEXT: v5: fact = Entered function=f1 @260:1 tail
 # CHECK-NEXT: v6: undefined|L0 ~ L0 = AssumeType v3, v5 provenType=undefined|L0
 # CHECK-NEXT: v7: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=InstancePrototypeUnchanged layout=L0}]
 # CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v9: boolean ~ true = TypeTest v6 testedType=L0
-# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b11()
+# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v10: boolean ~ true = TypeTest v6 testedType=L0
 # CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b5()
@@ -723,37 +687,17 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() frequency=Rare:
 # CHECK-NEXT: v13: boolean = InstanceOf v6, v7 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v13 -> taken b6(), notTaken b11()
+# CHECK-NEXT: Branch v13 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v14: L0 = RequireObjectCoercible v6 nullishAccess=Write name="x"
-# CHECK-NEXT: v15: boolean = HasNoFieldOutsideSlot v14
-# CHECK-NEXT: Branch v15 -> taken b7(| 0), notTaken b9()
-# CHECK-NEXT: b7(v16: guard):
-# CHECK-NEXT: v17: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v18: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v14, v16, v18 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: PropSet v14, v4 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b15(v21) @260:1 tail
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v23: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v23 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v24: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v22, v22, v24 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: PropSet v22, v4 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: Jump -> next b15(v22) @260:1 tail
-# CHECK-NEXT: b15(v27: undefined|L0):
-# CHECK-NEXT: Return v27
+# CHECK-NEXT: PutSlotOrAdd v14, -, v4 key="x" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Jump -> next b8(v16) @260:1 tail
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v17: L0 = NewObject -, v4 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b8(v17) @260:1 tail
+# CHECK-NEXT: b8(v18: undefined|L0):
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="both"
 # CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f14} inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 isConstruction=true module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 parent=6 isConstruction=true module=m0}] {
@@ -771,7 +715,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: b3(v9: int[0, 49]):
 # CHECK-NEXT: v10: 7 = Integer integer=7
 # CHECK-NEXT: v11: int[0, 7] = BitAnd v9, v10
-# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
+# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {layout=L0 side=Static key="prototype"}, {kind=MemberNotHidden layout=L0 key="get"}]
 # CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
 # CHECK-NEXT: b4(v13: guard):
 # CHECK-NEXT: v14: 1 = Integer integer=1
@@ -787,7 +731,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: v22: int[1, 50] = Increment v9
 # CHECK-NEXT: Jump -> next b2(v21, v22)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
+# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7() frequency=Rare:
 # CHECK-NEXT: v24: 1 = Integer integer=1
@@ -805,14 +749,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: b10(v31: int|whole ~ int[1, 8]) frequency=Unlikely:
 # CHECK-NEXT: v32: 3 = Integer integer=3
 # CHECK-NEXT: v33: int[0, 3] = BitAnd v9, v32
-# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
+# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {layout=L0 side=Static key="prototype"}, {kind=MemberNotHidden layout=L0 key="get"}]
 # CHECK-NEXT: Branch v34 -> taken b11(| 0), notTaken b12(v31, v33)
 # CHECK-NEXT: b11(v35: guard) frequency=Unlikely:
 # CHECK-NEXT: v36: 1 = Integer integer=1
 # CHECK-NEXT: v37: int[1, 4] = Add v33, v36
 # CHECK-NEXT: Jump -> next b16(v37, v31)
 # CHECK-NEXT: b12(v38: int|whole ~ int[1, 8], v39: int[0, 3]) frequency=Rare:
-# CHECK-NEXT: v40: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
+# CHECK-NEXT: v40: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v40 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: v41: 1 = Integer integer=1

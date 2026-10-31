@@ -44,6 +44,33 @@ const programs: [entry: string, pairs: Pair[]][] = [
     ],
   ],
   [
+    "loops-of-many-turns.ts",
+    [
+      ["members of a first list added up in few turns", "members of a first list added up in many turns", 1],
+      ["members of a second list added up in few turns", "members of a second list added up in many turns", 1],
+      ["members of a third list added up in few turns", "members of a third list added up in many turns", 1],
+      ["members of a fourth list added up in few turns", "members of a fourth list added up in many turns", 1],
+    ],
+  ],
+  [
+    "counters-handed-to-functions-out-of-lists.js",
+    [
+      ["a function called by its name", "a function read out of a list", 1],
+      ["two functions called by their names", "two functions read out of two lists", 1],
+      [
+        "a function called by its name in a while loop that steps by two",
+        "a function read out of a list in a while loop that steps by two",
+        1,
+      ],
+      ["a function called by its name in a method", "a function read out of a list in a field", 1],
+      ["a function called by its name in a method", "a function read out of a list of the module in a method", 1],
+    ],
+  ],
+  [
+    "counters-of-loops-that-seldom-run-code-comes-back-into.js",
+    [["a function called by its name", "a function read out of a member that is deleted now and then", 1]],
+  ],
+  [
     "bytes-copied-into-a-list-that-grows.ts",
     [
       ["from the first on", "from the last on", 1],

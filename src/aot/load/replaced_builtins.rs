@@ -1,5 +1,6 @@
 //! A test run that is compiled in several builds has to know, before the first of them, which members of built-in objects its files replace.
-//! This reads one file by itself: what it imports from other files names nothing, what it imports from Bun does.
+//! This reads one file by itself. What it imports from Bun names something. What it imports from another file does where the caller has read that file
+//! and says which built-ins it exports: `BuiltinsOfModule`.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -13,20 +14,21 @@ use bun_sema::hir::{
     CallId, ExportSpecId, ExprId, ExprKind, FileKind, ImportId, PatId, PatKind, StmtKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
-use bun_sema::module_format::DeclaredModuleType;
+use bun_sema::module_format::{DeclaredModuleType, ModuleFormat};
 use bun_sema::resolve::{JsxSettings, TransformRequest, TranspileSettings, TreeChange};
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 use crate::builtins::{
-    BuiltinNames, ImportTargets, ReplacedMembersSought, ResolveInput, RuntimeModule, SourceDialect,
-    resolve_file,
+    BuiltinExported, BuiltinId, BuiltinNames, BuiltinsOfLoadedFile, ImportTargets,
+    ReplacedMembersSought, ResolveInput, RuntimeModule, SourceDialect, resolve_file,
 };
 use crate::load::host_platform;
 use crate::load::replaced_modules::find_replaced_modules;
 use crate::load::runtime_modules::find_module_named;
 use crate::load::test_runner_names::import_used_names;
+use crate::modules::evicted::PathChangedOnDisk;
 use crate::options::OpenedName;
 
 // A name of a member is short.
@@ -77,15 +79,19 @@ pub struct FoundInFile {
     pub modules_replaced_in_text: Vec<Vec<u8>>,
     /// The file holds code as text that spies on what it is told: `"export const spy = (object, name) => spyOn(object, name)"`.
     pub text_spies_under_any_name: bool,
+    /// The parser reported an error and went on.
+    pub has_syntax_error: bool,
     /// `export function watch(object, name) { return spyOn(object, name); }`: the texts that other files pass to this one may be the name.
     pub spies_under_names_from_outside: bool,
     /// `ReplacedByTests::evicted_modules` and `evicts_any_module`, each file as this one writes it.
     pub evicted: Vec<Vec<u8>>,
     pub evicts_any: bool,
     /// `find_paths_changed_on_disk`
-    pub changed_on_disk: Vec<(Vec<u8>, bool)>,
+    pub changed_on_disk: Vec<PathChangedOnDisk<Vec<u8>>>,
     /// `ReplacedByTests::files_required_where_throws_are_caught`, each file as this one writes it.
     pub required_where_throws_are_caught: Vec<Vec<u8>>,
+    /// `ReplacedByTests::data_files_imported_with_types`, each file as this one writes it.
+    pub imported_with_types: Vec<Vec<u8>>,
     /// `ReplacedByTests::names_file_with_query`
     pub names_file_with_query: bool,
     /// `ReplacedByTests::files_imported_by_statements`, `files_imported_by_calls` and `files_required`, each file as this one writes it.
@@ -104,7 +110,22 @@ pub struct FoundInFile {
     pub names_exported_again: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
     /// `export * from "./c"`
     pub modules_exported_again: Vec<Vec<u8>>,
+    /// `ResolvedBuiltins::builtins_exported`, and whether it is a CommonJS file.
+    pub builtins_exported: BuiltinsOfModule,
+    /// What it takes from the modules that it loads: the module as it writes it, and the name. No name: the whole module, as `import * as`, `require()` and `import()` give it.
+    pub names_loaded: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
+
+/// The built-ins that a file exports, each by its number and with the names that lead to it: `BuiltinExported`.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct BuiltinsOfModule {
+    pub exported: Vec<(Vec<Vec<u8>>, u32)>,
+    /// `BuiltinsOfLoadedFile::object_is_default`
+    pub object_is_default: bool,
+}
+
+/// What the file with this path gets where it loads a module that it writes like this. `None`: no built-in, as far as anybody knows.
+pub type FindBuiltinsOfModule<'a> = dyn Fn(&[u8], &[u8]) -> Option<BuiltinsOfModule> + Sync + 'a;
 
 pub(super) fn is_relative(specifier: &[u8]) -> bool {
     specifier.starts_with(b"./") || specifier.starts_with(b"../")
@@ -121,12 +142,13 @@ fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
 /// Nothing for a file with a syntax error: its build says so. Nothing for a file that holds no code: `import data from "./data.json"`, `./types.d.ts`.
 /// Several files, one after another. The table of the names of built-ins takes longer to make than a test file to read: it is made once for all of them.
 pub fn look_at_files(look_at_each: &mut dyn FnMut(&dyn Fn(&[u8], &[u8]) -> FoundInFile)) {
-    look_at_files_of_run(&|_| false, look_at_each);
+    look_at_files_of_run(&|_| false, &|_, _| None, look_at_each);
 }
 
 /// `is_beside_test_files`: whether the file lies in the folder of a test file or below it. A helper does, whatever it imports, and so does the code that it holds as a string.
 pub fn look_at_files_of_run(
     is_beside_test_files: &(dyn Fn(&[u8]) -> bool + Sync),
+    find_builtins_of_module: &FindBuiltinsOfModule<'_>,
     look_at_each: &mut dyn FnMut(&dyn Fn(&[u8], &[u8]) -> FoundInFile),
 ) {
     let session = Session::new();
@@ -136,6 +158,7 @@ pub fn look_at_files_of_run(
         names: BuiltinNames::new(&atoms),
         atoms,
         is_beside_test_files: Cell::new(false),
+        find_builtins_of_module,
     };
     look_at_each(&|path, text| {
         look.is_beside_test_files.set(is_beside_test_files(path));
@@ -150,6 +173,7 @@ struct Look<'s> {
     atoms: Interner<'s>,
     names: BuiltinNames,
     is_beside_test_files: Cell<bool>,
+    find_builtins_of_module: &'s FindBuiltinsOfModule<'s>,
 }
 
 const IMPORT_OF_NAMES_OF_TEST_RUNNER: &[u8] = b"import { jest, spyOn, vi } from \"bun:test\";\n";
@@ -177,8 +201,11 @@ impl<'s> Look<'s> {
         if hir.has_errors || matches!(hir.kind, FileKind::Json | FileKind::Declaration) {
             return false;
         }
+        found.has_syntax_error |= hir.has_parse_diagnostics;
         hir.text = Cow::Borrowed(text);
+        // The look through the test files knows neither the defines nor the features of the run: what stands under `if (feature("X"))` may run.
         let fold_options = FoldOptions {
+            features_are_unknown: true,
             max_string_bytes: MAX_FOLDED_STRING_BYTES,
             ..FoldOptions::default()
         };
@@ -230,12 +257,30 @@ impl<'s> Look<'s> {
             .map(|site| (site.kind, module_of(site.specifier)))
             .collect();
         targets.shared_sort_unstable_by_key(|target| target.0);
+        let loaded_files = analysis.import_sites.iter().filter_map(|site| {
+            let ImportSpecifier::Constant(specifier) = site.specifier else {
+                return None;
+            };
+            let module = (self.find_builtins_of_module)(path, atoms.bytes(specifier))?;
+            let exported = module.exported.iter().filter_map(|(names, builtin)| {
+                Some(BuiltinExported {
+                    path: names.iter().map(|name| atoms.intern(name)).collect(),
+                    builtin: BuiltinId::from_wire(*builtin)?,
+                })
+            });
+            Some(BuiltinsOfLoadedFile {
+                site: site.kind,
+                object_is_default: module.object_is_default,
+                exported: exported.collect(),
+            })
+        });
+        let loaded_files: Vec<BuiltinsOfLoadedFile> = loaded_files.collect();
         let resolved = resolve_file(&ResolveInput {
             hir: &hir,
             bound: &bound,
             decisions: &analysis.decisions,
             module_format: analysis.module_format,
-            targets: &ImportTargets::new(&targets),
+            targets: &ImportTargets::new(&targets).with_loaded_files(loaded_files),
             names,
             platform: host_platform(),
             dialect: SourceDialect::Program,
@@ -291,9 +336,17 @@ impl<'s> Look<'s> {
         (found.evicted).extend(modules.evicted.iter().map(|&it| bytes_of(it)));
         found.evicts_any |= modules.evicts_any;
         let changed = modules.changed_on_disk.iter();
-        (found.changed_on_disk).extend(changed.map(|&(path, is_own)| (bytes_of(path), is_own)));
+        (found.changed_on_disk).extend(changed.map(|changed| PathChangedOnDisk {
+            path: bytes_of(changed.path),
+            starts_at_own_directory: changed.starts_at_own_directory,
+            reaches_below: changed.reaches_below,
+        }));
         let throwers = modules.required_where_throws_are_caught.iter();
         (found.required_where_throws_are_caught).extend(throwers.map(|&it| bytes_of(it)));
+        let typed = modules.imported_with_types.iter();
+        found
+            .imported_with_types
+            .extend(typed.map(|&it| bytes_of(it)));
         found.names_file_with_query |= modules.names_file_with_query;
         for (written, texts) in [
             (
@@ -338,6 +391,30 @@ impl<'s> Look<'s> {
                 found.names_exported_again.push(again);
             }
         }
+        for site in analysis.import_sites.iter() {
+            let ImportSpecifier::Constant(module) = site.specifier else {
+                continue;
+            };
+            match site.kind {
+                ImportSiteKind::Import(import) => {
+                    let import = hir[import];
+                    let named = import.named.iter().map(|spec| hir[spec]);
+                    let named = named.filter(|spec| !spec.type_only && !import.type_only);
+                    let named = named.map(|spec| Some(bytes_of(spec.imported)));
+                    let default = import.default.is_some().then(|| Some(b"default".to_vec()));
+                    let whole = import.namespace.is_some().then_some(None);
+                    let names = named.chain(default).chain(whole);
+                    (found.names_loaded).extend(names.map(|name| (bytes_of(module), name)));
+                }
+                ImportSiteKind::ImportCall(_)
+                | ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::GetBuiltinModule(_) => {
+                    found.names_loaded.push((bytes_of(module), None));
+                }
+                _ => {}
+            }
+        }
         for site in analysis.import_sites {
             if let (ImportSiteKind::ExportStar(statement), ImportSpecifier::Constant(module)) =
                 (site.kind, site.specifier)
@@ -346,6 +423,15 @@ impl<'s> Look<'s> {
                 found.modules_exported_again.push(bytes_of(module));
             }
         }
+        found.builtins_exported = BuiltinsOfModule {
+            exported: (resolved.builtins_exported().iter())
+                .map(|it| {
+                    let names = it.path.iter().map(|&name| bytes_of(name)).collect();
+                    (names, it.builtin as u32)
+                })
+                .collect(),
+            object_is_default: analysis.module_format == ModuleFormat::CommonJs,
+        };
         let holders = resolved.holders_named_from_outside().iter();
         (found.holders_named_from_outside).extend(holders.map(|&holder| holder as u32));
         let holders = resolved.builtins_handed_out().iter();
@@ -499,19 +585,31 @@ impl<'s> Look<'s> {
             1 => &[b""],
             _ => &[b"", b"0"],
         };
+        // "Write `using spy = spyOn(...)`": the parser goes on behind a syntax error, and nothing runs such a text. What it writes on built-ins is kept all the same: it costs
+        // little, and a message often spells what the code beside it does under a name that is made.
+        let mut read_with_syntax_error: Option<FoundInFile> = None;
         for filler in fillers {
             let text = texts.join(*filler);
             // The body of a function, which may return.
             let body = [b"async function body() {\n", &text[..], b"\n}"].concat();
-            let mut inner = FoundInFile::default();
             // `bun test` hands every file the names of the test runner, so `jest.spyOn(..)` needs no import. A text that declares such a name itself fails to parse this way.
             let with_names = [IMPORT_OF_NAMES_OF_TEST_RUNNER, &text[..]].concat();
             let takes_spy_from_nowhere =
                 strings::contains(&text, b"spyOn") && !strings::contains(&text, b"bun:test");
-            if (takes_spy_from_nowhere && self.look_at_text(b"/text.ts", &with_names, &mut inner))
-                || self.look_at_text(b"/text.ts", &text, &mut inner)
-                || self.look_at_text(b"/text.ts", &body, &mut inner)
-            {
+            let ways = [
+                takes_spy_from_nowhere.then_some(&with_names[..]),
+                Some(&text[..]),
+                Some(&body[..]),
+            ];
+            for way in ways.into_iter().flatten() {
+                let mut inner = FoundInFile::default();
+                if !self.look_at_text(b"/text.ts", way, &mut inner) {
+                    continue;
+                }
+                if inner.has_syntax_error {
+                    read_with_syntax_error.get_or_insert(inner);
+                    continue;
+                }
                 found.members.extend(inner.members);
                 found.names_added.extend(inner.names_added);
                 // Where that code runs says nothing about the folder it is in: of a module that it imports, the name is what is known.
@@ -527,6 +625,10 @@ impl<'s> Look<'s> {
                 (found.modules_replaced_in_text).extend(inner.modules_replaced_in_text);
                 return;
             }
+        }
+        if let Some(inner) = read_with_syntax_error {
+            found.members.extend(inner.members);
+            found.names_added.extend(inner.names_added);
         }
     }
 }

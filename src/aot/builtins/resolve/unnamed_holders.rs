@@ -66,6 +66,29 @@ impl Resolver<'_, '_> {
         self.find_builtins_behind(object).to_vec()
     }
 
+    /// And what the object may be where nothing says which: any member of a built-in object that is read under a key that nobody spells, and what stands
+    /// around an instance that a helper was handed. Ordinary code looks the same, `const made = build({}); made.keys = list;`: see `puts_a_function_there`.
+    pub(super) fn find_builtins_guessed_widely(&self, object: ExprId) -> Vec<BuiltinId> {
+        let narrow = self
+            .unnamed_holders
+            .replace(self.widely_guessed_holders.take());
+        self.guesses_widely.set(true);
+        let found = self.find_builtins_behind(object).to_vec();
+        self.guesses_widely.set(false);
+        let wide = self.unnamed_holders.replace(narrow);
+        self.widely_guessed_holders.replace(wide);
+        found
+    }
+
+    /// `spyOn(object, key)`, `delete object.name`, `object.name = () => 1`, `object.name = replaced` of `const replaced = () => 1`: what a test does to a method.
+    /// `object.name = list` is what any code does to an object of its own.
+    pub(super) fn puts_a_function_there(&self, write: ExprId) -> bool {
+        match self.input.hir[write].kind {
+            ExprKind::Assign { value, .. } => !self.find_functions_behind(value).is_empty(),
+            _ => true,
+        }
+    }
+
     /// The imports that the object of a write comes out of, each with the names on the way, from the write on:
     /// `make().prototype`, `const made = await make(); made.proxy`, `tools.make()`, `wrap(imported)`, `withProxy(proxy => { proxy .. })`.
     pub(super) fn find_imports_behind(&self, object: ExprId) -> Vec<(ImportId, Vec<Atom>)> {
@@ -115,6 +138,12 @@ impl Resolver<'_, '_> {
                 }
             }
             ExprKind::Await(promised) => self.push_imports_behind(promised, path, seen, found),
+            // `(init(), late)`
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => self.push_imports_behind(right, path, seen, found),
             _ => {
                 let Some((object, key)) = hir.member_key(expr) else {
                     return;
@@ -139,12 +168,39 @@ impl Resolver<'_, '_> {
         for declaration in (0..hir.var_decls.len() as u32).map(VarDeclId) {
             let declaration = hir[declaration];
             if matches!(hir[declaration.pat].kind, PatKind::Ident(_))
-                && declaration.init.is_some()
                 && let symbol = bound.declared_symbol(Decl::Var(declaration.pat))
                 && symbol.is_some()
                 && self.is_exported(symbol)
             {
-                self.add_builtins_that_export_hands_out(declaration.init, &mut out);
+                if declaration.init.is_some() {
+                    self.add_builtins_that_export_hands_out(declaration.init, &mut out);
+                }
+                // `export let late; export function init() { late = Array.prototype; }`
+                let stores = self.stores_by_name();
+                for &stored in stores.get(&symbol).map_or(&[][..], Vec::as_slice) {
+                    self.add_builtins_that_export_hands_out(stored, &mut out);
+                }
+            }
+        }
+        // `export class Tools { static proto = Array.prototype; static ofMath() { return Math; } }`
+        for class in (0..hir.classes.len() as u32).map(ClassId) {
+            let symbol = bound.declared_symbol(Decl::Class(class));
+            if symbol.is_none()
+                || !(self.is_exported(symbol) || hir[class].flags.contains(Flags::EXPORT))
+            {
+                continue;
+            }
+            for member in hir[class].members.iter().map(|it| hir[it]) {
+                match member.kind {
+                    _ if !member.flags.contains(Flags::STATIC) => {}
+                    MemberKind::Property if member.init.is_some() => {
+                        self.add_builtins_that_export_hands_out(member.init, &mut out);
+                    }
+                    MemberKind::Method | MemberKind::Getter => {
+                        self.add_builtins_that_function_hands_out(member.func, &mut out);
+                    }
+                    _ => {}
+                }
             }
         }
         // `export function ofMath() { return new Proxy(Math, {}); }`
@@ -190,6 +246,19 @@ impl Resolver<'_, '_> {
                 ExprKind::Object(properties) => {
                     for property in properties.iter() {
                         self.add_builtins_that_export_hands_out(hir[property].value, out);
+                    }
+                }
+                // `new Map([["a", Array.prototype]])`, `Object.freeze({ proto: Array.prototype })`: what a function of the table is handed may be in what it makes.
+                ExprKind::New(call) | ExprKind::Call(call)
+                    if self.value_of(hir[call].callee).is_some()
+                        && self.find_builtin(value).is_none() =>
+                {
+                    add(
+                        &mut out.builtins,
+                        self.find_builtins_behind(value).iter().copied(),
+                    );
+                    for operand in hir.ids(hir[call].args) {
+                        self.add_builtins_that_export_hands_out(operand, out);
                     }
                 }
                 _ => {
@@ -319,6 +388,37 @@ impl Resolver<'_, '_> {
                     Some((_, MemberKey::Computed(key))) => self.find_keys_spelled_for(key),
                     Some((_, MemberKey::PrivateName(_))) | None => Vec::new(),
                 };
+                // `globalThis[key]`, `Array[key]` under a key that nobody spells: any of its members.
+                if let (Some((object, MemberKey::Computed(_))), true) = (
+                    hir.member_key(expr),
+                    names.is_empty() && self.guesses_widely.get(),
+                ) {
+                    for &holder in self.find_builtins_behind(object).iter() {
+                        let members = table::members(holder).iter();
+                        add(&mut found, members.map(|&it| table::canonical_id(it)));
+                    }
+                }
+                // `held[key]` of `const held = { first: a, second: b }` or `[a, b]`, under a key that nobody spells: any of what it holds.
+                if let (Some((object, MemberKey::Computed(_))), true) =
+                    (hir.member_key(expr), names.is_empty())
+                {
+                    for &whole in self.spelled_values_of(object).iter() {
+                        let held: Vec<ExprId> = match hir[whole].kind {
+                            ExprKind::Object(properties) => (properties.iter())
+                                .map(|it| hir[it])
+                                .filter(|it| {
+                                    matches!(it.kind, PropKind::Init | PropKind::Shorthand)
+                                })
+                                .map(|it| it.value)
+                                .collect(),
+                            ExprKind::Array(elements) => hir.ids(elements).collect(),
+                            _ => Vec::new(),
+                        };
+                        for value in held {
+                            add(&mut found, self.find_builtins_behind(value).iter().copied());
+                        }
+                    }
+                }
                 for name in names {
                     let object = hir.member_key(expr).map(|it| it.0);
                     add(
@@ -661,10 +761,18 @@ impl Resolver<'_, '_> {
         let hir = self.input.hir;
         let mut found = Vec::new();
         for operand in hir.ids(hir[call].args) {
-            add(
-                &mut found,
-                self.find_builtins_behind(operand).iter().copied(),
-            );
+            let handed = self.find_builtins_behind(operand);
+            add(&mut found, handed.iter().copied());
+            if !handed.is_empty() || !self.guesses_widely.get() {
+                continue;
+            }
+            // Handed what is no built-in object itself, it mostly answers what stands around that: `above(new Map())`, `classOf([])`.
+            for &value in self.spelled_values_of(operand).iter() {
+                for prototype in self.find_prototypes_of_spelled(value) {
+                    let class = find_member(prototype, table::find_name(b"constructor"));
+                    add(&mut found, [Some(prototype), class].into_iter().flatten());
+                }
+            }
         }
         let callee = hir.skip_type_assertions(hir[call].callee);
         match hir.member_key(callee) {

@@ -50,6 +50,7 @@ use crate::load::named_loads::{
 };
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
+use crate::load::replaced_modules::shares_place_in_loader;
 use crate::load::runtime_declarations;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::runtime_types;
@@ -61,7 +62,7 @@ use crate::load::test_runner_names;
 use crate::load::worker_files::find_file_named_as_in_executable;
 use crate::load::{is_host_path, is_in_node_modules};
 use crate::module_keys::{is_url_with_text, places_of_form};
-use crate::options::Options;
+use crate::options::{EntryText, Options};
 use crate::statistics::LimitValues;
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
@@ -129,6 +130,8 @@ pub(crate) struct LoadHost<'a> {
     /// As `entry_point_paths`, of `begin_at`.
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
+    /// As `LoadOptions::entry_texts`, of `begin_at_texts`.
+    found_entry_texts: Guarded<Vec<EntryText>>,
     /// Sorted. The entry points whose names say nothing about them and that aren't text.
     binary_entry_point_paths: Vec<Vec<u8>>,
     /// Entry points that are named as declaration files and hold statements that run. `bun run` runs them.
@@ -206,6 +209,11 @@ impl<'a> LoadHost<'a> {
         *self.found_entry_point_paths.lock() = paths;
     }
 
+    /// The load that runs begins at these texts too, and at no others beside `LoadOptions::entry_texts`. From here on the name of each leads to its module.
+    pub(crate) fn begin_at_texts(&self, texts: Vec<EntryText>) {
+        *self.found_entry_texts.lock() = texts;
+    }
+
     /// What takes a while to free, for whoever frees it beside other work.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
@@ -247,6 +255,7 @@ impl<'a> LoadHost<'a> {
             entry_point_paths,
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
+            found_entry_texts: Guarded::new(Vec::new()),
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
@@ -644,6 +653,12 @@ impl CodeHost for LoadHost<'_> {
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
             return HostResolution::Path(self.plugins.add_entry_text(text));
         }
+        if !is_import {
+            let found = self.found_entry_texts.lock();
+            if let Some(text) = found.iter().find(|it| it.name == request.specifier) {
+                return HostResolution::Path(self.plugins.add_entry_text(text));
+            }
+        }
         // The first of the programs of the realm holds Bun's own modules. A file with a query is an instance of its own, which the loader makes.
         // `bun` is the object `Bun` wherever a text names it: no loader is asked, so no mock stands in its place.
         if is_import
@@ -760,9 +775,27 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn is_form_in_other_program(&self, path: &[u8], type_attribute: &[u8]) -> bool {
-        let images_below = &self.input.options.aot.images_below;
-        places_of_form(to_native(path), type_attribute)
-            .is_some_and(|places| images_below.holds_module(&places.path_of_form))
+        let aot = &self.input.options.aot;
+        let path = to_native(path);
+        // Which of two types of one file comes first shows when a test file runs, where the test file asks for one and a file of a program below for the other.
+        // So neither program holds the file: the loader of the run time does, as under `bun test`.
+        let typed_by_tests = &aot.replaced_by_tests.data_files_imported_with_types;
+        let is_typed_by_tests = || {
+            typed_by_tests
+                .binary_search_by(|it| it[..].cmp(path))
+                .is_ok()
+        };
+        let is_asked_by_test_files =
+            aot.is_part_of_test_files || (aot.shares_realms && is_typed_by_tests());
+        // A page or a file with code that is read as text stays in the program: the run time makes something else of such a file.
+        if is_asked_by_test_files
+            && shares_place_in_loader(type_attribute)
+            && parses_text_as_data(self.default_loader(path))
+        {
+            return true;
+        }
+        places_of_form(path, type_attribute)
+            .is_some_and(|places| aot.images_below.holds_module(&places.path_of_form))
     }
 
     fn is_left_to_loader(&self, path: &[u8]) -> bool {

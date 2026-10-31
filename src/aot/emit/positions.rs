@@ -9,6 +9,7 @@ pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions
         column_adjustments,
         text_printed_in_place: Vec::new(),
         text_of_body: Vec::new(),
+        starts_of_statements_in_long_lines: Vec::new(),
         where_this_is_made: Vec::new(),
     }
 }
@@ -59,6 +60,7 @@ pub fn source_positions_in_bundle(
         column_adjustments: places.finish(),
         text_printed_in_place: Vec::new(),
         text_of_body: Vec::new(),
+        starts_of_statements_in_long_lines: Vec::new(),
         where_this_is_made: Vec::new(),
     }
 }

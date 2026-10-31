@@ -21,6 +21,7 @@ const mismatches =
 
 // The flow analysis takes `globalThis.name` for absent where the table lists no such member and no statement stores one. So the table has to list every own name
 // that the engine and the host give the global object, also those that appear when another is touched, and nothing but Object.prototype may lie above it.
+// It takes `globalThis[Symbol.for(text)]` so too: the engine and the host lay nothing on the global object under a symbol.
 const namesOfGlobalObject = [
   'import { aotBuiltinEntries } from "bun:internal-for-testing";',
   'const listed = new Set(aotBuiltinEntries().entries.filter(entry => entry.holder === "GlobalThis").map(entry => entry.name));',
@@ -32,12 +33,14 @@ const namesOfGlobalObject = [
   "  } catch {}",
   "}",
   "const unlisted = Object.getOwnPropertyNames(globalThis).filter(name => !listed.has(name));",
-  "console.log(JSON.stringify({ unlisted, isBelowObjectPrototype: Object.getPrototypeOf(globalThis) === Object.prototype }));",
+  "const symbols = Object.getOwnPropertySymbols(globalThis).map(String);",
+  "console.log(JSON.stringify({ unlisted, symbols, isBelowObjectPrototype: Object.getPrototypeOf(globalThis) === Object.prototype }));",
 ].join("\n");
 
 test("the table lists every own name of the global object but ShadowRealm, which a compiled program does not have", async () => {
   expect(JSON.parse((await runFile(namesOfGlobalObject)).stdout)).toEqual({
     unlisted: ["ShadowRealm"],
+    symbols: [],
     isBelowObjectPrototype: true,
   });
 });
@@ -51,7 +54,7 @@ test(
       const executable = await buildExecutable(folder);
       const ran = await spawned([executable], folder, bunEnv);
       expect({ names: JSON.parse(ran.stdout), exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-        names: { unlisted: [], isBelowObjectPrototype: true },
+        names: { unlisted: [], symbols: [], isBelowObjectPrototype: true },
         exitCode: 0,
         signal: null,
       });

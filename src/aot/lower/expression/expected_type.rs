@@ -5,7 +5,7 @@ use bun_sema::bind::Binding;
 use bun_sema::hir::{ExprId, ExprKind};
 
 use crate::ir::generated::FunctionFlags;
-use crate::ir::{PositionFlags, TypeTable, ValueId};
+use crate::ir::{Mapped, PositionFlags, TypeTable, ValueId};
 use crate::lower::FunctionLowering;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -47,6 +47,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             // The engine derives the type of every other expression by itself.
             _ => return value,
         };
+        if self.file.expects_int32_from_untyped_import(expression) {
+            let int32 = Mapped::checked(TypeTable::INT32);
+            return self.convert_narrowed(value, type_of_position, int32, None);
+        }
         let Ok(inferred) = self.file.queries.predicted_expression_type(expression) else {
             return value;
         };

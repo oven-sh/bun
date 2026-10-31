@@ -321,7 +321,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: b3(v7: string):
 # CHECK-NEXT: v8: "c/d.js" = String string="c/d.js"
 # CHECK-NEXT: v9: "/" = String string="/"
-# CHECK-NEXT: v10: Array<string, Contiguous> = NewArray v7, v8, v9 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v10: Array<string, Contiguous> = NewArray v7, v8, v9 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v11: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: number = CallDirect v11 function=f1 accessSite=4
 # CHECK-NEXT: v13: "function" = String string="function"

@@ -1,10 +1,11 @@
 // The `jsc` shell makes its own import.meta, module and require, without the functions that Bun puts on them. Compiled code calls such a
 // function without testing that it is there, so the shell puts one in its place that names the function the program needs, and
 // shell/quick.py skips the program. shell/tools.ts says what the scripts need.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

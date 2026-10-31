@@ -7,6 +7,7 @@ use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
 use crate::compile::mentions_worker_constructor;
 use crate::load::named_loads::{
     find_library_modules_that_unknown_names_may_stand_for, loads_by_unknown_path,
+    writes_own_code_anew,
 };
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
@@ -43,6 +44,8 @@ pub(crate) struct FurtherLibraryCode<'a> {
     /// `AotOptions::is_part_of_test_files`, over other images. A test file runs once: a copy of a built-in function that is compiled for its callers here costs more than it saves.
     /// So it calls the built-in functions of the first image through the objects of the realm, and holds only those that no object holds.
     pub holds_test_files_alone: bool,
+    /// `CodeOptions::working_directory` of a test run, which compares a file that the run has written with the disk before it loads it. Nothing else does.
+    pub working_directory_of_test_run: Option<&'a [u8]>,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -93,8 +96,12 @@ pub(crate) fn collect_runtime_roots(
     named.dedup();
     asks.modules_read_whole.extend(&named);
     host_loaded.extend(named.iter().copied());
-    let loads_by_unknown_path =
-        !further.is_served_by_other_images && loads_by_unknown_path(application);
+    let writes_own_code_anew = || {
+        let started_in = further.working_directory_of_test_run;
+        started_in.is_some_and(|started_in| writes_own_code_anew(application, started_in))
+    };
+    let loads_by_unknown_path = !further.is_served_by_other_images
+        && (loads_by_unknown_path(application) || writes_own_code_anew());
     host_loaded.extend(&further.lacked_before.modules);
     functions.extend(&further.lacked_before.functions);
     asks.add(further.lacked_before);
@@ -269,6 +276,7 @@ mod tests {
                 serves_unseen_code: false,
                 is_served_by_other_images: false,
                 holds_test_files_alone: false,
+                working_directory_of_test_run: None,
             };
             collect_runtime_roots(input.files, runtime_modules, input.platform, further)
         })

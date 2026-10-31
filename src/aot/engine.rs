@@ -29,7 +29,7 @@ pub use self::registry::{is_optional_pass, operation_names};
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
     describe_difference_of_runtime, describe_regexp_syntax_error, has_compiler, image_alignment,
-    relocate_image,
+    place_of_string_headers_behind, relocate_image,
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};

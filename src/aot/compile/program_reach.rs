@@ -36,7 +36,7 @@ use crate::modules::{
     Site, SiteAnswer, SyntheticExportId, Validity, View, is_enum,
 };
 use crate::options::{RemovableOptions, WaysBetweenModuleObjects};
-use crate::statistics::LimitValues;
+use crate::statistics::{LimitValues, Stage, StepClock};
 
 pub(crate) struct ProgramReachInput<'a, 's> {
     pub files: &'a Files<'s>,
@@ -1540,6 +1540,14 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    // `named_loads::writes_own_code_anew`: where the file is loaded the run time may read another text from disk, and what the build has read says nothing of what that imports.
+    fn add_loads_of_text_written_anew(&mut self) {
+        let (graph, module) = (self.input.graph, ModuleRef::File(self.file));
+        if graph.is_changed_on_disk_by_run(module) && graph.is_code_of_program(module) {
+            self.units.interests[TOP_LEVEL as usize].push(Interest::LoadByUnknownName);
+        }
+    }
+
     fn add_loads(&mut self) {
         let graph = self.input.graph;
         let analysis = self.input.files.analysis(self.file);
@@ -1849,6 +1857,7 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_holders();
         self.add_loads();
         self.add_loads_by_unknown_names();
+        self.add_loads_of_text_written_anew();
         self.add_module_objects();
         self.add_stores_of_loader_functions();
         self.add_requests_that_loader_functions_answer();
@@ -1963,6 +1972,7 @@ struct Walk<'a, 's> {
     reaches_load_by_unknown_name: bool,
     // The folders of the packages in which a load by an unknown name is reached.
     packages_loading_by_unknown_name: FxHashSet<&'a [u8]>,
+    files_named_at_run_time: Option<FilesNamedAtRunTime<'a>>,
     // What the loads by unknown names read of what they find: every export, or these names.
     a_load_looks_at_every_export: bool,
     names_read_from_loads: Vec<Atom>,
@@ -2113,6 +2123,7 @@ impl<'a, 's> Walk<'a, 's> {
             requirers: None,
             reaches_load_by_unknown_name: false,
             packages_loading_by_unknown_name: FxHashSet::default(),
+            files_named_at_run_time: None,
             a_load_looks_at_every_export: false,
             names_read_from_loads: Vec::new(),
             files_found_by_name: Vec::new(),
@@ -2412,7 +2423,20 @@ impl<'a, 's> Walk<'a, 's> {
         if !is_new_package || (!is_first && self.input.any_file_is_named_at_run_time) {
             return;
         }
-        for file in find_files_named_at_run_time(self.input, package) {
+        let input = self.input;
+        let found = match input.any_file_is_named_at_run_time {
+            true => {
+                let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
+                let code_files = input.files.compiled_files().iter().filter(is_code);
+                code_files.copied().collect()
+            }
+            false => {
+                let named = &mut self.files_named_at_run_time;
+                let named = named.get_or_insert_with(|| FilesNamedAtRunTime::new(input));
+                named.find(input, package)
+            }
+        };
+        for file in found {
             let module = ModuleRef::File(file);
             if !self.is_found_by_name.insert(module) {
                 continue;
@@ -3259,9 +3283,6 @@ fn package_of(path: &[u8]) -> &[u8] {
     &path[..slashes.take(parts).last().unwrap_or(path.len())]
 }
 
-// The files with code that a load in the package may find under a name the build does not follow to it: any file where code comes from disk,
-// else those that a relative path spells which a file writes as a string. The path comes from the package, from a file that imports from it, or from a package that one of those imports.
-// The extension may differ, and a folder stands for its index file.
 // Whether a call of `import()` that is not dead is given the path of a file with a query, as far as the build knows its argument: each query is an instance of its own, which only code
 // from disk can be. A query that reaches the call through a parameter or a call shows nowhere: flow has no strings. That load is refused with an error that names the option.
 pub(crate) fn imports_file_with_query(files: &Files<'_>, sources: &Sources) -> bool {
@@ -3339,71 +3360,135 @@ pub(crate) fn find_root_folders_spelled(
     longest
 }
 
-fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>, package: &[u8]) -> Vec<FileId> {
+// The files with code that a load in the package may find under a name the build does not follow to it: any file where code comes from disk,
+// else those that a relative path spells which a file writes as a string. The path comes from the package, from a file that imports from it, or from a package that one of those imports.
+// The extension may differ, and a folder stands for its index file.
+// What does not go by the package is found once, for the first package that asks.
+struct FilesNamedAtRunTime<'a> {
+    files_by_spelling: FxHashMap<&'a [u8], SmallVec<[FileId; 2]>>,
+    numbers_of_packages: FxHashMap<&'a [u8], u32>,
+    // By package.
+    code_files: Vec<Vec<FileId>>,
+    // By package: the packages of the files with code that are of it or import from it, and of what those files import.
+    neighbors: Vec<Vec<u32>>,
+    // By file: what the relative paths spell that it writes as strings, once somebody has asked.
+    spelled_by: FxHashMap<FileId, Vec<FileId>>,
+}
+
+impl<'a> FilesNamedAtRunTime<'a> {
+    fn new(input: &'a ProgramReachInput<'a, '_>) -> FilesNamedAtRunTime<'a> {
+        let files = input.files;
+        let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
+        let code_files = || files.compiled_files().iter().filter(is_code).copied();
+        let mut files_by_spelling: FxHashMap<&[u8], SmallVec<[FileId; 2]>> = FxHashMap::default();
+        for file in code_files() {
+            let spelling = without_extension(files.module(file).file_name());
+            files_by_spelling.entry(spelling).or_default().push(file);
+            if spelling.ends_with(b"/index") {
+                let folder = directory_of(spelling);
+                files_by_spelling.entry(folder).or_default().push(file);
+            }
+        }
+        let mut numbers_of_packages: FxHashMap<&[u8], u32> = FxHashMap::default();
+        let mut package_by_file = vec![u32::MAX; files.modules.len()];
+        let mut number_of = |file: FileId| {
+            let number = &mut package_by_file[file.idx()];
+            if *number == u32::MAX {
+                let next = numbers_of_packages.len() as u32;
+                let package = package_of(files.module(file).file_name());
+                *number = *numbers_of_packages.entry(package).or_insert(next);
+            }
+            *number
+        };
+        let mut code_files_of: Vec<Vec<FileId>> = Vec::new();
+        let mut neighbors: Vec<Vec<u32>> = Vec::new();
+        let mut touched: SmallVec<[u32; 8]> = SmallVec::new();
+        for file in code_files() {
+            touched.clear();
+            touched.push(number_of(file));
+            for request in input.graph.requests(file) {
+                if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target {
+                    touched.push(number_of(target));
+                }
+            }
+            let own = touched[0] as usize;
+            touched.sort_unstable();
+            touched.dedup();
+            let count = *touched.last().expect("its own") as usize + 1;
+            if neighbors.len() < count {
+                neighbors.resize_with(count, Vec::new);
+                code_files_of.resize_with(count, Vec::new);
+            }
+            code_files_of[own].push(file);
+            for &package in &touched {
+                neighbors[package as usize].extend_from_slice(&touched);
+            }
+        }
+        for packages in &mut neighbors {
+            packages.sort_unstable();
+            packages.dedup();
+        }
+        FilesNamedAtRunTime {
+            files_by_spelling,
+            numbers_of_packages,
+            code_files: code_files_of,
+            neighbors,
+            spelled_by: FxHashMap::default(),
+        }
+    }
+
+    fn find(&mut self, input: &ProgramReachInput<'_, '_>, package: &[u8]) -> Vec<FileId> {
+        let number = self.numbers_of_packages.get(package);
+        let Some(neighbors) = number.and_then(|&number| self.neighbors.get(number as usize)) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for &neighbor in neighbors {
+            for &file in &self.code_files[neighbor as usize] {
+                let spelled = self.spelled_by.entry(file);
+                let spelled = spelled
+                    .or_insert_with(|| find_files_spelled_by(input, &self.files_by_spelling, file));
+                found.extend_from_slice(spelled);
+            }
+        }
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+}
+
+fn find_files_spelled_by(
+    input: &ProgramReachInput<'_, '_>,
+    files_by_spelling: &FxHashMap<&[u8], SmallVec<[FileId; 2]>>,
+    file: FileId,
+) -> Vec<FileId> {
     let files = input.files;
-    let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
-    let code_files = || files.compiled_files().iter().filter(is_code).copied();
-    if input.any_file_is_named_at_run_time {
-        return code_files().collect();
-    }
-    let mut files_by_spelling: FxHashMap<&[u8], SmallVec<[FileId; 2]>> = FxHashMap::default();
-    for file in code_files() {
-        let spelling = without_extension(files.module(file).file_name());
-        files_by_spelling.entry(spelling).or_default().push(file);
-        if spelling.ends_with(b"/index") {
-            let folder = directory_of(spelling);
-            files_by_spelling.entry(folder).or_default().push(file);
-        }
-    }
-    let package_of_file = |file: FileId| package_of(files.module(file).file_name());
-    let imported_files = |file: FileId| {
-        let requests = input.graph.requests(file).iter();
-        requests.filter_map(|it| match it.target {
-            ModuleRef::File(target) | ModuleRef::Face(target) => Some(target),
-            _ => None,
-        })
-    };
-    let mut packages: FxHashSet<&[u8]> = FxHashSet::default();
-    packages.insert(package);
-    for file in code_files() {
-        if package_of_file(file) == package
-            || imported_files(file).any(|it| package_of_file(it) == package)
-        {
-            packages.insert(package_of_file(file));
-            packages.extend(imported_files(file).map(package_of_file));
-        }
-    }
     let mut found = Vec::new();
-    for file in code_files() {
-        if !packages.contains(package_of_file(file)) {
+    let directory = directory_of(files.module(file).file_name());
+    let sites = files.analysis(file).import_sites.iter();
+    let resolved: FxHashSet<ExprId> = sites.map(|site| site.specifier_node).collect();
+    let decisions = &files.analysis(file).decisions;
+    for (index, expression) in files.hir(file).exprs.iter().enumerate() {
+        let ExprKind::String(text) = expression.kind else {
+            continue;
+        };
+        // `feature ? require("./a.js") : null`, where the build has decided: nothing runs it.
+        if decisions.is_dead_expr(ExprId(index as u32)) {
             continue;
         }
-        let directory = directory_of(files.module(file).file_name());
-        let sites = files.analysis(file).import_sites.iter();
-        let resolved: FxHashSet<ExprId> = sites.map(|site| site.specifier_node).collect();
-        let decisions = &files.analysis(file).decisions;
-        for (index, expression) in files.hir(file).exprs.iter().enumerate() {
-            let ExprKind::String(text) = expression.kind else {
-                continue;
-            };
-            // `feature ? require("./a.js") : null`, where the build has decided: nothing runs it.
-            if decisions.is_dead_expr(ExprId(index as u32)) {
-                continue;
-            }
-            let text = files.atoms.bytes(text);
-            let names_something = split(text, b"/").any(|part| !matches!(part, b"" | b"." | b".."));
-            // `import.meta.dir + "/a.ts"`
-            if !(text.starts_with(b"./") || text.starts_with(b"../") || text.starts_with(b"/"))
-                || !names_something
-                || resolved.contains(&ExprId(index as u32))
-            {
-                continue;
-            }
-            let path = join(directory, text.strip_prefix(b"/").unwrap_or(text));
-            let path = path.strip_suffix(b"/").unwrap_or(&path);
-            for spelling in [path, without_extension(path)] {
-                found.extend(files_by_spelling.get(spelling).into_iter().flatten());
-            }
+        let text = files.atoms.bytes(text);
+        let names_something = split(text, b"/").any(|part| !matches!(part, b"" | b"." | b".."));
+        // `import.meta.dir + "/a.ts"`
+        if !(text.starts_with(b"./") || text.starts_with(b"../") || text.starts_with(b"/"))
+            || !names_something
+            || resolved.contains(&ExprId(index as u32))
+        {
+            continue;
+        }
+        let path = join(directory, text.strip_prefix(b"/").unwrap_or(text));
+        let path = path.strip_suffix(b"/").unwrap_or(&path);
+        for spelling in [path, without_extension(path)] {
+            found.extend(files_by_spelling.get(spelling).into_iter().flatten());
         }
     }
     found.sort_unstable();
@@ -3672,11 +3757,20 @@ pub(crate) fn find_left_out_code(
     if found.1.is_ready_for_loader_functions || !found.1.stores_loader_functions {
         return found;
     }
+    log_why_walk_runs_again("it met a store of a loader function behind a file that asks them");
     let input = ProgramReachInput {
         stores_loader_functions: true,
         ..*input
     };
     find_left_out_code_with_ways_named(&input, ways_named_that_nobody_reads, in_parallel)
+}
+
+// With the stages. The walk goes on one thread, and each time from nothing.
+fn log_why_walk_runs_again(why: &str) {
+    if crate::statistics::logs_stages() {
+        bun_core::print_errorln!("AOT walk for what is left out runs again | {}", why);
+        bun_core::Output::flush();
+    }
 }
 
 fn find_left_out_code_with_ways_named(
@@ -3701,6 +3795,11 @@ fn find_left_out_code_with_ways_named(
     if followed.is_empty() {
         return found;
     }
+    log_why_walk_runs_again(match (followed.children, followed.parent) {
+        (true, true) => "a module object is out of sight, and files name `children` and `parent`",
+        (true, false) => "a module object is out of sight, and a file names `children`",
+        (false, _) => "a module object is out of sight, and a file names `parent`",
+    });
     let mut ways_read_out_of_sight = input.ways_read_out_of_sight;
     ways_read_out_of_sight.add(followed);
     let input = ProgramReachInput {
@@ -3717,8 +3816,11 @@ fn find_left_out_code_following(
     input: &ProgramReachInput<'_, '_>,
     in_parallel: InParallel<'_>,
 ) -> (LeftOutCode, ReachedModules) {
+    let mut steps = StepClock::new(Stage::BindModules, "find_left_out_code");
     let mut walk = Walk::new(input, in_parallel);
+    steps.end("Walk::new");
     walk.run();
+    steps.end("Walk::run");
     let mut left_out = LeftOutCode::default();
     let mut reached_modules = ReachedModules::default();
     for (index, units) in walk.files.iter().enumerate() {
@@ -3836,5 +3938,6 @@ fn find_left_out_code_following(
         && !input.files.compiled_files().iter().any(loads_outside_units);
     left_out.names_read_from_objects = walk.names_read_from_objects;
     left_out.bound_variables = walk.bound_variables;
+    steps.end("what is left out is listed");
     (left_out, reached_modules)
 }

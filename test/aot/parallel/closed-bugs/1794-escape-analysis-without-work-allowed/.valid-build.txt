@@ -1,0 +1,3 @@
+error: internal compiler error (Optimize): GuardNotAvailable: something between the guard and the use may write what the guard depends on; function 'taker' (f1619), block b13, value v38 (IsElementPresent) in function 'taker' at /dev/shm/fl43-probe-1231868/lists-made-of-what-is-walked-and-used-on-a-rare-path.00145/main.ts:24:36
+
+note: This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues

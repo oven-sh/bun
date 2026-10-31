@@ -205,17 +205,6 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"import { createRequire } from "node:module"; import.meta.url = other; createRequire(import.meta.url)("a");"#,
         &[],
     ),
-    // What is made is asked for on the way to what it is made of.
-    (
-        "a.mts",
-        r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("a");"#,
-        &[],
-    ),
-    (
-        "a.cjs",
-        r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("a");"#,
-        &["module"],
-    ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
@@ -583,9 +572,42 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
         r#"(typeof require === "function" ? require : other)("a");"#,
         &["a"],
     ),
+    // What is called may be `require`: the call asks where it runs.
     (
         "a.cjs",
         r#"const load = (flag ? require : other); load("a");"#,
+        &["a"],
+    ),
+    ("a.cjs", r#"(other ?? require)("a");"#, &["a"]),
+    ("a.cjs", r#"(require || other)("a");"#, &["a"]),
+    (
+        "a.cjs",
+        r#"(one ?? (two || (flag ? three : require)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"(a ?? (b ?? (c ?? (d ?? (e ?? (f ?? (g ?? (h ?? (i ?? (j ?? require))))))))))("a");"#,
+        &["a"],
+    ),
+    ("a.cjs", r#"(one ?? two)("a");"#, &[]),
+    // A choice that leads back to itself.
+    ("a.cjs", r#"var load = load || require; load("a");"#, &["a"]),
+    ("a.cjs", r#"var load = load ?? require; load("a");"#, &["a"]),
+    (
+        "a.cjs",
+        r#"var load = typeof load === "function" ? load : require; load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"var one = two || require; var two = one || require; one("a"); two("b");"#,
+        &["a", "b"],
+    ),
+    ("a.cjs", r#"var load = load || other; load("a");"#, &[]),
+    (
+        "a.cjs",
+        r#"var one = two || one; var two = one || two; one("a");"#,
         &[],
     ),
     (
@@ -811,6 +833,63 @@ fn builtin_module_call_needs_constant_specifier() {
     }
 }
 
+/// The file, its text, and `(specifier, path)` of what the names of its loads ask of other files.
+const ASKED_OF_DATA_FILES: &[(&str, &str, &[(&str, &str)])] = &[
+    (
+        "a.cjs",
+        r#"require(require("./c.json").plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.cjs",
+        r#"require(require("./c.json").nested.main);"#,
+        &[("./c.json", "nested"), ("./c.json", "nested\0main")],
+    ),
+    (
+        "a.cjs",
+        r#"const c = require("./c.json"); require(c.list[0]);"#,
+        &[("./c.json", "list"), ("./c.json", "list\x000")],
+    ),
+    (
+        "a.cjs",
+        r#"const { plugin } = require("./c.json"); require(plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.mts",
+        r#"import c from "./c.json"; import(c.plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.mts",
+        r#"import { plugin } from "./c.json"; import(plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.mts",
+        r#"import * as c from "./c.json"; import(c.default.plugin); import(c.other);"#,
+        &[("./c.json", "other"), ("./c.json", "plugin")],
+    ),
+    // No load is named by it.
+    ("a.cjs", r#"console.log(require("./c.json").plugin);"#, &[]),
+    // The key is not known.
+    ("a.cjs", r#"require(require("./c.json")[key]);"#, &[]),
+];
+
+#[test]
+fn names_of_loads_ask_for_texts_of_other_files() {
+    for &(path, text, expected) in ASKED_OF_DATA_FILES {
+        analyzed(path, text, |s| {
+            let asked = s.analysis.asked_of_data_files.iter();
+            let mut asked: Vec<(&str, &str)> = asked
+                .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
+                .collect();
+            asked.sort_unstable();
+            assert_eq!(asked, expected, "{text}");
+        });
+    }
+}
+
 #[test]
 fn call_of_require_made_for_own_file_is_site() {
     let programs = MADE_REQUIRES.iter().chain(REQUIRES_AS_VALUES);
@@ -824,6 +903,147 @@ fn call_of_require_made_for_own_file_is_site() {
                 _ => None,
             });
             assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
+        });
+    }
+}
+
+// `None`: no site. `Some(None)`: the name is looked for from the file itself.
+const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/")("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/beside.js")("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/index.js")("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib" + "/index.js")("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(`${__dirname}/lib/index.js`)("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("path").join(__dirname, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"const base = __dirname + "/lib/"; const load = require("module").createRequire(base); load("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/").resolve("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/../lib/")("./a");"#,
+        Some(Some("./../lib/")),
+    ),
+    // A path without a slash at its end is a file to `createRequire`, and the folder of this one is the folder above.
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname)("./a");"#,
+        Some(Some(".")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(import.meta.dir + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    // A whole path is the same to every `require`.
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/")(__dirname + "/a");"#,
+        Some(None),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/..")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + name)("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/" + name + "/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("x" + __dirname + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(other + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"__dirname = other; require("module").createRequire(__dirname + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"var a = b + "/x", b = a + "/y"; require("module").createRequire(a)("./a");"#,
+        None,
+    ),
+    // What is made is asked for on the way to what it is made of.
+    (
+        "a.cjs",
+        r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("./a");"#,
+        None,
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("./a");"#,
+        None,
+    ),
+];
+
+#[test]
+fn call_of_require_made_for_path_from_own_folder_is_resolved_from_that_path() {
+    for &(path, text, expected) in REQUIRES_MADE_FOR_PATHS {
+        analyzed(path, text, |s| {
+            let sites = s.analysis.import_sites.iter().enumerate();
+            let found = sites.filter_map(|(index, site)| match site.specifier {
+                ImportSpecifier::Constant(name) if s.workspace.text(name) == "./a" => {
+                    Some(match s.analysis.path_to_resolve_from(index) {
+                        Some(ResolvedFrom::PathFromOwnFolder(path)) => Some(s.workspace.text(path)),
+                        Some(ResolvedFrom::File(_)) => Some("a file"),
+                        None => None,
+                    })
+                }
+                _ => None,
+            });
+            assert_eq!(
+                found.collect::<Vec<_>>(),
+                Vec::from_iter(expected),
+                "{text}"
+            );
         });
     }
 }
@@ -1342,6 +1562,31 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./a/*"],
     ),
     (
+        "require('file://' + __dirname + '/lib/a.js');",
+        ResolvedForm::Url,
+        &["./lib/a.js"],
+    ),
+    (
+        "require(`file://${__dirname}/lib/a.js`);",
+        ResolvedForm::Url,
+        &["./lib/a.js"],
+    ),
+    (
+        "require('file://' + require('path').join(__dirname, 'lib', 'a.js'));",
+        ResolvedForm::Url,
+        &["./lib/a.js"],
+    ),
+    (
+        "const name = c ? 'a' : 'b'; import('file://' + __dirname + '/lib/' + name + '.js');",
+        ResolvedForm::Url,
+        &["./lib/a.js", "./lib/b.js"],
+    ),
+    (
+        "import('file://' + __dirname + '/lib/' + x + '.js');",
+        ResolvedForm::Url,
+        &["./lib/*.js"],
+    ),
+    (
         "require(require.resolve(`./a/${x}.js`).trim());",
         ResolvedForm::Path,
         &["./a/*.js"],
@@ -1372,6 +1617,12 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; import.meta.url = x; await import(new URL('./a.js', import.meta.url));",
     "export {}; await import(c ? new URL('./a.js', import.meta.url) : import.meta.resolve('./b'));",
     "require(require.resolve('./a').trimEnd(x));",
+    "require('file://' + __dirname + '/a%20b.js');",
+    "require('file://' + __dirname + '/a.js?b');",
+    "require('file://' + __dirname + '/a.js#b');",
+    "require('file://' + 'file://' + __dirname + '/a.js');",
+    "require(require('path').join('file://' + __dirname, 'a.js'));",
+    "require(require('url').pathToFileURL('file://' + __dirname + '/a.js').href);",
 ];
 
 fn find_site_given_answer_of_resolver<'a>(
@@ -1492,7 +1743,59 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
     ),
     (
         "import { renameSync } from 'node:fs'; renameSync('/p/a.js', '/p/b.js');",
-        &["/p/a.js", "/p/b.js"],
+        &["/p/a.js and below", "/p/b.js and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { force: true, recursive: true });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { recursive: false });",
+        &["/p/a"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { force: true });",
+        &["/p/a"],
+    ),
+    (
+        "import { rm } from 'node:fs'; rm('/p/a', () => {});",
+        &["/p/a"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { recursive: deep });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { recursive });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { ...options });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { [name]: true });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', options);",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', ...rest);",
+        &["/p/a and below"],
+    ),
+    (
+        "import { cpSync } from 'node:fs'; cpSync('/p/a', '/p/b', { recursive: true });",
+        &["/p/b and below"],
+    ),
+    (
+        "import { cpSync } from 'node:fs'; cpSync('/p/a', '/p/b');",
+        &["/p/b"],
+    ),
+    (
+        "import { createWriteStream } from 'node:fs'; createWriteStream('', { fd });",
+        &[""],
     ),
     (
         "import { copyFileSync } from 'node:fs'; copyFileSync('/p/a.js', '/p/b.js');",
@@ -1544,7 +1847,15 @@ fn describe_paths_of_changed_files(text: &str) -> Vec<String> {
         let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
         let paths = s.analysis.paths_of_changed_files.iter();
         described = paths
-            .flat_map(|(_, specifier)| describe_specifier(s, specifier))
+            .flat_map(|changed| {
+                let reach = if changed.reaches_below {
+                    " and below"
+                } else {
+                    ""
+                };
+                let paths = describe_specifier(s, &changed.path).into_iter();
+                paths.map(move |path| path + reach)
+            })
             .collect();
     });
     described

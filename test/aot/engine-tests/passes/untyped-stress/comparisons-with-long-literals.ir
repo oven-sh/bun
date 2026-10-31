@@ -479,13 +479,13 @@ function f64 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # -- generated: f1 count3
 # CHECK-LABEL: function f1 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 478, patchpoints: 105, rare instructions: 451, polls: 3
+# CHECK-NEXT: instructions: 426, patchpoints: 98, rare instructions: 352, polls: 3
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="count3"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 91, patchpoints: 12, rare instructions: 184, polls: 4
+# CHECK-NEXT: instructions: 26, patchpoints: 5, polls: 1
 # CHECK-NEXT: end of function f17
 # CHECK-LABEL: function {{*}}name="count3"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f84
+# CHECK-NEXT: end of function f85

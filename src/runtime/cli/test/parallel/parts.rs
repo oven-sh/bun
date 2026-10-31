@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::FdExt as _;
 
 use super::file_range::FileRange;
-use crate::cli::run_compiled::{self, TestPartFile, TestPartKind};
+use crate::cli::run_compiled::{self, TestPartFile, TestPartKind, TestPartMessages};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PartState {
@@ -123,6 +123,22 @@ impl Parts {
         }
     }
 
+    /// The files of the project are built as so many programs, one above the other. None of them has begun.
+    pub(crate) fn set_programs_of_project(&mut self, programs: u32) {
+        let below = usize::from(self.stands_on_library_of_this_bun)
+            + 1
+            + usize::from(self.has_layer_of_computed_imports);
+        let of_project = &self.layers[below..];
+        assert!(
+            of_project
+                .iter()
+                .all(|layer| layer.state == PartState::Waiting)
+        );
+        let all_files = of_project[0].range;
+        self.layers
+            .resize_with(below + programs as usize, || Part::new(all_files));
+    }
+
     /// The programs of the first `count` layers, the lowest first.
     pub(crate) fn programs_below(&self, count: usize) -> Vec<bun_sys::Fd> {
         let files = self.layers[..count]
@@ -194,12 +210,10 @@ impl Parts {
     }
 
     /// `time_of`: with `--timings`, what the files of a part take together. The part that takes longest is built first.
-    /// `reserves_room`: with `--aot-memory-limit`.
     pub(crate) fn next_to_build(
         &self,
         free_workers: u32,
         time_of: Option<&dyn Fn(FileRange) -> u64>,
-        reserves_room: bool,
     ) -> Option<u32> {
         for (index, (layer, number)) in self.layers.iter().zip(FIRST_LAYER..).enumerate() {
             match layer.state {
@@ -212,9 +226,6 @@ impl Parts {
                 }
                 PartState::Ready | PartState::Finished => {}
             }
-        }
-        if reserves_room {
-            return self.next_to_build_where_room_is_reserved(free_workers, time_of);
         }
         // Builds follow the workers, so that few of them run beside the tests: a part for each worker that has none, one that
         // waits for the next worker to end, and one behind it.
@@ -241,56 +252,6 @@ impl Parts {
             .or_else(|| first_of_the_largest(waiting(false), time_of))
     }
 
-    /// The heavy parts start from the heaviest down, each when there is room, so one stands ready and one behind it. The others
-    /// follow the workers as ever.
-    fn next_to_build_where_room_is_reserved(
-        &self,
-        free_workers: u32,
-        time_of: Option<&dyn Fn(FileRange) -> u64>,
-    ) -> Option<u32> {
-        let on_their_way = |is_heavy: bool| {
-            let is_one = move |part: &&Part| {
-                (part.heavy_growth > 0) == is_heavy
-                    && (part.state == PartState::Building
-                        || (part.state == PartState::Ready && part.is_free()))
-            };
-            self.list.iter().filter(is_one).count() as u32
-        };
-        let waiting = |is_heavy: bool| {
-            (self.list.iter().enumerate()).filter(move |(_, part)| {
-                part.state == PartState::Waiting && (part.heavy_growth > 0) == is_heavy
-            })
-        };
-        if on_their_way(true) < 2
-            && let Some((index, _)) = waiting(true).max_by_key(|(_, part)| part.heavy_growth)
-        {
-            return Some(index as u32);
-        }
-        if on_their_way(false) >= free_workers + 2 {
-            return None;
-        }
-        let light = waiting(false).map(|(index, part)| (index as u32, part.range));
-        first_of_the_largest(light, time_of)
-    }
-
-    pub(crate) fn has_light_files_left(&self) -> bool {
-        (self.list.iter()).any(|part| part.heavy_growth == 0 && !part.range.is_empty())
-    }
-
-    /// The heaviest file that is being built, or is built and has no worker.
-    pub(crate) fn heaviest_on_its_way(&self) -> u32 {
-        let is_one = |part: &&Part| {
-            part.state == PartState::Building
-                || (part.state == PartState::Ready && part.is_free() && !part.range.is_empty())
-        };
-        let growths = self
-            .list
-            .iter()
-            .filter(is_one)
-            .map(|part| part.heavy_growth);
-        growths.max().unwrap_or(0)
-    }
-
     /// A worker starts a VM and the layers, so it runs a part from its first file to its last. Only when no part is left to build
     /// does a worker help with a part that another has begun, so that the run does not end with one worker at work.
     /// `waiting`: the part of each worker that has no file yet.
@@ -304,27 +265,22 @@ impl Parts {
             .then_some(next as u32)
     }
 
-    /// `has_room_for`: with `--aot-memory-limit`, whether a file of the part may start, from the given one on.
     pub(crate) fn next_for_worker(
         &self,
         waiting: &[u32],
         time_of: Option<&dyn Fn(FileRange) -> u64>,
-        has_room_for: Option<&dyn Fn(&Part, u32) -> bool>,
     ) -> Option<u32> {
         let running = self.heavy_growth_running();
         let next_files = |is_free: bool| {
             (self.list.iter().enumerate()).filter_map(move |(index, part)| {
                 let already_waiting =
                     waiting.iter().filter(|&&of| of as usize == index).count() as u32;
-                let next = part.range.lo + already_waiting;
                 // No two heavy files run at once.
                 let has_file = part.state == PartState::Ready
                     && part.is_free() == is_free
                     && part.range.len() > already_waiting
-                    && match has_room_for {
-                        Some(has_room_for) => has_room_for(part, next),
-                        None => !self.is_held_back(part, running),
-                    };
+                    && !self.is_held_back(part, running);
+                let next = part.range.lo + already_waiting;
                 has_file.then_some((
                     index as u32,
                     FileRange {
@@ -337,15 +293,7 @@ impl Parts {
         let is_to_come =
             |part: &Part| matches!(part.state, PartState::Waiting | PartState::Building);
         let is_heavy = |&(index, _): &(u32, FileRange)| self.list[index as usize].heavy_growth > 0;
-        let growth_of = |files: FileRange| -> u64 {
-            let is_it = |part: &&Part| part.range.lo == files.lo;
-            (self.list.iter().find(is_it)).map_or(0, |part| u64::from(part.heavy_growth))
-        };
-        let order_of_heavy = match has_room_for {
-            Some(_) => Some(&growth_of as &dyn Fn(FileRange) -> u64),
-            None => time_of,
-        };
-        let heavy = first_of_the_largest(next_files(true).filter(is_heavy), order_of_heavy);
+        let heavy = first_of_the_largest(next_files(true).filter(is_heavy), time_of);
         heavy
             .or_else(|| first_of_the_largest(next_files(true), time_of))
             .or_else(|| match self.list.iter().any(is_to_come) {
@@ -487,7 +435,7 @@ pub(crate) struct PartBuilder {
     pub(crate) part: u32,
     pub(crate) process: Option<spawn::ProcessHandle>,
     parts: *mut Parts,
-    messages_path: ZBox,
+    messages: TestPartMessages,
 }
 
 impl PartBuilder {
@@ -524,13 +472,12 @@ impl PartBuilder {
         argv.push(self_path.as_ptr());
         argv.extend(arguments.iter().map(|argument| argument.as_ptr()));
         argv.push(core::ptr::null());
-        let messages_path = run_compiled::temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-        let messages = Box::<[u8]>::from(messages_path.as_bytes());
+        let messages = TestPartMessages::create().map_err(|_| crate::Error::SpawnFailed)?;
         #[cfg(unix)]
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout: Stdio::Ignore,
-            stderr: Stdio::Path(messages),
+            stderr: Stdio::Pipe(messages.descriptor),
             extra_fds: core::iter::once(file.descriptor)
                 .chain(below.iter().copied())
                 .chain(told_of_last_below)
@@ -548,7 +495,7 @@ impl PartBuilder {
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout: Stdio::Ignore,
-            stderr: Stdio::Path(messages),
+            stderr: Stdio::Path(Box::from(messages.path.as_bytes())),
             cwd: cwd.to_vec().into_boxed_slice(),
             windows: spawn::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(vm.event_loop().cast()),
@@ -575,7 +522,7 @@ impl PartBuilder {
             part,
             process: None,
             parts,
-            messages_path,
+            messages,
         });
         let this: *mut PartBuilder = &raw mut *builder;
         let process: *mut Process = handle.as_ptr();
@@ -604,10 +551,7 @@ impl PartBuilder {
     }
 
     pub(crate) fn take_messages(&self) -> Vec<u8> {
-        let messages = bun_sys::File::read_from(bun_sys::Fd::cwd(), self.messages_path.as_bytes())
-            .unwrap_or_default();
-        let _ = bun_sys::unlink(&self.messages_path);
-        messages
+        self.messages.read()
     }
 }
 

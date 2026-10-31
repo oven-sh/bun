@@ -142,6 +142,11 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
+    Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
+      if (isStdio(this.fd)) return cb(err);
+      fs.ReadStream.prototype._destroy.$call(this, err, cb);
+    };
+
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });
 
     return Prototype;
@@ -154,27 +159,33 @@ type Self = $Node.TTYWriteStream;
 function WriteStream(this: Self, fd: number): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd) as any;
 
-  // Answers its `this`: the prototype below is `fs.WriteStream.prototype` itself.
-  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false }) as unknown as Self;
-  stream.columns = undefined;
-  stream.rows = undefined;
-  stream.isTTY = isatty(stream.fd);
+  fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  this.columns = undefined;
+  this.rows = undefined;
+  this.isTTY = isatty(this.fd);
 
-  if (stream.isTTY) {
+  if (this.isTTY) {
     const windowSizeArray = [0, 0];
     if (_getWindowSize(fd, windowSizeArray) === true) {
-      stream.columns = windowSizeArray[0];
-      stream.rows = windowSizeArray[1];
+      this.columns = windowSizeArray[0];
+      this.rows = windowSizeArray[1];
     }
   }
-
-  return stream as unknown as void;
 }
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    const Prototype = Object.create(fs.WriteStream.prototype);
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
+
+    WriteStream.prototype._destroy = function (this: $Node.TTYWriteStream, err: Error | null, cb: DoneCallback) {
+      // Ending a FileSink never closes the stream's fd, so only a stream without one has to skip the close.
+      if (isStdio(this.fd) && !this[fs.kWriteStreamFastPath]) {
+        this.fd = null;
+        return cb(err);
+      }
+      fs.WriteStream.prototype._destroy.$call(this, err, cb);
+    };
 
     WriteStream.prototype._refreshSize = function (this: $Node.TTYWriteStream) {
       const oldCols = this.columns;
@@ -251,10 +262,15 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    return Prototype;
   },
   enumerable: true,
   configurable: true,
 });
+
+// Node's tty streams wrap a libuv TTY handle, and closing one never closes descriptors 0-2.
+function isStdio(fd: number | null) {
+  return fd != null && fd <= 2;
+}
 
 export default { ReadStream, WriteStream, isatty };

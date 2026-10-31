@@ -143,7 +143,7 @@ function f1 name="main" module=m0 position=330 flags=[IsChecked, HasExplicitName
     v48 = Undefined
     Return v48
 }
-function f2 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f2 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -166,4 +166,4 @@ function f2 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChe
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-runtimefunction id=69 function=f2
+runtimefunction id=68 function=f2

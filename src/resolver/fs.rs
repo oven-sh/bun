@@ -341,11 +341,11 @@ pub mod dir_entry {
 
 /// Per-entry hook invoked by `readdir`, which lends it the filesystem it is running on.
 pub trait DirEntryIterator {
-    fn next<R: EntryKindResolver>(&self, fs: &R, entry: &Entry, fd: Fd);
+    fn next<R: EntryKindResolver>(&mut self, fs: &R, entry: &Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
-    fn next<R: EntryKindResolver>(&self, _fs: &R, _entry: &Entry, _fd: Fd) {}
+    fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
 pub struct DirEntry {

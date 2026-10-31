@@ -642,6 +642,13 @@ extern "C" size_t Bun__reported_memory_size;
 // executionContextId: >-1 for workers
 extern "C" bool Bun__hasStandaloneModuleGraph();
 
+NEVER_INLINE Zig::GlobalObject* defaultGlobalObjectSlow(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject))
+        return globalObject;
+    return defaultGlobalObject();
+}
+
 Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 {
     if (auto* clientData = WebCore::clientData(vm); clientData && clientData->defaultGlobalObject)

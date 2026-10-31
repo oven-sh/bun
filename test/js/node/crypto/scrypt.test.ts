@@ -169,6 +169,12 @@ test("scrypt reports its arguments and options as Node does", () => {
   );
 });
 
+test("scrypt passes null as the error of a successful derivation", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown[]>();
+  scrypt("password", "salt", 4, { N: 2 }, (...args) => resolve(args));
+  expect(await promise).toEqual([null, scryptSync("password", "salt", 4, { N: 2 })]);
+});
+
 // Node refuses the second name of an option where it reads it: before it validates what the name holds, before it reads
 // a later option, and before it checks the callback. Without a fifth argument, the fourth is the callback.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L40-L50 and #L90-L129

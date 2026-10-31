@@ -1464,6 +1464,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_png"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_highway",
+ "bun_zlib",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_pod"
 version = "0.0.0"
 dependencies = [
@@ -1639,6 +1650,7 @@ dependencies = [
  "bun_paths",
  "bun_picohttp",
  "bun_platform",
+ "bun_png",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolve_builtins",

@@ -399,7 +399,11 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames, expected }` to rename its field, to accept other spellings, or to report a wrong type as
-a function's `expected` does.
+a function's `expected` does. What another spelling holds is reported under the member's own name.
+`exclusive: true` is for an option that Node gives two names and refuses under both, as `cost` is the second name of
+scrypt's `N`: `N: { type: b.u32.validateInteger().optional, altNames: ["cost"], exclusive: true }`. Each name is read once, and
+what it holds is converted and reported under that name, into the one field. If neither holds `undefined`, the second throws
+`ERR_INCOMPATIBLE_OPTION_PAIR` when it is read: before its value is converted, and before a later member is read.
 A dictionary whose members can all be absent implements `Default`. As an argument, with
 `.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
 `options: &BracesOptions`, or `Option<&BracesOptions>` with one of the modifiers that make it an `Option`. As a member, with `.withValue`, as the value of a setter, or inside a union or an array, it is held by value.

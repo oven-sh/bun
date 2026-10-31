@@ -162,6 +162,7 @@ describe("bundler", () => {
       run: {
         exitCode: 1,
         validate({ stderr }) {
+          expect(stderr).toInclude("error: Hello World");
           expect(stderr).not.toInclude("Could not decode sourcemap");
           expect(stderr).toInclude("\nnote: missing sourcemaps for ");
           expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get unminified traces\n");

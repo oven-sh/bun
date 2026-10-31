@@ -272,6 +272,8 @@ const buildPlatforms: Platform[] = [
   // In no release either. The build checks the layout of the file that it links and of the one that it strips
   // (scripts/build/verify-binary.ts).
   { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" },
+  // Links bun-webkit-linux-arm64-lto-hardened, which signs return addresses (oven-sh/WebKit#945).
+  { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -332,6 +334,8 @@ const testPlatforms: Platform[] = [
       "aot/the-build-under-test",
     ],
   },
+  // Built with --lock-environment=off, so tests steer it as they steer any other: it runs them all.
+  { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -614,6 +618,8 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
   if (profile === "hardened") args.push("--hardened=on");
+  // The lane that signs return addresses has no ahead-of-time compiler.
+  if (profile === "hardened" && arch === "aarch64") args.push("--aot=off", "--lock-environment=off");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -949,6 +955,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // source-tree lints and build-script unit tests that never touch the built
     // binary; run in .github/workflows/source-lints.yml instead
     args.push("--exclude=internal/source-lints");
+    // Built with --aot=off.
+    if (profile === "hardened") args.push("--exclude=aot/", "--exclude=compile-aot", "--exclude=bundler_compile_aot");
   }
 
   const depends: string[] = [];
@@ -1008,7 +1016,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
             // imports runner.node.ts; call that directly once the hosts have a
             // hook that knows the new name.
             `./scripts/runner.node.mjs ${args.join(" ")}`
-          : `./scripts/runner.node.ts ${args.join(" ")}`,
+          : `${profile === "hardened" && platform.arch === "aarch64" ? `grep -m1 -ow paca /proc/cpuinfo || echo "no pointer authentication"; ` : ""}./scripts/runner.node.ts ${args.join(" ")}`,
   };
 }
 

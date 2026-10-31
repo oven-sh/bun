@@ -2087,7 +2087,15 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
 
 export function computeHardeningFlags(cfg: Config): string[] {
   if (!cfg.hardened) return [];
-  return hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE"));
+  return [
+    ...hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE")),
+    ...(signsReturnAddresses(cfg) ? ["-mbranch-protection=pac-ret"] : []),
+  ];
+}
+
+/** `SIGNED_RETURN_ADDRESSES` in oven-sh/WebKit's .github/scripts/lanes.mjs: arm64's "lto-hardened", which has no compiler. */
+export function signsReturnAddresses(cfg: Pick<Config, "hardened" | "arm64" | "linux" | "aot">): boolean {
+  return cfg.hardened && cfg.linux && cfg.arm64 && !cfg.aot;
 }
 
 /** Just the -march/-mcpu/-mtune flags: rust.ts translates them into rustc's -Ctarget-cpu so Rust code targets the same CPU as the C++. */

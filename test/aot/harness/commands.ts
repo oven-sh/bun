@@ -63,7 +63,9 @@ export const verifiesEachPass = (flags: string[]) =>
 
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
-  if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
+  // `bun run --aot` and `bun test --aot` refuse the flags of a build.
+  const isBuild = behindTheFlag && (cmd.includes("build") || cmd.includes("compile"));
+  if (moreBuildFlags.length && isBuild) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // Where collections are forced a sweep overwrites dead cells.
   if (env.BUN_JSC_slowPathAllocsBetweenGCs || collectsEveryMillisecond(env))
     env = { BUN_JSC_useZombieMode: "1", ...env };
@@ -90,7 +92,6 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   });
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
   const secondsToAnswer = 3;
-  const isBuild = behindTheFlag && (cmd.includes("build") || cmd.includes("compile"));
   const answers = !!isBuild && !isWindows;
   using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram, answers);
   const asked = answers ? setTimeout(() => proc.kill("SIGTERM"), timeout - secondsToAnswer * 1000) : undefined;

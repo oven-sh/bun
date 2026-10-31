@@ -672,7 +672,7 @@ pub(crate) fn run_as_worker(
     worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    vm.run_with_api_lock(|| flush_frames(&raw mut wloop.cmds, vm));
+    vm.run_with_api_lock(|| flush_frames(&wloop.cmds.channel, vm));
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code = 0;
@@ -688,10 +688,8 @@ pub(crate) fn run_as_worker(
 }
 
 /// Ticks until every frame written so far is out, or the channel is done.
-fn flush_frames(cmds: *mut WorkerCommands, vm: &VirtualMachine) {
-    // SAFETY: `cmds` is the worker's live `WorkerCommands`; the process exits before it drops. Each check reads through
-    // the pointer again: a tick can run a channel callback, and that callback forms `&mut WorkerCommands`.
-    let pending = || unsafe { (*cmds).channel.has_pending_writes() && !(*cmds).channel.done.get() };
+fn flush_frames(channel: &Channel<WorkerCommands>, vm: &VirtualMachine) {
+    let pending = || channel.has_pending_writes() && !channel.done.get();
     while pending() {
         vm.event_loop_ref().tick();
         if !pending() {
@@ -772,7 +770,9 @@ pub(crate) fn worker_flush_frames(vm: &VirtualMachine) {
     let Some(cmds) = (unsafe { WORKER_CMDS.read() }) else {
         return;
     };
-    flush_frames(cmds, vm);
+    // SAFETY: `cmds` is the worker's live `WorkerCommands`; the process exits before it drops. Every field of `Channel`
+    // is a cell, so this `&` stays valid while a tick runs the callbacks of the channel.
+    flush_frames(unsafe { &(*cmds).channel }, vm);
 }
 
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {

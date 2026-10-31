@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { createSecretKey } from "node:crypto";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -47,6 +48,35 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     const b = new FakeMap();
     expect(deepEquals(a, b)).toBe(false);
     expect(deepEquals(b, a)).toBe(false);
+  });
+
+  // KeyObject and CryptoKey have no own properties; compare the key material,
+  // like node's assert and util do.
+  it("KeyObjects and CryptoKeys compare by key material", () => {
+    const keyA = createSecretKey(Buffer.from("secret-A"));
+    const keyA2 = createSecretKey(Buffer.from("secret-A"));
+    const keyB = createSecretKey(Buffer.from("secret-B"));
+    expect(deepEquals(keyA, keyA2)).toBe(true);
+    expect(deepEquals(keyA, keyB)).toBe(false);
+    expect(deepEquals({ k: keyA }, { k: keyB })).toBe(false);
+    expect(deepEquals(keyA, {})).toBe(false);
+    expect(deepEquals({}, keyA)).toBe(false);
+    expect(keyA).toEqual(keyA2);
+    expect(keyA).not.toEqual(keyB);
+    expect(keyA).not.toStrictEqual(keyB);
+
+    const hmac = { name: "HMAC", hash: "SHA-256" };
+    const cryptoKeyA = keyA.toCryptoKey(hmac, true, ["sign"]);
+    const cryptoKeyA2 = keyA2.toCryptoKey(hmac, true, ["sign"]);
+    const cryptoKeyB = keyB.toCryptoKey(hmac, true, ["sign"]);
+    expect(deepEquals(cryptoKeyA, cryptoKeyA2)).toBe(true);
+    expect(deepEquals(cryptoKeyA, cryptoKeyB)).toBe(false);
+    expect(deepEquals(cryptoKeyA, keyA.toCryptoKey(hmac, false, ["sign"]))).toBe(false);
+    expect(deepEquals(cryptoKeyA, keyA.toCryptoKey(hmac, true, ["verify"]))).toBe(false);
+    expect(deepEquals(cryptoKeyA, keyA.toCryptoKey({ name: "HMAC", hash: "SHA-512" }, true, ["sign"]))).toBe(false);
+    expect(deepEquals(cryptoKeyA, keyA)).toBe(false);
+    expect(cryptoKeyA).toEqual(cryptoKeyA2);
+    expect(cryptoKeyA).not.toEqual(cryptoKeyB);
   });
 
   // we may change this in the future

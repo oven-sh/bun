@@ -1,6 +1,7 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { linkSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { unsupported } from "./harness/compiler";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
@@ -314,8 +315,10 @@ function executables() {
       files["worker.ts"] = importsTheCase("worker.ts");
       const folder = tempDir("aot-heap-limit-together", files);
       folders.push(folder);
-      // On a machine with cores to spare this build is what the file waits for longest, so it has a second thread.
-      return build(String(folder), "program", 2, "program.ts", "worker.ts", ...alone);
+      // On a machine with cores to spare this build is what the file waits for longest, so it has two threads, and four where
+      // the machine has eight cores or more. With AddressSanitizer a build with more than two threads takes longer.
+      const threads = isASAN || availableParallelism() < 8 ? 2 : 4;
+      return build(String(folder), "program", threads, "program.ts", "worker.ts", ...alone);
     })());
   }
   /** Puts the executable of all those programs into `cwd` as ./program. */
@@ -339,6 +342,8 @@ function executables() {
 
 // TODO: with AddressSanitizer these run out of room where a release build does not.
 const runsOutOfRoomEarly = isASAN;
+// `bun test` runs five tests at a time with AddressSanitizer and twenty without.
+const fewTestsRunAtATime = isASAN;
 // `ulimit -v` limits the address space of a process on Linux. A Bun with AddressSanitizer does not start under such a limit.
 const canLimitAddressSpace = isLinux && !isASAN;
 /** The file of the program of a row of a table. */
@@ -350,20 +355,24 @@ export function addressSpaceForObjects(part: number, parts: number) {
   const isInPart = () => cases++ % parts === part - 1;
   const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
   const { oneOfMany, byItself, start, together, buildTogether, linkTogether } = executables();
-  // Tests start in the order in which they are defined, and few run at a time: five with AddressSanitizer. So the order decides
-  // when the file ends. The tests that run longest are defined first: the short ones run beside them. The tests of Workers are
-  // defined last: their executable takes many times as long to build as the others, and a test that waits for its build keeps
-  // the next from starting. The first test starts that build behind its own, so that it is through when the last tests start.
-  const testsThatRunLongest: (() => void)[] = [];
+  // Tests start in the order in which they are defined, and few run at a time. So the order decides when the file ends. The
+  // tests that take longest are defined first: the short ones run beside them. The tests of Workers are defined last: their
+  // executable takes many times as long to build as the others, and a test that waits for its build keeps the next from
+  // starting. The first test starts that build behind its own, so that it is through when the last tests start. Of the tests
+  // of Workers the one that runs longest is the first: the file ends when the last of them ends.
+  const testsThatTakeLongest: (() => void)[] = [];
   const testsBetween: (() => void)[] = [];
   const testsOfWorkers: (() => void)[] = [];
   const among =
-    (tests: (() => void)[]) => (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) => {
-      if (isInPart()) tests.push(() => define(name, body, timeout));
+    (tests: (() => void)[], add: "push" | "unshift" = "push") =>
+    (define: typeof test) =>
+    (name: string, body: () => Promise<void>, timeout?: number) => {
+      if (isInPart()) tests[add](() => define(name, body, timeout));
     };
   const [inPart, inPartWithWorkers] = [among(testsBetween), among(testsOfWorkers)];
+  const inPartWithWorkersFirst = among(testsOfWorkers, "unshift");
   const inPartFirst = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) =>
-    among(testsThatRunLongest)(define)(
+    among(testsThatTakeLongest)(define)(
       name,
       () => {
         const ended = body();
@@ -526,8 +535,14 @@ for (const fill of [${Object.keys(made)
       120_000,
     );
 
-    const callsValuesNobodyKnowsProgram = oneOfMany("calls-values-nobody-knows.js", callsValuesNobodyKnows);
-    inPart(test)(
+    // This program takes more than a third of the time of the build of many. Where few tests run at a time, a test that waits
+    // for that build keeps the next from starting. So there this program has a build of its own beside it, and its test is one
+    // of the first: the build of many is through a third sooner, and this build before it.
+    const callsValuesNobodyKnowsProgram = (fewTestsRunAtATime ? byItself : oneOfMany)(
+      "calls-values-nobody-knows.js",
+      callsValuesNobodyKnows,
+    );
+    (fewTestsRunAtATime ? inPartFirst : inPart)(test)(
       "so does one that calls values nobody knows",
       async () => {
         const { stdout, stderr, exitCode } = await start(callsValuesNobodyKnowsProgram, smallHeap);
@@ -861,7 +876,7 @@ if (way === "objects in a try") {
 }
 `,
     });
-    inPartWithWorkers(test)(
+    inPartWithWorkersFirst(test)(
       "a Worker that fills its range inside a try catches the error, and one that does not catch it ends alone",
       async () => {
         using folder = tempDir("aot-heap-limit", case3);
@@ -1532,6 +1547,6 @@ console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
       120_000,
     );
 
-    for (const define of [...testsThatRunLongest, ...testsBetween, ...testsOfWorkers]) define();
+    for (const define of [...testsThatTakeLongest, ...testsBetween, ...testsOfWorkers]) define();
   });
 }

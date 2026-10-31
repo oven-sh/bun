@@ -7,6 +7,8 @@ const iterations = 100;
 const simplePattern = "foo.{js,jsx,ts,tsx}";
 const complexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}} wow {a,b}";
 const veryComplexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}";
+const oneBytePattern = "{a,b,c,d,e,f,g,h}";
+const nonAsciiPattern = "café-{résumé,naïve,déjà}.txt";
 
 console.log(braces(complexPattern, { expand: true }));
 function benchPattern(pattern, name) {
@@ -30,6 +32,8 @@ function benchPattern(pattern, name) {
 benchPattern(simplePattern, "simple");
 benchPattern(complexPattern, "complex");
 benchPattern(veryComplexPattern, "very complex pattern");
+benchPattern(oneBytePattern, "one-byte alternatives");
+benchPattern(nonAsciiPattern, "non-ASCII");
 
 await run({
   avg: true,

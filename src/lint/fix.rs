@@ -411,10 +411,7 @@ impl<'a> Fixer<'a> {
 
     /// `replaceText`, `replaceTextRange`
     pub fn replace<'t>(self, at: impl Spanned, text: impl IntoText<'t>) -> Fix {
-        Fix {
-            span: at.span(),
-            text: text.into_text().into_owned(),
-        }
+        Fix::owned(at.span(), text.into_text())
     }
 
     /// `remove`, `removeRange`
@@ -427,22 +424,27 @@ impl<'a> Fixer<'a> {
 
     /// `insertTextBefore`, `insertTextBeforeRange`
     pub fn insert_before<'t>(self, at: impl Spanned, text: impl IntoText<'t>) -> Fix {
-        Fix {
-            span: Span::empty(at.span().start),
-            text: text.into_text().into_owned(),
-        }
+        Fix::owned(Span::empty(at.span().start), text.into_text())
     }
 
     /// `insertTextAfter`, `insertTextAfterRange`
     pub fn insert_after<'t>(self, at: impl Spanned, text: impl IntoText<'t>) -> Fix {
-        Fix {
-            span: Span::empty(at.span().end),
-            text: text.into_text().into_owned(),
-        }
+        Fix::owned(Span::empty(at.span().end), text.into_text())
     }
 }
 
 /// The return type of the function passed to [`Report::fix`](crate::context::Report::fix).
+impl Fix {
+    #[cold]
+    #[inline(never)]
+    fn owned(span: Span, text: std::borrow::Cow<'_, [u8]>) -> Fix {
+        Fix {
+            span,
+            text: text.into_owned(),
+        }
+    }
+}
+
 pub trait IntoFix {
     /// ESLint's `mergeFixes`: merges all the fixes into one. Returns `None` if there are none, or if two overlap.
     fn into_fix(self, file: &File) -> Option<Fix>;

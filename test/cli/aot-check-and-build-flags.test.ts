@@ -1,8 +1,8 @@
 // What `bun check --aot` and `bun build --compile --aot` say about their own flags, and about a store that replaces a member of a built-in object.
 import { describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
+import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { unsupported } from "../aot/run-programs";
 
 async function bun(cwd: string, ...args: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd);

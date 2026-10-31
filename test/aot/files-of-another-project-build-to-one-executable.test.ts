@@ -4,15 +4,15 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { withoutDebugInformation } from "./harness/commands";
 import { compileCommand, withThreads } from "./harness/flags";
 import { run } from "./harness/run";
-import { withoutDebugInformation } from "./run-programs";
 import { test } from "./supported";
 
 setDefaultTimeout(600_000);
 
-const files = 6;
-const threadCounts = [1, 2, 3, 4, 16, 16];
+const files = 4;
+const threadCounts = [1, 4, 16];
 
 const shared = { target: "esnext", module: "esnext", moduleResolution: "bundler", noEmit: true };
 

@@ -81,6 +81,8 @@ pub struct AotOptions {
     pub erases_types: bool,
     pub emits_symbols: bool,
     pub omits_builtin_modules: bool,
+    /// `--aot-separate-programs`: every entry point begins a program of its own, compiled as it is when it is built alone.
+    pub separates_programs: bool,
     pub obfuscates: bool,
     pub forbids_text_evaluation: bool,
     pub admits_inspector: bool,
@@ -97,7 +99,16 @@ pub struct AotOptions {
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
     pub thread_count: Option<NonZeroU32>,
+    /// Whose built-ins and code of the run time the program gets. `None`: those of the platform that the compiler runs on. No flag sets it.
+    pub platform: Option<TargetPlatform>,
     pub option_words: Vec<Box<[u8]>>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TargetPlatform {
+    Darwin,
+    Linux,
+    Windows,
 }
 
 impl Default for AotOptions {
@@ -111,6 +122,7 @@ impl Default for AotOptions {
             erases_types: false,
             emits_symbols: false,
             omits_builtin_modules: false,
+            separates_programs: false,
             obfuscates: false,
             forbids_text_evaluation: false,
             admits_inspector: false,
@@ -123,6 +135,7 @@ impl Default for AotOptions {
             before_read: None,
             preload: None,
             thread_count: None,
+            platform: None,
             option_words: Vec::new(),
         }
     }
@@ -164,6 +177,7 @@ mod tests {
             erases_types,
             emits_symbols,
             omits_builtin_modules,
+            separates_programs,
             obfuscates,
             forbids_text_evaluation,
             admits_inspector,
@@ -176,8 +190,10 @@ mod tests {
             before_read,
             preload,
             thread_count,
+            platform,
             option_words,
         } = AotOptions::default();
+        assert_eq!(platform, None);
         assert_eq!(heap, HeapSize::Standard);
         assert_eq!(heap, HeapSize::default());
         assert!(embeds_function_source);
@@ -189,6 +205,7 @@ mod tests {
         assert!(!erases_types);
         assert!(!emits_symbols);
         assert!(!omits_builtin_modules);
+        assert!(!separates_programs);
         assert!(!obfuscates);
         assert!(!forbids_text_evaluation);
         assert!(!admits_inspector);

@@ -1,0 +1,32 @@
+# list = Array.from({ length: 3 }); list[1] = "text"; list[1], as the front end writes it: a call of the compiler's arrayOfUndefined (runtimefunction 131111)
+# The records answer the call: the caller has the list under the name that they give it, and the text that it stores is found there.
+# The statements of the code know the same list under another name, under which nobody stores a text. So nothing but its class is proven of it there, and the signature says no more.
+# LIBRARY: own
+# RUN: valueflow-apply
+# CHECK: function f0
+# CHECK: AssumeType v2 provenType=Array<undefined|"text", proven, pristine[Storage, Names]>
+# CHECK: AssumeType v6 provenType=undefined|"text"
+# CHECK: function f1 {{*}}parameters=[{type=int}] results=[{type=Array}]
+# CHECK: v2: Array = NewArray
+# CHECK: v4: anything = ElemGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131111 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=3
+    v1 = Builtin builtin=CompilerHelpersArrayOfUndefined
+    v2 = Call v1, -, v0
+    v3 = Integer integer=1
+    v4 = String string="text"
+    ElemSet v2, v3, v4
+    v6 = ElemGet v2, v3
+    Return v6
+}
+function f1 name="arrayOfUndefined" role=Library enclosingRuntimeFunction=131111 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewArray v1, v1, v1 contents=anything
+    v3 = Integer integer=0
+    v4 = ElemGet v2, v3
+    Return v2
+}

@@ -140,9 +140,10 @@ impl WrittenNames {
 struct Follower<'i, 'a, 's> {
     inputs: &'i ScanInputs<'a, 's>,
     written_names: &'i WrittenNames,
-    /// The variables whose lists and objects are taken to stay as they are written. One that does not ends the search.
+    /// The variables whose lists and objects are taken to stay as they are written.
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
+    not_kept_as_written: FxHashSet<SymbolId>,
     variables_in_progress: Vec<SymbolId>,
     functions_in_progress: Vec<FnId>,
     expressions_left: u32,
@@ -167,17 +168,13 @@ pub(super) fn find_alternatives(
         written_names,
         kept_as_written: FxHashSet::default(),
         unchecked: Vec::new(),
+        not_kept_as_written: FxHashSet::default(),
         variables_in_progress: Vec::new(),
         functions_in_progress: Vec::new(),
         expressions_left: MOST_EXPRESSIONS_FOLLOWED,
         depth: 0,
     };
-    let values = follower.values_of(argument)?;
-    while let Some(symbol) = follower.unchecked.pop() {
-        if !follower.is_kept_as_written(symbol) {
-            return None;
-        }
-    }
+    let values = follower.values_of_argument(argument)?;
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
     let mut forms: Vec<Option<ResolvedForm>> = Vec::with_capacity(values.len());
     for value in values {
@@ -238,6 +235,22 @@ pub(super) fn find_alternatives(
 }
 
 impl Follower<'_, '_, '_> {
+    fn values_of_argument(&mut self, argument: ExprId) -> Option<Values> {
+        loop {
+            let values = self.values_of(argument)?;
+            let known_before = self.not_kept_as_written.len();
+            while let Some(symbol) = self.unchecked.pop() {
+                if !self.is_kept_as_written(symbol) {
+                    self.not_kept_as_written.insert(symbol);
+                }
+            }
+            if self.not_kept_as_written.len() == known_before {
+                return Some(values);
+            }
+            self.kept_as_written.clear();
+        }
+    }
+
     fn text_of(&self, constant: Constant) -> Option<Text> {
         let atoms = self.inputs.atoms;
         if let Constant::String(text) = constant {
@@ -468,7 +481,7 @@ impl Follower<'_, '_, '_> {
             places.push(match expr_kind(hir, item)? {
                 ExprKind::Missing => vec![Held::Primitive(Constant::Undefined)],
                 ExprKind::Spread(_) => return None,
-                _ => self.values_of(item)?,
+                _ => self.values_of(item).unwrap_or_else(some_text),
             });
         }
         Some(vec![Held::List(places)])
@@ -522,7 +535,7 @@ impl Follower<'_, '_, '_> {
                 match find_values_passed_for(hir, bound, self.inputs.decisions, name, &find_written)
                 {
                     Some(passed) => self.values_of_any(passed),
-                    None => self.values_of_element_handed_to(symbol),
+                    None => self.values_handed_by_walk(symbol),
                 }
             }
             BindingKind::Function if bound.is_stable_binding(symbol) => {
@@ -546,10 +559,9 @@ impl Follower<'_, '_, '_> {
         };
         self.variables_in_progress.pop();
         let values = values?;
-        if values.iter().any(Held::can_be_changed) {
-            self.take_as_kept_as_written(symbol);
-        }
-        Some(values)
+        let is_as_written =
+            !values.iter().any(Held::can_be_changed) || self.take_as_kept_as_written(symbol);
+        is_as_written.then_some(values)
     }
 
     fn values_of_variable(&mut self, symbol: SymbolId) -> Option<Values> {
@@ -662,8 +674,8 @@ impl Follower<'_, '_, '_> {
         Some(elements)
     }
 
-    /// `list.forEach(name => ..)`: what `name` holds.
-    fn values_of_element_handed_to(&mut self, parameter: SymbolId) -> Option<Values> {
+    /// `list.forEach((name, index, all) => ..)`: what `name` or `all` holds.
+    fn values_handed_by_walk(&mut self, parameter: SymbolId) -> Option<Values> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
             return None;
@@ -675,8 +687,8 @@ impl Follower<'_, '_, '_> {
         let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
             return None;
         };
-        let is_first_alone = hir[function].params.iter().next() == Some(id)
-            && hir[id].default.is_none()
+        let position = hir[function].params.iter().position(|it| it == id)?;
+        let holds_what_it_is_handed = hir[id].default.is_none()
             && !hir[id].flags.contains(Flags::REST)
             && bound.stores_to(parameter).is_empty()
             && !bound.finds_itself(hir, function);
@@ -687,12 +699,19 @@ impl Follower<'_, '_, '_> {
             return None;
         };
         let call = hir[call];
-        let (list, _) = self.find_walk_of_list(call).filter(|_| is_first_alone)?;
-        (hir.ids(call.args).next() == Some(written)).then(|| self.values_of_elements(list))?
+        let (list, _) = self.find_walk_of_list(call)?;
+        if !holds_what_it_is_handed || hir.ids(call.args).next() != Some(written) {
+            return None;
+        }
+        match position {
+            0 => self.values_of_elements(list),
+            2 => self.values_of(list),
+            _ => None,
+        }
     }
 
-    /// The list, where the call hands each element of a list to its first argument. A program cannot replace these members of a list.
-    fn find_walk_of_list(&self, call: Call) -> Option<(ExprId, Atom)> {
+    /// The list, where the call hands each element of a list to its first argument, which leaves the list as it is. A program cannot replace these members of a list.
+    fn find_walk_of_list(&mut self, call: Call) -> Option<(ExprId, Atom)> {
         let hir = self.inputs.hir;
         let (list, MemberKey::Name(name)) =
             hir.member_key(hir.skip_type_assertions(call.callee))?
@@ -711,15 +730,42 @@ impl Follower<'_, '_, '_> {
                 | b"some"
                 | b"every"
         );
-        (walks && call.chain == Chain::No).then_some((list, name))
+        (walks && call.chain == Chain::No && self.keeps_walked_list_as_written(call))
+            .then_some((list, name))
+    }
+
+    /// A walk hands the list itself to its first argument too, as the third argument of each call.
+    fn keeps_walked_list_as_written(&mut self, walk: Call) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let written = hir.ids(walk.args).next();
+        let written = written.and_then(|it| expr_kind(hir, hir.skip_type_assertions(it)));
+        let Some(ExprKind::Fn(function)) = written else {
+            return false;
+        };
+        let parameters = hir[function].params;
+        let has_rest = (parameters.iter()).any(|id| hir[id].flags.contains(Flags::REST));
+        if has_rest || bound.finds_itself(hir, function) {
+            return false;
+        }
+        let Some(list) = parameters.iter().nth(2) else {
+            return true;
+        };
+        let pattern = hir[list].pat;
+        if !matches!(hir[pattern].kind, PatKind::Ident(_)) {
+            return false;
+        }
+        let holder = bound.declared_symbol(Decl::Param(pattern));
+        self.take_as_kept_as_written(holder)
+            && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+            && !bound.is_visible_to_eval(holder)
     }
 
     fn values_of_walk(&mut self, call: Call) -> Option<Values> {
         let (list, name) = self.find_walk_of_list(call)?;
-        let mut elements = self.values_of_elements(list)?;
         match self.inputs.atoms.bytes(name) {
-            b"filter" => Some(vec![Held::ListOf(elements)]),
+            b"filter" => Some(vec![Held::ListOf(self.values_of_elements(list)?)]),
             b"find" | b"findLast" => {
+                let mut elements = self.values_of_elements(list)?;
                 add(&mut elements, Held::Primitive(Constant::Undefined));
                 Some(elements)
             }
@@ -886,10 +932,14 @@ impl Follower<'_, '_, '_> {
     }
 
     /// It is looked at once nothing is half followed.
-    fn take_as_kept_as_written(&mut self, symbol: SymbolId) {
+    fn take_as_kept_as_written(&mut self, symbol: SymbolId) -> bool {
+        if self.not_kept_as_written.contains(&symbol) {
+            return false;
+        }
         if self.kept_as_written.insert(symbol) {
             self.unchecked.push(symbol);
         }
+        true
     }
 
     fn is_kept_as_written(&mut self, symbol: SymbolId) -> bool {
@@ -919,8 +969,8 @@ impl Follower<'_, '_, '_> {
                 return matches!(hir[pattern].kind, PatKind::Ident(_))
                     && match bound.initialized_binding(pattern) {
                         Binding::Symbol(holder) => {
-                            self.take_as_kept_as_written(holder);
-                            bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+                            self.take_as_kept_as_written(holder)
+                                && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
                                 && !bound.is_visible_to_eval(holder)
                         }
                         _ => false,
@@ -967,6 +1017,8 @@ impl Follower<'_, '_, '_> {
             ExprKind::Binary { op, left, .. } => match op {
                 BinOp::And | BinOp::Or | BinOp::Nullish => self.keeps_as_written(above),
                 BinOp::Comma => left == e || self.keeps_as_written(above),
+                // `Symbol.hasInstance` of the right side is called with the left side.
+                BinOp::Instanceof => left != e,
                 _ => true,
             },
             ExprKind::Cond { test, .. } => test == e || self.keeps_as_written(above),
@@ -1100,6 +1152,10 @@ impl Follower<'_, '_, '_> {
                 }
                 PropKey::None | PropKey::Private(_) => return None,
             };
+            // An operator that converts the object calls these with the object as `this`.
+            if matches!(&key[..], b"toString" | b"valueOf") {
+                return None;
+            }
             written.retain(|earlier| earlier.0 != key);
             written.push((key, property.value));
         }

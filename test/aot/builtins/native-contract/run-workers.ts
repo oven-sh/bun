@@ -17,9 +17,18 @@ export type RunOptions = {
   folder: string;
   filter: string;
   workerCount: number;
-  /** The workers take part `part` of `parts`: every `parts`-th function. */
-  part: number;
-  parts: number;
+};
+
+/** For a process that makes a hundred thousand short calls and is gone in seconds. */
+export const settingsOfEngine = {
+  // At a level above 0 every matcher of expect() ends with a collection.
+  BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+  // More threads that mark do not end a collection of so small a heap sooner.
+  BUN_JSC_numberOfGCMarkers: "1",
+  // From the fifth memory of WebAssembly that is alive on, the engine collects whenever one is made.
+  BUN_JSC_maxNumWasmFastMemories: "1024",
+  // The last tier costs more time than is left to win it back in.
+  BUN_JSC_useFTLJIT: "0",
 };
 
 const maxAttempts = 60;
@@ -61,7 +70,7 @@ async function waitFor(worker: Bun.Subprocess, currentPath: string): Promise<voi
 // A target that twice ends its process or does not come back is left out of the next attempt, which goes on behind it. Once can be the
 // machine: under load a call may starve.
 async function runWorker(options: RunOptions, index: number, results: Results): Promise<void> {
-  const { executable, environment, folder, filter, workerCount, part, parts } = options;
+  const { executable, environment, folder, filter, workerCount } = options;
   const requestPath = join(folder, `request.${index}.json`);
   const reportsPath = join(folder, `reports.${index}.jsonl`);
   const currentPath = `${reportsPath}.current`;
@@ -70,7 +79,7 @@ async function runWorker(options: RunOptions, index: number, results: Results): 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const reports = new Map<string, Report>();
     readReports(reportsPath, reports);
-    writeFileSync(requestPath, JSON.stringify({ filter, index: index * parts + part - 1, count: workerCount * parts, finished: [...reports.keys(), ...ended] } satisfies WorkerRequest));
+    writeFileSync(requestPath, JSON.stringify({ filter, index, count: workerCount, finished: [...reports.keys(), ...ended] } satisfies WorkerRequest));
     writeFileSync(currentPath, '""');
     // What a function does to the files that its operands name stays in a folder that nothing else uses.
     const workingFolder = join(folder, `work.${index}.${attempt}`);
@@ -78,7 +87,7 @@ async function runWorker(options: RunOptions, index: number, results: Results): 
     const worker = Bun.spawn({
       cmd: [executable, "--expose-internals", join(import.meta.dir, "worker.ts"), requestPath, reportsPath],
       cwd: workingFolder,
-      env: { ...environment, AWS_ENDPOINT: "http://127.0.0.1:1", S3_ENDPOINT: "http://127.0.0.1:1" },
+      env: { ...environment, ...settingsOfEngine, AWS_ENDPOINT: "http://127.0.0.1:1", S3_ENDPOINT: "http://127.0.0.1:1" },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",

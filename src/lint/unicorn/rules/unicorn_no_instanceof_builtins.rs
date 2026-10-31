@@ -10,8 +10,8 @@ pub struct NoInstanceofBuiltins {
     is_strict: bool,
 }
 
-const NO_INSTANCEOF_BUILTINS: Message = Message::new("", "Do not use `instanceof` with built-in constructors");
-const USE_ALTERNATIVE: Message = Message::new(
+const NO_INSTANCEOF_BUILTINS: &Message = &Message::new("", "Do not use `instanceof` with built-in constructors");
+const USE_ALTERNATIVE: &Message = &Message::new(
     "",
     "Use `Array.isArray(…)`, `typeof … === 'string'`, or another realm-safe alternative instead",
 );

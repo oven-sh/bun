@@ -399,14 +399,11 @@ impl PackageJSON {
         );
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
-        // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
-        // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
-        // singletons so the two `&mut` projections below do not alias each other,
-        // and no other `&mut *r.fs` / `&mut *r.log` retag occurs while they are
-        // live in this function. Caller upholds the single-thread `Resolver`
-        // aliasing contract.
-        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
-        // SAFETY: see above — `r.log()` points to a distinct singleton from `r.fs()`.
+        let r_fs = fs::FileSystem::get();
+        // SAFETY: PORT (Stacked Borrows) — `r.log()` returns a RAW `*mut` (see
+        // the `Resolver::log()` note), and no other `&mut *r.log` retag occurs
+        // while this one is live in this function. Caller upholds the
+        // single-thread `Resolver` aliasing contract.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
@@ -432,7 +429,6 @@ impl PackageJSON {
         // (allocator dropped — global mimalloc)
 
         let mut entry = match r.caches.fs.read_file_with_allocator(
-            r_fs,
             package_json_path,
             dirname_fd,
             false,

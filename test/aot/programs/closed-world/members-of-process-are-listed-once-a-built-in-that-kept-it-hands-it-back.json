@@ -1,1 +1,0 @@
-{ "skipInShell": "it uses process, which the jsc shell does not have", "alone": "what it prints hangs on what else the executable holds: whether anything names the members of process that it lists" }

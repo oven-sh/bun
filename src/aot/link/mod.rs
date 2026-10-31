@@ -338,6 +338,7 @@ pub fn link_while(
             writes_preload = mark_unused_records(defined, &uses, b"preload");
             literal_slots::widen_literal_slots(defined, &uses, &types);
             add_views_of_literals(defined, views);
+            literal_slots::expect_fields_filled_with_other_data(defined, &tables.data, &types);
         },
         || drop_each(unit_marks, in_parallel),
     );

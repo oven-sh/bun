@@ -3,8 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
+import { withoutCoreDump } from "./harness/commands";
 import { run as runProcess } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 // An executable built with --aot-validate compares what each native function does with what the table of built-ins says of it. An entry of the table
@@ -38,7 +38,17 @@ describe.skipIf(isHardened)("the native calls that a validating executable check
 
   beforeAll(async () => {
     const built = await runProcess(
-      [bunExe(), "build", "--compile", "--aot", "--aot-validate", "main.ts", "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--no-builtin-modules",
+        "--aot-validate",
+        "main.ts",
+        "--outfile",
+        executable,
+      ],
       String(dir),
       bunEnv,
     );

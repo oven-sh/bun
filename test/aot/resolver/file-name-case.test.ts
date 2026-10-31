@@ -1,4 +1,4 @@
-import { describe } from "../supported";
+import { describe } from "../with-compiler";
 import { testResolution, type ResolutionCase } from "./resolution-cases";
 
 // Bun's resolver looks up a file name in lowercase on every file system, and remembers the path it answered with. So each

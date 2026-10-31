@@ -490,6 +490,11 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 /// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
 
+/// `isReservedMemberName`: a name that the binder makes up, other than that of a symbol-keyed or a private property.
+pub fn is_reserved_member_name(name: &[u8]) -> bool {
+    matches!(name, [0xFE, next, ..] if !matches!(next, b'@' | b'#'))
+}
+
 /// `SymbolName`: returns the `#x` of a private name, which is stored as `\xFE#x@<class>`. Returns
 /// any other name unchanged.
 pub fn written_name(name: &[u8]) -> &[u8] {
@@ -785,6 +790,11 @@ impl<'s> Interner<'s> {
         self.session
     }
 
+    /// The same atoms. What is parsed with it belongs to `session`.
+    pub fn for_files_of(self, session: &'s Session) -> Interner<'s> {
+        Interner { session, ..self }
+    }
+
     /// Sequence number of this interner among all interners ever created. Data cached for one
     /// interner is invalid for another.
     #[inline]
@@ -937,10 +947,16 @@ impl<'p, 's> Atoms<'p, 's> {
             .or_else(|| self.own.find_atom(spread, text))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn own_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.own.atom_bytes(atom)
+    }
+
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &'p [u8] {
         if atom.is_own() {
-            self.own.atom_bytes(atom)
+            self.own_bytes(atom)
         } else {
             self.published.bytes(atom)
         }

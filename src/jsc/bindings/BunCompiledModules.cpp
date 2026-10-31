@@ -4,6 +4,7 @@
 
 #include "BunAOTCompile.h"
 #include "BunClientData.h"
+#include "BunCompiledEntryPoint.h"
 #include "CodeGenerationFromStrings.h"
 #include "ErrorCode.h"
 #include "ImportMetaObject.h"
@@ -624,6 +625,8 @@ const AOT::ModuleHost compiledModuleHost = {
     &findModuleWithAttributes,
     &resolveFunctionOf,
     &replacesNativeModule,
+    &isImportOfMainModule,
+    &runMainModule,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -676,7 +679,7 @@ static JSObject* createCodeNotCompiledError(JSGlobalObject* globalObject, const 
 {
     auto& vm = getVM(globalObject);
     JSObject* error = JSC::createError(globalObject, message);
-    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, String("ERR_CODE_NOT_COMPILED"_s)));
+    Bun::putDirectNamed(vm, error, "code"_s, jsString(vm, String("ERR_CODE_NOT_COMPILED"_s)));
     return error;
 }
 
@@ -751,9 +754,9 @@ extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes image)
     return reinterpret_cast<const JSC::AOT::ImageHeader*>(bytes.data())->options.omitsFunctionSource;
 }
 
-extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
+extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool threadsAreEnding)
 {
-    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread();
+    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread(threadsAreEnding);
     *pages = result.pages;
     return !result.isRefused;
 }
@@ -816,7 +819,7 @@ extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
-extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
+extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool)
 {
     *pages = nullptr;
     return true;

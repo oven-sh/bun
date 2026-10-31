@@ -388,7 +388,7 @@ pub trait Storage {
     type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]> + Default;
-    type Map<K, V>;
+    type Map<K: 'static, V: 'static>;
     /// A map that is empty in most files.
     type FewMap<K: 'static, V: 'static>;
     /// A set that is empty in most files.
@@ -413,7 +413,7 @@ impl Storage for Growable {
     type Nodes<T: 'static> = Vec<T>;
     type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
-    type Map<K, V> = FxHashMap<K, V>;
+    type Map<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewSet<K: 'static> = FxHashSet<K>;
     type Owning<T: Clone + 'static> = Vec<T>;
@@ -432,7 +432,7 @@ impl<'s> Storage for InArena<'s> {
     type Nodes<T: 'static> = Fixed<'s, T>;
     type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
-    type Map<K, V> = ArenaHashMap<'s, K, V>;
+    type Map<K: 'static, V: 'static> = FixedMap<'s, K, V>;
     type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
     type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. A program's files are never dropped, so `Files::load` hands the list to
@@ -442,6 +442,23 @@ impl<'s> Storage for InArena<'s> {
     type Text = Cow<'s, [u8]>;
     type Lazy = Lazy<'s>;
     type Boxed<T> = ArenaBox<'s, T>;
+}
+
+/// A map that nothing writes to. It either owns its arena block or belongs to a file that several programs share.
+pub enum FixedMap<'s, K, V> {
+    Arena(ArenaHashMap<'s, K, V>),
+    Shared(&'s ArenaHashMap<'s, K, V>),
+}
+
+impl<'s, K, V> Deref for FixedMap<'s, K, V> {
+    type Target = ArenaHashMap<'s, K, V>;
+    #[inline(always)]
+    fn deref(&self) -> &ArenaHashMap<'s, K, V> {
+        match self {
+            FixedMap::Arena(map) => map,
+            FixedMap::Shared(map) => map,
+        }
+    }
 }
 
 /// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
@@ -2439,6 +2456,11 @@ pub struct ImportedConstant {
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
+    pub exprs: S::Nodes<Expr>,
+    pub stmts: S::Nodes<Stmt>,
+    pub types: S::Nodes<TypeNode>,
+    pub fns: S::Nodes<Func>,
+    pub members: S::Nodes<Member>,
     pub kind: FileKind,
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
@@ -2588,13 +2610,9 @@ pub struct FileIn<S: Storage> {
 
     pub ids: S::Nodes<u32>,
     pub numbers: S::Nodes<f64>,
-    pub exprs: S::Nodes<Expr>,
-    pub stmts: S::Nodes<Stmt>,
-    pub types: S::Nodes<TypeNode>,
     pub pats: S::Nodes<Pat>,
     pub pat_props: S::Nodes<PatProp>,
     pub pat_elems: S::Nodes<PatElem>,
-    pub fns: S::Nodes<Func>,
     pub params: S::Nodes<Param>,
     pub type_params: S::Nodes<TypeParam>,
     pub classes: S::Nodes<Class>,
@@ -2603,7 +2621,6 @@ pub struct FileIn<S: Storage> {
     pub enums: S::Few<Enum>,
     pub enum_members: S::Few<EnumMember>,
     pub modules: S::Few<Module>,
-    pub members: S::Nodes<Member>,
     pub props: S::Nodes<Prop>,
     pub var_decls: S::Nodes<VarDecl>,
     pub calls: S::Nodes<Call>,

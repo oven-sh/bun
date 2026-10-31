@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { run } from "./harness/run";
-import { test } from "./supported-with-counted-calls";
+import { types } from "node:util";
+import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-programs";
+import { test } from "./supported";
 
 // Every read below runs once, on a receiver that comes back out of an array, so the compiler does not know what arrives: what a program does while it starts.
 const copies = 40;
@@ -69,57 +69,52 @@ const allowed: Record<string, number> = {
   "functions-in-a-literal": 8,
   "members-of-a-function": 8,
   "names-that-a-function-inherits": 8,
-  "variables-of-the-environment": 8,
+  // Where the object is a proxy, each read goes through the run time, which calls the trap: once a read and no more.
+  "variables-of-the-environment": (types.isProxy(process.env) ? copies + 1 : 0) + 8,
   "methods-of-an-array": 8,
   "names-that-a-function-of-the-engine-lacks-or-inherits": 8,
   // One a function, which makes the object.
   "prototype-of-a-function": copies + 8,
 };
 
-for (const [name, { text, sum }] of Object.entries(programs)) {
-  test(`${name}: what is read once is not looked up by the run time`, async () => {
-    using dir = tempDir("aot-first-reads-by-name", {
-      "main.mjs": `${head}${text}\nconsole.log(sum);`,
-    });
-    const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
-      String(dir),
-      bunEnv,
-    );
-    expect({
-      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
-      exitCode: built.exitCode,
-    }).toEqual({ stderr: [], exitCode: 0 });
-    const path = join(String(dir), "counts");
-    const env = {
-      ...bunEnv,
-      A_VARIABLE_THAT_IS_SET: "yes",
-      BUN_DESTRUCT_VM_ON_EXIT: "1",
-      BUN_JSC_aotCountsPath: path,
-    };
-    expect(await run([executable], String(dir), env)).toEqual({
-      stdout: sum + "\n",
-      stderr: "",
-      exitCode: 0,
-    });
-    let calls = 0,
-      filedAgain = 0;
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-      const [count, operation] = line.split("\toperation:");
-      if (operation !== undefined && lookups.includes(operation)) calls += Number(count);
-      if (line.endsWith("\tcounter:PairsFiledAgainWhilePresent")) filedAgain = Number(line.split("\t")[0]);
-    }
-    expect({
-      name,
-      isSeldom: calls <= allowed[name],
-      calls: calls <= allowed[name] ? 0 : calls,
-      filedAgain: filedAgain <= 2 ? 0 : filedAgain,
-    }).toEqual({
-      name,
-      isSeldom: true,
-      calls: 0,
-      filedAgain: 0,
-    });
-  }, 240_000);
+const { folder, start } = separatePrograms(
+  "aot-first-reads-by-name",
+  Object.fromEntries(
+    Object.entries(programs).map(([name, { text }]) => [`${name}.mjs`, `${head}${text}\nconsole.log(sum);`]),
+  ),
+  Object.keys(programs).map(name => `${name}.mjs`),
+);
+
+for (const [name, { sum }] of Object.entries(programs)) {
+  test.skipIf(!startsAtAnyEntryPoint)(
+    `${name}: what is read once is not looked up by the run time`,
+    async () => {
+      const path = join(folder, `counts-${name}`);
+      const env = { A_VARIABLE_THAT_IS_SET: "yes", BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
+      expect(await start(`${name}.mjs`, env)).toEqual({
+        stdout: sum + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      let calls = 0,
+        filedAgain = 0;
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        const [count, operation] = line.split("\toperation:");
+        if (operation !== undefined && lookups.includes(operation)) calls += Number(count);
+        if (line.endsWith("\tcounter:PairsFiledAgainWhilePresent")) filedAgain = Number(line.split("\t")[0]);
+      }
+      expect({
+        name,
+        isSeldom: calls <= allowed[name],
+        calls: calls <= allowed[name] ? 0 : calls,
+        filedAgain: filedAgain <= 2 ? 0 : filedAgain,
+      }).toEqual({
+        name,
+        isSeldom: true,
+        calls: 0,
+        filedAgain: 0,
+      });
+    },
+    240_000,
+  );
 }

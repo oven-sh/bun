@@ -44,6 +44,10 @@ jobs:
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
           tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
+      - name: Check that the engine's generator writes what the build declares
+        env:
+          AOT_SCHEMA: ${{ github.workspace }}/vendor/WebKit/Source/JavaScriptCore/aot/ir/AOTSchema.def
+        run: bun test ./test/internal/aot-schema-generator.test.ts
       - name: Typecheck the built-in modules
         # The code generators write the types src/js/builtins.d.ts references (build/types) and the enums the dev
         # server's sources import (src/runtime/bake/generated.ts). A module with a second text in src/js/ahead-of-time is
@@ -63,7 +67,7 @@ jobs:
           version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
           git init --quiet "$RUNNER_TEMP/WebKit"
           git -C "$RUNNER_TEMP/WebKit" remote add origin https://github.com/oven-sh/WebKit.git
-          git -C "$RUNNER_TEMP/WebKit" sparse-checkout set Source/JavaScriptCore
+          git -C "$RUNNER_TEMP/WebKit" sparse-checkout set Source/JavaScriptCore Tools/Scripts/aot
           git -C "$RUNNER_TEMP/WebKit" fetch --quiet --depth=1 --filter=blob:none origin "refs/tags/autobuild-${version#autobuild-}"
           git -C "$RUNNER_TEMP/WebKit" checkout --quiet FETCH_HEAD
           BUN_WEBKIT_PATH="$RUNNER_TEMP/WebKit" bun test test/internal/build-aot-codegen-declared-outputs.test.ts -t "finds a use for every name of the schema"

@@ -1,0 +1,249 @@
+# Exceptions thrown locally, by called functions and by built-in functions, and which values are live in and after the `catch` block.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="exceptions.ts" displayPath="exceptions.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="risky" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Double number=0.5
+    v1 = Convert v0 declared={type=number}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v1, v3, v5)
+  b1(v6: number, v7: number, v8: number):
+    LoopHint
+    v10 = Integer integer=20
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b8(| 0)
+  b2(v12):
+    Jump -> next b3()
+  b3() handler=b6(v6):
+    v13 = GetModuleVariable variable=g0
+    v14 = Call v13, -, v12 calleeName="risky"
+    v15 = Convert v14 declared={type=number}
+    v16 = Add v6, v15
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b4()
+  b4() handler=b6(v17):
+    Jump -> next b5()
+  b5():
+    Jump -> next b7(v17, v7)
+  b6(v18: number) role=CatchHandler:
+    v19 = Increment v7
+    v20 = Convert v19 declared={type=number}
+    Jump -> next b7(v18, v20)
+  b7(v21: number, v22: number):
+    v23 = Increment v12
+    v24 = Convert v23 declared={type=number}
+    Jump -> next b1(v21, v22, v24)
+  b8(v25):
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="console" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(Console) flags=[IsExpected]}
+    v29 = PropGet v28 key="log"
+    v30 = Convert v29 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v31 = Call v30, v28, v6, v7 calleeKey="log" calleeName="console.log"
+    v32 = Null
+    Jump -> next b9()
+  b9() handler=b11():
+    v33 = Convert v32 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v34 = PropGet v33 key="x"
+    Jump -> next b10()
+  b10():
+    Jump -> next b12()
+  b11() role=CatchHandler:
+    Jump -> next b12()
+  b12():
+    v35 = Undefined
+    Return v35
+}
+function f1 name="risky" module=m0 position=135 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=3
+    v2 = Mod v0, v1
+    v3 = Integer
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Error" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Error) flags=[IsExpected]}
+    v8 = String string="bad "
+    v9 = Add v8, v0
+    v10 = Construct v7, -, v9 calleeName="Error"
+    v11 = Convert v10 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    Throw v11
+  b2():
+    v12 = Integer integer=2
+    v13 = Mul v0, v12
+    v14 = Convert v13 declared={type=number}
+    Return v14
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Double b@32 = ConstDouble(5.000000e-01(4602678819172646912), v0:Double)
+# CHECK-NEXT: Void b@34 = Upsilon($0.500000(b@32), ^18, WritesLocalState)
+# CHECK-NEXT: Int32 b@33 = Const32(0, v1:Integer)
+# CHECK-NEXT: Void b@35 = Upsilon($0(b@33), ^19, WritesLocalState)
+# CHECK-NEXT: Int32 b@17 = Const32(-1431655765, v12:Mod)
+# CHECK-NEXT: Int32 b@50 = Const32(3, v11:Integer)
+# CHECK-NEXT: Void b@36 = Jump(Terminal)
+# CHECK-NEXT: Successors: #1
+# CHECK-NEXT: BB#1: ; frequency = 1.000489
+# CHECK-NEXT: Predecessors: #0, #5
+# CHECK-NEXT: Double b@18 = Phi(ReadsLocalState, v2:Parameter)
+# CHECK-NEXT: Int32 b@19 = Phi(ReadsLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@129 = Upsilon(b@18, ^127, WritesLocalState)
+# CHECK-NEXT: Void b@130 = Upsilon(b@19, ^128, WritesLocalState)
+# CHECK-NEXT: Void b@40 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#2: ; frequency = 10.004885
+# CHECK-NEXT: Predecessors: #1, #10
+# CHECK-NEXT: Double b@127 = Phi(ReadsLocalState, v5:Parameter)
+# CHECK-NEXT: Int32 b@128 = Phi(ReadsLocalState, v6:Parameter)
+# CHECK-NEXT: Int32 b@42 = Const32(20, v8:Integer)
+# CHECK-NEXT: Int32 b@48 = Below(b@128, $20(b@42), v9:Less)
+# CHECK-NEXT: Void b@49 = Branch(b@48, Terminal, v9:Less)
+# CHECK-NEXT: Successors: Then:#12, Else:Rare:#13
+# CHECK-NEXT: BB#12: ; frequency = 10.003908
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Int32 b@16 = UMulHigh(b@128, $-1431655765(b@17), v12:Mod)
+# CHECK-NEXT: Int32 b@15 = Const32(1, v21:Increment)
+# CHECK-NEXT: Int32 b@14 = ZShr(b@16, $1(b@15), v12:Mod)
+# CHECK-NEXT: Int32 b@52 = Mul(b@14, $3(b@50), v12:Mod)
+# CHECK-NEXT: Int32 b@53 = Sub(b@128, b@52, v12:Mod)
+# CHECK-NEXT: Void b@59 = Branch(b@53, Terminal, v14:StrictEq)
+# CHECK-NEXT: Successors: Then:#10, Else:Rare:#14
+# CHECK-NEXT: BB#10: ; frequency = 10.002932
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Int32 b@4 = Shl(b@128, $1(b@15), v35:Mul)
+# CHECK-NEXT: Double b@105 = IToD(b@4, v36:Add)
+# CHECK-NEXT: Double b@106 = Add(b@105, b@127, v36:Add)
+# CHECK-NEXT: Void b@126 = Upsilon(b@106, ^127, WritesLocalState)
+# CHECK-NEXT: Int32 b@104 = Add(b@128, $1(b@15), v37:Increment)
+# CHECK-NEXT: Void b@125 = Upsilon(b@104, ^128, WritesLocalState)
+# CHECK-NEXT: Void b@109 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#14: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Void b@54 = Upsilon(b@128, ^23, WritesLocalState)
+# CHECK-NEXT: Void b@55 = Upsilon(b@127, ^24, WritesLocalState)
+# CHECK-NEXT: Double b@6 = ConstDouble(0.000000e+00(0), v4:Integer)
+# CHECK-NEXT: Void b@56 = Upsilon($0.000000(b@6), ^25, WritesLocalState)
+# CHECK-NEXT: Int64 b@11 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@57 = Jump(Terminal)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#3: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #14, #17
+# CHECK-NEXT: Int32 b@23 = Phi(ReadsLocalState, v15:Parameter)
+# CHECK-NEXT: Double b@24 = Phi(ReadsLocalState, v16:Parameter)
+# CHECK-NEXT: Double b@25 = Phi(ReadsLocalState, v17:Parameter)
+# CHECK-NEXT: Double b@13 = Load(b@11, offset = -56, ReadsImmutable, v18:Increment)
+# CHECK-NEXT: Void b@62 = Upsilon(b@24, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@63 = Upsilon(b@23, ^27, WritesLocalState)
+# CHECK-NEXT: Double b@61 = Add(b@25, b@13, v18:Increment)
+# CHECK-NEXT: Int64 b@67 = Patchpoint(b@61:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v22:TypeTest)
+# CHECK-NEXT: Double b@68 = IToD(b@67, v22:TypeTest)
+# CHECK-NEXT: Int64 b@69 = BitwiseCast(b@68, v22:TypeTest)
+# CHECK-NEXT: Int64 b@70 = BitwiseCast(b@61, v22:TypeTest)
+# CHECK-NEXT: Int32 b@71 = Equal(b@69, b@70, v22:TypeTest)
+# CHECK-NEXT: Void b@64 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 0.000979
+# CHECK-NEXT: Predecessors: #3, #9
+# CHECK-NEXT: Double b@26 = Phi(ReadsLocalState, v19:Parameter)
+# CHECK-NEXT: Int32 b@27 = Phi(ReadsLocalState, v20:Parameter)
+# CHECK-NEXT: Int32 b@66 = Add(b@27, $1(b@15), v21:Increment)
+# CHECK-NEXT: Void b@75 = Branch(b@71, Terminal, v22:TypeTest)
+# CHECK-NEXT: Successors: Then:Unlikely:#20, Else:Rare:#8
+# CHECK-NEXT: BB#20: ; frequency = 0.000978
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Void b@123 = Branch(b@67, Terminal, v22:TypeTest)
+# CHECK-NEXT: Successors: Then:Rare:#8, Else:Unlikely:#5
+# CHECK-NEXT: BB#5: ; frequency = 0.000488
+# CHECK-NEXT: Predecessors: #20
+# CHECK-NEXT: Void b@76 = Upsilon(b@26, ^18, WritesLocalState)
+# CHECK-NEXT: Void b@77 = Upsilon(b@66, ^19, WritesLocalState)
+# CHECK-NEXT: Void b@78 = Jump(Terminal)
+# CHECK-NEXT: Successors: #1
+# CHECK-NEXT: BB#8: ; frequency = 0.000002
+# CHECK-NEXT: Predecessors: #4, #20
+# CHECK-NEXT: Void b@79 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v23:LoopHint)
+# CHECK-NEXT: Int32 b@85 = Below(b@66, $20(b@42), v25:Less)
+# CHECK-NEXT: Void b@86 = Branch(b@85, Terminal, v25:Less)
+# CHECK-NEXT: Successors: Then:Unlikely:#15, Else:Rare:#16
+# CHECK-NEXT: BB#15: ; frequency = 0.000002
+# CHECK-NEXT: Predecessors: #8
+# CHECK-NEXT: Int32 b@12 = UMulHigh(b@66, $-1431655765(b@17), v28:Mod)
+# CHECK-NEXT: Int32 b@65 = Const32(1, v21:Increment)
+# CHECK-NEXT: Int32 b@10 = ZShr(b@12, $1(b@65), v28:Mod)
+# CHECK-NEXT: Int32 b@88 = Mul(b@10, $3(b@50), v28:Mod)
+# CHECK-NEXT: Int32 b@9 = Sub($1(b@65), b@88, v28:Mod)
+# CHECK-NEXT: Int32 b@8 = Add(b@9, b@27, v28:Mod)
+# CHECK-NEXT: Void b@95 = Branch(b@8, Terminal, v30:StrictEq)
+# CHECK-NEXT: Successors: Then:Unlikely:#9, Else:Rare:#17
+# CHECK-NEXT: BB#9: ; frequency = 0.000002
+# CHECK-NEXT: Predecessors: #15
+# CHECK-NEXT: Int32 b@94 = Shl(b@27, $1(b@65), v32:Mul)
+# CHECK-NEXT: Int32 b@73 = Const32(2, v21:Increment)
+# CHECK-NEXT: Int32 b@21 = Add(b@94, $2(b@73), v32:Mul)
+# CHECK-NEXT: Double b@98 = IToD(b@21, v33:Add)
+# CHECK-NEXT: Double b@99 = Add(b@26, b@98, v33:Add)
+# CHECK-NEXT: Void b@100 = Upsilon(b@99, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@101 = Upsilon(b@66, ^27, WritesLocalState)
+# CHECK-NEXT: Void b@102 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#17: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #15
+# CHECK-NEXT: Void b@90 = Upsilon(b@66, ^23, WritesLocalState)
+# CHECK-NEXT: Void b@91 = Upsilon(b@26, ^24, WritesLocalState)
+# CHECK-NEXT: Void b@92 = Upsilon(b@61, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@93 = Jump(Terminal)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#16: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #8
+# CHECK-NEXT: Void b@82 = Upsilon(b@26, ^29, WritesLocalState)
+# CHECK-NEXT: Void b@83 = Upsilon(b@61, ^30, WritesLocalState)
+# CHECK-NEXT: Void b@84 = Jump(Terminal)
+# CHECK-NEXT: Successors: #11
+# CHECK-NEXT: BB#11: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #13, #16
+# CHECK-NEXT: Double b@29 = Phi(ReadsLocalState, v38:Parameter)
+# CHECK-NEXT: Double b@30 = Phi(ReadsLocalState, v39:Parameter)
+# CHECK-NEXT: Int64 b@110 = Patchpoint(b@29:Register(%xmm0), runsWithoutFrame, resultConstraints = Register(%rax), pureFunction = 0xb00000000(children), ControlDependent, v40:CallBuiltin)
+# CHECK-NEXT: Int64 b@111 = Patchpoint(b@30:Register(%xmm0), runsWithoutFrame, resultConstraints = Register(%rax), pureFunction = 0xb00000000(children), ControlDependent, v40:CallBuiltin)
+# CHECK-NEXT: Int64 b@112 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000004, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v40:CallBuiltin)
+# CHECK-NEXT: Int64 b@114 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v40:CallBuiltin)
+# CHECK-NEXT: Int64 b@115 = Patchpoint(b@112:Register(%r8), b@114:Register(%rax), b@110:Register(%rdi), b@111:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v40:CallBuiltin)
+# CHECK-NEXT: Int64 b@117 = Const64(2, v41:Null)
+# CHECK-NEXT: Int64 b@118 = Patchpoint($2(b@117):SomeRegister, resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v42:PropGet)
+# CHECK-NEXT: Successors: #19, Rare:#18
+# CHECK-NEXT: BB#19: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Void b@121 = Oops(Terminal, v42:PropGet)
+# CHECK-NEXT: BB#18: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Int64 b@119 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:jscRoot, v42:PropGet)
+# CHECK-NEXT: Int64 b@113 = Const64(10, v40:CallBuiltin)
+# CHECK-NEXT: Void b@122 = Return($10(b@113), Terminal)
+# CHECK-NEXT: BB#13: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Void b@45 = Upsilon(b@127, ^29, WritesLocalState)
+# CHECK-NEXT: Double b@37 = ConstDouble(0.000000e+00(0), v4:Integer)
+# CHECK-NEXT: Void b@46 = Upsilon($0.000000(b@37), ^30, WritesLocalState)
+# CHECK-NEXT: Void b@47 = Jump(Terminal)
+# CHECK-NEXT: Successors: #11
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: range = [0,20]
+# CHECK-NEXT: b@23: range = [0,19]
+# CHECK-NEXT: b@27: range = [0,19]
+# CHECK-NEXT: b@128: range = [0,20]
+# CHECK-NEXT: b@27: induction, next = b@66, step = 1, test = b@85, doesNotWrap, relationHoldsOnEntry
+# CHECK-NEXT: end of function f0

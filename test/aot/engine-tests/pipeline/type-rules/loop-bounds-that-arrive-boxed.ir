@@ -1,0 +1,1089 @@
+# -- source: loop-bounds-that-arrive-boxed.ts
+# // A loop counts an int32 against a bound that arrives boxed: integers, fractions, -0, NaN, infinities, numbers beyond int32, with each relation and the bound on either side. The output is that of plain Bun.
+# const bounds: any[] = JSON.parse("[0, 1, 2, 5, -1, -5, 2.5, 4.000001, 3.999999, -0.5, 0.5, 2147483647, 2147483648, -2147483648, -2147483649, 1e10, -1e10, 4611686018427387904, -4611686018427387904, 1e300]");
+# bounds.push(-0, NaN, Infinity, -Infinity);
+#
+# let bound: number = 0;
+# function setBound(value: any, depth: number): void { if (depth > 0) setBound(value, depth - 1); bound = value; }
+#
+# const most = 8;
+# function below(): number { let turns = 0; const n = bound; for (let i = 0; i < n; i = (i + 1) | 0) { if (++turns >= most) break; } return turns; }
+# function atMost(): number { let turns = 0; const n = bound; for (let i = 0; i <= n; i = (i + 1) | 0) { if (++turns >= most) break; } return turns; }
+# function above(): number { let turns = 0; const n = bound; for (let i = 0; i > n; i = (i - 1) | 0) { if (++turns >= most) break; } return turns; }
+# function atLeast(): number { let turns = 0; const n = bound; for (let i = 0; i >= n; i = (i - 1) | 0) { if (++turns >= most) break; } return turns; }
+# function boundOnLeftAbove(): number { let turns = 0; const n = bound; for (let i = 0; n > i; i = (i + 1) | 0) { if (++turns >= most) break; } return turns; }
+# function boundOnLeftAtLeast(): number { let turns = 0; const n = bound; for (let i = 0; n >= i; i = (i + 1) | 0) { if (++turns >= most) break; } return turns; }
+# function boundOnLeftBelow(): number { let turns = 0; const n = bound; for (let i = 0; n < i; i = (i - 1) | 0) { if (++turns >= most) break; } return turns; }
+# function boundOnLeftAtMost(): number { let turns = 0; const n = bound; for (let i = 0; n <= i; i = (i - 1) | 0) { if (++turns >= most) break; } return turns; }
+# function nearTheTop(): number { let turns = 0; const n = bound; for (let i = 2147483645; i < n; i = (i + 1) | 0) { if (++turns >= most) break; } return turns; }
+#
+# let lines: string[] = [];
+# for (let round = 0; round < 200; round++) {
+#   lines = [];
+#   for (const value of bounds) {
+#     setBound(value, 0);
+#     lines.push([below(), atMost(), above(), atLeast(), boundOnLeftAbove(), boundOnLeftAtLeast(), boundOnLeftBelow(), boundOnLeftAtMost(), nearTheTop()].join(" "));
+#   }
+# }
+# console.log(lines.join("\n"));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="loop-bounds-that-arrive-boxed.ts" displayPath="loop-bounds-that-arrive-boxed.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=512 kind=Parameter
+typesite w1 module=m0 position=214 kind=Variable
+typesite w2 module=m0 position=463 kind=Variable
+typesite w3 module=m0 position=602 kind=Variable
+typesite w4 module=m0 position=2008 kind=Variable
+typesite w5 module=m0 position=612 kind=Result
+typesite w6 module=m0 position=759 kind=Result
+typesite w7 module=m0 position=908 kind=Result
+typesite w8 module=m0 position=1055 kind=Result
+typesite w9 module=m0 position=1205 kind=Result
+typesite w10 module=m0 position=1363 kind=Result
+typesite w11 module=m0 position=1524 kind=Result
+typesite w12 module=m0 position=1682 kind=Result
+typesite w13 module=m0 position=1842 kind=Result
+typesite w14 module=m0 position=415 kind=CallResult
+typesite w15 module=m0 position=2039 kind=Variable
+typesite w16 module=m0 position=2160 kind=CallResult
+typesite w17 module=m0 position=2169 kind=CallResult
+typesite w18 module=m0 position=2179 kind=CallResult
+typesite w19 module=m0 position=2188 kind=CallResult
+typesite w20 module=m0 position=2199 kind=CallResult
+typesite w21 module=m0 position=2219 kind=CallResult
+typesite w22 module=m0 position=2241 kind=CallResult
+typesite w23 module=m0 position=2261 kind=CallResult
+typesite w24 module=m0 position=2282 kind=CallResult
+typesite w25 module=m0 position=2159 kind=CallResult
+typesite w26 module=m0 position=2148 kind=CallResult
+typesite w27 module=m0 position=2326 kind=CallResult
+typesite w28 module=m0 position=643 kind=Variable
+typesite w29 module=m0 position=660 kind=Variable
+typesite w30 module=m0 position=680 kind=Variable
+typesite w31 module=m0 position=791 kind=Variable
+typesite w32 module=m0 position=808 kind=Variable
+typesite w33 module=m0 position=828 kind=Variable
+typesite w34 module=m0 position=939 kind=Variable
+typesite w35 module=m0 position=956 kind=Variable
+typesite w36 module=m0 position=976 kind=Variable
+typesite w37 module=m0 position=1088 kind=Variable
+typesite w38 module=m0 position=1105 kind=Variable
+typesite w39 module=m0 position=1125 kind=Variable
+typesite w40 module=m0 position=1247 kind=Variable
+typesite w41 module=m0 position=1264 kind=Variable
+typesite w42 module=m0 position=1284 kind=Variable
+typesite w43 module=m0 position=1407 kind=Variable
+typesite w44 module=m0 position=1424 kind=Variable
+typesite w45 module=m0 position=1444 kind=Variable
+typesite w46 module=m0 position=1566 kind=Variable
+typesite w47 module=m0 position=1583 kind=Variable
+typesite w48 module=m0 position=1603 kind=Variable
+typesite w49 module=m0 position=1725 kind=Variable
+typesite w50 module=m0 position=1742 kind=Variable
+typesite w51 module=m0 position=1762 kind=Variable
+typesite w52 module=m0 position=1878 kind=Variable
+typesite w53 module=m0 position=1895 kind=Variable
+typesite w54 module=m0 position=1915 kind=Variable
+data d0 root=Array{contents=undefined|null|string} module=m0
+data d1 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="setBound" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="bound" module=m0 declared={type=number|absent site=w2}
+variable g2 name="most" module=m0 declared={type=8|absent site=w3} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f5
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f6
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f7
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f8
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f9
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f10
+    v17 = Convert v16 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = Builtin builtin=JSON
+    v19 = PropGet v18 key="parse"
+    v20 = Convert v19 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v21 = String string="[0, 1, 2, 5, -1, -5, 2.5, 4.000001, 3.999999, -0.5, 0.5, 2147483647, 2147483648, -2147483648, -2147483649, 1e10, -1e10, 4611686018427387904, -4611686018427387904, 1e300]"
+    v22 = Call v20, v18, v21 calleeKey="parse" calleeName="JSON.parse"
+    v23 = Convert v22 declared={type=undefined|null|Array flags=[IsExpected]}
+    v24 = Convert v23 declared={type=undefined|null|Array site=w1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v25 = PropGet v24 key="push"
+    v26 = Double number=-0
+    v27 = Double number=NaN
+    v28 = Double number=Infinity
+    v29 = Double number=-Infinity
+    v30 = Call v25, v24, v26, v27, v28, v29 calleeKey="push" calleeName="bounds.push"
+    v31 = Convert v30 declared={type=number site=w14} illTypedCause=DeclarationWithoutBody
+    v32 = Integer
+    v33 = Convert v32 declared={type=number site=w2}
+    PutModuleVariable v33 variable=g1
+    v35 = Integer integer=8
+    v36 = Convert v35 declared={type=8 site=w3}
+    PutModuleVariable v36 variable=g2
+    v38 = Data data=d0
+    v39 = Convert v38 declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v40 = Integer
+    v41 = Convert v40 declared={type=number site=w15}
+    Jump -> next b2(v39, v41)
+  b2(v42: undefined|null|Array<undefined|null|string>, v43: number):
+    LoopHint
+    v45 = Integer integer=200
+    v46 = Less v43, v45
+    Branch v46 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v47):
+    Jump -> next b4()
+  b4():
+    v48 = Data data=d1
+    v49 = Convert v48 declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v50 = IteratorOpen v24
+    Jump -> next b5()
+  b5():
+    LoopHint
+    v52 = IteratorResume v50
+    v53 = ResultAt v52
+    v54 = ResultAt v52 index=1
+    Branch v53 -> taken b6(), notTaken b8()
+  b6():
+    Jump -> next b7()
+  b7():
+    v55 = Increment v47
+    v56 = Convert v55 declared={type=number site=w15}
+    Jump -> next b2(v49, v56)
+  b8():
+    Jump -> next b9()
+  b9() handler=b10():
+    v57 = GetModuleVariable variable=g0
+    v58 = Integer
+    v59 = Call v57, -, v54, v58 calleeName="setBound"
+    v60 = PropGet v49 key="push"
+    v61 = Call v1 calleeName="below"
+    v62 = Convert v61 declared={type=number site=w16}
+    v63 = Call v3 calleeName="atMost"
+    v64 = Convert v63 declared={type=number site=w17}
+    v65 = Call v5 calleeName="above"
+    v66 = Convert v65 declared={type=number site=w18}
+    v67 = Call v7 calleeName="atLeast"
+    v68 = Convert v67 declared={type=number site=w19}
+    v69 = Call v9 calleeName="boundOnLeftAbove"
+    v70 = Convert v69 declared={type=number site=w20}
+    v71 = Call v11 calleeName="boundOnLeftAtLeast"
+    v72 = Convert v71 declared={type=number site=w21}
+    v73 = Call v13 calleeName="boundOnLeftBelow"
+    v74 = Convert v73 declared={type=number site=w22}
+    v75 = Call v15 calleeName="boundOnLeftAtMost"
+    v76 = Convert v75 declared={type=number site=w23}
+    v77 = Call v17 calleeName="nearTheTop"
+    v78 = Convert v77 declared={type=number site=w24}
+    v79 = NewArray v62, v64, v66, v68, v70, v72, v74, v76, v78 contents=number
+    v80 = PropGet v79 key="join"
+    v81 = String string=" "
+    v82 = Call v80, v79, v81 calleeKey="join" calleeName="join"
+    v83 = Convert v82 declared={type=undefined|null|string site=w25 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v84 = Call v60, v49, v83 calleeKey="push" calleeName="lines.push"
+    v85 = Convert v84 declared={type=number site=w26} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b10() role=IterationCleanup subject=v50:
+    v86 = CatchException
+    IteratorClose v50 completion=Throw
+    Rethrow v86
+  b11(v88):
+    Jump -> next b12()
+  b12():
+    v89 = Builtin builtin=GlobalThis
+    v90 = PropGet v89 key="console" [isFreeName]
+    v91 = Convert v90 declared={type=builtin(Console) flags=[IsExpected]}
+    v92 = PropGet v91 key="log"
+    v93 = Convert v92 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v94 = PropGet v42 key="join"
+    v95 = String string="\n"
+    v96 = Call v94, v42, v95 calleeKey="join" calleeName="lines.join"
+    v97 = Convert v96 declared={type=undefined|null|string site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v98 = Call v93, v91, v97 calleeKey="log" calleeName="console.log"
+    v99 = Undefined
+    Return v99
+}
+function f1 name="setBound" module=m0 position=482 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number site=w0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Greater v1, v2
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    Jump -> next b3()
+  b3():
+    v5 = GetModuleVariable variable=g0
+    v6 = Integer integer=1
+    v7 = Sub v4, v6
+    v8 = Call v5, -, v0, v7 calleeName="setBound"
+    Jump -> next b5()
+  b4(v9):
+    Jump -> next b5()
+  b5():
+    v10 = GetModuleVariable variable=g1
+    v11 = CheckInitialized v10 name="bound"
+    v12 = Convert v0 declared={type=number site=w2} illTypedCause=FromLooseType
+    PutModuleVariable v12 variable=g1
+    v14 = Undefined
+    Return v14
+}
+function f2 name="below" module=m0 position=612 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w28}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w29}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w30}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Less v10, v4
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w28}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Add v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w30}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w5}
+    Return v28
+}
+function f3 name="atMost" module=m0 position=759 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w31}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w32}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w33}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = LessEq v10, v4
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w31}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Add v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w33}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w6}
+    Return v28
+}
+function f4 name="above" module=m0 position=908 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w34}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w35}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w36}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Greater v10, v4
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w34}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Sub v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w36}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w7}
+    Return v28
+}
+function f5 name="atLeast" module=m0 position=1055 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w37}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w38}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w39}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = GreaterEq v10, v4
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w37}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Sub v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w39}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w8}
+    Return v28
+}
+function f6 name="boundOnLeftAbove" module=m0 position=1205 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w40}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w41}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w42}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Greater v4, v10
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w40}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Add v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w42}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w9}
+    Return v28
+}
+function f7 name="boundOnLeftAtLeast" module=m0 position=1363 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w43}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w44}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w45}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = GreaterEq v4, v10
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w43}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Add v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w45}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w10}
+    Return v28
+}
+function f8 name="boundOnLeftBelow" module=m0 position=1524 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w46}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w47}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w48}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Less v4, v10
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w46}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Sub v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w48}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w11}
+    Return v28
+}
+function f9 name="boundOnLeftAtMost" module=m0 position=1682 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w49}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w50}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w51}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = LessEq v4, v10
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w49}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Sub v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w51}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w12}
+    Return v28
+}
+function f10 name="nearTheTop" module=m0 position=1842 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number site=w52}
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="bound"
+    v4 = Convert v3 declared={type=number site=w53}
+    v5 = Integer integer=2147483645
+    v6 = Convert v5 declared={type=number site=w54}
+    Jump -> next b2(v1, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Less v10, v4
+    Branch v11 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v12, v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v7
+    v15 = Convert v14 declared={type=number site=w52}
+    v16 = GetModuleVariable variable=g2
+    v17 = CheckInitialized v16 name="most"
+    v18 = GreaterEq v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b9(v15)
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = Add v19, v20
+    v22 = Integer
+    v23 = BitOr v21, v22
+    v24 = Convert v23 declared={type=number site=w54}
+    Jump -> next b2(v15, v24)
+  b8(v25, v26):
+    Jump -> next b9(v7)
+  b9(v27: number):
+    v28 = Convert v27 declared={type=number site=w13}
+    Return v28
+}
+function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = HasJSType v0 first=5 last=5
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5 index=1
+    v7 = ResultAt v5
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v9 = CreateIteratorResult v6, v8
+    Return v9
+  b4(v10):
+    Jump -> next b5()
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+    Unreachable
+}
+runtimefunction id=68 function=f11
+# -- generated: setBound below atMost above atLeast boundOnLeftAbove boundOnLeftAtLeast boundOnLeftBelow boundOnLeftAtMost nearTheTop
+# CHECK-LABEL: function {{*}}name="setBound"
+# CHECK: module=m0 position=482 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}, {type=int|whole site=w0}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|object, v1: int|whole):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean = Greater v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: int|whole = Sub v1, v4
+# CHECK-NEXT: v6: undefined = CallDirect v0, v5 function=f1 accessSite=23 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v7: undefined|null|boolean|number|string|object ~ number = Expect v0 expectedType=number
+# CHECK-NEXT: PutModuleVariable v7 variable=g1
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="below"
+# CHECK: module=m0 position=612 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v6, v4
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = Less v18, v16
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="atMost"
+# CHECK: module=m0 position=759 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = LessEq v6, v4
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = LessEq v18, v16
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="above"
+# CHECK: module=m0 position=908 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Greater v6, v4
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = Greater v18, v16
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="atLeast"
+# CHECK: module=m0 position=1055 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = GreaterEq v6, v4
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = GreaterEq v18, v16
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="boundOnLeftAbove"
+# CHECK: module=m0 position=1205 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Greater v4, v6
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = Greater v16, v18
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="boundOnLeftAtLeast"
+# CHECK: module=m0 position=1363 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = GreaterEq v4, v6
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = GreaterEq v16, v18
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="boundOnLeftBelow"
+# CHECK: module=m0 position=1524 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v4, v6
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = Less v16, v18
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="boundOnLeftAtMost"
+# CHECK: module=m0 position=1682 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = LessEq v4, v6
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = LessEq v16, v18
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="nearTheTop"
+# CHECK: module=m0 position=1842 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: 2147483645 = Integer integer=2147483645
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: number):
+# CHECK-NEXT: Jump -> next b2(v0, v2)
+# CHECK-NEXT: b2(v5: int|whole, v6: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v6, v4
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: int|whole = Increment v5
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: boolean = GreaterEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: i32 = BitOr v13, v14
+# CHECK-NEXT: Jump -> next b2(v9, v15)
+# CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v0, v2)
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 2147483645) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: boolean = Less v18, v16
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }

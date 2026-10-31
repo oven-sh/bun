@@ -1,3 +1,0 @@
-{
-  "alone": "what it prints hangs on what else the executable holds: another program that writes to String.prototype unlocks the same members"
-}

@@ -193,9 +193,10 @@ impl FileLowering<'_, '_, '_, '_> {
             false => None,
         };
         let types = &mut self.fragment.types;
-        let builtin = match own_exports {
-            Some(exports) => exports.ty,
-            None => types.intern(Type::builtin(path.id)),
+        let builtin = match (own_exports, Type::value_of_builtin(path.id)) {
+            (Some(exports), _) => exports.ty,
+            (None, Some(builtin)) => types.intern(builtin),
+            (None, None) => return position,
         };
         let expected = match is_expected {
             true => types.union(position.ty, builtin),

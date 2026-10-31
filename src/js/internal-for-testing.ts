@@ -359,8 +359,7 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 export const Dequeue = require("internal/fifo");
 
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
-// non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
-// so the node edge cases are handled here.
+// non-strings are undefined; the node edge cases are handled here.
 const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(
   "node_util_binding.bind.ts",
   "normalizeEncoding",
@@ -370,7 +369,6 @@ function nodeNormalizeEncoding(enc: unknown) {
   if (enc == null) return "utf8";
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
-  if (lower === "utf-16le") return "utf16le";
   // The Rust map also accepts Buffer-only names node's normalizeEncoding rejects.
   if (lower === "buffer" || lower === "utf16-le") return undefined;
   return rustNormalizeEncoding(enc);
@@ -819,6 +817,13 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
+
+/** Whether the heap profiler of this thread's VM holds a snapshot. While it does, every collection visits each dead cell. */
+export const heapProfilerHasSnapshot: () => boolean = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_heapProfilerHasSnapshot",
+  0,
+);
 
 /** In a build with AddressSanitizer: reads a string of WTF's that was freed, which the sanitizer has to report. Elsewhere: nothing. */
 export const readFreedStringUnderASAN: () => number | undefined = $newCppFunction(

@@ -28,6 +28,8 @@ pub struct Compilation {
     pub further_programs: Vec<EngineResult>,
     /// `UsedFeatures::starts_workers_from_unseen_code`
     pub starts_workers_from_unseen_code: bool,
+    /// The names that the programs start Workers with and that are not the paths of modules: the path that each would have as a file of the executable, and the file on disk that it leads to.
+    pub names_of_worker_files: Vec<EntryPointPaths>,
 }
 
 pub struct BuildFailed {

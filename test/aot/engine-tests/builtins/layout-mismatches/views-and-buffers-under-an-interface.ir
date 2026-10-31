@@ -1,0 +1,234 @@
+# An interface that typed arrays, buffers and views satisfy
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="views-and-buffers-under-an-interface.ts" displayPath="views-and-buffers-under-an-interface.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/builtins/JSBufferConstructor.ts" displayPath="/$bun/js/builtins/JSBufferConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+typesite w0 module=m0 position=277 kind=Variable
+typesite w1 module=m0 position=117 kind=Parameter
+typesite w2 module=m0 position=103 kind=Result
+typesite w3 module=m0 position=318 kind=CallResult
+typesite w4 module=m0 position=339 kind=CallResult
+typesite w5 module=m0 position=374 kind=CallResult
+typesite w6 module=m0 position=361 kind=CallResult
+typesite w7 module=m0 position=397 kind=CallResult
+typesite w8 module=m0 position=430 kind=Variable
+typesite w9 module=m0 position=472 kind=Element
+typesite w10 module=m0 position=495 kind=CallResult
+typesite w11 module=m0 position=173 kind=CallResult
+typesite w12 module=m1 position=241 kind=CallResult
+typesite w13 module=m1 position=377 kind=CallResult
+typesite w14 module=m1 position=464 kind=CallResult
+typesite w15 module=m1 position=908 kind=CallResult
+typesite w16 module=m1 position=959 kind=CallResult
+typesite w17 module=m1 position=988 kind=CallResult
+typesite w18 module=m1 position=1105 kind=PropertyRead
+typesite w19 module=m1 position=1130 kind=CallResult
+typesite w20 module=m1 position=1159 kind=CallResult
+typesite w21 module=m1 position=1399 kind=CallResult
+layout L0 name="Sized" module=m0 position=71 fields=[{key="byteLength" declared={type=number} flags=[IsRequired]}] flags=[HasMembersWithoutLayout] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="byteLength" value=Number{value=7}}]} module=m0
+data d1 root=Array{contents=undefined|null|string elements=[String{value="string"}, String{value="Buffer"}, String{value="ArrayBuffer"}, String{value="Array"}, String{value="Array-like Object"}]} module=m1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Builtin builtin=Uint8Array
+    v4 = Integer integer=3
+    v5 = Construct v3, -, v4 calleeName="Uint8Array"
+    v6 = Convert v5 declared={type=undefined|null|Uint8Array site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v7 = Builtin builtin=ArrayBuffer
+    v8 = Integer integer=5
+    v9 = Construct v7, -, v8 calleeName="ArrayBuffer"
+    v10 = Convert v9 declared={type=undefined|null|ArrayBuffer site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="DataView" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(DataView) flags=[IsExpected]}
+    v14 = Builtin builtin=ArrayBuffer
+    v15 = Integer integer=2
+    v16 = Construct v14, -, v15 calleeName="ArrayBuffer"
+    v17 = Convert v16 declared={type=undefined|null|ArrayBuffer site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v18 = Construct v13, -, v17 calleeName="DataView"
+    v19 = Convert v18 declared={type=undefined|null|DataView site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="Buffer" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v23 = PropGet v22 key="from"
+    v24 = Convert v23 declared={type=builtin(BufferFrom) flags=[IsExpected]}
+    v25 = String string="abcd"
+    v26 = Call v24, v22, v25 calleeKey="from" calleeName="Buffer.from"
+    v27 = Convert v26 declared={type=undefined|null|Buffer site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v28 = NewArray v2, v6, v10, v19, v27 contents=undefined|null|L0
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|L0> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v30 = Integer
+    v31 = Convert v30 declared={type=number site=w8}
+    Jump -> next b1(v31)
+  b1(v32: number):
+    v33 = IteratorOpen v29
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v35 = IteratorResume v33
+    v36 = ResultAt v35
+    v37 = ResultAt v35 index=1
+    Branch v36 -> taken b3(), notTaken b4()
+  b3():
+    v38 = Increment v32
+    v39 = Convert v38 declared={type=number site=w8}
+    Jump -> next b1(v39)
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v40 = Convert v37 declared={type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v41 = Call v1, -, v40 calleeName="tell"
+    Jump -> next b2()
+  b6() role=IterationCleanup subject=v33:
+    v42 = CatchException
+    Rethrow v42
+}
+function f1 name="tell" module=m0 position=103 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="byteLength"
+    v2 = String string="|"
+    v3 = Add v1, v2
+    v4 = Builtin builtin=ArrayBuffer
+    v5 = Builtin builtin=ArrayBufferIsView
+    v6 = Call v5, v4, v0 calleeName="ArrayBuffer.isView"
+    v7 = Convert v6 declared={type=boolean site=w11} illTypedCause=DeclarationWithoutBody
+    v8 = Add v3, v7
+    v9 = String string="|"
+    v10 = Add v8, v9
+    v11 = Builtin builtin=Uint8Array
+    v12 = InstanceOf v0, v11 writtenExpression="v instanceof Uint8Array"
+    v13 = Add v10, v12
+    v14 = String string="|"
+    v15 = Add v13, v14
+    v16 = Builtin builtin=ArrayBuffer
+    v17 = InstanceOf v0, v16 writtenExpression="v instanceof ArrayBuffer"
+    v18 = Add v15, v17
+    v19 = Convert v18 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
+    Return v19
+}
+function f2 module=m1 position=145 role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=65565 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=null|object
+    Branch v3 -> taken b1(| 0), notTaken b15(| 0)
+  b1(v4):
+    v5 = Convert v4 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key=@"inherits" [isFreeName]
+    v8 = Integer integer=4
+    v9 = Convert v5 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
+    v10 = Call v7, -, v8, v9
+    v11 = ToBoolean v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = Builtin builtin=Buffer [isNotReadFromHolder]
+    v14 = Convert v1 declared={type=number flags=[IsExpected]}
+    v15 = Convert v2 declared={type=number flags=[IsExpected]}
+    v16 = Construct v13, -, v9, v14, v15 calleeName="$Buffer"
+    v17 = Convert v16 declared={type=undefined|null|Buffer site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v17
+  b3(v18):
+    v19 = HasJSType v9 first=4 last=2
+    v20 = ToBoolean v19
+    Branch v20 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v21):
+    v22 = Builtin builtin=Buffer [isNotReadFromHolder]
+    v23 = Convert v9 declared={type=undefined|null|DataView|TypedArray|Uint8Array flags=[IsExpected]}
+    v24 = Convert v1 declared={type=number flags=[IsExpected]}
+    v25 = Convert v2 declared={type=number flags=[IsExpected]}
+    v26 = Construct v22, -, v23, v24, v25 calleeName="$Buffer"
+    v27 = Convert v26 declared={type=undefined|null|Buffer site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v27
+  b5(v28):
+    v29 = PropGet v9 key="valueOf"
+    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]}
+    v31 = PropGet v9 key="valueOf"
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
+    v33 = Call v32, v9 calleeKey="valueOf" calleeName="value.valueOf"
+    v34 = TypeTest v33 testedType=null|object
+    Branch v34 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v35):
+    v36 = Builtin builtin=Buffer [isNotReadFromHolder]
+    v37 = Builtin builtin=BufferFrom
+    v38 = Convert v1 declared={type=number flags=[IsExpected]}
+    v39 = Convert v2 declared={type=number flags=[IsExpected]}
+    v40 = Call v37, v36, v35, v38, v39 calleeName="Buffer.from"
+    ReturnCall v40
+  b7(v41):
+    v42 = Convert v9 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
+    v43 = PropGet v42 key="length"
+    v44 = Convert v43 declared={type=number flags=[IsExpected]}
+    v45 = TypeTest v44 testedType=undefined
+    Branch v45 -> taken b8(| 0), notTaken b13(| 0)
+  b8(v46):
+    v47 = Builtin builtin=GlobalThis
+    v48 = PropGet v47 key=@"inherits" [isFreeName]
+    v49 = Integer integer=4
+    v50 = PropGet v42 key="buffer"
+    v51 = Call v48, -, v49, v50
+    v52 = ToBoolean v51
+    Branch v52 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v53):
+    Jump -> next b14(v46)
+  b10(v54):
+    v55 = PropGet v42 key="type"
+    v56 = PropGet v42 key="data"
+    v57 = String string="Buffer"
+    v58 = StrictEq v55, v57
+    Branch v58 -> taken b11(| 0), notTaken b12(| 0)
+  b11(v59):
+    v60 = Builtin builtin=ArrayIsArray [isNotReadFromHolder]
+    v61 = Builtin builtin=Array [isNotReadFromHolder]
+    v62 = Convert v56 declared={type=undefined|null|Array flags=[IsExpected]}
+    v63 = Call v60, v61, v62
+    v64 = Builtin builtin=Buffer [isNotReadFromHolder]
+    v65 = Integer
+    v66 = Construct v64, -, v65 calleeName="$Buffer"
+    v67 = Convert v66 declared={type=undefined|null|Buffer site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v67
+  b12(v68):
+    v69 = PropGet v42 key=@@toPrimitive
+    v70 = Convert v69 declared={type=undefined|null|function flags=[IsExpected]}
+    v71 = Convert v70 declared={type=undefined|null|function flags=[IsExpected]}
+    v72 = String string="string"
+    v73 = Call v71, v42, v72
+    v74 = Convert v73 declared={type=undefined|null|string flags=[IsExpected]}
+    v75 = Builtin builtin=Buffer [isNotReadFromHolder]
+    v76 = Convert v74 declared={type=undefined|null|string} illTypedCause=Assertion
+    v77 = Convert v1 declared={type=number flags=[IsExpected]}
+    v78 = Construct v75, -, v76, v77 calleeName="$Buffer"
+    v79 = Convert v78 declared={type=undefined|null|Buffer site=w21 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v79
+  b13(v80):
+    Jump -> next b14(v80)
+  b14(v81):
+    v82 = Convert v81 declared={type=number} illTypedCause=Assertion
+    v83 = Builtin builtin=Buffer [isNotReadFromHolder]
+    v84 = Integer
+    v85 = Construct v83, -, v84 calleeName="$Buffer"
+    v86 = Convert v85 declared={type=undefined|null|Buffer site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v86
+  b15(v87):
+    v88 = Builtin builtin=GlobalThis
+    v89 = PropGet v88 key=@"makeErrorWithCode" [isFreeName]
+    v90 = Integer integer=112
+    v91 = String string="first argument"
+    v92 = Data data=d1
+    v93 = Convert v87 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
+    v94 = Call v89, -, v90, v91, v92, v93
+    Throw v94
+}
+function f3 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=68 function=f3
+runtimefunction id=65565 function=f2
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 120, patchpoints: 32, rare instructions: 72, polls: 2
+# CHECK-NEXT: end of function f0

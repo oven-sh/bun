@@ -1,0 +1,746 @@
+# Captured variables escape on one path only: a closure over the variables of a loop is stored when a flag is set. What the function and the stored closure write after that goes to one variable, and the result is the same as with the flag clear.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="environment-escapes-on-one-path.ts" displayPath="environment-escapes-on-one-path.ts" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/DisposableStackPrototype.ts" displayPath="/$bun/js/engine/DisposableStackPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="internal:primordials" displayPath="internal:primordials" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalPrimordials body=f13
+module m5 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f14
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|function|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|absent|Array<undefined|null|function|f4|f5|f6> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}] ownFieldCount=2
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}, {key=@"binding.1" declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=2
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}, {key=@"binding.1" declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=2
+layout L3 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L4|L6|L7|L8|L9 flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=1
+layout L4 name="Box" module=m0 position=401 fields=[{key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L5 fields=[{key="configurable" declared={type=true} flags=[IsRequired]}, {key="enumerable" declared={type=true} flags=[IsRequired]}] supertypes=[L6] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L6 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f17|f19|f21 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function|f18|f20|f22 flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] supertypes=[L5] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L7 module=m2 position=690 fields=[{key="method" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L8 module=m3 position=6451 fields=[{key="done" declared={type=undefined|boolean flags=[IsExpected]}}, {key="value" declared={type=anything}}] ownFieldCount=2
+layout L9 module=m4 position=4548 fields=[{key="configurable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="enumerable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="writable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L6] declaredOrder=[2, 3, 1, 0] ownFieldCount=4
+layout L10 name="Context" module=m5 position=11187 fields=[{key="breakLength" declared={type=number} flags=[IsRequired]}, {key="budget" declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="circular" declared={type=undefined|null|Map<anything, number> flags=[OmitsNull]}}, {key="colors" declared={type=boolean} flags=[IsRequired]}, {key="compact" declared={type=boolean|number} flags=[IsRequired]}, {key="currentDepth" declared={type=number} flags=[IsRequired]}, {key="customInspect" declared={type=boolean} flags=[IsRequired]}, {key="depth" declared={type=null|number} flags=[IsRequired]}, {key="getters" declared={type=undefined|null|boolean|"get"|"set" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="indentationLvl" declared={type=number} flags=[IsRequired]}, {key="maxArrayLength" declared={type=number} flags=[IsRequired]}, {key="maxStringLength" declared={type=number} flags=[IsRequired]}, {key="numericSeparator" declared={type=boolean} flags=[IsRequired]}, {key="seen" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="seenRefs" declared={type=undefined|null|Set<number> flags=[OmitsNull]}}, {key="showHidden" declared={type=boolean} flags=[IsRequired]}, {key="showProxy" declared={type=boolean} flags=[IsRequired]}, {key="sorted" declared={type=undefined|null|boolean|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="stylize" declared={type=undefined|null|function|f15|f16 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="userOptions" declared={type=undefined|null|object flags=[OmitsNull]}}] supertypes=[L11] declaredOrder=[1, 9, 13, 5, 18, 15, 7, 3, 6, 16, 10, 11, 0, 4, 17, 8, 12, 19, 2, 14] ownFieldCount=20
+layout L11 name="InspectOptions" module=m5 position=10770 fields=[{key="breakLength" declared={type=undefined|number}}, {key="colors" declared={type=undefined|boolean}}, {key="compact" declared={type=undefined|boolean|number}}, {key="customInspect" declared={type=undefined|boolean}}, {key="depth" declared={type=undefined|null|number}}, {key="getters" declared={type=undefined|null|boolean|"get"|"set" flags=[OmitsNull]}}, {key="maxArrayLength" declared={type=undefined|null|number}}, {key="maxStringLength" declared={type=undefined|null|number}}, {key="numericSeparator" declared={type=undefined|boolean}}, {key="showHidden" declared={type=undefined|boolean}}, {key="showProxy" declared={type=undefined|boolean}}, {key="sorted" declared={type=undefined|null|boolean|function flags=[OmitsNull]}}, {key="stylize" declared={type=undefined|null|function|f15|f16 flags=[OmitsNull]}}] declaredOrder=[12, 9, 4, 1, 3, 10, 6, 7, 0, 2, 11, 5, 8] ownFieldCount=13
+layout L12 fields=[{key="breakLength" declared={type=number} flags=[IsRequired]}, {key="colors" declared={type=anything} flags=[IsRequired]}, {key="compact" declared={type=number} flags=[IsRequired]}, {key="customInspect" declared={type=boolean} flags=[IsRequired]}, {key="depth" declared={type=number} flags=[IsRequired]}, {key="getters" declared={type=boolean} flags=[IsRequired]}, {key="maxArrayLength" declared={type=number} flags=[IsRequired]}, {key="maxStringLength" declared={type=number} flags=[IsRequired]}, {key="numericSeparator" declared={type=boolean} flags=[IsRequired]}, {key="showHidden" declared={type=boolean} flags=[IsRequired]}, {key="showProxy" declared={type=boolean} flags=[IsRequired]}, {key="sorted" declared={type=boolean} flags=[IsRequired]}] declaredOrder=[9, 4, 1, 3, 10, 6, 7, 0, 2, 11, 5, 8] ownFieldCount=12
+data d0 root=Array{contents=undefined|null|function|f4|f5|f6} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure v0 function=f1
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = NewClosure v0 function=f2
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = NewClosure v0 function=f3
+    v6 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="edenGC" [isFreeName, isForTypeOf]
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="edenGC" [isFreeName]
+    v11 = Data data=d0
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|function|f4|f5|f6> flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v0, v12 layout=L0 field=1
+    v14 = Integer
+    v15 = Convert v14 declared={type=number}
+    v16 = String string=""
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v18 = Integer
+    v19 = Convert v18 declared={type=number}
+    Jump -> next b1(v15, v17, v19)
+  b1(v20: number, v21: undefined|null|string, v22: number):
+    LoopHint
+    v24 = Integer integer=600
+    v25 = Less v22, v24
+    Branch v25 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v26):
+    v27 = Integer integer=7
+    v28 = Mod v26, v27
+    v29 = Convert v28 declared={type=number}
+    v30 = Integer integer=3
+    v31 = Mod v26, v30
+    v32 = Integer
+    v33 = StrictEq v31, v32
+    v34 = Convert v33 declared={type=boolean}
+    v35 = Call v2, -, v29, v34 calleeName="variablesOfOneIteration"
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v37 = Call v4, -, v29, v34 calleeName="variablesOfAllIterations"
+    v38 = Convert v37 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v39 = ToBoolean v34
+    v40 = LogicalNot v39
+    v41 = Call v2, -, v29, v40 calleeName="variablesOfOneIteration"
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v43 = StrictEq v36, v42
+    Branch v43 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v44):
+    v45 = ToBoolean v34
+    v46 = LogicalNot v45
+    v47 = Call v4, -, v29, v46 calleeName="variablesOfAllIterations"
+    Jump -> next b5(v44, v38, v20)
+  b4(v48):
+    v49 = Increment v20
+    v50 = Convert v49 declared={type=number}
+    Jump -> next b5(v48, v38, v50)
+  b5(v51: undefined|null|string, v52: undefined|null|string, v53: number):
+    v54 = String string=" "
+    v55 = Add v34, v54
+    v56 = Add v55, v51
+    v57 = String string=" | "
+    v58 = Add v56, v57
+    v59 = Add v58, v52
+    v60 = String string="\n"
+    v61 = Add v59, v60
+    v62 = Add v21, v61
+    v63 = Convert v62 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v64 = Integer
+    v65 = Convert v64 declared={type=number}
+    PropSet v12, v65 key="length" mode=Sloppy
+    v67 = Increment v26
+    v68 = Convert v67 declared={type=number}
+    Jump -> next b1(v53, v63, v68)
+  b6(v69):
+    v70 = Integer
+    v71 = Convert v70 declared={type=number}
+    Jump -> next b7(v21, v71)
+  b7(v72: undefined|null|string, v73: number):
+    LoopHint
+    v75 = Integer integer=4
+    v76 = Less v73, v75
+    Branch v76 -> taken b8(| 0), notTaken b9(| 0)
+  b8(v77):
+    v78 = Integer integer=2
+    v79 = Mod v77, v78
+    v80 = Integer
+    v81 = StrictEq v79, v80
+    v82 = Convert v81 declared={type=boolean}
+    v83 = String string=" "
+    v84 = Add v82, v83
+    v85 = Integer integer=20
+    v86 = Call v6, -, v85, v82 calleeName="objectsAcrossCollections"
+    v87 = Convert v86 declared={type=number}
+    v88 = Add v84, v87
+    v89 = String string="\n"
+    v90 = Add v88, v89
+    v91 = Add v72, v90
+    v92 = Convert v91 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v93 = Increment v77
+    v94 = Convert v93 declared={type=number}
+    Jump -> next b7(v92, v94)
+  b9(v95):
+    v96 = Undefined
+    Return v96
+}
+function f1 name="variablesOfOneIteration" module=m0 position=475 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}, {type=boolean}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: number, v2: boolean):
+    v3 = String string=""
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v4, v6)
+  b1(v7: undefined|null|string, v8: number):
+    LoopHint
+    v10 = Less v8, v1
+    Branch v10 -> taken b2(| 0, 1), notTaken b12(| 0, 1)
+  b2(v11, v12):
+    v13 = NewObject layout=L1
+    v14 = Convert v11 declared={type=number}
+    PutEnvironmentField v13, v14 layout=L1
+    v16 = String string="t"
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v17 layout=L1 field=1
+    v19 = ToBoolean v2
+    Branch v19 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v20):
+    v21 = GetEnvironmentField v0 layout=L0 field=1
+    v22 = CheckInitialized v21 name="saved"
+    v23 = PropGet v22 key="push"
+    v24 = NewClosure v13 function=f4
+    v25 = Call v23, v22, v24 calleeKey="push" calleeName="saved.push"
+    Jump -> next b5(v20)
+  b4(v26):
+    Jump -> next b5(v26)
+  b5(v27: boolean):
+    v28 = GetEnvironmentField v13 layout=L1
+    v29 = CheckInitialized v28 name="total"
+    v30 = Integer integer=100
+    v31 = Add v29, v30
+    v32 = Convert v31 declared={type=number}
+    PutEnvironmentField v13, v32 layout=L1
+    v34 = GetEnvironmentField v13 layout=L1 field=1
+    v35 = CheckInitialized v34 name="text"
+    v36 = String string="f"
+    v37 = Add v35, v36
+    v38 = Convert v37 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v38 layout=L1 field=1
+    v40 = ToBoolean v27
+    Branch v40 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v41):
+    v42 = GetEnvironmentField v0 layout=L0 field=1
+    v43 = CheckInitialized v42 name="saved"
+    v44 = GetEnvironmentField v0 layout=L0 field=1
+    v45 = CheckInitialized v44 name="saved"
+    v46 = PropGet v45 key="length"
+    v47 = Convert v46 declared={type=number} illTypedCause=Assertion
+    v48 = Integer integer=1
+    v49 = Sub v47, v48
+    v50 = ElemGet v43, v49
+    v51 = Convert v50 declared={type=undefined|null|function|f4|f5|f6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v52 = Integer integer=7
+    v53 = Call v51, v43, v52
+    v54 = Convert v53 declared={type=number}
+    v55 = Convert v54 declared={type=undefined|number}
+    Jump -> next b8(v41, v55)
+  b7(v56):
+    v57 = GetEnvironmentField v13 layout=L1 field=1
+    v58 = CheckInitialized v57 name="text"
+    v59 = Integer integer=7
+    v60 = Add v58, v59
+    v61 = Convert v60 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v61 layout=L1 field=1
+    v63 = GetEnvironmentField v13 layout=L1
+    v64 = CheckInitialized v63 name="total"
+    v65 = Convert v64 declared={type=undefined|number}
+    Jump -> next b8(v56, v65)
+  b8(v66: boolean, v67: undefined|number):
+    v68 = ToBoolean v66
+    Branch v68 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v69):
+    v70 = GetEnvironmentField v0 layout=L0 field=1
+    v71 = CheckInitialized v70 name="saved"
+    v72 = GetEnvironmentField v0 layout=L0 field=1
+    v73 = CheckInitialized v72 name="saved"
+    v74 = PropGet v73 key="length"
+    v75 = Convert v74 declared={type=number} illTypedCause=Assertion
+    v76 = Integer integer=1
+    v77 = Sub v75, v76
+    v78 = ElemGet v71, v77
+    v79 = Convert v78 declared={type=undefined|null|function|f4|f5|f6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v80 = Integer
+    v81 = Call v79, v71, v80
+    v82 = Convert v81 declared={type=number}
+    v83 = Convert v82 declared={type=undefined|number}
+    Jump -> next b11(v83)
+  b10(v84):
+    v85 = GetEnvironmentField v13 layout=L1 field=1
+    v86 = CheckInitialized v85 name="text"
+    v87 = Integer
+    v88 = Add v86, v87
+    v89 = Convert v88 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v89 layout=L1 field=1
+    v91 = GetEnvironmentField v13 layout=L1
+    v92 = CheckInitialized v91 name="total"
+    v93 = Convert v92 declared={type=undefined|number}
+    Jump -> next b11(v93)
+  b11(v94: undefined|number):
+    v95 = Convert v67 declared={type=number} illTypedCause=Assertion
+    v96 = String string=":"
+    v97 = Add v95, v96
+    v98 = Convert v94 declared={type=number} illTypedCause=Assertion
+    v99 = Add v97, v98
+    v100 = String string=":"
+    v101 = Add v99, v100
+    v102 = GetEnvironmentField v13 layout=L1
+    v103 = CheckInitialized v102 name="total"
+    v104 = Add v101, v103
+    v105 = GetEnvironmentField v13 layout=L1 field=1
+    v106 = CheckInitialized v105 name="text"
+    v107 = Add v104, v106
+    v108 = String string=";"
+    v109 = Add v107, v108
+    v110 = Add v7, v109
+    v111 = Convert v110 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v112 = Increment v11
+    v113 = Convert v112 declared={type=number}
+    Jump -> next b1(v111, v113)
+  b12(v114, v115):
+    v116 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v116
+}
+function f2 name="variablesOfAllIterations" module=m0 position=1172 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}, {type=boolean}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: number, v2: boolean):
+    v3 = NewObject layout=L2
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    PutEnvironmentField v3, v5 layout=L2
+    v7 = GetEnvironmentField v0 layout=L0 field=1
+    v8 = CheckInitialized v7 name="saved"
+    v9 = PropGet v8 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Integer
+    v12 = Convert v11 declared={type=number}
+    Jump -> next b1(v12)
+  b1(v13: number):
+    LoopHint
+    v15 = Less v13, v1
+    Branch v15 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v16, v17):
+    v18 = GetEnvironmentField v0 layout=L0 field=1
+    v19 = CheckInitialized v18 name="saved"
+    v20 = PropGet v19 key="push"
+    v21 = NewClosure v3 function=f5
+    v22 = Call v20, v19, v21 calleeKey="push" calleeName="saved.push"
+    v23 = GetEnvironmentField v3 layout=L2
+    v24 = CheckInitialized v23 name="total"
+    v25 = Integer integer=10
+    v26 = Add v24, v25
+    v27 = Convert v26 declared={type=number}
+    PutEnvironmentField v3, v27 layout=L2
+    v29 = GetEnvironmentField v3 layout=L2 field=1
+    v30 = CheckInitialized v29 name="text"
+    v31 = Increment v16
+    v32 = Convert v31 declared={type=number}
+    Jump -> next b1(v32)
+  b3(v33, v34):
+    v35 = Integer
+    v36 = Convert v35 declared={type=number}
+    Jump -> next b4(v36)
+  b4(v37: number):
+    LoopHint
+    v39 = Convert v37 declared={type=i32 flags=[IsExpected]}
+    v40 = Integer integer=1
+    v41 = RShift v34, v40
+    v42 = Less v39, v41
+    Branch v42 -> taken b5(| 0), notTaken b9(| 0)
+  b5(v43):
+    v44 = ToBoolean v2
+    Branch v44 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v45):
+    v46 = GetEnvironmentField v0 layout=L0 field=1
+    v47 = CheckInitialized v46 name="saved"
+    v48 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v49 = Convert v43 declared={type=i32 flags=[IsExpected]}
+    v50 = Add v48, v49
+    v51 = ElemGet v47, v50
+    v52 = Convert v51 declared={type=undefined|null|function|f4|f5|f6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v53 = Call v52, v47, v49
+    v54 = Convert v53 declared={type=number}
+    Jump -> next b8(v49)
+  b7(v55):
+    v56 = GetEnvironmentField v3 layout=L2
+    v57 = CheckInitialized v56 name="total"
+    v58 = Convert v43 declared={type=i32 flags=[IsExpected]}
+    v59 = Add v57, v58
+    v60 = Convert v59 declared={type=number}
+    PutEnvironmentField v3, v60 layout=L2
+    v62 = GetEnvironmentField v3 layout=L2 field=1
+    v63 = CheckInitialized v62 name="text"
+    Jump -> next b8(v58)
+  b8(v64: number):
+    v65 = GetEnvironmentField v3 layout=L2
+    v66 = CheckInitialized v65 name="total"
+    v67 = Integer integer=1000
+    v68 = Add v66, v67
+    v69 = Convert v68 declared={type=number}
+    PutEnvironmentField v3, v69 layout=L2
+    v71 = Increment v64
+    v72 = Convert v71 declared={type=number}
+    Jump -> next b4(v72)
+  b9(v73):
+    v74 = GetEnvironmentField v3 layout=L2
+    v75 = CheckInitialized v74 name="total"
+    v76 = GetEnvironmentField v3 layout=L2 field=1
+    v77 = CheckInitialized v76 name="text"
+    v78 = Add v75, v77
+    v79 = Convert v78 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v79
+}
+function f3 name="objectsAcrossCollections" module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: number, v2: boolean):
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v4, v6)
+  b1(v7: number, v8: number):
+    LoopHint
+    v10 = Less v8, v1
+    Branch v10 -> taken b2(| 0, 1), notTaken b9(| 0, 1)
+  b2(v11, v12):
+    v13 = NewObject layout=L3
+    v14 = Convert v11 declared={type=number}
+    v15 = NewObject -, v14 layout=L4 fields=[0]
+    v16 = FinishObject v15
+    v17 = Convert v16 declared={type=undefined|null|L4|L6|L7|L8|L9 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v17 layout=L3
+    v19 = ToBoolean v2
+    Branch v19 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v20):
+    v21 = GetEnvironmentField v0 layout=L0 field=1
+    v22 = CheckInitialized v21 name="saved"
+    v23 = PropGet v22 key="push"
+    v24 = NewClosure v13 function=f6
+    v25 = Call v23, v22, v24 calleeKey="push" calleeName="saved.push"
+    Jump -> next b5(v20)
+  b4(v26):
+    Jump -> next b5(v26)
+  b5(v27: boolean):
+    v28 = GetEnvironmentField v13 layout=L3
+    v29 = CheckInitialized v28 name="box"
+    v30 = PropGet v29 key="value"
+    v31 = Integer integer=1
+    v32 = Add v30, v31
+    v33 = Convert v32 declared={type=number}
+    v34 = NewObject -, v33 layout=L4 fields=[0]
+    v35 = FinishObject v34
+    v36 = Convert v35 declared={type=undefined|null|L4|L6|L7|L8|L9 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v36 layout=L3
+    v38 = ToBoolean v27
+    Branch v38 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v39):
+    v40 = GetEnvironmentField v0 layout=L0 field=1
+    v41 = CheckInitialized v40 name="saved"
+    v42 = GetEnvironmentField v0 layout=L0 field=1
+    v43 = CheckInitialized v42 name="saved"
+    v44 = PropGet v43 key="length"
+    v45 = Convert v44 declared={type=number} illTypedCause=Assertion
+    v46 = Integer integer=1
+    v47 = Sub v45, v46
+    v48 = ElemGet v41, v47
+    v49 = Convert v48 declared={type=undefined|null|function|f4|f5|f6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v50 = Integer integer=5
+    v51 = Call v49, v41, v50
+    v52 = Convert v51 declared={type=number}
+    v53 = Add v7, v52
+    v54 = Convert v53 declared={type=number}
+    Jump -> next b8(v54)
+  b7(v55):
+    v56 = GetEnvironmentField v13 layout=L3
+    v57 = CheckInitialized v56 name="box"
+    v58 = PropGet v57 key="value"
+    v59 = Add v7, v58
+    v60 = Convert v59 declared={type=number}
+    v61 = GetEnvironmentField v13 layout=L3
+    v62 = CheckInitialized v61 name="box"
+    v63 = PropGet v62 key="value"
+    v64 = Integer integer=5
+    v65 = Add v63, v64
+    v66 = Convert v65 declared={type=number}
+    v67 = NewObject -, v66 layout=L4 fields=[0]
+    v68 = FinishObject v67
+    v69 = Convert v68 declared={type=undefined|null|L4|L6|L7|L8|L9 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v13, v69 layout=L3
+    Jump -> next b8(v60)
+  b8(v71: number):
+    v72 = GetEnvironmentField v13 layout=L3
+    v73 = CheckInitialized v72 name="box"
+    v74 = PropGet v73 key="value"
+    v75 = Add v71, v74
+    v76 = Convert v75 declared={type=number}
+    v77 = Increment v11
+    v78 = Convert v77 declared={type=number}
+    Jump -> next b1(v76, v78)
+  b9(v79, v80):
+    v81 = Convert v7 declared={type=number}
+    Return v81
+}
+function f4 module=m0 position=682 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number):
+    v2 = GetEnvironmentField v0 layout=L1
+    v3 = CheckInitialized v2 name="total"
+    v4 = Add v3, v1
+    v5 = Convert v4 declared={type=number}
+    PutEnvironmentField v0, v5 layout=L1
+    v7 = GetEnvironmentField v0 layout=L1 field=1
+    v8 = CheckInitialized v7 name="text"
+    v9 = Add v8, v1
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v0, v10 layout=L1 field=1
+    v12 = GetEnvironmentField v0 layout=L1
+    v13 = CheckInitialized v12 name="total"
+    v14 = Convert v13 declared={type=number}
+    Return v14
+}
+function f5 module=m0 position=1404 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2, v1: number):
+    v2 = GetEnvironmentField v0 layout=L2
+    v3 = CheckInitialized v2 name="total"
+    v4 = Add v3, v1
+    v5 = Convert v4 declared={type=number}
+    PutEnvironmentField v0, v5 layout=L2
+    v7 = GetEnvironmentField v0 layout=L2 field=1
+    v8 = CheckInitialized v7 name="text"
+    v9 = String string="c"
+    v10 = Add v8, v9
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v0, v11 layout=L2 field=1
+    v13 = GetEnvironmentField v0 layout=L2
+    v14 = CheckInitialized v13 name="total"
+    v15 = Convert v14 declared={type=number}
+    Return v15
+}
+function f6 module=m0 position=1865 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L3, v1: number):
+    v2 = GetEnvironmentField v0 layout=L3
+    v3 = CheckInitialized v2 name="box"
+    v4 = PropGet v3 key="value"
+    v5 = Convert v4 declared={type=number}
+    v6 = Add v5, v1
+    v7 = Convert v6 declared={type=number}
+    v8 = NewObject -, v7 layout=L4 fields=[0]
+    v9 = FinishObject v8
+    v10 = Convert v9 declared={type=undefined|null|L4|L6|L7|L8|L9 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v0, v10 layout=L3
+    Return v5
+}
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f11 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m4 kind=Module role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f14 module=m5 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f15 name="stylizeWithColor" module=m5 position=32390 role=Library flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f16 name="stylizeNoColor" module=m5 position=32895 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f17 name="get" module=m5 position=19269 kind=Method role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L10|L11|L12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f18 name="set" module=m5 position=19318 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f19 name="get" module=m5 position=19508 kind=Method role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L10|L11|L12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f20 name="set" module=m5 position=19555 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f21 name="get" module=m5 position=21693 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f22 name="set" module=m5 position=21739 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f23 module=m5 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f25 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f26 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f27 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f28 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f29 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f30 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f31 module=m5 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+# -- generated: f0 objectsAcrossCollections f4 f5 f6
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy, IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v1: anything = PropGet v0 key="edenGC" accessSite=1 [isFreeName]
+# CHECK-NEXT: v2: Array<f4|f5|f6> = NewArray contents=f4|f5|f6 allocationSite=4
+# CHECK-NEXT: v3: Array<f4|f5|f6, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<f4|f5|f6, proven, pristine[Storage, Names]>
+# CHECK-NEXT: PutModuleVariable v3 variable=g2
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v5)
+# CHECK-NEXT: b1(v7: int[0, 600]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v9: 600 = Integer integer=600
+# CHECK-NEXT: v10: boolean = Less v7, v9
+# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: b2(v11: int[0, 599]):
+# CHECK-NEXT: v12: 7 = Integer integer=7
+# CHECK-NEXT: v13: int[0, 6] = Mod v11, v12
+# CHECK-NEXT: v14: 3 = Integer integer=3
+# CHECK-NEXT: v15: int[0, 2] = Mod v11, v14
+# CHECK-NEXT: v16: 0 = Integer
+# CHECK-NEXT: v17: boolean = StrictEq v15, v16
+# CHECK-NEXT: v18: string = CallDirect v13, v17 function=f1 accessSite=2
+# CHECK-NEXT: v19: string = CallDirect v13, v17 function=f2 accessSite=3
+# CHECK-NEXT: v20: boolean = LogicalNot v17
+# CHECK-NEXT: v21: string = CallDirect v13, v20 function=f1 accessSite=4
+# CHECK-NEXT: v22: boolean = StrictEq v18, v21
+# CHECK-NEXT: Branch v22 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v23: boolean = LogicalNot v17
+# CHECK-NEXT: v24: string = CallDirect v13, v23 function=f2 accessSite=5
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v25: " " = String string=" "
+# CHECK-NEXT: v26: " | " = String string=" | "
+# CHECK-NEXT: v27: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v17, v25, v18, v26, v19, v27
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: PropSet v3, v29 key="length" mode=Sloppy accessSite=6
+# CHECK-NEXT: v31: int[1, 600] = Increment v11
+# CHECK-NEXT: Jump -> next b1(v31)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v32: true = Boolean boolean=true
+# CHECK-NEXT: v33: "true " = String string="true "
+# CHECK-NEXT: v34: 20 = Integer integer=20
+# CHECK-NEXT: v35: int|whole = CallDirect v34, v32 function=f3 accessSite=7
+# CHECK-NEXT: v36: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v33, v35, v36
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: 2 = Integer integer=2
+# CHECK-NEXT: v40: int[0, 1] = Mod v38, v39
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: v42: boolean = StrictEq v40, v41
+# CHECK-NEXT: v43: " " = String string=" "
+# CHECK-NEXT: v44: 20 = Integer integer=20
+# CHECK-NEXT: v45: int|whole = CallDirect v44, v42 function=f3 accessSite=7
+# CHECK-NEXT: v46: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v42, v43, v45, v46
+# CHECK-NEXT: v48: 2 = Integer integer=2
+# CHECK-NEXT: v49: 2 = Integer integer=2
+# CHECK-NEXT: v50: int[0, 1] = Mod v48, v49
+# CHECK-NEXT: v51: 0 = Integer
+# CHECK-NEXT: v52: boolean = StrictEq v50, v51
+# CHECK-NEXT: v53: " " = String string=" "
+# CHECK-NEXT: v54: 20 = Integer integer=20
+# CHECK-NEXT: v55: int|whole = CallDirect v54, v52 function=f3 accessSite=7
+# CHECK-NEXT: v56: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v52, v53, v55, v56
+# CHECK-NEXT: v58: 3 = Integer integer=3
+# CHECK-NEXT: v59: 2 = Integer integer=2
+# CHECK-NEXT: v60: int[0, 1] = Mod v58, v59
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: boolean = StrictEq v60, v61
+# CHECK-NEXT: v63: " " = String string=" "
+# CHECK-NEXT: v64: 20 = Integer integer=20
+# CHECK-NEXT: v65: int|whole = CallDirect v64, v62 function=f3 accessSite=7
+# CHECK-NEXT: v66: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v62, v63, v65, v66
+# CHECK-NEXT: StringBuilderDiscard v6
+# CHECK-NEXT: v69: undefined = Undefined
+# CHECK-NEXT: Return v69
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="objectsAcrossCollections"
+# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20}, {type=boolean}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: 20, v1: boolean):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: int|whole, v5: int[0, 20]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: boolean = Less v5, v0
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b17()
+# CHECK-NEXT: b2(v8: int[0, 19]):
+# CHECK-NEXT: Branch v1 -> taken b3(), notTaken b16()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: Array<f4|f5|f6, proven, pristine[Storage, Names]> = GetModuleVariable variable=g2
+# CHECK-NEXT: v10: L4 = NewObject -, v8 layout=L4 fields=[0] allocationSite=10 allocationClass=0
+# CHECK-NEXT: v11: env L3 = NewObject -, v10 layout=L3 fields=[0] allocationSite=9
+# CHECK-NEXT: v12: f6 = NewClosure v11 function=f6 allocationSite=11
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v9, v12 overload=ArrayPrototypePush/0 accessSite=22
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[1, 20] = Add v8, v14
+# CHECK-NEXT: v16: L4 = NewObject -, v15 layout=L4 fields=[0] allocationSite=12 allocationClass=0
+# CHECK-NEXT: v17: L4 = FinishObject v16
+# CHECK-NEXT: PutEnvironmentField v11, v17 layout=L3
+# CHECK-NEXT: v19: Array<f4|f5|f6, proven, pristine[Storage, Names]> = GetModuleVariable variable=g2
+# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v19 overload=ArrayPrototypeLength/0 accessSite=24
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: int[-1, 4294967294] = Sub v20, v21
+# CHECK-NEXT: v23: boolean = HasArrayStorage v19 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v23 -> taken b4(| 0), notTaken b8()
+# CHECK-NEXT: b4(v24: guard):
+# CHECK-NEXT: v25: boolean = IsElementPresent v19, v22, v24 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v26: guard):
+# CHECK-NEXT: v27: guard = AllGuards v24, v26
+# CHECK-NEXT: v28: f4|f5|f6 = GetArrayElement v19, v22, v27 arrayStorage=Contiguous level=Expected accessSite=25 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=f4
+# CHECK-NEXT: Branch v29 -> taken b9(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b6(v30: f5|f6):
+# CHECK-NEXT: v31: boolean = TypeTest v30 testedType=f5
+# CHECK-NEXT: Branch v31 -> taken b11(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b7(v32: f6):
+# CHECK-NEXT: Jump -> next b13(v32)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v33: undefined|f4|f5|f6 = ElemGet v19, v22 accessSite=25 [keyIsIntegral]
+# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=f4
+# CHECK-NEXT: Branch v34 -> taken b9(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b9(v35: f4):
+# CHECK-NEXT: v36: env L1 = GetCapture v35 function=f4
+# CHECK-NEXT: v37: 5 = Integer integer=5
+# CHECK-NEXT: v38: fact = Entered function=f4
+# CHECK-NEXT: v39: int|whole|unspecified = GetEnvironmentField v36 layout=L1 [mayPrecedeItsStore]
+# CHECK-NEXT: v40: int|whole = AssumeType v39, v38 provenType=int|whole
+# CHECK-NEXT: v41: int|whole = Add v40, v37
+# CHECK-NEXT: PutEnvironmentField v36, v41 layout=L1
+# CHECK-NEXT: v43: string|unspecified = GetEnvironmentField v36 layout=L1 field=1 [mayPrecedeItsStore]
+# CHECK-NEXT: v44: string = AssumeType v43, v38 provenType=string
+# CHECK-NEXT: v45: string = Add v44, v37
+# CHECK-NEXT: PutEnvironmentField v36, v45 layout=L1 field=1
+# CHECK-NEXT: Jump -> next b14(v41)
+# CHECK-NEXT: b10(v47: undefined|f5|f6) frequency=Rare:
+# CHECK-NEXT: v48: boolean = TypeTest v47 testedType=f5
+# CHECK-NEXT: Branch v48 -> taken b11(| 0), notTaken b12(| 0)
+# CHECK-NEXT: b11(v49: f5):
+# CHECK-NEXT: v50: env L2 = GetCapture v49 function=f5
+# CHECK-NEXT: v51: 5 = Integer integer=5
+# CHECK-NEXT: v52: fact = Entered function=f5
+# CHECK-NEXT: v53: int|whole|unspecified = GetEnvironmentField v50 layout=L2 [mayPrecedeItsStore]
+# CHECK-NEXT: v54: int|whole = AssumeType v53, v52 provenType=int|whole
+# CHECK-NEXT: v55: int|whole = Add v54, v51
+# CHECK-NEXT: PutEnvironmentField v50, v55 layout=L2
+# CHECK-NEXT: v57: string|absent = GetEnvironmentField v50 layout=L2 field=1
+# CHECK-NEXT: v58: string = CheckInitialized v57 name="text"
+# CHECK-NEXT: v59: "c" = String string="c"
+# CHECK-NEXT: v60: string = Add v58, v59
+# CHECK-NEXT: PutEnvironmentField v50, v60 layout=L2 field=1
+# CHECK-NEXT: Jump -> next b14(v55)
+# CHECK-NEXT: b12(v62: undefined|f6) frequency=Rare:
+# CHECK-NEXT: v63: boolean = TypeTest v62 testedType=f6
+# CHECK-NEXT: Branch v63 -> taken b13(| 0), notTaken b15()
+# CHECK-NEXT: b13(v64: f6):
+# CHECK-NEXT: v65: env L3 = GetCapture v64 function=f6
+# CHECK-NEXT: v66: 5 = Integer integer=5
+# CHECK-NEXT: v67: fact = Entered function=f6
+# CHECK-NEXT: v68: unspecified|L4 = GetEnvironmentField v65 layout=L3 [mayPrecedeItsStore]
+# CHECK-NEXT: v69: L4 = AssumeType v68, v67 provenType=L4
+# CHECK-NEXT: v70: int|whole = GetSlot v69 key="value" receivers=[L4] level=Proven accessSite=30
+# CHECK-NEXT: v71: int|whole = Add v70, v66
+# CHECK-NEXT: v72: L4 = NewObject -, v71 layout=L4 fields=[0] allocationSite=14 allocationClass=0
+# CHECK-NEXT: v73: L4 = FinishObject v72
+# CHECK-NEXT: PutEnvironmentField v65, v73 layout=L3
+# CHECK-NEXT: Jump -> next b14(v70)
+# CHECK-NEXT: b14(v75: int|whole):
+# CHECK-NEXT: v76: int|whole = Add v4, v75
+# CHECK-NEXT: v77: L4 = GetEnvironmentField v11 layout=L3
+# CHECK-NEXT: v78: int|whole = GetSlot v77 key="value" receivers=[L4] level=Proven accessSite=29
+# CHECK-NEXT: v79: int|whole = Add v76, v78
+# CHECK-NEXT: v80: int[1, 20] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v79, v80)
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v81: undefined = Undefined
+# CHECK-NEXT: v82: 5 = Integer integer=5
+# CHECK-NEXT: v83: never = Call v81, v19, v82 accessSite=26 callees=[f4, f5, f6]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v84: 1 = Integer integer=1
+# CHECK-NEXT: v85: int[1, 20] = Add v8, v84
+# CHECK-NEXT: v86: int|whole = Add v4, v85
+# CHECK-NEXT: v87: 5 = Integer integer=5
+# CHECK-NEXT: v88: int[6, 25] = Add v85, v87
+# CHECK-NEXT: v89: int|whole = Add v86, v88
+# CHECK-NEXT: v90: int[1, 20] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v89, v90)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=682 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L1, v1: int[0, 7]):
+# CHECK-NEXT: v2: int|whole = GetEnvironmentField v0 layout=L1
+# CHECK-NEXT: v3: int|whole = Add v2, v1
+# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L1
+# CHECK-NEXT: v5: string = GetEnvironmentField v0 layout=L1 field=1
+# CHECK-NEXT: v6: string = Add v5, v1
+# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L1 field=1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=1404 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L2, v1: int[0, 7]):
+# CHECK-NEXT: v2: int|whole = GetEnvironmentField v0 layout=L2
+# CHECK-NEXT: v3: int|whole = Add v2, v1
+# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L2
+# CHECK-NEXT: v5: string|absent = GetEnvironmentField v0 layout=L2 field=1
+# CHECK-NEXT: v6: string = CheckInitialized v5 name="text"
+# CHECK-NEXT: v7: "c" = String string="c"
+# CHECK-NEXT: v8: string = Add v6, v7
+# CHECK-NEXT: PutEnvironmentField v0, v8 layout=L2 field=1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=1865 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L3, v1: int[0, 7]):
+# CHECK-NEXT: v2: L4 = GetEnvironmentField v0 layout=L3
+# CHECK-NEXT: v3: int|whole = GetSlot v2 key="value" receivers=[L4] level=Proven accessSite=30
+# CHECK-NEXT: v4: int|whole = Add v3, v1
+# CHECK-NEXT: v5: L4 = NewObject -, v4 layout=L4 fields=[0] allocationSite=14 allocationClass=0
+# CHECK-NEXT: v6: L4 = FinishObject v5
+# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L3
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

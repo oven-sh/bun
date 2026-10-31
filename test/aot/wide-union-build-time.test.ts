@@ -1,3 +1,4 @@
+// Runs alone: it judges by a clock.
 import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
 import { run } from "./harness/run";

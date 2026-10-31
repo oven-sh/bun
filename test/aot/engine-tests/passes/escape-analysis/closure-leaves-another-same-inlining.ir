@@ -1,0 +1,279 @@
+# a-closure-leaves-while-another-one-over-the-same-variable-is-still-used.js where every call stays a call and all code counts as hot: what a caller believes about a callee is only tested there, and only hot code keeps a closure that may leave in the frame. The output is that of plain Bun.
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls heat=EverythingIsHot
+# RUN: lower-to-air size f0 f5
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="closure-leaves-another-same-variable.js" displayPath="closure-leaves-another-same-variable.js" body=f0 namespaceLayout=L(m0)
+module m1 path="closure-leaves-another-same-inlining.js" displayPath="closure-leaves-another-same-inlining.js" body=f19 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]}}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]}}] ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]}}] ownFieldCount=1
+layout L3 module=m0 position=315 fields=[{key="f" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="g" declared={type=null flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L3 members=[{key="f" value=Null}, {key="g" value=Null}]} module=m0
+variable g0 name="borrows" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="keeps" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="box" module=m0 declared={type=undefined|null|absent|L3 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f5
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f6
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Data data=d0
+    v9 = Convert v8 declared={type=undefined|null|L3 flags=[IsExpected]}
+    PutModuleVariable v9 variable=g2
+    v11 = Integer
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Integer
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    v15 = Integer
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Integer
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Integer
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v12, v14, v16, v18, v20)
+  b1(v21, v22, v23, v24, v25):
+    LoopHint
+    v27 = Integer integer=1000
+    v28 = Less v25, v27
+    Branch v28 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v29):
+    v30 = Call v1, -, v29 calleeName="storedInAField"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Add v21, v31
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Call v3, -, v29 calleeName="theOtherOneWrites"
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = Add v22, v35
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Call v5, -, v29 calleeName="bothGoIntoOneCall"
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    v40 = Add v23, v39
+    v41 = Convert v40 declared={type=number flags=[IsExpected]}
+    v42 = Call v7, -, v29 calleeName="inALoop"
+    v43 = Convert v42 declared={type=number flags=[IsExpected]}
+    v44 = Add v24, v43
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    v46 = Increment v29
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v33, v37, v41, v45, v47)
+  b3(v48):
+    v49 = Builtin builtin=GlobalThis
+    v50 = PropGet v49 key="console" [isFreeName]
+    v51 = Convert v50 declared={type=builtin(Console) flags=[IsExpected]}
+    v52 = PropGet v51 key="log"
+    v53 = Convert v52 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v54 = Call v53, v51, v21, v22, v23, v24 calleeKey="log" calleeName="console.log"
+    v55 = Undefined
+    Return v55
+}
+function f1 name="borrows" module=m0 position=337 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="f"
+    ReturnCall v2
+}
+function f2 name="keeps" module=m0 position=891 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|function):
+    v2 = GetModuleVariable variable=g2
+    v3 = CheckInitialized v2 name="box"
+    v4 = Convert v0 declared={type=null flags=[IsExpected]}
+    PropSet v3, v4 key="f"
+    v6 = Call v1 calleeName="g"
+    ReturnCall v6
+}
+function f3 name="storedInAField" module=m0 position=424 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1 function=f7
+    v3 = Convert v2 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    v4 = NewClosure v1 function=f8
+    v5 = Convert v4 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -, v3 calleeName="borrows"
+    v8 = Integer integer=1
+    v9 = BitAnd v0, v8
+    v10 = GetModuleVariable variable=g2
+    v11 = CheckInitialized v10 name="box"
+    v12 = Convert v3 declared={type=null flags=[IsExpected]}
+    PropSet v11, v12 key="f"
+    v14 = GetModuleVariable variable=g0
+    v15 = Call v14, -, v5 calleeName="borrows"
+    ReturnCall v15 casts=[{declared={type=number flags=[IsExpected]}}]
+}
+function f4 name="theOtherOneWrites" module=m0 position=651 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="bothGoIntoOneCall" module=m0 position=945 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = NewObject layout=L1
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PutEnvironmentField v1, v3 layout=L1
+    v5 = NewClosure v1 function=f9
+    v6 = Convert v5 declared={type=undefined|null|function|f9 flags=[IsExpected]}
+    v7 = NewClosure v1 function=f10
+    v8 = Convert v7 declared={type=undefined|null|function|f10 flags=[IsExpected]}
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v9, -, v6 calleeName="borrows"
+    v11 = Integer integer=1
+    v12 = BitAnd v0, v11
+    v13 = ToBoolean v12
+    Branch v13 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v14):
+    v15 = GetModuleVariable variable=g1
+    v16 = Call v15, -, v6, v8 calleeName="keeps"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Integer integer=1000
+    v19 = Mul v17, v18
+    v20 = GetModuleVariable variable=g0
+    v21 = Call v20, -, v8 calleeName="borrows"
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Add v19, v22
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Return v24
+  b2(v25):
+    v26 = GetEnvironmentField v1 layout=L1
+    v27 = CheckInitialized v26 name="n"
+    v28 = Convert v27 declared={type=number flags=[IsExpected]}
+    Return v28
+}
+function f6 name="inALoop" module=m0 position=1163 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Integer integer=3
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v10):
+    v11 = NewObject layout=L2
+    v12 = Convert v10 declared={type=number flags=[IsExpected]}
+    PutEnvironmentField v11, v12 layout=L2
+    v14 = NewClosure v11 function=f11
+    v15 = Convert v14 declared={type=undefined|null|function|f11 flags=[IsExpected]}
+    v16 = NewClosure v11 function=f12
+    v17 = Convert v16 declared={type=undefined|null|function|f12 flags=[IsExpected]}
+    v18 = Convert v0 declared={type=number flags=[IsExpected]}
+    v19 = Add v18, v10
+    v20 = Integer integer=1
+    v21 = BitAnd v19, v20
+    v22 = ToBoolean v21
+    Branch v22 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v23):
+    v24 = GetModuleVariable variable=g2
+    v25 = CheckInitialized v24 name="box"
+    v26 = Convert v15 declared={type=null flags=[IsExpected]}
+    PropSet v25, v26 key="f"
+    v28 = GetModuleVariable variable=g0
+    v29 = Call v28, -, v17 calleeName="borrows"
+    v30 = Add v5, v29
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = GetModuleVariable variable=g2
+    v33 = CheckInitialized v32 name="box"
+    v34 = PropGet v33 key="f"
+    v35 = Convert v34 declared={type=null flags=[IsExpected]}
+    v36 = Integer integer=1
+    v37 = Call v35, v33, v36 calleeKey="f" calleeName="box.f"
+    v38 = Add v31, v37
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    v40 = GetModuleVariable variable=g0
+    v41 = Call v40, -, v17 calleeName="borrows"
+    v42 = Add v39, v41
+    v43 = Convert v42 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v43)
+  b4(v44):
+    Jump -> next b5(v5)
+  b5(v45):
+    v46 = GetEnvironmentField v11 layout=L2
+    v47 = CheckInitialized v46 name="n"
+    v48 = Add v45, v47
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    v50 = Increment v10
+    v51 = Convert v50 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v49, v51)
+  b6(v52):
+    v53 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v53
+}
+function f7 name="inc" module=m0 position=480 kind=Arrow length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = CheckInitialized v2 name="n"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v4
+}
+function f8 name="get" module=m0 position=522 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="n"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Return v3
+}
+function f9 name="inc" module=m0 position=1004 kind=Arrow length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1
+    v3 = CheckInitialized v2 name="n"
+    v4 = Add v3, v1
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    PutEnvironmentField v0, v5 layout=L1
+    v7 = GetEnvironmentField v0 layout=L1
+    v8 = CheckInitialized v7 name="n"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Return v9
+}
+function f10 name="get" module=m0 position=1046 kind=Arrow captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1
+    v2 = CheckInitialized v1 name="n"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Return v3
+}
+function f11 name="inc" module=m0 position=1263 kind=Arrow length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L2
+    v3 = CheckInitialized v2 name="n"
+    v4 = Add v3, v1
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    PutEnvironmentField v0, v5 layout=L2
+    v7 = GetEnvironmentField v0 layout=L2
+    v8 = CheckInitialized v7 name="n"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Return v9
+}
+function f12 name="get" module=m0 position=1307 kind=Arrow captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2
+    v2 = CheckInitialized v1 name="n"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Return v3
+}
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# -- generated: f0 bothGoIntoOneCall
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 112, patchpoints: 21, rare instructions: 8, polls: 3
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="bothGoIntoOneCall"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 55, patchpoints: 6
+# CHECK-NEXT: end of function f5

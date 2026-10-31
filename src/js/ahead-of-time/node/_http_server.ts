@@ -3249,15 +3249,13 @@ function ServerResponse(
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
 // A class that extends ServerResponse may have an accessor under any of these names, so each store is made, in this order.
+// Only what `new ServerResponse()` makes has an exchange. An instance of a class below, and an object that ServerResponse is called on, keeps all of its state on itself.
 function initializeStoreByStore(
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
   options: $Node.ServerResponseOptions | undefined,
 ): void {
-  const exchange = makeExchange(res, null, noResponseEvents, null);
-  exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS;
   OutgoingMessage.$call(res, options);
-  res.$exchange = exchange;
 
   res.useChunkedEncodingByDefault = true;
 

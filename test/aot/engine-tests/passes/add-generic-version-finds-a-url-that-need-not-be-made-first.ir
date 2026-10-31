@@ -1,10 +1,8 @@
-# A URL of which only the path is read is not made. The generic version takes over what is alive where a check fails, and an object that it takes over has to be made,
-# so the URL is found before the generic version is made: whether a function has one does not decide whether its URL is made.
+# A URL of which only the path is read is not made, whether or not a check stands in front of it.
 # FORM: Prepared
 # OPTIONS: heat=NothingIsHottest
 # RUN: pass AddGenericVersion
 # STATISTIC: URLsLeftUnbuilt = 1
-# STATISTIC: GenericVersionsCreated = 1
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"

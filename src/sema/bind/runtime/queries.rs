@@ -411,8 +411,8 @@ impl Bound<'_> {
         self.runtime.import_meta_may_be_modified
     }
 
-    /// The file writes `import.meta`, or a `require` or a `__filename` that is the file's own. Without one of them no expression in it is the
-    /// file's `require`, one made for the file, or `import.meta.require`.
+    /// The file writes `import.meta`, or a `require`, a `module` or a `__filename` that is the file's own. Without one of them no expression in it
+    /// is the file's `require`, one made for the file, or `import.meta.require`.
     pub fn may_name_own_require(&self) -> bool {
         self.runtime.may_name_own_require
     }

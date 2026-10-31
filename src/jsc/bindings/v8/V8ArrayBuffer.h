@@ -28,6 +28,8 @@ void freeWithAddonAllocator(void* storage);
 // v8::BackingStore methods reinterpret_cast `this` to this layout.
 struct BackingStoreImpl {
     void* operator new(size_t size) { return allocateForAddonDelete(size); }
+    void* operator new(size_t, void* storage) { return storage; }
+    void* operator new(size_t, NotNullTag, void* storage) { return storage; }
     void operator delete(void* storage) { freeWithAddonAllocator(storage); }
 
     // ArrayBuffer::GetBackingStore(): the buffer this store stands for.

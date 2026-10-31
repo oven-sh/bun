@@ -5860,6 +5860,21 @@ pub mod bv2_impl {
                     //
                     // Actual empty files will contain a part exporting an empty object.
                     if part_list.len() != 0 {
+                        // Resolution through a plugin, or to a target already in the bundle, leaves the path as written, and the dev server names the module by that path: https://github.com/oven-sh/bun/issues/20877
+                        for record in import_records.as_mut_slice() {
+                            if !record.source_index.is_valid() {
+                                continue;
+                            }
+                            let resolved = record.source_index.get() as usize;
+                            let loader = loaders[resolved];
+                            // The dev server files the build errors of a stylesheet that is not a file under `path.text`, which only the path as written can match.
+                            let is_stylesheet_file =
+                                loader.is_css() && sources[resolved].path.is_file();
+                            // An html file or a stylesheet prints the path of any other target, such as an asset URL.
+                            if loader.is_javascript_like() || is_stylesheet_file {
+                                record.path = sources[resolved].path;
+                            }
+                        }
                         if maybe_css.is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after

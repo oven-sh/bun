@@ -82,6 +82,72 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // Every expected value below is the stdout of this exact entry on
+  // Node.js v26.10.0. The browser Buffer polyfill has to reproduce it.
+  itBundled("browser/NodeBuffer fractional byteOffset and hex write length", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        // A fractional byteOffset is truncated toward zero, as Node does, so the
+        // search starts on a byte that exists. Without this the search loop
+        // begins on a hole in the buffer and never matches.
+        const b = Buffer.from("abcabc");
+        console.log(b.indexOf("b", 1.9), b.indexOf("a", 1.9), b.indexOf("b", 4.9));
+        // -0.9 truncates to -0, which is not less than zero, so the search
+        // starts at the front. Rounding toward negative infinity would report
+        // the offset as -1 and answer 5 here.
+        console.log(b.indexOf("a", -0.9), b.lastIndexOf("a", -0.9));
+        console.log(b.lastIndexOf("b", -5.9), b.lastIndexOf("c", 5.9));
+        console.log(b.indexOf("b", 1.9999999), b.indexOf("a", 0.0000001));
+        console.log(b.includes("c", 2.9), b.includes("z", 2.9));
+        // A number is searched for as a byte and takes a different branch.
+        console.log(b.indexOf(0x62, 1.9), b.lastIndexOf(0x63, 5.9), b.includes(0x61, 0.9));
+        // Whole offsets and the non-finite offsets are unaffected.
+        console.log(b.indexOf("a", NaN), b.indexOf("a", Infinity), b.indexOf("a", -Infinity));
+        console.log(b.lastIndexOf("a", -Infinity), b.indexOf("a", 1e21), b.indexOf("a", undefined));
+
+        // A zero length writes nothing, for hex exactly as for every other
+        // encoding, and an omitted length still fills the rest of the buffer.
+        const hex0 = Buffer.alloc(8, 0x2e);
+        console.log(hex0.write("41424344", 0, 0, "hex"), hex0.toString("hex"));
+        const hex0off = Buffer.alloc(8, 0x2e);
+        console.log(hex0off.write("4142434445464748", 2, 0, "hex"), hex0off.toString("hex"));
+        const utf80 = Buffer.alloc(8, 0x2e);
+        console.log(utf80.write("ABCDEFGH", 0, 0, "utf8"), utf80.toString("hex"));
+        const hex4 = Buffer.alloc(8, 0x2e);
+        console.log(hex4.write("41424344", 0, 4, "hex"), hex4.toString("hex"));
+        const hexAll = Buffer.alloc(8, 0x2e);
+        console.log(hexAll.write("4142434445464748"), hexAll.toString("hex"));
+        // byteLength and Buffer.from do not go through hexWrite, so they are
+        // unchanged by the zero-length fix.
+        console.log(Buffer.byteLength("41424344", "hex"), Buffer.from("41424344", "hex").length);
+        console.log(Buffer.from("", "hex").length, Buffer.byteLength("", "hex"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "1 3 4",
+        "0 0",
+        "1 5",
+        "1 0",
+        "true false",
+        "1 5 true",
+        "0 -1 0",
+        "-1 -1 0",
+        "0 2e2e2e2e2e2e2e2e",
+        "0 2e2e2e2e2e2e2e2e",
+        "0 2e2e2e2e2e2e2e2e",
+        "4 414243442e2e2e2e",
+        "8 3431343234333434",
+        "4 4",
+        "0 0",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

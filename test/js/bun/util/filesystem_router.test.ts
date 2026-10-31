@@ -2287,16 +2287,25 @@ it.concurrent.skipIf(isWindows)("a chain of links ends where a route name is as 
   });
 });
 
-it("a tsconfig.json or package.json that does not parse is not the router's error", () => {
-  using dir = tempDir("fsr-broken-config", {
-    "tsconfig.json": `{ "compilerOptions": { "paths": `,
-    "pages/a.tsx": page,
-    "pages/package.json": `{ "name": `,
-    "pages/sub/b.tsx": page,
-    "pages/sub/tsconfig.json": `{ "compilerOptions": `,
-  });
-  expect(routeNames(routerOver(path.join(String(dir), "pages")))).toEqual(["/a", "/sub/b"]);
-});
+// The resolver logs the parse error of such a file only when it first reads the directory of the file.
+it.each(["tsconfig.json", "pages/tsconfig.json", "pages/package.json", "pages/sub/tsconfig.json"])(
+  "a %s that does not parse is not the router's error",
+  file => {
+    using dir = tempDir("fsr-broken-config", {
+      "pages/a.tsx": page,
+      "pages/sub/b.tsx": page,
+      [file]: `{"compilerOptions": {`,
+    });
+    const pages = path.join(String(dir), "pages");
+    const first = routerOver(pages);
+    const second = routerOver(pages);
+    first.reload();
+    expect({ first: routeNames(first), second: routeNames(second) }).toEqual({
+      first: ["/a", "/sub/b"],
+      second: ["/a", "/sub/b"],
+    });
+  },
+);
 
 it("reload() and new routers in a loop keep no memory of the scans before", async () => {
   const files: Record<string, string> = {};

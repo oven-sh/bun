@@ -133,7 +133,7 @@ JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
     return JSC::JSFunction::create(vm, globalObject, 1, "nativeFrameForTesting"_s, nativeFrameForTesting, ImplementationVisibility::Public);
 }
 
-void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
+void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb, BunPositionSpace space)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = jsUndefined();
@@ -194,8 +194,22 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         if (!mySourceURL || mySourceURL->length() == 0) {
             sb.append("unknown"_s);
         } else {
-            sb.append(mySourceURL->getString(globalObject));
+            String sourceURLString = mySourceURL->getString(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+            if (space == BunPositionSpace::Original && line && column) {
+                Bun::OwnedZigStackFrames frames(1);
+                ZigStackFrame& frame = frames[0];
+                frame.position.line_zero_based = line->zeroBasedInt();
+                frame.position.column_zero_based = column->zeroBasedInt();
+                frame.source_url = Bun::toStringRef(sourceURLString);
+                frames.remapLoadedToOriginal(bunVM(vm));
+                if (frame.remapped) {
+                    sourceURLString = frame.source_url.toWTFString();
+                    line = frame.position.line();
+                    column = frame.position.column();
+                }
+            }
+            sb.append(sourceURLString);
         }
 
         if (line && column) {

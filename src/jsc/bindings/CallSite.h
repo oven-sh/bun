@@ -86,7 +86,8 @@ public:
     void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
     void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
 
-    void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
+    // A CallSite is in the loaded file. For BunPositionSpace::Original the text has where that is in what the file was made from.
+    void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb, BunPositionSpace space);
 
 private:
     CallSite(JSC::VM& vm, JSC::Structure* structure)

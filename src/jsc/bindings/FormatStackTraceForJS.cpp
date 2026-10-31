@@ -75,9 +75,13 @@ static WTF::String stackTraceHeaderMessage(JSC::VM& vm, JSC::JSGlobalObject* lex
     RELEASE_AND_RETURN(scope, messageValue.toWTFString(lexicalGlobalObject));
 }
 
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, HeaderThrow headerThrow)
+static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, HeaderThrow headerThrow, BunPositionSpace space)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Original is Loaded while the switch is off. It is asked here once, and not for each frame.
+    if (space == BunPositionSpace::Original && !Bun__VM__sourceMapsSupport(globalObject->bunVM()).enabled)
+        space = BunPositionSpace::Loaded;
 
     // default formatting
     size_t framesCount = callSites->length();
@@ -134,7 +138,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         RETURN_IF_EXCEPTION(scope, {});
 
         if (CallSite* callSite = dynamicDowncast<CallSite>(callSiteValue)) {
-            callSite->formatAsString(vm, lexicalGlobalObject, sb);
+            callSite->formatAsString(vm, lexicalGlobalObject, sb, space);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // This matches Node.js / V8's behavior
@@ -161,7 +165,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
     bool callsPrepareStackTrace = prepareStackTraceCallData.type != JSC::CallData::Type::None;
 
-    auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, callsPrepareStackTrace ? HeaderThrow::Describe : HeaderThrow::Propagate);
+    // With no callback this is the default Error.prepareStackTrace, which Node maps. What a callback finds in error.stack is V8's own text, which Node does not map.
+    auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, callsPrepareStackTrace ? HeaderThrow::Describe : HeaderThrow::Propagate, callsPrepareStackTrace ? BunPositionSpace::Loaded : BunPositionSpace::Original);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (callsPrepareStackTrace) {

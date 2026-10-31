@@ -215,6 +215,20 @@ impl ChainedSourceMap {
             .as_ref()
     }
 
+    /// `line` and `column` are a position in the file that was loaded. `None`: the module's own map has nothing there.
+    fn original_position(
+        &self,
+        line: Ordinal,
+        column: Ordinal,
+    ) -> Option<(&Arc<ParsedSourceMap>, SourceMap::Mapping)> {
+        let original = self.original()?;
+        let mapping = original.find_mapping(line, column)?;
+        let name = usize::try_from(mapping.source_index)
+            .ok()
+            .and_then(|index| original.external_source_names.get(index))?;
+        (!name.is_empty()).then_some((original, mapping))
+    }
+
     /// `line` and `column` are a position in what runs. `None`: the printer mapped nothing there.
     fn resolve(
         &self,
@@ -223,15 +237,10 @@ impl ChainedSourceMap {
         source_handling: SourceMap::SourceContentHandling,
     ) -> Option<SourceMap::mapping::Lookup> {
         let loaded = self.loaded.find_mapping(line, column)?;
-        let moved = self.original().and_then(|original| {
-            let mapping = original.find_mapping(loaded.original.lines, loaded.original.columns)?;
-            let name = usize::try_from(mapping.source_index)
-                .ok()
-                .and_then(|index| original.external_source_names.get(index))?;
-            (!name.is_empty()).then_some((original, mapping))
-        });
         // Where the module's own map has nothing, the position stays in the file that was loaded.
-        let Some((original, mapping)) = moved else {
+        let Some((original, mapping)) =
+            self.original_position(loaded.original.lines, loaded.original.columns)
+        else {
             return Some(SourceMap::mapping::Lookup {
                 mapping: loaded,
                 source_map: Some(Arc::clone(&self.loaded)),
@@ -753,6 +762,29 @@ impl SavedSourceMap {
             source_map: Some(map),
             prefetched_source_code: parse.source_contents,
             loaded: None,
+        })
+    }
+
+    /// [`PositionSpace::Original`] for a position that is in the loaded file already, as a `CallSite` has it. `None`: it stays there.
+    pub(crate) fn resolve_loaded_mapping(
+        &mut self,
+        path: &[u8],
+        line: Ordinal,
+        column: Ordinal,
+    ) -> Option<SourceMap::mapping::Lookup> {
+        if !self.source_maps_support().applies_to(path) {
+            return None;
+        }
+        let chained = self.get_chained(path)?;
+        let (original, mapping) = chained.original_position(line, column)?;
+        Some(SourceMap::mapping::Lookup {
+            mapping,
+            source_map: Some(Arc::clone(original)),
+            prefetched_source_code: None,
+            loaded: Some(SourceMap::LineColumnOffset {
+                lines: line,
+                columns: column,
+            }),
         })
     }
 }

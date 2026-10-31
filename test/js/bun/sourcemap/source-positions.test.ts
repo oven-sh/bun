@@ -909,6 +909,229 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
+  // In node v26.3.0 the function that `Error.prepareStackTrace` is at first is the one that maps. A callback that
+  // hands it the call sites gets the text of `Error.stack`, and the call sites stay in the loaded file.
+  test("the default Error.prepareStackTrace is in the original, also for a callback that delegates to it", async () => {
+    using dir = tempDir("own-source-map-default-prepare", {
+      ...withMap("lib.js"),
+      ...withMap("esm.mjs", "esm"),
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        import { boom as boomOfModule } from "./esm.mjs";
+        ${firstFrame}
+        const lib = createRequire(import.meta.url)("./lib.js");
+        const original = Error.prepareStackTrace;
+        const frames = text => text.split("\\n").slice(1).map(line => line.trim());
+        const out = { "Error.stack": firstFrame(lib.boom) };
+
+        Error.prepareStackTrace = (error, sites) => original(error, sites);
+        out["a callback that delegates"] = firstFrame(lib.boom);
+        out["a callback that delegates, for a module"] = firstFrame(boomOfModule);
+        try {
+          lib.call(() => {
+            throw new Error("thrown through call()");
+          });
+        } catch (error) {
+          out["a callback that delegates, for a frame under the first"] = frames(error.stack)[1];
+        }
+        const captured = new Error("captured in call()");
+        lib.call(() => {
+          Error.captureStackTrace(captured);
+        });
+        out["Error.captureStackTrace() with that callback"] = frames(captured.stack)[1];
+
+        let sites;
+        Error.prepareStackTrace = (error, collected) => {
+          sites = collected;
+          out["error.stack in a callback that does not delegate"] = frames(error.stack)[0];
+          return "collected";
+        };
+        let error;
+        try {
+          lib.boom();
+        } catch (thrown) {
+          error = thrown;
+        }
+        out["the result of that callback"] = error.stack;
+        Error.prepareStackTrace = original;
+        out["the default function with the call sites of that callback"] = frames(original(error, sites))[0];
+        out["the default function with a string and a call site twice"] = frames(
+          original(error, ["text", sites[0], sites[0]]),
+        );
+        out["the call site after that"] = {
+          getFileName: sites[0].getFileName(),
+          getLineNumber: sites[0].getLineNumber(),
+          getColumnNumber: sites[0].getColumnNumber(),
+          toString: String(sites[0]),
+        };
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const [line, column] = transpiled.cjs.boom.split(":").map(Number);
+    const loaded = `at boom (<dir>/lib.js:${transpiled.cjs.boom})`;
+    const answers = (boom: string, boomOfModule: string, call: string) => ({
+      stdout: {
+        "Error.stack": boom,
+        "a callback that delegates": boom,
+        "a callback that delegates, for a module": boomOfModule,
+        "a callback that delegates, for a frame under the first": call,
+        "Error.captureStackTrace() with that callback": call,
+        "error.stack in a callback that does not delegate": loaded,
+        "the result of that callback": "collected",
+        "the default function with the call sites of that callback": boom,
+        "the default function with a string and a call site twice": ["at text", boom, boom],
+        "the call site after that": {
+          getFileName: "<dir>/lib.js",
+          getLineNumber: line,
+          getColumnNumber: column,
+          toString: `boom (<dir>/lib.js:${transpiled.cjs.boom})`,
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.mjs"]),
+      run(String(dir), ["main.mjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      answers(
+        `at boom (<dir>/lib.ts:${inOriginal.boom})`,
+        `at boom (<dir>/esm.ts:${inOriginal.boom})`,
+        `at call (<dir>/lib.ts:${inOriginal.call})`,
+      ),
+      answers(
+        loaded,
+        `at boom (<dir>/esm.mjs:${transpiled.esm.boom})`,
+        `at call (<dir>/lib.js:${transpiled.cjs.call})`,
+      ),
+    ]);
+  });
+
+  // node v26.3.0 looks for the source map of each call site when the function is called: the switch and nodeModules
+  // are what they are then, and the module has a source map if it loaded while the switch was on.
+  test("the default Error.prepareStackTrace follows the switch as it is when it is called", async () => {
+    using dir = tempDir("own-source-map-default-prepare-switch", {
+      ...withMap("before.js"),
+      ...withMap("on.js"),
+      ...withMap("node_modules/dep/index.js"),
+      "main.cjs": `
+        ${firstFrame}
+        const { setSourceMapsSupport } = require("node:module");
+        const original = Error.prepareStackTrace;
+        const top = text => text.split("\\n")[1].trim();
+        // An error of f, and the call sites that a callback gets for it.
+        const collect = f => {
+          let sites;
+          Error.prepareStackTrace = (error, collected) => ((sites = collected), "collected");
+          let error;
+          try {
+            f();
+          } catch (thrown) {
+            error = thrown;
+          }
+          void error.stack;
+          Error.prepareStackTrace = original;
+          return [error, sites];
+        };
+        const delegated = f => {
+          Error.prepareStackTrace = (error, sites) => original(error, sites);
+          try {
+            return firstFrame(f);
+          } finally {
+            Error.prepareStackTrace = original;
+          }
+        };
+        const out = {};
+
+        const before = require("./before.js");
+        process.setSourceMapsEnabled(true);
+        const on = require("./on.js");
+        const whileOn = collect(on.boom);
+        out["call sites of while it was on, called while it is on"] = top(original(...whileOn));
+        process.setSourceMapsEnabled(false);
+        out["call sites of while it was on, called while it is off"] = top(original(...whileOn));
+        out["a callback that delegates while it is off"] = delegated(on.boom);
+        const whileOff = collect(on.boom);
+        process.setSourceMapsEnabled(true);
+        out["call sites of while it was off, called while it is on"] = top(original(...whileOff));
+        out["a module that loaded before the switch"] = [top(original(...collect(before.boom))), delegated(before.boom)];
+
+        setSourceMapsSupport(true, { nodeModules: true });
+        const dep = require("dep");
+        const inNodeModules = collect(dep.boom);
+        out["nodeModules: true"] = [top(original(...inNodeModules)), delegated(dep.boom)];
+        setSourceMapsSupport(true);
+        out["nodeModules: false"] = [top(original(...inNodeModules)), delegated(dep.boom)];
+        setSourceMapsSupport(true, { nodeModules: true });
+        out["nodeModules: true again"] = top(original(...inNodeModules));
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const loaded = (file: string) => `at boom (<dir>/${file}.js:${transpiled.cjs.boom})`;
+    const mapped = (file: string) => `at boom (<dir>/${file}.ts:${inOriginal.boom})`;
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+      stdout: {
+        "call sites of while it was on, called while it is on": mapped("on"),
+        "call sites of while it was on, called while it is off": loaded("on"),
+        "a callback that delegates while it is off": loaded("on"),
+        "call sites of while it was off, called while it is on": mapped("on"),
+        "a module that loaded before the switch": [loaded("before"), loaded("before")],
+        "nodeModules: true": [mapped("node_modules/dep/index"), mapped("node_modules/dep/index")],
+        "nodeModules: false": [loaded("node_modules/dep/index"), loaded("node_modules/dep/index")],
+        "nodeModules: true again": mapped("node_modules/dep/index"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the default Error.prepareStackTrace of a Worker follows the switch of the Worker", async () => {
+    using dir = tempDir("own-source-map-default-prepare-worker", {
+      ...withMap("lib.js"),
+      "main.cjs": `
+        ${firstFrame}
+        const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+        const delegated = () => {
+          const original = Error.prepareStackTrace;
+          Error.prepareStackTrace = (error, sites) => original(error, sites);
+          return firstFrame(require("./lib.js").boom);
+        };
+        const inWorker = options => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const worker = new Worker(__filename, options);
+          worker.on("message", resolve);
+          worker.on("error", reject);
+          worker.on("exit", code => reject(new Error("the worker exited with " + code)));
+          return promise;
+        };
+        if (isMainThread) {
+          (async () => {
+            const out = {};
+            out["a Worker with --enable-source-maps in its execArgv"] = await inWorker({
+              execArgv: ["--enable-source-maps"],
+            });
+            out["a Worker without it"] = await inWorker({});
+            out["the main thread, after the Workers"] = delegated();
+            console.log(JSON.stringify(out));
+          })();
+        } else {
+          parentPort.postMessage(delegated());
+        }
+      `,
+    });
+    const loaded = `at boom (<dir>/lib.js:${transpiled.cjs.boom})`;
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+      stdout: {
+        "a Worker with --enable-source-maps in its execArgv": `at boom (<dir>/lib.ts:${inOriginal.boom})`,
+        "a Worker without it": loaded,
+        "the main thread, after the Workers": loaded,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   /** The `mappings` of a map where line `i + 1` of the generated text is line `lines[i]` of the original. */
   function lineMappings(lines: number[]) {
     const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

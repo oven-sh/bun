@@ -82,6 +82,18 @@ pub(crate) fn remap_stack_frame_positions(
     }
 }
 
+// HOST_EXPORT(Bun__remapLoadedStackFramePositionsToOriginal, c)
+pub(crate) fn remap_loaded_stack_frame_positions_to_original(
+    vm: &mut VirtualMachine,
+    frames: *mut ZigStackFrame<'_>,
+    frames_count: usize,
+) {
+    // SAFETY: `frames[..frames_count]` is a live C++ array that nothing else reads during the call.
+    let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
+    // Only the JS thread has a `CallSite` to call this for, so the thread needs no setup as above.
+    vm.remap_loaded_stack_frame_positions_to_original(frames);
+}
+
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMain, c)
 pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {

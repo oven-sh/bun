@@ -510,6 +510,8 @@ enum class BunPositionSpace : uint8_t {
     Original = 1,
 };
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t, BunPositionSpace);
+// To Original for frames that are at a position in the loaded file already, as a CallSite is. `remapped` is set on each that moves.
+extern "C" void Bun__remapLoadedStackFramePositionsToOriginal(void*, ZigStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;
@@ -555,6 +557,11 @@ public:
     void remap(void* bunVM, BunPositionSpace space)
     {
         Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size(), space);
+    }
+
+    void remapLoadedToOriginal(void* bunVM)
+    {
+        Bun__remapLoadedStackFramePositionsToOriginal(bunVM, m_frames.begin(), m_frames.size());
     }
 
 private:

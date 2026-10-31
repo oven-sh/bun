@@ -6736,6 +6736,41 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
+    /// [`PositionSpace::Original`] for frames that are in the loaded file already, as a `CallSite` is. `remapped` is set on each that moves.
+    pub fn remap_loaded_stack_frame_positions_to_original(
+        &mut self,
+        frames: &mut [crate::ZigStackFrame<'_>],
+    ) {
+        for frame in frames {
+            if frame.position.is_invalid() || frame.source_url.is_empty() {
+                continue;
+            }
+            let resolved = {
+                let source_url = frame.source_url.to_utf8();
+                self.source_mappings
+                    .resolve_loaded_mapping(
+                        source_url.slice(),
+                        frame.position.line,
+                        frame.position.column,
+                    )
+                    .map(|lookup| {
+                        (
+                            lookup.display_source_url_if_needed(source_url.slice()),
+                            lookup.mapping.original,
+                        )
+                    })
+            };
+            if let Some((display_url, original)) = resolved {
+                if let Some(source_url) = display_url {
+                    frame.source_url = source_url.into();
+                }
+                frame.position.line = original.lines;
+                frame.position.column = original.columns;
+                frame.remapped = true;
+            }
+        }
+    }
+
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     /// `source_code` receives the text that `exception`'s source lines borrow.
     pub(crate) fn remap_zig_exception<'a>(

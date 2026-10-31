@@ -593,8 +593,9 @@ if (!Bun.isMainThread) {
   postMessage("/proc/" + readlinkSync("/proc/thread-self"));
 } else if (process.argv[2] === "the main thread exits") {
   const others = await constructWorkerThatWaits();
-  // Only an exit that waits for every thread ends the others.
-  if (process.env.BUN_DESTRUCT_VM_ON_EXIT) endOneByOne(others);
+  // Only an exit that waits for every thread ends the others. The runtime takes these values of the variable for no.
+  const waits = !["", "0", "false", "no", "off"].includes((process.env.BUN_DESTRUCT_VM_ON_EXIT ?? "").toLowerCase());
+  if (waits) endOneByOne(others);
   writeSync(1, "exits at " + Date.now() + "\\n");
   process.exit(0);
 } else {

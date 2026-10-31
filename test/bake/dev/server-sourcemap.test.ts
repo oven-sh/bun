@@ -140,7 +140,7 @@ function helperFunction() {
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
     const hasUtilsThrowLine = cleanLines.includes("helperFunction") && cleanLines.includes("5:1");
-    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:28");
+    const hasUtilsCallLine = cleanLines.includes("doSomething") && cleanLines.includes("1:31");
     const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:38");
 
     expect(hasUtilsThrowLine).toBe(true);

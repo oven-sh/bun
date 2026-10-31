@@ -8551,18 +8551,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if ctx_storage.is_none() {
             self.react_refresh.signature_used = true;
 
-            // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain
-            // walk run without raw-pointer `unsafe` and without borrowing
-            // `self`.
+            // `var _s = $RefreshSig$()` goes in the statement list around this
+            // function, so the name lives where a `var` there hoists to.
             let mut scope = self.current_scope_ref();
-            loop {
-                if scope.kind == js_ast::scope::Kind::FunctionBody
-                    || scope.kind == js_ast::scope::Kind::Block
-                    || scope.kind == js_ast::scope::Kind::Entry
-                {
-                    break;
-                }
+            while scope.kind != js_ast::scope::Kind::FunctionBody {
                 let Some(p) = scope.parent else { break };
+                scope = p;
+            }
+            // Out of this function: its body, then its arguments.
+            for _ in 0..2 {
+                if let Some(p) = scope.parent {
+                    scope = p;
+                }
+            }
+            while (!scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs)
+                && let Some(p) = scope.parent
+            {
                 scope = p;
             }
 
@@ -8573,9 +8577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO: fix the renamer bug. this bug theoretically affects all
-            // usages of temp refs, but i cannot find another example of it
-            // breaking (like with `using`)
+            // The file's top level is renamed from `Part::declared_symbols`.
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,

@@ -65,11 +65,12 @@ import { expectType } from "./utilities";
         expectType<string>(hostname);
         expectType<string>(cert.fingerprint256);
         expectType<Buffer>(cert.raw);
+        expectType<import("node:tls").DetailedPeerCertificate>(cert.issuerCertificate);
         return hostname === "dev.local" ? undefined : new Error("pin mismatch");
       },
     },
   } satisfies Bun.WebSocketOptions;
-  options.tls.checkServerIdentity("dev.local", {} as import("node:tls").PeerCertificate);
+  options.tls.checkServerIdentity("dev.local", {} as import("node:tls").DetailedPeerCertificate);
 }
 
 // Assignability test

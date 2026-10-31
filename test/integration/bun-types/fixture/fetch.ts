@@ -1,3 +1,6 @@
+import * as tls from "node:tls";
+import { expectType } from "./utilities";
+
 // Valid body types
 fetch("https://example.com", { body: "string body" });
 fetch("https://example.com", { body: JSON.stringify({ key: "value" }) });
@@ -351,6 +354,18 @@ if (typeof process !== "undefined") {
 
 {
   fetch("https://example.com", { tls: { checkServerIdentity: () => new Error("pin mismatch") } });
+  // The chain is linked through issuerCertificate, as in tls.connect()
+  fetch("https://example.com", {
+    tls: {
+      checkServerIdentity(hostname, cert) {
+        expectType<string>(hostname);
+        expectType<import("node:tls").DetailedPeerCertificate>(cert.issuerCertificate);
+        return undefined;
+      },
+    },
+  });
+  // A callback written for node:tls still assigns
+  fetch("https://example.com", { tls: { checkServerIdentity: tls.checkServerIdentity } });
   // @ts-expect-error - `false` approves the certificate at runtime
   fetch("https://example.com", { tls: { checkServerIdentity: () => false } });
   // @ts-expect-error - a Promise fails the request at runtime

@@ -167,11 +167,6 @@ unsafe extern "C" {
         for_proxy: bool,
     ) -> JSValue;
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
-    // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
-    safe fn Bun__X509__toJSLegacyEncoding(
-        cert: &mut boringssl::c::X509,
-        global_object: &JSGlobalObject,
-    ) -> JSValue;
     safe fn SSL_total_renegotiations(ssl: &boringssl::c::SSL) -> core::ffi::c_int;
 }
 
@@ -471,11 +466,11 @@ fn call_check_server_identity(
     ssl: &mut boringssl::c::SSL,
     hostname: &[u8],
 ) -> JsResult<bool> {
-    let Some(cert) = ssl.peer_leaf_certificate() else {
+    let Some(mut chain) = bun_uws::PeerCertificateChain::collect(ssl) else {
         return Ok(false);
     };
-    let js_cert =
-        bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+    let js_cert = bun_jsc::tls_server_identity::chain_to_js(&mut chain, global)?;
+    drop(chain);
     let js_hostname = bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname)?;
     let verdict = callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])?;
     js_hostname.ensure_still_alive();

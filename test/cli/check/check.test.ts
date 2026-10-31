@@ -4137,6 +4137,58 @@ export { n, area, u };
   });
 
   describe("cases not covered by TypeScript's test suite", () => {
+    test.each(["method", '"method"', '["method"]'])(
+      "overrides object literal method %s inherited through ReturnType (#47530)",
+      async name => {
+        using dir = project({
+          "index.ts": `export {};
+function mixin() {
+  return { ${name}(): number { return 1; } };
+}
+interface Base extends ReturnType<typeof mixin> {}
+declare class Base {}
+class Derived extends Base {
+  override method(): number { return 2; }
+}
+`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--no-script", "--no-pretty", "--all"]);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("preserves object literal property and accessor override errors through ReturnType (#47530)", async () => {
+      using dir = project(
+        Object.fromEntries(
+          [
+            ["arrow", "method: (): number => 1", "method(): number { return 2; }"],
+            ["function", "method: function(): number { return 1; }", "method(): number { return 2; }"],
+            ["getter", "get method() { return (): number => 1; }", "method(): number { return 2; }"],
+            ["accessor", "method(): number { return 1; }", "get method() { return (): number => 2; }"],
+          ].map(([name, base, derived]) => [
+            `${name}.ts`,
+            `export {};
+function mixin() { return { ${base} }; }
+interface Base extends ReturnType<typeof mixin> {}
+declare class Base {}
+class Derived extends Base {
+  override ${derived}
+}
+`,
+          ]),
+        ),
+      );
+      const { stdout, exitCode } = await check(dir, ["--no-script", "--no-pretty", "--all"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "accessor.ts(6,16): error TS2611: 'method' is defined as a property in class 'Base', but is overridden here in 'Derived' as an accessor.
+        arrow.ts(6,12): error TS2425: Class 'Base' defines instance member property 'method', but extended class 'Derived' defines it as instance member function.
+        function.ts(6,12): error TS2425: Class 'Base' defines instance member property 'method', but extended class 'Derived' defines it as instance member function.
+        getter.ts(6,12): error TS2426: Class 'Base' defines instance member accessor 'method', but extended class 'Derived' defines it as instance member function."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     // From ten levels of one conditional type on, tsc takes the source for a type that expands without an end and says maybe.
     test.each([
       [1, 1],

@@ -944,7 +944,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
 }
 
-EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
+EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer, const BunString* kind)
 {
     Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
     if (groupPtr == nullptr) {
@@ -990,7 +990,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
 
         JSC::MarkedArgumentBuffer arguments;
 
-        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
         const auto& builtinNames = WebCore::builtinNames(vm);
         auto* pathJS = Bun::toJS(globalObject, *path);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1002,6 +1002,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
             importerJS);
+        auto* kindJS = Bun::toJS(globalObject, *kind);
+        RETURN_IF_EXCEPTION(scope, {});
+        paramsObject->putDirect(vm, builtinNames.kindPublicName(), kindJS);
         arguments.append(paramsObject);
 
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -1091,9 +1094,9 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
     return {};
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from, const BunString* kind)
 {
-    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
+    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from, kind);
 }
 
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)

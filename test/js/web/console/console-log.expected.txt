@@ -24,6 +24,7 @@ Symbol(Symbol Description)
 {} {}
 String {}
 {} 1
+[String: "abc"]
 [ 123, 456, 789 ]
 {
   name: "foo",

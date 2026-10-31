@@ -1574,8 +1574,8 @@ describe("String.prototype, Number.prototype and Boolean.prototype", () => {
       "[Boolean: false]",
       "[Boolean (B): true]",
     ]);
-    expect(Bun.inspect(new S("abc"))).toContain("abc");
-    expect(Bun.inspect(new String("abc"))).toContain("abc");
+    // Bun.inspect() prints a boxed String as a plain string. console-log.js has the form that console.log() prints.
+    expect([new String("abc"), new S("abc")].map(value => Bun.inspect(value))).toEqual(['"abc"', '"abc"']);
   });
 
   it("a boxed value that the object printer gets keeps its class name", () => {

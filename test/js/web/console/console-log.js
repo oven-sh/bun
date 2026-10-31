@@ -22,6 +22,7 @@ console.log(String.prototype);
 console.log(Number.prototype, Boolean.prototype);
 console.log(Object.create(String.prototype));
 console.log(String.prototype, 1);
+console.log(new (class S extends String {})("abc"));
 console.log([123, 456, 789]);
 console.log({ name: "foo" });
 console.log({ a: 123, b: 456, c: 789 });

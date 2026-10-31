@@ -178,8 +178,7 @@ impl ByteBlobLoader {
     pub(crate) fn to_any_blob(&self, global: &JSGlobalObject) -> Option<blob::Any> {
         // Take ownership via detach_store() up front.
         let store = self.detach_store()?;
-        if self.offset.get() == 0
-            && self.remain.get() == store.size()
+        if store.is_whole_view(self.offset.get(), self.remain.get())
             && self.content_type.get().is_empty()
         {
             // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.

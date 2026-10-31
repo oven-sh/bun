@@ -11,10 +11,11 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
+import { readArchiveIndex } from "./archive.ts";
 import { readAt } from "./binary-reader.ts";
 import { findLinkedMembers, namedBytesOfPe, readCoffGraph, sectionInFile } from "./coff-graph.ts";
 import { nameSections } from "./coff-object-editor.ts";
-import { builtinModulesSection } from "./coff-objects.ts";
+import { builtinModulesSection, CoffObject } from "./coff-objects.ts";
 import type { SectionGraph } from "./graph.ts";
 import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
 import type { Link, Linker, LinkerFormat, SectionOrder } from "./linker.ts";
@@ -25,6 +26,54 @@ const orderFlag = "/order:@";
 const symbolMapFlag = "/map:";
 const commonFlags = ["/lldsavetemps:prelink", "/opt:nolldtailmerge"];
 export const unnamedSectionPrefix = "bun_unnamed_";
+
+const IMAGE_SYM_CLASS_EXTERNAL = 2;
+const bitcodeMagic = 0x4243c0de;
+
+/**
+ * A name that `objects`, compiled from bitcode, refer to and none of them defines, and that the index of an archive offers from a
+ * member of bitcode. lld-link resolves a weak alias of a bitcode file (`??_E..`, the vector deleting destructor, for `??_G..`) from what
+ * it read when it parsed the file: no copy prevails for LTO, and what is compiled only refers to the name. So does it where the copy
+ * of a COMDAT that prevailed came from a native member of a later archive. A link of the objects in front of the archives finds such a
+ * name undefined, takes the member of bitcode for it, and that collides with the object compiled from it.
+ */
+function findNameThatLoadsBitcode(objects: readonly string[], inputs: readonly string[]): string | undefined {
+  const defined = new Set<string>();
+  const wanted = new Set<string>();
+  for (const path of objects) {
+    const fd = openSync(path, "r");
+    try {
+      const object = CoffObject.open(fd, 0, statSync(path).size);
+      object?.symbolClass.forEach((storage, symbol) => {
+        if (storage === 0) return;
+        const isWanted =
+          storage === IMAGE_SYM_CLASS_EXTERNAL && object.symbolSection[symbol] === 0 && object.symbolValue[symbol] === 0;
+        (isWanted ? wanted : defined).add(object.nameOf(symbol));
+      });
+    } finally {
+      closeSync(fd);
+    }
+  }
+  for (const archive of inputs) {
+    if (!/\.(lib|rlib|a)$/i.test(archive) || !existsSync(archive)) continue;
+    const fd = openSync(archive, "r");
+    try {
+      const isBitcodeAt = new Map<number, boolean>();
+      for (const [name, header] of readArchiveIndex(archive)) {
+        if (!wanted.has(name) || defined.has(name)) continue;
+        let isBitcode = isBitcodeAt.get(header);
+        if (isBitcode === undefined) {
+          isBitcode = readAt(fd, header + 60, 4).readUInt32BE(0) === bitcodeMagic;
+          isBitcodeAt.set(header, isBitcode);
+        }
+        if (isBitcode) return name;
+      }
+    } finally {
+      closeSync(fd);
+    }
+  }
+  return undefined;
+}
 
 const isMovable = (output: string) => output === ".text" || output === ".rdata" || output === builtinModulesSection;
 
@@ -89,6 +138,7 @@ export function coff(linker: Linker): LinkerFormat {
   const namedFolder = join(work, "named");
   const namedCopies = new Map<string, string>();
   let named: string[] = [];
+  let relinksSameInputs = false;
   let ordinal = 0;
   const nextPrefix = () => unnamedSectionPrefix + ordinal++;
   // A member that the first link took is linked as a file of its own, in front of its archive: what it defines is defined by then, so
@@ -124,10 +174,18 @@ export function coff(linker: Linker): LinkerFormat {
       return copy;
     },
     prepareCompiledObjects(objects, first) {
+      const name = findNameThatLoadsBitcode(objects, linker.inputs);
+      if (name !== undefined) {
+        console.log(`trim: the second link compiles the bitcode again: linked in front of the archives, what the first link compiled would take a member of bitcode for ${name}`);
+        relinksSameInputs = true;
+        named = objects;
+        return undefined;
+      }
       for (const object of objects) nameSections(object, nextPrefix());
       named = [...objects, ...nameLinkedMembers(first)];
       return named.length > 0 ? named : undefined;
     },
+    relinksSameInputs: () => relinksSameInputs,
     compiledObjects(link) {
       const objects = compiledObjects(link);
       const empty = objects.filter(object => statSync(object).size === 0);

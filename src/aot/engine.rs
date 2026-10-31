@@ -127,6 +127,9 @@ fn reports_of(options: &AotOptions) -> ReportSet {
     if options.emits_symbols {
         reports |= ReportSet::SYMBOLS;
     }
+    if options.explain.contains(ExplainSet::STATISTICS) || detail.is_some() {
+        reports |= ReportSet::ACCESS_COUNTS;
+    }
     reports
 }
 

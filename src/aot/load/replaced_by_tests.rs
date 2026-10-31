@@ -14,7 +14,9 @@ use std::sync::OnceLock;
 use crate::builtins::BuiltinId;
 use crate::builtins::table::{self, Mutability};
 use crate::load::is_in_node_modules;
-use crate::load::replaced_builtins::{FoundInFile, look_at_files, look_at_files_of_run};
+use crate::load::replaced_builtins::{
+    FoundInFile, is_relative, look_at_files, look_at_files_of_run,
+};
 use crate::load::runtime_modules::find_module_named;
 use crate::options::OpenedName;
 use crate::statistics::logs_stages;
@@ -92,6 +94,26 @@ fn read_file_named(path: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
         .or_else(|| written_for_output.and_then(read))
         .or_else(|| (EXTENSIONS.iter()).find_map(|extension| read([path, extension].concat())))
         .or_else(|| (EXTENSIONS.iter()).find_map(|end| read([path, b"/index", end].concat())))
+}
+
+/// `new URL("./rows/", import.meta.url)`: whoever names a folder may load what lies in it.
+fn find_files_in_folder(path: &[u8]) -> Vec<Vec<u8>> {
+    let path = path.strip_suffix(b"/").unwrap_or(path);
+    let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
+    let name = bun_core::ZBox::from_bytes(path);
+    let Ok(folder) = bun_sys::openat(Fd::cwd(), &name, flags, 0) else {
+        return Vec::new();
+    };
+    let _close = bun_sys::CloseOnDrop::new(folder);
+    let mut entries = bun_sys::dir_iterator::iterate(folder);
+    let mut files = Vec::new();
+    while let Ok(Some(entry)) = entries.next() {
+        if entry.kind == bun_sys::EntryKind::File {
+            files.push([path, b"/", entry.name.slice_u8()].concat());
+        }
+    }
+    files.shared_sort_unstable();
+    files
 }
 
 /// One of Bun's own modules: what it writes on built-in objects, and the modules of Bun that it names.
@@ -174,10 +196,12 @@ pub(crate) fn without_extension(path: &[u8]) -> &[u8] {
 }
 
 /// `files`: the test files and the preloads. A helper is a step or two away; further on lies the code under test, which every build sees.
+/// `resolve`: as for `find_what_tests_replace`. Without it a helper is found under a relative name alone.
 pub(crate) fn scan_files_of_tests(
     files: &[Vec<u8>],
     threads: usize,
     reads_library: ReadsLibrary,
+    mut resolve: Option<&mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>>,
 ) -> FoundInTests {
     const STEPS_FROM_TEST_FILES: usize = 2;
     let started = std::time::Instant::now();
@@ -187,12 +211,13 @@ pub(crate) fn scan_files_of_tests(
     let mut paths = files.to_vec();
     let mut seen: FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
     // As `bun test` tells a test file by its name.
+    let is_test_file = |path: &[u8]| {
+        const ENDS: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+        ENDS.iter()
+            .any(|end| without_extension(path).ends_with(end))
+    };
     let folders_of_test_files: FxHashSet<&[u8]> = (files.iter())
-        .filter(|path| {
-            const ENDS: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
-            ENDS.iter()
-                .any(|end| without_extension(path).ends_with(end))
-        })
+        .filter(|path| is_test_file(path))
         .map(|path| dirname::<platform::Auto>(path))
         .collect();
     let is_beside_test_files = |path: &[u8]| {
@@ -208,13 +233,53 @@ pub(crate) fn scan_files_of_tests(
             folder = above;
         }
     };
+    // "@/test/tracker": a name that the tsconfig.json of the project gives to a file. The folder of the file that writes it decides which tsconfig.json that is.
+    let mut files_under_other_names: FxHashMap<WrittenModule, Option<Vec<u8>>> =
+        FxHashMap::default();
+    let mut find_file_under_other_name = |module: WrittenModule| -> Option<Vec<u8>> {
+        let resolve = resolve.as_mut()?;
+        let asked_from_folder = WrittenModule {
+            importer: dirname::<platform::Auto>(&module.importer).to_vec(),
+            specifier: module.specifier,
+        };
+        let answer = files_under_other_names
+            .entry(asked_from_folder)
+            .or_insert_with_key(|asked| {
+                // "@/src/main" is the code under test, which every build sees.
+                resolve(&module.importer, &asked.specifier, false)
+                    .filter(|path| is_absolute(path) && !is_in_node_modules(path))
+                    .filter(|path| is_beside_test_files(path))
+            });
+        answer.clone()
+    };
+    let mut texts_passed_under_other_names: Guarded<Vec<(WrittenModule, Vec<u8>)>> =
+        Guarded::new(Vec::new());
+    let mut known_by_folder_alone: FxHashSet<Vec<u8>> = FxHashSet::default();
     for step in 0..=STEPS_FROM_TEST_FILES {
         let mut named: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+        let mut named_otherwise: Guarded<Vec<WrittenModule>> = Guarded::new(Vec::new());
+        let mut lying_in_named_folders: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
         let look_at_one = |asked_for: &[u8], look_at: &dyn Fn(&[u8], &[u8]) -> FoundInFile| {
             let Some((path, text)) = read_file_named(asked_for) else {
+                if step < STEPS_FROM_TEST_FILES {
+                    let files = find_files_in_folder(asked_for).into_iter();
+                    // `new URL("./", import.meta.url)` is the folder of the test file itself, and no test file loads another.
+                    let files = files.filter(|it| is_beside_test_files(it) && !is_test_file(it));
+                    lying_in_named_folders.lock().extend(files);
+                }
                 return;
             };
-            let file = look_at(&path, &text);
+            let mut file = look_at(&path, &text);
+            // Whether the run loads it nobody knows. What it spells counts; what it leaves open does not open the run.
+            if known_by_folder_alone.contains(asked_for) {
+                file.any_module = false;
+                file.hands_on_any = false;
+                file.spies_on_unknown_objects = false;
+                file.text_spies_under_any_name = false;
+                file.spies_under_names_from_outside = false;
+                file.holders_named_from_outside = Vec::new();
+                file.evicts_any = false;
+            }
             let written = |specifier: Vec<u8>| WrittenModule {
                 importer: path.clone(),
                 specifier,
@@ -284,9 +349,16 @@ pub(crate) fn scan_files_of_tests(
                     };
                     found.exported_again.insert(path.clone(), again);
                 }
-                let named = file.other_modules_named.into_iter();
-                (found.library_modules_named)
-                    .extend(named.filter(|name| find_module_named(name).is_some()));
+                let (of_library, others): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+                    (file.other_modules_named.into_iter())
+                        .partition(|name| find_module_named(name).is_some());
+                found.library_modules_named.extend(of_library);
+                // The code under test names packages by the thousand. A helper lies beside the test files.
+                if step < STEPS_FROM_TEST_FILES && is_beside_test_files(&path) {
+                    named_otherwise
+                        .lock()
+                        .extend(others.into_iter().map(written));
+                }
                 if file.spies_under_names_from_outside {
                     found.spy_under_names_from_outside.push(asked_for.to_vec());
                 }
@@ -301,6 +373,13 @@ pub(crate) fn scan_files_of_tests(
             }
             let mut buffer = path_buffer_pool::get();
             for (name, text) in file.texts_passed {
+                if !is_relative(&name) {
+                    if is_beside_test_files(&path) {
+                        let passed = (written(name), text);
+                        texts_passed_under_other_names.lock().push(passed);
+                    }
+                    continue;
+                }
                 let joined = join_abs_string_buf_checked::<platform::Auto>(
                     directory,
                     &mut buffer[..],
@@ -335,9 +414,23 @@ pub(crate) fn scan_files_of_tests(
             });
         });
         paths = core::mem::take(named.get_mut());
+        let others = core::mem::take(named_otherwise.get_mut()).into_iter();
+        paths.extend(others.filter_map(&mut find_file_under_other_name));
         paths.retain(|path| seen.insert(path.clone()));
+        let mut lying_in_named_folders = core::mem::take(lying_in_named_folders.get_mut());
+        lying_in_named_folders.retain(|path| seen.insert(path.clone()));
+        known_by_folder_alone.extend(lying_in_named_folders.iter().cloned());
+        paths.extend(lying_in_named_folders);
     }
     let mut found = core::mem::take(found.get_mut());
+    if !found.spy_under_names_from_outside.is_empty()
+        || !found.holders_named_from_outside.is_empty()
+    {
+        for (module, text) in core::mem::take(texts_passed_under_other_names.get_mut()) {
+            let file = find_file_under_other_name(module);
+            found.texts_passed.extend(file.map(|file| (file, text)));
+        }
+    }
     // A build that sees the files follows them into the library by itself.
     if reads_library == ReadsLibrary::Yes {
         let library = look_at_library(&caches, threads);
@@ -348,7 +441,8 @@ pub(crate) fn scan_files_of_tests(
     drop_thread_caches(&caches);
     // `export function plant(name) { Object.prototype[name] = 1; }` in one file, `plant("polluted")` in another: every text that goes to the file may be the name.
     for (file, holders) in core::mem::take(&mut found.holders_named_from_outside) {
-        let texts = found.texts_passed.iter().filter(|passed| passed.0 == file);
+        let texts = (found.texts_passed.iter())
+            .filter(|passed| without_extension(&passed.0) == without_extension(&file));
         let names: Vec<&Vec<u8>> = texts.map(|passed| &passed.1).collect();
         for holder in holders {
             let added = names.iter().map(|&name| OpenedName {
@@ -417,8 +511,18 @@ pub(crate) fn find_what_tests_replace(
     threads: usize,
     resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>,
 ) -> ReplacedByTests {
-    let found = scan_files_of_tests(files, threads, ReadsLibrary::Yes);
     let mut resolved: FxHashMap<(WrittenModule, bool), Option<Vec<u8>>> = FxHashMap::default();
+    let mut resolve_once = |importer: &[u8], specifier: &[u8], is_for_require: bool| {
+        let module = WrittenModule {
+            importer: importer.to_vec(),
+            specifier: specifier.to_vec(),
+        };
+        let answer = resolved
+            .entry((module, is_for_require))
+            .or_insert_with(|| resolve(importer, specifier, is_for_require));
+        answer.clone()
+    };
+    let found = scan_files_of_tests(files, threads, ReadsLibrary::Yes, Some(&mut resolve_once));
     // A module that nothing resolves is no file of any build.
     let mut resolve_for = |mut module: WrittenModule, is_for_require: bool| {
         // `mock.module("file:./a.ts", ..)`
@@ -431,12 +535,7 @@ pub(crate) fn find_what_tests_replace(
         if let Some(module) = find_module_named(&module.specifier) {
             return Some(table::specifier_of(module).to_vec());
         }
-        let answer = resolved
-            .entry((module, is_for_require))
-            .or_insert_with_key(|(module, _)| {
-                resolve(&module.importer, &module.specifier, is_for_require)
-            });
-        answer.clone()
+        resolve_once(&module.importer, &module.specifier, is_for_require)
     };
     // The keys of `require.cache` are what `require.resolve()` answers.
     let evicted_modules: Vec<Vec<u8>> = (found.evicted.into_iter())
@@ -550,6 +649,91 @@ pub(crate) fn find_what_tests_replace(
 mod tests {
     use super::*;
     use crate::builtins::BuiltinId;
+
+    #[test]
+    fn finds_helpers_under_names_of_the_tsconfig_in_folders_and_behind_parameters() {
+        bun_sema_driver::run_regions_inline_on_this_thread();
+        let folder = std::env::temp_dir().join(format!("bun-aot-helpers-{}", std::process::id()));
+        let root = folder.clone().into_os_string().into_encoded_bytes();
+        let files = [
+            (
+                "test/one.test.ts",
+                r#"import { createTracker } from "@/test/helpers/tracker";
+                import "@/test/helpers/guard";
+                import * as math from "../src/math";
+                const rows = new URL("./rows/", import.meta.url);
+                const tracker = createTracker();
+                tracker.watch(math, "twice");
+                function start(watch: (object: object, name: string) => void) { watch(math, "thrice"); }
+                start(tracker.watch);
+                const other = await import(process.argv[2]);
+                tracker.watch(other, "fourfold");"#,
+            ),
+            (
+                "test/helpers/tracker.ts",
+                r#"import { spyOn } from "bun:test";
+                export function createTracker() { return { watch(object: any, name: string) { return spyOn(object, name); } }; }"#,
+            ),
+            (
+                "test/helpers/guard.ts",
+                r#"import { mock } from "bun:test"; mock.module("../../src/own", () => ({}));"#,
+            ),
+            (
+                "test/rows/one.rows.ts",
+                r#"import { spyOn } from "bun:test"; import * as math from "../../src/math"; spyOn(math, "half");"#,
+            ),
+            (
+                "test/rows/nobody-calls-it.ts",
+                r#"import { spyOn } from "bun:test"; export function watch(object: any, name: string) { return spyOn(object, name); }"#,
+            ),
+        ];
+        for (name, text) in files {
+            let path = folder.join(name);
+            std::fs::create_dir_all(path.parent().expect("it lies in a folder"))
+                .expect("the folder is made");
+            std::fs::write(&path, text).expect("the file is written");
+        }
+        let file = [&root[..], b"/test/one.test.ts"].concat();
+        let replaced = find_what_tests_replace(&[file], 1, &mut |importer, specifier, _| {
+            let folder = dirname::<platform::Auto>(importer);
+            match specifier.strip_prefix(b"@/") {
+                Some(rest) => Some([&root[..], b"/", rest, b".ts"].concat()),
+                None => Some([folder, b"/", specifier].concat()),
+            }
+        });
+        std::fs::remove_dir_all(&folder).expect("the folder is removed");
+        let ends_of = |paths: Vec<&Vec<u8>>| -> Vec<String> {
+            let ends = paths.into_iter().map(|path| &path[root.len()..]);
+            ends.map(|end| String::from_utf8_lossy(end).into_owned())
+                .collect()
+        };
+        assert_eq!(
+            ends_of(replaced.modules.iter().collect()),
+            ["/test/helpers/../../src/own"]
+        );
+        let exports = replaced.exports.iter();
+        let exports: Vec<(String, String)> = exports
+            .map(|(module, name)| {
+                let name = String::from_utf8_lossy(name).into_owned();
+                (ends_of(vec![module]).remove(0), name)
+            })
+            .collect();
+        let pair = |module: &str, name: &str| (module.to_owned(), name.to_owned());
+        assert_eq!(
+            exports,
+            [
+                pair("/test/../src/math", "thrice"),
+                pair("/test/../src/math", "twice"),
+                pair("/test/rows/../../src/math", "half"),
+            ]
+        );
+        assert_eq!(
+            replaced.names_spied_on_unknown_objects,
+            [b"fourfold".to_vec(), b"thrice".to_vec(), b"twice".to_vec()]
+        );
+        assert!(!replaced.spies_on_unknown_objects);
+        assert!(!replaced.any_module);
+    }
 
     #[test]
     fn tells_the_name_that_a_plugin_answers_for_beside_the_file_of_the_package() {

@@ -133,6 +133,7 @@ pub(super) fn bind_imports(
         deferred_exports: input.deferred_exports,
         known_members: KnownMembers::new(input),
         platform: input.platform,
+        unlocked: input.replaced_builtins,
         scans,
         modules,
         tables,
@@ -140,6 +141,7 @@ pub(super) fn bind_imports(
         sites,
         marker,
         runs_tests: input.runs_tests,
+        typescript_drops_absent_exports: input.typescript_drops_absent_exports,
         evicted,
         mocks_any_module: input.mocks_any_module,
         stored_in_cache,
@@ -231,6 +233,8 @@ pub(super) struct BindContext<'a, 's> {
     deferred_exports: &'a DeferredExports,
     known_members: KnownMembers<'a>,
     platform: Platforms,
+    /// `LoadOptions::replaced_builtins`
+    unlocked: &'a [u32],
     scans: &'a Scans,
     pub(super) modules: &'a ModuleSet,
     tables: &'a ExportTables,
@@ -238,6 +242,8 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) sites: &'a PlannedSites,
     pub(super) marker: FindMarker<'a>,
     pub(super) runs_tests: bool,
+    /// `BindInput::typescript_drops_absent_exports`
+    typescript_drops_absent_exports: bool,
     pub(super) evicted: &'a EvictedModules,
     pub(super) stored_in_cache: &'a LibraryModulesStoredInCache,
     /// `LoadOptions::mocks_any_module`
@@ -463,7 +469,8 @@ impl<'a, 's> FileBinder<'a, 's> {
         match find_module_export(names, module, name, platform) {
             ModuleExport::Found(member) => {
                 let is_copied = name != known::default
-                    && (is_property_that_a_store_replaces(member) || self.is_exported(symbol));
+                    && (is_property_that_a_store_replaces(member, self.context.unlocked)
+                        || self.is_exported(symbol));
                 Some(match is_copied {
                     true => ImportBinding::BuiltinMember { holder, name },
                     false => ImportBinding::Builtin(member),
@@ -591,7 +598,7 @@ impl<'a, 's> FileBinder<'a, 's> {
                 } else {
                     Import::ThroughAnotherModule
                 };
-                bind_runtime_member(names, module, name, platform, import)
+                bind_runtime_member(names, module, name, platform, import, context.unlocked)
                     .map_err(|()| not_found)?
             }
             Resolution::Synthetic { module, name } => PendingBinding::Synthetic { module, name },
@@ -780,11 +787,28 @@ impl<'a, 's> FileBinder<'a, 's> {
                 }
                 binding
             }
+            // `import { A } from "./a"; export { A }`: the link takes `A` for a type that `./a` no longer has. A read finds `undefined`.
+            Err(ModuleFailureKind::ExportNotFound { .. })
+                if self.drops_absent_exports()
+                    && name != known::default
+                    && (self.context.tables).exports_imported_name(
+                        self.file,
+                        written.order.site,
+                        name,
+                    ) =>
+            {
+                UNBOUND
+            }
             Err(kind) => {
                 self.imports.failures.push(written.fail(self.file, kind));
                 UNBOUND
             }
         }
+    }
+
+    /// `ExportEntries::drops_absent_exports`
+    fn drops_absent_exports(&self) -> bool {
+        self.context.typescript_drops_absent_exports && !self.hir.is_js
     }
 
     fn add_required_name(&mut self, required_name: RequiredName) {
@@ -865,10 +889,7 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.find_exported_name_that_a_mock_of_an_es_module_may_leave_out(position);
             let required_name = resolved.required_name.or(name_of_file);
             for required_name in [required_name, name_of_es_module].into_iter().flatten() {
-                self.add_required_name(RequiredName {
-                    asked_by: self.find_export_statement(position, export_name),
-                    ..required_name
-                });
+                self.add_name_required_by_export(position, export_name, required_name);
             }
         }
         // The export table names the variable.
@@ -886,12 +907,25 @@ impl<'a, 's> FileBinder<'a, 's> {
                 resolution => self.find_deferred_export(resolution),
             };
             for required_name in [deferred, unlisted_name].into_iter().flatten() {
-                self.add_required_name(RequiredName {
-                    asked_by: self.find_export_statement(position, export_name),
-                    ..required_name
-                });
+                self.add_name_required_by_export(position, export_name, required_name);
             }
         }
+    }
+
+    fn add_name_required_by_export(
+        &mut self,
+        position: usize,
+        export_name: Atom,
+        required_name: RequiredName,
+    ) {
+        let asked_by = self.find_export_statement(position, export_name);
+        self.add_required_name(RequiredName {
+            asked_by,
+            drops_export_if_absent: asked_by.is_some()
+                && required_name.name != known::default
+                && self.drops_absent_exports(),
+            ..required_name
+        });
     }
 }
 
@@ -914,9 +948,12 @@ fn imported_namespace_binding(module: ModuleRef, phase: ImportPhase) -> ImportBi
 }
 
 /// A property of the object of a built-in module holds what the module has put there until a store replaces it, whether the body of the module or native code makes the object.
-fn is_property_that_a_store_replaces(member: BuiltinId) -> bool {
+/// `unlocked`: `LoadOptions::replaced_builtins`.
+fn is_property_that_a_store_replaces(member: BuiltinId, unlocked: &[u32]) -> bool {
     let entry = table::entry(member);
-    entry.module.is_none() && entry.holder.is_some() && entry.mutability != Mutability::AlwaysLocked
+    let is_locked = entry.mutability == Mutability::AlwaysLocked
+        && unlocked.binary_search(&(member as u32)).is_err();
+    entry.module.is_none() && entry.holder.is_some() && !is_locked
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -933,6 +970,7 @@ fn bind_runtime_member(
     name: Atom,
     platform: Platforms,
     import: Import,
+    unlocked: &[u32],
 ) -> Result<PendingBinding, ()> {
     let binding = match find_module_export(names, module, name, platform) {
         ModuleExport::Absent => return Err(()),
@@ -940,7 +978,7 @@ fn bind_runtime_member(
             let module = ModuleRef::Runtime(module);
             return Ok(PendingBinding::Synthetic { module, name });
         }
-        ModuleExport::Found(member) if is_property_that_a_store_replaces(member) => {
+        ModuleExport::Found(member) if is_property_that_a_store_replaces(member, unlocked) => {
             let module = ModuleRef::Runtime(module);
             return Ok(PendingBinding::CapturedBuiltin {
                 module,

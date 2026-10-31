@@ -2,7 +2,8 @@
 // not have. This reads the generated code instead. Nothing runs and nothing is counted by hardware, so it judges on every machine.
 //
 // The front end writes each program (`bun compile --aot-out`), and testaot generates code for the functions of the program's own file and says how large it is
-// (`testaot print <program> --command="lower-to-air size loops entry-modules"`): Air instructions and patchpoints in the blocks that are reached without a rare edge.
+// (`testaot print <program> --command="lower-to-air size loops entry-modules" references=narrow`): Air instructions and patchpoints in the blocks that are reached without a
+// rare edge. Bun ships narrow references and testaot's default is wide, under which no lookup in a Map or a Set stands in line.
 //
 //   an idiom       each function by its name, as `all`: [instructions, patchpoints] of the function, and `loop`: [step, instructions, patchpoints] of its cheapest loop per
 //                  element, where `step` is what the counter advances by (8: unrolled eight times)
@@ -24,7 +25,7 @@
 //   AOT_PERF_ONLY='^array/' ..                                                        only the programs whose name matches the regular expression
 //   AOT_PERF_OPTION_WORDS='disable=b3:UnrollLoops' ..                                 option words for testaot: to see what fails without one optimization
 //
-// To see the code: `testaot print <program> --command="lower-to-air loops entry-modules"`. The engine's aot/tests/codegen has B3 tests of the same lowerings.
+// To see the code: `testaot print <program> --command="lower-to-air loops entry-modules" references=narrow`. The engine's aot/tests/codegen has B3 tests of the same lowerings.
 import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
@@ -98,6 +99,7 @@ async function measure(folder: string, source: string, program: string, words: s
       program,
       `--command=lower-to-air ${words}`,
       ...(functions ? [`--aotFunctionToDump=${functions.join("|")}`] : []),
+      "references=narrow",
       ...optionWords,
     ],
     folder,
@@ -161,8 +163,12 @@ type IdiomPin = Record<(typeof forms)[number], Record<string, Code>>;
 function codeOf(copies: Copy[]): Code {
   const sum = (count: (copy: Copy) => number) => copies.reduce((total, copy) => total + count(copy), 0);
   const all: Code["all"] = [sum(copy => copy.instructions), sum(copy => copy.patchpoints)];
-  const loops = copies.flatMap(copy => copy.loops);
-  if (!loops.length) return { all };
+  const cycles = copies.flatMap(copy => copy.loops);
+  if (!cycles.length) return { all };
+  // A cycle with nothing in it that is reached without a rare edge turns only behind one: such is the way back in front of a loop that one turn has left.
+  // Beside a loop of the likely path it would always be the cheapest, and the pin would hold nothing.
+  const likely = cycles.filter(loop => costOf([loop.instructions, loop.patchpoints]));
+  const loops = likely.length ? likely : cycles;
   const perElement = (loop: Loop) => costOf([loop.instructions, loop.patchpoints]) / loop.step;
   const cheapest = loops.reduce((best, loop) => (perElement(loop) < perElement(best) ? loop : best));
   return { all, loop: [cheapest.step, cheapest.instructions, cheapest.patchpoints] };

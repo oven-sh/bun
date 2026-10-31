@@ -1385,7 +1385,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v15: boolean = Less v12, v14
-# CHECK-NEXT: Branch v15 -> taken b9(| 0), notTaken b19()
+# CHECK-NEXT: Branch v15 -> taken b9(| 0), notTaken b21()
 # CHECK-NEXT: b9(v16: int[0, 4294967294]):
 # CHECK-NEXT: v17: boolean = IsElementPresent v6, v16, v11 arrayStorage=Double [keyIsIntegral]
 # CHECK-NEXT: Branch v17 -> taken b10(| 0), notTaken b13(v16)
@@ -1401,7 +1401,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v26: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v27: boolean = Less v9, v26
-# CHECK-NEXT: Branch v27 -> taken b12(| 0), notTaken b19()
+# CHECK-NEXT: Branch v27 -> taken b12(| 0), notTaken b21()
 # CHECK-NEXT: b12(v28: int[0, 4294967294] ~ 0) frequency=Rare:
 # CHECK-NEXT: Jump -> next b13(v28)
 # CHECK-NEXT: b13(v29: int[0, 4294967294]) frequency=Rare:
@@ -1427,26 +1427,31 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: v45: boolean = ResultAt v44
 # CHECK-NEXT: v46: anything = ResultAt v44 index=1
 # CHECK-NEXT: v47: int[0, 2147483648] = ResultAt v44 index=2
-# CHECK-NEXT: Jump -> next b18(v45, v46, v47)
+# CHECK-NEXT: Jump -> next b20(v45, v46, v47)
 # CHECK-NEXT: b17(v48: object) frequency=Unlikely:
 # CHECK-NEXT: v49: undefined = CallDirect v48, v39 function=f40 [isNeverInlined]
 # CHECK-NEXT: v50: boolean = ResultAt v49
+# CHECK-NEXT: Branch v50 -> taken b18(), notTaken b19()
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b19() frequency=Unlikely:
 # CHECK-NEXT: v51: anything = ResultAt v49 index=1
-# CHECK-NEXT: Jump -> next b18(v50, v51, v40)
-# CHECK-NEXT: b18(v52: boolean, v53: anything, v54: int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: Branch v52 -> taken b19(), notTaken b20()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v55: null = Null
-# CHECK-NEXT: v56: never = RequireObjectCoercible v55 nullishAccess=Iterate
+# CHECK-NEXT: v52: false = Boolean
+# CHECK-NEXT: Jump -> next b20(v52, v51, v40)
+# CHECK-NEXT: b20(v53: boolean, v54: anything, v55: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: Branch v53 -> taken b21(), notTaken b22()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v56: null = Null
+# CHECK-NEXT: v57: never = RequireObjectCoercible v56 nullishAccess=Iterate
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b20() frequency=Unlikely handler=b21():
-# CHECK-NEXT: v57: anything ~ number = Expect v53 expectedType=number
-# CHECK-NEXT: v58: undefined = CallDirect v57 function=f1 accessSite=48
-# CHECK-NEXT: Jump -> next b15(v54)
-# CHECK-NEXT: b21() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v59: exception = CatchException
-# CHECK-NEXT: v60: undefined = CallDirect v38 function=f39 [isNeverInlined]
-# CHECK-NEXT: Rethrow v59
+# CHECK-NEXT: b22() frequency=Unlikely handler=b23():
+# CHECK-NEXT: v58: anything ~ number = Expect v54 expectedType=number
+# CHECK-NEXT: v59: undefined = CallDirect v58 function=f1 accessSite=48
+# CHECK-NEXT: Jump -> next b15(v55)
+# CHECK-NEXT: b23() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v60: exception = CatchException
+# CHECK-NEXT: v61: undefined = CallDirect v38 function=f39 [isNeverInlined]
+# CHECK-NEXT: Rethrow v60
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loopsOnBothSides"
 # CHECK: module=m0 position=852 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f7 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f7 body=f53} inlineFrames=[{}, {callee=f1 callPosition=943 module=m0}] {
@@ -1476,7 +1481,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v15: boolean = Less v12, v14
-# CHECK-NEXT: Branch v15 -> taken b9(| 0), notTaken b19()
+# CHECK-NEXT: Branch v15 -> taken b9(| 0), notTaken b21()
 # CHECK-NEXT: b9(v16: int[0, 4294967294]):
 # CHECK-NEXT: v17: boolean = IsElementPresent v6, v16, v11 arrayStorage=Double [keyIsIntegral]
 # CHECK-NEXT: Branch v17 -> taken b10(| 0), notTaken b13(v16)
@@ -1492,7 +1497,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v26: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v27: boolean = Less v9, v26
-# CHECK-NEXT: Branch v27 -> taken b12(| 0), notTaken b19()
+# CHECK-NEXT: Branch v27 -> taken b12(| 0), notTaken b21()
 # CHECK-NEXT: b12(v28: int[0, 4294967294] ~ 0) frequency=Rare:
 # CHECK-NEXT: Jump -> next b13(v28)
 # CHECK-NEXT: b13(v29: int[0, 4294967294]) frequency=Rare:
@@ -1518,26 +1523,31 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: v45: boolean = ResultAt v44
 # CHECK-NEXT: v46: anything = ResultAt v44 index=1
 # CHECK-NEXT: v47: int[0, 2147483648] = ResultAt v44 index=2
-# CHECK-NEXT: Jump -> next b18(v45, v46, v47)
+# CHECK-NEXT: Jump -> next b20(v45, v46, v47)
 # CHECK-NEXT: b17(v48: object) frequency=Unlikely:
 # CHECK-NEXT: v49: undefined = CallDirect v48, v39 function=f40 [isNeverInlined]
 # CHECK-NEXT: v50: boolean = ResultAt v49
+# CHECK-NEXT: Branch v50 -> taken b18(), notTaken b19()
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b19() frequency=Unlikely:
 # CHECK-NEXT: v51: anything = ResultAt v49 index=1
-# CHECK-NEXT: Jump -> next b18(v50, v51, v40)
-# CHECK-NEXT: b18(v52: boolean, v53: anything, v54: int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: Branch v52 -> taken b19(), notTaken b20()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v55: undefined = Undefined
-# CHECK-NEXT: v56: never = RequireObjectCoercible v55 nullishAccess=Iterate
+# CHECK-NEXT: v52: false = Boolean
+# CHECK-NEXT: Jump -> next b20(v52, v51, v40)
+# CHECK-NEXT: b20(v53: boolean, v54: anything, v55: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: Branch v53 -> taken b21(), notTaken b22()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v56: undefined = Undefined
+# CHECK-NEXT: v57: never = RequireObjectCoercible v56 nullishAccess=Iterate
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b20() frequency=Unlikely handler=b21():
-# CHECK-NEXT: v57: anything ~ number = Expect v53 expectedType=number
-# CHECK-NEXT: v58: undefined = CallDirect v57 function=f1 accessSite=50
-# CHECK-NEXT: Jump -> next b15(v54)
-# CHECK-NEXT: b21() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v59: exception = CatchException
-# CHECK-NEXT: v60: undefined = CallDirect v38 function=f39 [isNeverInlined]
-# CHECK-NEXT: Rethrow v59
+# CHECK-NEXT: b22() frequency=Unlikely handler=b23():
+# CHECK-NEXT: v58: anything ~ number = Expect v54 expectedType=number
+# CHECK-NEXT: v59: undefined = CallDirect v58 function=f1 accessSite=50
+# CHECK-NEXT: Jump -> next b15(v55)
+# CHECK-NEXT: b23() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v60: exception = CatchException
+# CHECK-NEXT: v61: undefined = CallDirect v38 function=f39 [isNeverInlined]
+# CHECK-NEXT: Rethrow v60
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="answerOfACall"
 # CHECK: module=m0 position=1033 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f8 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f8 body=f54} {
@@ -1572,7 +1582,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: v8: 0 = Integer
 # CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v10: boolean = Less v8, v9
-# CHECK-NEXT: Branch v10 -> taken b6(), notTaken b11()
+# CHECK-NEXT: Branch v10 -> taken b6(), notTaken b13()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v11: anything ~ undefined|number = ElemGet v6, v8 [keyIsIntegral]
 # CHECK-NEXT: v12: anything ~ number = Expect v11 expectedType=number
@@ -1591,27 +1601,32 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: v22: undefined = CallDirect v20, v21 function=f37 [isNeverInlined]
 # CHECK-NEXT: v23: boolean = ResultAt v22
 # CHECK-NEXT: v24: anything = ResultAt v22 index=1
-# CHECK-NEXT: Jump -> next b10(v23, v24)
+# CHECK-NEXT: Jump -> next b12(v23, v24)
 # CHECK-NEXT: b9(v25: object) frequency=Unlikely:
 # CHECK-NEXT: v26: undefined = CallDirect v25, v18 function=f40 [isNeverInlined]
 # CHECK-NEXT: v27: boolean = ResultAt v26
+# CHECK-NEXT: Branch v27 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b11() frequency=Unlikely:
 # CHECK-NEXT: v28: anything = ResultAt v26 index=1
-# CHECK-NEXT: Jump -> next b10(v27, v28)
-# CHECK-NEXT: b10(v29: boolean, v30: anything) frequency=Unlikely:
-# CHECK-NEXT: Branch v29 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v31: undefined = Undefined
-# CHECK-NEXT: Return v31
-# CHECK-NEXT: b12() frequency=Unlikely handler=b13():
-# CHECK-NEXT: v32: anything ~ number = Expect v30 expectedType=number
-# CHECK-NEXT: v33: undefined = CallDirect v32 function=f1 accessSite=54
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: v35: never = RequireObjectCoercible v34 nullishAccess=Iterate
+# CHECK-NEXT: v29: false = Boolean
+# CHECK-NEXT: Jump -> next b12(v29, v28)
+# CHECK-NEXT: b12(v30: boolean, v31: anything) frequency=Unlikely:
+# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: Return v32
+# CHECK-NEXT: b14() frequency=Unlikely handler=b15():
+# CHECK-NEXT: v33: anything ~ number = Expect v31 expectedType=number
+# CHECK-NEXT: v34: undefined = CallDirect v33 function=f1 accessSite=54
+# CHECK-NEXT: v35: undefined = Undefined
+# CHECK-NEXT: v36: never = RequireObjectCoercible v35 nullishAccess=Iterate
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b13() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v36: exception = CatchException
-# CHECK-NEXT: v37: undefined = CallDirect v17 function=f39 [isNeverInlined]
-# CHECK-NEXT: Rethrow v36
+# CHECK-NEXT: b15() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v37: exception = CatchException
+# CHECK-NEXT: v38: undefined = CallDirect v17 function=f39 [isNeverInlined]
+# CHECK-NEXT: Rethrow v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loopThatLeavesEarlyBehind"
 # CHECK: module=m0 position=1991 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f13 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f13 body=f58} {

@@ -4544,11 +4544,11 @@ runtimefunction id=IteratorConsumersFrom function=f140
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v10: undefined = CallDirect v7, v8 function=f178 [isNeverInlined]
 # CHECK-NEXT: v11: boolean = ResultAt v10
-# CHECK-NEXT: v12: anything = ResultAt v10 index=1
 # CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: b3():
+# CHECK-NEXT: v12: anything = ResultAt v10 index=1
 # CHECK-NEXT: v13: boolean = IsPristine v5 builtinClass=Array aspects=[Names]
 # CHECK-NEXT: Branch v13 -> taken b4(), notTaken b7()
 # CHECK-NEXT: b4():
@@ -4841,11 +4841,11 @@ runtimefunction id=IteratorConsumersFrom function=f140
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v12: undefined = CallDirect v9, v10 function=f178 [isNeverInlined]
 # CHECK-NEXT: v13: boolean = ResultAt v12
-# CHECK-NEXT: v14: anything = ResultAt v12 index=1
 # CHECK-NEXT: Branch v13 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: b3():
+# CHECK-NEXT: v14: anything = ResultAt v12 index=1
 # CHECK-NEXT: v15: boolean = IsPristine v7 builtinClass=Array aspects=[Names]
 # CHECK-NEXT: Branch v15 -> taken b4(), notTaken b7()
 # CHECK-NEXT: b4():

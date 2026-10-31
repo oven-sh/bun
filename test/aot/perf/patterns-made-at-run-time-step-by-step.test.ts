@@ -1,5 +1,6 @@
-// A pattern whose text the build cannot know is matched step by step, by a machine and not by code of its own. Two things that made a match dearer than it has to be went unseen,
+// A pattern whose text the build cannot know is matched step by step, by a machine and not by code of its own. Three things that made a match dearer than it has to be went unseen,
 // because every pin holds a whole match: here one row of ./patterns-made-at-run-time-step-by-step/main.js is held against another of the same executable.
+// - `x[a-z]*[0-9]` can begin where two characters say so. Eight units were copied into a buffer and looked through by vectors to learn that the match begins at the first: 154 instructions for one more step.
 // - `(?=([a-z]*))\1` spells a run that gives nothing back. It took a lookahead, a group, a run with a frame, the end of the lookahead and a reference that reads the run again: it is one step.
 // - A text with a surrogate pair under the flag u goes to the machine that can do everything. It kept its position, its step and its stack in memory, and read and wrote them at every step.
 import { expect } from "bun:test";
@@ -11,9 +12,10 @@ import { withSteadyCollections } from "../harness/counted-run";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "patterns-made-at-run-time-step-by-step");
-// As counted on Linux x64: 890 against 993 (it was 1,094), and 9,967 against 9,013 (it was 11,169). Elsewhere a step may take another instruction.
+// As counted on Linux x64: 455 against 405 (it was 560 against 406), 890 against 993 (it was 1,094), and 9,967 against 9,013 (it was 11,169). Elsewhere a step may take another instruction.
 const slack = process.platform === "linux" && process.arch === "x64" ? 0 : 0.05;
 const rows: [row: string, yardstick: string, times: number][] = [
+  ["a-digit-behind-a-run-behind-a-letter", "a-run-behind-a-letter", 1.2 + slack],
   ["three-runs-in-lookaheads-read-again", "three-runs-in-groups", 1 + slack],
   ["many-steps-behind-a-surrogate-pair", "many-steps-behind-a-wide-character", 1.17 + slack],
 ];

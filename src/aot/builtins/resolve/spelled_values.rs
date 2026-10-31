@@ -143,13 +143,18 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn find_property_of_literal(&self, literal: ExprId, name: Atom) -> Option<ExprId> {
+    pub(super) fn find_property_of_literal(&self, literal: ExprId, name: Atom) -> Option<ExprId> {
         let hir = self.input.hir;
         let ExprKind::Object(properties) = hir[literal].kind else {
             return None;
         };
         (properties.iter().map(|it| hir[it]))
-            .filter(|it| matches!(it.kind, PropKind::Init | PropKind::Shorthand))
+            .filter(|it| {
+                matches!(
+                    it.kind,
+                    PropKind::Init | PropKind::Shorthand | PropKind::Method
+                )
+            })
             .find(|it| matches!(it.key, PropKey::Name(key) if key == name))
             .map(|it| it.value)
     }
@@ -230,8 +235,8 @@ impl Resolver<'_, '_> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut calls: FxHashMap<SymbolId, Vec<CallId>> = FxHashMap::default();
         for expr in (0..hir.exprs.len() as u32).map(ExprId) {
-            // `name(..)`, and `name.method(..)` under the same name: who asks looks at the callee.
-            if let ExprKind::Call(call) = hir[expr].kind
+            // `name(..)`, `new name(..)`, and `name.method(..)` under the same name: who asks looks at the callee.
+            if let ExprKind::Call(call) | ExprKind::New(call) = hir[expr].kind
                 && let callee = hir.skip_type_assertions(hir[call].callee)
                 && let name = hir.member_key(callee).map_or(callee, |(object, _)| object)
                 && let name = hir.skip_type_assertions(name)

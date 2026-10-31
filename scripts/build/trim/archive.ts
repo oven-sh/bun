@@ -58,6 +58,29 @@ export function readArchive(path: string): Map<string, ArchiveMember[]> {
   }
 }
 
+/** What the index of the archive offers: each name, and where the header of the member that defines it starts. */
+export function readArchiveIndex(path: string): [name: string, header: number][] {
+  const fd = openSync(path, "r");
+  try {
+    const end = fstatSync(fd).size;
+    if (end < 68 || readAt(fd, 0, 8).toString("latin1") !== "!<arch>\n") return [];
+    const header = readAt(fd, 8, 60).toString("latin1");
+    const size = Number(header.slice(48, 58));
+    if (header.slice(0, 16).trimEnd() !== "/" || !(size >= 4 && 68 + size <= end)) return [];
+    const index = readAt(fd, 68, size);
+    const count = index.readUInt32BE(0);
+    const entries: [string, number][] = [];
+    for (let number = 0, at = 4 + 4 * count; number < count && at < size; number++) {
+      const stop = index.indexOf(0, at);
+      entries.push([index.toString("latin1", at, stop), index.readUInt32BE(4 + 4 * number)]);
+      at = stop + 1;
+    }
+    return entries;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export class ArchiveCache {
   readonly #archives = new Map<string, Map<string, ArchiveMember[]>>();
 

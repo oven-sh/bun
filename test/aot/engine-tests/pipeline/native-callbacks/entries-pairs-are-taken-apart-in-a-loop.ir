@@ -214,52 +214,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v9: 0 = Integer
 # CHECK-NEXT: v10: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v9, v10)
-# CHECK-NEXT: b1(v11: number ~ 0, v12: int[0, 200000] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v11, v12)
-# CHECK-NEXT: b2(v13: number, v14: int[0, 200000]):
+# CHECK-NEXT: b1(v11: number, v12: int[0, 200000]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v16: 200000 = Integer integer=200000
-# CHECK-NEXT: v17: boolean = Less v14, v16
-# CHECK-NEXT: Branch v17 -> taken b3(| 0), notTaken b11()
-# CHECK-NEXT: b3(v18: int[0, 199999]):
-# CHECK-NEXT: v19: number = CallDirect v8 function=f1 accessSite=0
-# CHECK-NEXT: v20: anything ~ number = CallDirect v8 function=f2 accessSite=1
-# CHECK-NEXT: v21: boolean ~ true = TypeTest v20 testedType=number
-# CHECK-NEXT: Branch v21 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v22: number):
-# CHECK-NEXT: v23: number = Add v19, v22
-# CHECK-NEXT: v24: number = Add v13, v23
-# CHECK-NEXT: v25: int[1, 200000] = Increment v18
-# CHECK-NEXT: Jump -> next b2(v24, v25)
-# CHECK-NEXT: b5(v26: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6(v13, v18, v19, v26)
-# CHECK-NEXT: b6(v27: number|string|bigint ~ number, v28: int[0, 199999], v29: number, v30: anything ~ number) frequency=Unlikely:
-# CHECK-NEXT: v31: number|string|bigint ~ number = Add v29, v30
-# CHECK-NEXT: v32: number|string|bigint ~ number = Add v27, v31
-# CHECK-NEXT: v33: int[1, 200000] = Increment v28
-# CHECK-NEXT: v34: boolean ~ true = TypeTest v32 testedType=number
-# CHECK-NEXT: Branch v34 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v35: number) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v35, v33)
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v37: 200000 = Integer integer=200000
-# CHECK-NEXT: v38: boolean = Less v33, v37
-# CHECK-NEXT: Branch v38 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v39: int[1, 199999]) frequency=Unlikely:
-# CHECK-NEXT: v40: number = CallDirect v8 function=f1 accessSite=0
-# CHECK-NEXT: v41: anything ~ number = CallDirect v8 function=f2 accessSite=1
-# CHECK-NEXT: Jump -> next b6(v32, v39, v40, v41)
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v42: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v43: undefined = CallBuiltin v42, v32 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=4
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v44: undefined = CallBuiltin -, v13 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v45: undefined = Undefined
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v14: 200000 = Integer integer=200000
+# CHECK-NEXT: v15: boolean = Less v12, v14
+# CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v16: int[0, 199999]):
+# CHECK-NEXT: v17: number = CallDirect v8 function=f1 accessSite=0
+# CHECK-NEXT: v18: int[-17179869120, 17179869200] = CallDirect v8 function=f2 accessSite=1
+# CHECK-NEXT: v19: number = Add v17, v18
+# CHECK-NEXT: v20: number = Add v11, v19
+# CHECK-NEXT: v21: int[1, 200000] = Increment v16
+# CHECK-NEXT: Jump -> next b1(v20, v21)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v22: undefined = CallBuiltin -, v11 overload=ConsoleLog/0 accessSite=4
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="total"
 # CHECK: module=m0 position=175 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -338,82 +308,56 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pairs"
-# CHECK: module=m0 position=305 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=305 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=int[-17179869120, 17179869200]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: int[-2147483643, 2147483647] = GetSlot v0 key="a" receivers=[L0] level=Proven
-# CHECK-NEXT: v3: "b" = String string="b"
-# CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L0] level=Proven
-# CHECK-NEXT: v5: "c" = String string="c"
-# CHECK-NEXT: v6: int[-2147483643, 2147483647] = GetSlot v0 key="c" receivers=[L0] level=Proven
-# CHECK-NEXT: v7: "d" = String string="d"
-# CHECK-NEXT: v8: int[-2147483643, 2147483647] = GetSlot v0 key="d" receivers=[L0] level=Proven
-# CHECK-NEXT: v9: "e" = String string="e"
-# CHECK-NEXT: v10: int[-2147483643, 2147483647] = GetSlot v0 key="e" receivers=[L0] level=Proven
-# CHECK-NEXT: v11: "f" = String string="f"
-# CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v0 key="f" receivers=[L0] level=Proven
-# CHECK-NEXT: v13: "g" = String string="g"
-# CHECK-NEXT: v14: int[-2147483643, 2147483647] = GetSlot v0 key="g" receivers=[L0] level=Proven
-# CHECK-NEXT: v15: "h" = String string="h"
-# CHECK-NEXT: v16: int[-2147483643, 2147483647] = GetSlot v0 key="h" receivers=[L0] level=Proven
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v1, v17)
-# CHECK-NEXT: b1(v18: number ~ 0, v19: int[0, 8] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v18, v19)
-# CHECK-NEXT: b2(v20: number ~ int|whole, v21: int[0, 8]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v23: 16 = Integer integer=16
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[0, 8] = URShift v23, v24
-# CHECK-NEXT: v26: boolean = Less v21, v25
-# CHECK-NEXT: Branch v26 -> taken b3(| 0), notTaken b13()
-# CHECK-NEXT: b3(v27: int[0, 7]):
-# CHECK-NEXT: v28: int[0, 14] = Add v27, v27
-# CHECK-NEXT: v29: 1 = Integer integer=1
-# CHECK-NEXT: v30: int[1, 15] = Add v28, v29
-# CHECK-NEXT: Switch v30 cases=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] -> case b4(v2), case b4(v3), case b4(v4), case b4(v5), case b4(v6), case b4(v7), case b4(v8), case b4(v9), case b4(v10), case b4(v11), case b4(v12), case b4(v13), case b4(v14), case b4(v15), otherwise b4(v16)
-# CHECK-NEXT: b4(v31: int[-2147483643, 2147483647]|"b"|"c"|"d"|"e"|"f"|"g"|"h"):
-# CHECK-NEXT: v32: int[-2147483643, 2147483647]|"b"|"c"|"d"|"e"|"f"|"g"|"h" ~ int[-2147483643, 2147483647] = Upcast v31 castType=anything
-# CHECK-NEXT: v33: boolean ~ true = TypeTest v32 testedType=i32
-# CHECK-NEXT: Branch v33 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v34: int[-2147483643, 2147483647]):
+# CHECK-NEXT: v3: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L0] level=Proven
+# CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v0 key="c" receivers=[L0] level=Proven
+# CHECK-NEXT: v5: int[-2147483643, 2147483647] = GetSlot v0 key="d" receivers=[L0] level=Proven
+# CHECK-NEXT: v6: int[-2147483643, 2147483647] = GetSlot v0 key="e" receivers=[L0] level=Proven
+# CHECK-NEXT: v7: int[-2147483643, 2147483647] = GetSlot v0 key="f" receivers=[L0] level=Proven
+# CHECK-NEXT: v8: int[-2147483643, 2147483647] = GetSlot v0 key="g" receivers=[L0] level=Proven
+# CHECK-NEXT: v9: int[-2147483643, 2147483647] = GetSlot v0 key="h" receivers=[L0] level=Proven
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: int[-2147483642, 2147483648] = Add v2, v10
+# CHECK-NEXT: v12: 2 = Integer integer=2
+# CHECK-NEXT: v13: int[-2147483640, 2147483650] = Add v11, v12
+# CHECK-NEXT: v14: int[-2147483640, 2147483650] = Add v1, v13
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: int[-2147483642, 2147483648] = Add v3, v15
+# CHECK-NEXT: v17: 2 = Integer integer=2
+# CHECK-NEXT: v18: int[-2147483640, 2147483650] = Add v16, v17
+# CHECK-NEXT: v19: int[-4294967280, 4294967300] = Add v14, v18
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: int[-2147483642, 2147483648] = Add v4, v20
+# CHECK-NEXT: v22: 2 = Integer integer=2
+# CHECK-NEXT: v23: int[-2147483640, 2147483650] = Add v21, v22
+# CHECK-NEXT: v24: int[-6442450920, 6442450950] = Add v19, v23
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483642, 2147483648] = Add v5, v25
+# CHECK-NEXT: v27: 2 = Integer integer=2
+# CHECK-NEXT: v28: int[-2147483640, 2147483650] = Add v26, v27
+# CHECK-NEXT: v29: int[-8589934560, 8589934600] = Add v24, v28
+# CHECK-NEXT: v30: 1 = Integer integer=1
+# CHECK-NEXT: v31: int[-2147483642, 2147483648] = Add v6, v30
+# CHECK-NEXT: v32: 2 = Integer integer=2
+# CHECK-NEXT: v33: int[-2147483640, 2147483650] = Add v31, v32
+# CHECK-NEXT: v34: int[-10737418200, 10737418250] = Add v29, v33
 # CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[-2147483642, 2147483648] = Add v34, v35
+# CHECK-NEXT: v36: int[-2147483642, 2147483648] = Add v7, v35
 # CHECK-NEXT: v37: 2 = Integer integer=2
 # CHECK-NEXT: v38: int[-2147483640, 2147483650] = Add v36, v37
-# CHECK-NEXT: v39: number ~ int|whole = Add v20, v38
-# CHECK-NEXT: v40: int[1, 8] = Increment v27
-# CHECK-NEXT: Jump -> next b2(v39, v40)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v20, v27, v32)
-# CHECK-NEXT: b7(v41: number|string|bigint ~ int|whole, v42: int[0, 7], v43: int[-2147483643, 2147483647]|"b"|"c"|"d"|"e"|"f"|"g"|"h" ~ int[-2147483643, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v44: 1 = Integer integer=1
-# CHECK-NEXT: v45: number|string|bigint ~ int[-2147483642, 2147483648] = Add v43, v44
-# CHECK-NEXT: v46: 2 = Integer integer=2
-# CHECK-NEXT: v47: number|string|bigint ~ int[-2147483640, 2147483650] = Add v45, v46
-# CHECK-NEXT: v48: number|string|bigint ~ int|whole = Add v41, v47
-# CHECK-NEXT: v49: int[1, 8] = Increment v42
-# CHECK-NEXT: v50: boolean ~ true = TypeTest v48 testedType=number
-# CHECK-NEXT: Branch v50 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v51: number ~ int|whole) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v51, v49)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v53: 16 = Integer integer=16
-# CHECK-NEXT: v54: 1 = Integer integer=1
-# CHECK-NEXT: v55: int[0, 8] = URShift v53, v54
-# CHECK-NEXT: v56: boolean = Less v49, v55
-# CHECK-NEXT: Branch v56 -> taken b10(| 0), notTaken b12()
-# CHECK-NEXT: b10(v57: int[1, 7]) frequency=Unlikely:
-# CHECK-NEXT: v58: int[2, 14] = Add v57, v57
-# CHECK-NEXT: v59: 1 = Integer integer=1
-# CHECK-NEXT: v60: int[3, 15] = Add v58, v59
-# CHECK-NEXT: Switch v60 cases=[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] -> case b11(v4), case b11(v5), case b11(v6), case b11(v7), case b11(v8), case b11(v9), case b11(v10), case b11(v11), case b11(v12), case b11(v13), case b11(v14), case b11(v15), otherwise b11(v16)
-# CHECK-NEXT: b11(v61: int[-2147483643, 2147483647]|"c"|"d"|"e"|"f"|"g"|"h") frequency=Unlikely:
-# CHECK-NEXT: v62: int[-2147483643, 2147483647]|"c"|"d"|"e"|"f"|"g"|"h" ~ int[-2147483643, 2147483647] = Upcast v61 castType=anything
-# CHECK-NEXT: Jump -> next b7(v48, v57, v62)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: Return v48
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v39: int[-12884901840, 12884901900] = Add v34, v38
+# CHECK-NEXT: v40: 1 = Integer integer=1
+# CHECK-NEXT: v41: int[-2147483642, 2147483648] = Add v8, v40
+# CHECK-NEXT: v42: 2 = Integer integer=2
+# CHECK-NEXT: v43: int[-2147483640, 2147483650] = Add v41, v42
+# CHECK-NEXT: v44: int[-15032385480, 15032385550] = Add v39, v43
+# CHECK-NEXT: v45: 1 = Integer integer=1
+# CHECK-NEXT: v46: int[-2147483642, 2147483648] = Add v9, v45
+# CHECK-NEXT: v47: 2 = Integer integer=2
+# CHECK-NEXT: v48: int[-2147483640, 2147483650] = Add v46, v47
+# CHECK-NEXT: v49: int[-17179869120, 17179869200] = Add v44, v48
+# CHECK-NEXT: Return v49
 # CHECK-NEXT: }

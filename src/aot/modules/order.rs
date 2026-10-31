@@ -24,7 +24,7 @@ use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, OwnRequire, find_module_printed_as_require, find_own_require,
 };
 use bun_sema::program::{FileId, Files};
-use bun_sema::util::{FxHashMap, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use std::cell::{OnceCell, RefCell};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -756,7 +756,7 @@ struct LoadsSeenByProgram {
 // A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads every graph that comes to that cycle:
 // whatever imports or requires, directly or not, a module of the cycle. What no such way leads from is loaded as if the cycle were not in the executable.
 // An `import()` that leads back starts a second load of the file while the first one runs it. That changes no order, so the loader is not needed for it.
-// An ES module on such a way back imports its CommonJS file while the file runs. If the file then throws, nobody gets the error and a later `require` of the file is answered with the names of that import: it asks the run time too.
+// An ES module on such a way back imports its CommonJS file while the file runs, and so does an `import()` that names the file. If the file then throws, nobody gets the error and a later `require` of the file is answered with the names of that import: it asks the run time too.
 fn find_loads_seen_by_program(
     scans: &Scans,
     modules: &ModuleSet,
@@ -799,12 +799,18 @@ fn find_loads_seen_by_program(
     let mut component_of = None;
     let mut components_that_lead_back = Vec::new();
     let mut components_imported_back = Vec::new();
+    let mut files_imported_back = Vec::new();
     for (file, file_sites) in planned {
         if scans.of(*file).interop.kind == ModuleKind::CommonJs {
-            for &(referrer, target) in &file_sites.other_loads {
-                let Some((target, ModuleKind::SourceText)) = kind_of(target) else {
+            let mut required = None;
+            for load in &file_sites.other_loads {
+                let &(referrer, target) = load;
+                let Some((target, kind)) = kind_of(target) else {
                     continue;
                 };
+                if kind != ModuleKind::SourceText && kind != ModuleKind::CommonJs {
+                    continue;
+                }
                 let Some(referrer) = numbers.number_of(referrer) else {
                     continue;
                 };
@@ -813,8 +819,18 @@ fn find_loads_seen_by_program(
                 }
                 let component_of =
                     component_of.get_or_insert_with(|| strongly_connected_components(edges).0);
-                if component_of[referrer] == component_of[target.idx()] {
+                if component_of[referrer] != component_of[target.idx()] {
+                    continue;
+                }
+                if kind == ModuleKind::SourceText {
                     components_imported_back.push(component_of[referrer]);
+                    continue;
+                }
+                // `import("./file.cjs")` in the file itself, or in a file that it requires.
+                let required: &FxHashSet<_> =
+                    required.get_or_insert_with(|| file_sites.required_candidates.iter().collect());
+                if !required.contains(load) {
+                    files_imported_back.push(target);
                 }
             }
         }
@@ -848,6 +864,9 @@ fn find_loads_seen_by_program(
         seen.may_be_imported_while_it_runs[file.idx()] |= components_imported_back
             .contains(&component_of[file.idx()])
             && component_of[importer.idx()] == component_of[file.idx()];
+    }
+    for file in files_imported_back {
+        seen.may_be_imported_while_it_runs[file.idx()] = true;
     }
     if components_that_lead_back.is_empty() {
         return seen;

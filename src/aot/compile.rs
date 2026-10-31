@@ -72,8 +72,8 @@ use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{
-    EntryText, LibraryCode, LoadOptions, OpenedName, Options, PathOptions, ReplacedExport,
-    WaysBetweenModuleObjects,
+    EntryText, LibraryCode, LoadOptions, LoadsBelowFilesLeftToLoader, OpenedName, Options,
+    PathOptions, ReplacedExport, WaysBetweenModuleObjects,
 };
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{
@@ -238,6 +238,8 @@ pub struct BuildFailed {
     pub replaced_builtins: Vec<u32>,
     /// No failure yet: every error of a test run stands in one of these files, which are no test files and fail where a test loads them. See `compile`.
     pub left_to_loader: Vec<Vec<u8>>,
+    /// `None`: the build ended before it had followed what its files load. A file that the loader cannot read either loads nothing.
+    pub loads_below_files_left_to_loader: Option<Arc<LoadsBelowFilesLeftToLoader>>,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -272,6 +274,8 @@ pub(crate) struct Build<'a> {
     circular_runtime_files: Vec<(FileId, u32)>,
     lowered_runtimes: LoweredRuntimes,
     import_graph: Option<ImportGraph>,
+    /// Whoever started the build goes on without the entry points that reach an error.
+    names_refused_entry_points: bool,
     /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
     pub(crate) checked_elsewhere: Vec<FileId>,
     pub(crate) place: ProgramPlace,
@@ -762,8 +766,10 @@ fn reads_main_module(found: &FlowFindings<'_>, lets_process_out_of_sight: bool) 
     (found.unseen_code.is_empty() || lets_process_out_of_sight)
         && found.builtins_used.iter().any(|record| {
             record.uses.contains(BuiltinUse::READ)
-                && builtin_of(record.builtin).map(table::canonical_id)
-                    == Some(BuiltinId::ProcessMainModule)
+                && matches!(
+                    builtin_of(record.builtin).map(table::canonical_id),
+                    Some(BuiltinId::ProcessMainModule | BuiltinId::ModuleRequireMain)
+                )
         })
 }
 
@@ -1024,11 +1030,7 @@ fn find_load_options_to_compile_again_with(
             load.replaced_builtins.shared_sort_unstable();
             load.replaced_builtins.dedup();
         }
-        Err(failure) if starts_over_without_brought_types(&load, failure) => {
-            load.takes_runtime_as_any = true;
-            load.errors_with_bun_types
-                .clone_from(&failure.errors_with_bun_types);
-        }
+        // First: the types that the build brings are not to blame for a file that cannot be read.
         Err(failure)
             if (failure.left_to_loader.iter()).any(|file| !load.left_to_loader.contains(file)) =>
         {
@@ -1036,6 +1038,13 @@ fn find_load_options_to_compile_again_with(
                 .extend_from_slice(&failure.left_to_loader);
             load.left_to_loader.shared_sort_unstable();
             load.left_to_loader.dedup();
+            load.loads_below_files_left_to_loader
+                .extend(failure.loads_below_files_left_to_loader.clone());
+        }
+        Err(failure) if starts_over_without_brought_types(&load, failure) => {
+            load.takes_runtime_as_any = true;
+            load.errors_with_bun_types
+                .clone_from(&failure.errors_with_bun_types);
         }
         Ok(compiled) => return find_load_options_with_what_engine_found(options, compiled),
         Err(_) => return None,
@@ -1169,7 +1178,7 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
         return None;
     }
     let threads = options.thread_count().get();
-    let mut found = scan_files_of_tests(&options.entry_points, threads, ReadsLibrary::No);
+    let mut found = scan_files_of_tests(&options.entry_points, threads, ReadsLibrary::No, None);
     found
         .members
         .extend_from_slice(&options.load.replaced_builtins);
@@ -1244,6 +1253,12 @@ fn with_what_test_build_learned<'a>(options: &Options<'a>) -> Option<Options<'a>
         .extend_from_slice(&learned.left_to_loader);
     load.left_to_loader.shared_sort_unstable();
     load.left_to_loader.dedup();
+    for below in &learned.loads_below_files_left_to_loader {
+        let known = &mut load.loads_below_files_left_to_loader;
+        if !known.iter().any(|known| Arc::ptr_eq(known, below)) {
+            known.push(Arc::clone(below));
+        }
+    }
     load.mocks_any_module |= learned.mocks_any_module;
     if learned.takes_runtime_as_any && !load.takes_runtime_as_any {
         load.takes_runtime_as_any = true;
@@ -2247,6 +2262,7 @@ fn compile_programs<'a>(
             has_early_errors: false,
             replaced_builtins: Vec::new(),
             left_to_loader: Vec::new(),
+            loads_below_files_left_to_loader: None,
         }),
     }
 }
@@ -2320,6 +2336,7 @@ fn fail(
         errors_with_bun_types,
         replaced_builtins: Vec::new(),
         left_to_loader: Vec::new(),
+        loads_below_files_left_to_loader: None,
     }
 }
 
@@ -2358,6 +2375,7 @@ impl<'a> Build<'a> {
             circular_runtime_files: Vec::new(),
             lowered_runtimes: LoweredRuntimes::default(),
             import_graph: None,
+            names_refused_entry_points: false,
             checked_elsewhere: Vec::new(),
             place: ProgramPlace::Only,
             programs: None,
@@ -2390,20 +2408,31 @@ impl<'a> Build<'a> {
     // One file with a mistake, or with data that the compiler cannot hold, costs a test run nothing but what `bun test` loses to it.
     fn find_files_to_leave_to_loader(&self) -> Vec<Vec<u8>> {
         let load = &self.options.load;
-        if !load.runs_tests {
-            return Vec::new();
-        }
         let holds_code = |path: &[u8]| {
             loader_by_path(&load.loaders, path, CodeImportKind::Import).is_java_script_like()
         };
         let mut files = self.diagnostics.files_that_fail_at_load(holds_code);
         files.retain(|path| !self.options.entry_points.contains(path));
+        // An executable holds whatever `import(name)` may find, and a package brings files that nobody ever loads: a tsconfig with comments, a fixture with a mistake.
+        // `bun run` says what is wrong with one where the program loads it. A file that a site spells stops the build, as it stops `bun build`.
+        if !load.runs_tests {
+            let graph = self.import_graph.as_ref();
+            files.retain(|path| graph.is_some_and(|it| it.is_found_by_computed_names_alone(path)));
+        }
         files
+    }
+
+    fn find_loads_below(&self, left: &[Vec<u8>]) -> Option<Arc<LoadsBelowFilesLeftToLoader>> {
+        // In an executable no loader reads such a file, so none asks for what it imports.
+        let is_read_by_loader = !left.is_empty() && self.options.load.runs_tests;
+        let graph = self.import_graph.as_ref().filter(|_| is_read_by_loader)?;
+        Some(Arc::new(graph.find_loads_below(left)))
     }
 
     fn find_refused_entry_points(&self) -> Option<Vec<u32>> {
         let paths = self.diagnostics.paths_of_errors()?;
-        let graph = self.import_graph.as_ref()?;
+        let graph = self.import_graph.as_ref();
+        let graph = graph.filter(|_| self.names_refused_entry_points)?;
         graph.find_entry_points_that_reach(paths.into_iter())
     }
 
@@ -2685,6 +2714,7 @@ impl<'a> Build<'a> {
             .forget_errors_in(&options.load.left_to_loader);
         let refused_entry_points = self.find_refused_entry_points();
         let left_to_loader = self.find_files_to_leave_to_loader();
+        let loads_below_files_left_to_loader = self.find_loads_below(&left_to_loader);
         self.clock.add_to(&mut self.statistics);
         match result {
             Ok(value) => {
@@ -2693,6 +2723,7 @@ impl<'a> Build<'a> {
             }
             Err(stage) => Err(BuildFailed {
                 left_to_loader,
+                loads_below_files_left_to_loader,
                 ..fail(
                     stage,
                     self.diagnostics,

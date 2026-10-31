@@ -19,11 +19,13 @@ pub(crate) enum Kind {
     /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
     /// files, unhandled; u64 elapsed_ns; 2 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, and those of its largest child
     /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
+    /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left
+    /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left,
+    /// str: what the last FileDone of the worker's slot said of first loads
     Run,
     /// (empty)
     Shutdown,
@@ -31,6 +33,8 @@ pub(crate) enum Kind {
     /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
     /// every worker's per file and writes the one report.
     CoverageFile,
+    /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
+    RefusedChange,
 }
 
 impl TryFrom<u8> for Kind {
@@ -46,6 +50,7 @@ impl TryFrom<u8> for Kind {
             5 => Kind::Run,
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
+            8 => Kind::RefusedChange,
             _ => return Err(()),
         })
     }

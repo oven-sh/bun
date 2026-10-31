@@ -291,7 +291,6 @@ fn default_options_ask_for_no_report() {
 
 #[test]
 fn reports_follow_explain_and_detail() {
-    let no_report = ReportSet::default();
     let cases = [
         (ExplainSet::TEXT, None, ReportSet::FLOW),
         (ExplainSet::JSON, None, ReportSet::FLOW),
@@ -305,26 +304,29 @@ fn reports_follow_explain_and_detail() {
         (ExplainSet::ALLOCATIONS, None, ReportSet::ALLOCATIONS),
         // The places in the lines of --explain=trim.
         (ExplainSet::RUNTIME_USE, None, ReportSet::FLOW),
-        (ExplainSet::STATISTICS, None, no_report),
+        (ExplainSet::STATISTICS, None, ReportSet::ACCESS_COUNTS),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Summary),
-            ReportSet::DECLINES,
+            ReportSet::DECLINES | ReportSet::ACCESS_COUNTS,
         ),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Functions),
-            ReportSet::DECLINES | ReportSet::FUNCTIONS,
+            ReportSet::DECLINES | ReportSet::FUNCTIONS | ReportSet::ACCESS_COUNTS,
         ),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Sites),
-            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::FUNCTIONS,
+            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::FUNCTIONS | ReportSet::ACCESS_COUNTS,
         ),
         (
             ExplainSet::TEXT | ExplainSet::ALLOCATIONS,
             Some(ReportDetail::Summary),
-            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::ALLOCATIONS,
+            ReportSet::FLOW
+                | ReportSet::DECLINES
+                | ReportSet::ALLOCATIONS
+                | ReportSet::ACCESS_COUNTS,
         ),
     ];
     for (explain, detail, expected) in cases {
@@ -335,7 +337,6 @@ fn reports_follow_explain_and_detail() {
 #[test]
 fn front_end_options_do_not_reach_record() {
     let changed = filled_record(|options| {
-        options.explain = ExplainSet::STATISTICS;
         options.erases_types = true;
         options.omits_builtin_modules = true;
         options.ir_output_path = Some(Box::from(&b"program.ir"[..]));

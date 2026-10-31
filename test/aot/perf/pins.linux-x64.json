@@ -102,13 +102,13 @@
     "jit": 2.9
   },
   "class/method-given-parsed-data-for-a-class-nothing-makes": {
-    "typed": 30,
-    "untyped": 42,
+    "typed": 5,
+    "untyped": 5,
     "jit": 11
   },
   "class/method-given-parsed-data-for-a-class-that-was-handed-out": {
-    "typed": 72,
-    "untyped": 70,
+    "typed": 5,
+    "untyped": 5,
     "jit": 16
   },
   "class/new-extends-in-function": {
@@ -225,8 +225,8 @@
     "jit": 423.3
   },
   "fill/for-in-copy-has-own-property-in-function": {
-    "typed": 258.1,
-    "untyped": 256.8,
+    "typed": 114.8,
+    "untyped": 113.7,
     "jit": 374.7
   },
   "fill/for-in-copy-in-function": {
@@ -235,8 +235,8 @@
     "jit": 319.7
   },
   "fill/for-in-copy-one-name-skipped-in-function": {
-    "typed": 231.9,
-    "untyped": 222.1,
+    "typed": 111.3,
+    "untyped": 110.4,
     "jit": 306.1
   },
   "fill/for-in-map-in-function": {
@@ -265,7 +265,7 @@
     "jit": 309.7
   },
   "fill/then-enumerated-in-function": {
-    "typed": 522.9,
+    "typed": 500.4,
     "untyped": 479.1,
     "jit": 481.8
   },
@@ -433,7 +433,7 @@
     "jit": 20.6
   },
   "keyed/read-by-key-joined-at-run-time": {
-    "typed": 43,
+    "typed": 42,
     "untyped": 43,
     "jit": 42
   },
@@ -476,33 +476,33 @@
     "jit": 39.2
   },
   "react/create-element-key-in-props": {
-    "typed": 231.7,
-    "untyped": 218.6,
+    "typed": 107.6,
+    "untyped": 110.6,
     "jit": 335.5
   },
   "react/create-element-key-in-props-in-function": {
-    "typed": 232.2,
-    "untyped": 213.8,
+    "typed": 113.5,
+    "untyped": 113.4,
     "jit": 349.9
   },
   "react/create-element-no-key": {
-    "typed": 271.7,
-    "untyped": 256.7,
+    "typed": 106.6,
+    "untyped": 109.6,
     "jit": 390.5
   },
   "react/create-element-no-key-in-function": {
-    "typed": 271.1,
-    "untyped": 250.5,
+    "typed": 112,
+    "untyped": 112.3,
     "jit": 394.5
   },
   "react/jsx-key-in-props": {
-    "typed": 241.3,
-    "untyped": 223.2,
+    "typed": 111.8,
+    "untyped": 114.6,
     "jit": 277.5
   },
   "react/jsx-key-in-props-in-function": {
-    "typed": 241.3,
-    "untyped": 218.4,
+    "typed": 110.6,
+    "untyped": 109.7,
     "jit": 285
   },
   "react/jsx-no-key": {
@@ -1032,7 +1032,7 @@
   },
   "built-in/create-an-object-below-an-object-nobody-knows": {
     "typed": 34.3,
-    "untyped": 35.2,
+    "untyped": 34.2,
     "jit": 227
   },
   "built-in/number-of-a-header": {
@@ -1246,18 +1246,18 @@
     "jit": 1445.1
   },
   "guess/bound-is-the-length-of-what-is-no-array-wrong": {
-    "typed": 5,
+    "typed": 4,
     "untyped": 5,
     "jit": 6
   },
   "guess/callee-is-another-function-right": {
-    "typed": 43,
-    "untyped": 40,
+    "typed": 9,
+    "untyped": 9,
     "jit": 10
   },
   "guess/callee-is-another-function-wrong": {
-    "typed": 10,
-    "untyped": 10,
+    "typed": 9,
+    "untyped": 9,
     "jit": 116.3
   },
   "guess/method-of-one-receiver-right": {
@@ -1266,8 +1266,8 @@
     "jit": 10
   },
   "guess/method-of-one-receiver-wrong": {
-    "typed": 75,
-    "untyped": 75,
+    "typed": 9,
+    "untyped": 9,
     "jit": 10
   },
   "guess/options-are-another-literal-of-the-program": {
@@ -1281,23 +1281,23 @@
     "jit": 7
   },
   "guess/read-of-one-receiver-wrong": {
-    "typed": 91,
-    "untyped": 120,
+    "typed": 5,
+    "untyped": 4,
     "jit": 7.2
   },
   "guess/reads-of-each-element-right": {
-    "typed": 53,
-    "untyped": 63,
+    "typed": 19,
+    "untyped": 19,
     "jit": 39
   },
   "guess/reads-of-each-element-wrong": {
-    "typed": 113,
-    "untyped": 119,
+    "typed": 68,
+    "untyped": 69,
     "jit": 43
   },
   "guess/reads-of-elements-of-two-kinds-wrong": {
-    "typed": 111,
-    "untyped": 115.5,
+    "typed": 52,
+    "untyped": 51.5,
     "jit": 34.5
   },
   "guess/reads-of-two-receivers-right": {
@@ -1306,18 +1306,18 @@
     "jit": 6.2
   },
   "guess/reads-of-two-receivers-wrong": {
-    "typed": 39,
-    "untyped": 42,
+    "typed": 6,
+    "untyped": 4,
     "jit": 5.9
   },
   "guess/store-to-one-receiver-right": {
     "typed": 3.5,
-    "untyped": 7,
+    "untyped": 4,
     "jit": 10.1
   },
   "guess/store-to-one-receiver-wrong": {
-    "typed": 37,
-    "untyped": 37,
+    "typed": 11,
+    "untyped": 11,
     "jit": 10
   },
   "bytes/fill-a-buffer-by-index": {

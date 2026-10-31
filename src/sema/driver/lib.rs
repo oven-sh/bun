@@ -14,7 +14,7 @@ pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
 pub use compile::{
     BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, DemotionCause, EntryPointFailure,
-    EntryPoints, LoadFailure, LoadedProgram, Locator, Passes, RoleDecision, TextLocator,
+    EntryPoints, LoadFailure, LoadedProgram, Locator, PassCount, Passes, RoleDecision, TextLocator,
     check_and_lower, check_and_lower_noting_commits, decide_roles, drop_thread_caches,
     find_configuration_of_each_entry_point, keep_verified_roles, load_program,
     load_program_of_loaded_files, load_program_with_parsed_files, log_message, resolve_entry_point,
@@ -1404,6 +1404,8 @@ pub struct Report {
     pub diagnostics: Vec<Diagnostic>,
     /// Files whose errors may be incomplete.
     pub incomplete: Vec<Incomplete>,
+    /// `FileWork::is_one_part_of_files`: the files that are left to the caller, in no order.
+    pub left_for_last_round: Vec<FileId>,
     /// `Host::take_unreadable`: the source files that couldn't be read. Each was checked as an empty file.
     pub unreadable: Vec<Vec<u8>>,
     pub rejected_programs: Vec<RejectedProgram>,
@@ -4845,6 +4847,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
+    let left_for_last_round: Guarded<Vec<FileId>> = Guarded::new(Vec::new());
+    let has_met_limit_in_last_round = AtomicBool::new(false);
     // Which files are final, and the length of the final prefix in program order. The task that checks the next file
     // enters a cycle where `tsc --singleThreaded` does. See `Checker::set_first_in_order`.
     let final_files = Guarded::new((vec![false; to_check.len()], 0usize));
@@ -4920,6 +4924,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         let round_began = Instant::now();
         let since_round_began = || round_began.elapsed().as_micros() as u64;
         let (tasks_of_round, visits_thrown_away) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let most_logged_between_idle_moments = AtomicUsize::new(0);
         let (busy, first_idle) = (AtomicU64::new(0), AtomicU64::new(u64::MAX));
         // How long it took, when it began, and the bytes of its first file.
         let longest_task = Guarded::new((0u64, 0u64, 0usize));
@@ -5159,6 +5164,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     checker.set_requested((work.requested)(file));
                 }
                 let checked = checker.check_file(file);
+                if is_last_round && checker.take_met_limit() {
+                    has_met_limit_in_last_round.store(true, Ordering::Relaxed);
+                }
                 if request.plan_options.discards_first_visits
                     && !is_last_round
                     && visits.lock()[index].rechecks == 0
@@ -5244,7 +5252,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
                 give_back_free_memory(to_check.len().saturating_sub(done));
                 if program.files.modules[file.idx()].is_leaf
-                    && file_work.is_none_or(|work| (work.frees_tree)(file) && !is_last_round)
+                    && file_work.is_none_or(|work| {
+                        (work.frees_tree)(file) && !is_last_round && !work.is_one_part_of_files
+                    })
                 {
                     trees_to_free.push(file);
                 }
@@ -5261,6 +5271,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
             queries.fetch_add(checker.work as usize, Ordering::Relaxed);
             tasks_run.fetch_add(1, Ordering::Relaxed);
+            most_logged_between_idle_moments.fetch_max(
+                checker.most_logged_between_idle_moments(),
+                Ordering::Relaxed,
+            );
             checker.end_task_after_commits();
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
@@ -5422,7 +5436,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             let wall = since_round_began().max(1);
             let (took, began, bytes) = *longest_task.lock();
             bun_core::print_errorln!(
-                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB",
+                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB | at most {} results stored between two idle moments of a task",
                 match is_last_round {
                     true => "one thread, in order",
                     false => "all threads",
@@ -5440,6 +5454,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 took / 1000,
                 began / 1000,
                 bytes >> 10,
+                most_logged_between_idle_moments.load(Ordering::Relaxed),
             );
         }
         #[cfg(test)]
@@ -5482,12 +5497,18 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             checker.begin_task(first_round + ROUND, tasks[at][0] as u32);
             checker.see_commits(true);
             checker.set_first_in_order(true, true);
+            // A task keeps what it has derived from an answer at a limit, so the files behind that one are left with it.
+            let mut is_left = false;
             for &index in tasks[at] {
                 let file = to_check[index];
                 checker.set_requested((work.requested)(file));
                 checker.check_file(file);
                 after_file(&mut checker, file);
-                (work.after_commit)(file);
+                is_left |= work.is_one_part_of_files && checker.take_met_limit();
+                match is_left {
+                    true => left_for_last_round.lock().push(file),
+                    false => (work.after_commit)(file),
+                }
                 checker.take_ran_out_of_stack();
             }
             checker.end_task_after_commits();
@@ -5501,8 +5522,11 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 began.elapsed().as_millis(),
             );
         }
-        let is_freed =
-            |file: &FileId| program.files.modules[file.idx()].is_leaf && (work.frees_tree)(*file);
+        let is_freed = |file: &FileId| {
+            program.files.modules[file.idx()].is_leaf
+                && (work.frees_tree)(*file)
+                && !work.is_one_part_of_files
+        };
         free_trees(
             files
                 .iter()
@@ -5518,8 +5542,17 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if !again.is_empty() {
             again.shared_sort_unstable();
             run_tasks(1, &again, expected, true);
-            if let Some(work) = file_work {
-                work_after_last_round(work, &again, expected);
+            match file_work {
+                // What the round has committed holds an answer from a limit, and each of its files may have read that.
+                Some(work)
+                    if work.is_one_part_of_files
+                        && has_met_limit_in_last_round.load(Ordering::Relaxed) =>
+                {
+                    let left = again.iter().map(|&index| to_check[index]);
+                    left_for_last_round.lock().extend(left);
+                }
+                Some(work) => work_after_last_round(work, &again, expected),
+                None => {}
             }
         }
     };
@@ -5683,6 +5716,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         report.rounds = std::mem::take(&mut *rounds.lock());
     }
     report.incomplete = std::mem::take(&mut *incomplete.lock());
+    report.left_for_last_round = std::mem::take(&mut *left_for_last_round.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();
     let unreadable = host.take_unreadable();

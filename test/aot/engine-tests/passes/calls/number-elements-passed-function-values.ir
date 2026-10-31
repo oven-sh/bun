@@ -1342,7 +1342,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f71 visibility=Private
 # CHECK-NEXT: v28: 1 = Integer integer=1
 # CHECK-NEXT: v29: int[1, 4294967295] = Add v12, v28
 # CHECK-NEXT: v30: 0 = Integer
-# CHECK-NEXT: v31: int[0, 4294967295] = URShift v29, v30
+# CHECK-NEXT: v31: int[1, 4294967295] = URShift v29, v30
 # CHECK-NEXT: Jump -> next b1(v31)
 # CHECK-NEXT: b16() frequency=Rare:
 # CHECK-NEXT: v32: int[1, 4294967295] = Increment v12

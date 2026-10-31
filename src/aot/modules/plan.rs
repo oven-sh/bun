@@ -611,7 +611,7 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
-    /// An ES module that the CommonJS file leads to by a `require` or an `import()` imports the file.
+    /// An ES module that the CommonJS file leads to by a `require` or an `import()` imports the file, or such an `import()` names the file.
     pub fn may_be_imported_while_it_runs(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self

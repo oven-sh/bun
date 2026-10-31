@@ -52,7 +52,9 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::{Beside, run_beside};
 use crate::load::replaced_by_tests::without_extension;
 use crate::load::{EntryPointKind, SourceKind, Sources};
-use crate::options::{FilesThatTestsLoad, ReplacedExport, ReplacedModule};
+use crate::options::{
+    FilesThatTestsLoad, LoadsBelowFilesLeftToLoader, ReplacedExport, ReplacedModule,
+};
 use crate::statistics::{Counters, StatisticId};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::StmtId;
@@ -69,8 +71,12 @@ use imports::{FileImports, bind_imports, finish_bindings, finish_named_members};
 use module_set::{ModuleSet, collect_modules};
 use order::{SiteKey, SitePosition, compute_order};
 use plan::{Plan, StoredSite};
-use requests::{ScannedSite, Scans, finish_requests, finish_site_answers, scan_files};
+use requests::{
+    ScannedSite, Scans, finish_requests, finish_site_answers,
+    leave_imports_of_test_files_to_loader, scan_files,
+};
 use side_effects::is_declared_free_of_side_effects;
+use std::sync::Arc;
 use synthetic_exports::{ReplacedNames, number_synthetic_exports};
 use unloadable::{drop_errors_of_unloadable_modules, find_unloadable_modules};
 
@@ -85,6 +91,8 @@ pub struct BindInput<'a, 's> {
     pub external_packages: &'a [Vec<u8>],
     /// What the engine found in an earlier compile of the program: a spy of the test runner may replace them.
     pub replaced_exports: &'a [ReplacedExport],
+    /// `LoadOptions::replaced_builtins`
+    pub replaced_builtins: &'a [u32],
     /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
     pub runs_in_place: bool,
     /// `LoadOptions::mocked_modules`
@@ -109,12 +117,18 @@ pub struct BindInput<'a, 's> {
     pub evicted_modules: &'a [ReplacedModule],
     /// `LoadOptions::evicts_any_module`
     pub evicts_any_module: bool,
+    /// `LoadOptions::loads_below_files_left_to_loader`
+    pub loads_below_files_left_to_loader: &'a [Arc<LoadsBelowFilesLeftToLoader>],
     pub files_that_tests_load: &'a FilesThatTestsLoad,
     pub runs_tests: bool,
+    /// The entry points are the test files and the preloads of `bun test --aot`, which the runner starts one after another.
+    pub runner_starts_entry_points: bool,
     /// `LoadOptions::stores_path_of_main_module`
     pub stores_path_of_main_module: bool,
     /// `AotOptions::entry_points_run_again`
     pub entry_points_run_again: bool,
+    /// `AotOptions::typescript_drops_absent_exports`
+    pub typescript_drops_absent_exports: bool,
     /// `AotOptions::loads_code_from_disk`
     pub loads_code_from_disk: bool,
     /// `AotOptions::host_runs_files_from_disk`
@@ -157,7 +171,24 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let file_count = input.files.modules.len();
     let mut scans = scan_files(input);
     let unloadable = find_unloadable_modules(input, &mut scans);
-    let modules = collect_modules(input, &scans);
+    let mut modules = collect_modules(input, &scans);
+    let mut evicted = find_evicted_modules(input, &scans, &modules);
+    let may_load_again = |file: FileId| {
+        let kind = modules.interop(ModuleRef::File(file)).kind;
+        evicted.contains(ModuleRef::File(file))
+            && match input.sources.kind(file) {
+                SourceKind::Program => {
+                    matches!(kind, ModuleKind::SourceText | ModuleKind::CommonJs)
+                }
+                SourceKind::Data => true,
+                _ => false,
+            }
+    };
+    // A test file whose statements the loader links imports no file that may load again, so it never runs from disk for the sake of one.
+    if leave_imports_of_test_files_to_loader(input, &mut scans, &may_load_again) {
+        modules = collect_modules(input, &scans);
+        evicted = find_evicted_modules(input, &scans, &modules);
+    }
     let ((order, mut sites), entries) = run_beside(
         input.beside,
         || compute_order(input, &scans, &modules),
@@ -175,7 +206,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
     let mut texts = scan_commonjs_modules(&commonjs_input);
-    let evicted = find_evicted_modules(input, &scans, &modules);
     let stored_in_cache = find_library_modules_stored_in_cache(input, &scans, &modules);
     let mut stored_markers = FxHashSet::default();
     let mut newly_stored_markers = find_markers_stored_in_application(input, &modules);
@@ -212,6 +242,18 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             break (tables, imports);
         }
     };
+    // A spy, and whoever is handed the object, gets hold of the namespace object of the compiled file.
+    let mut imports = imports;
+    for file in &mut imports {
+        let lists = [
+            &mut file.imported_namespaces,
+            &mut file.namespaces_handed_out,
+            &mut file.namespaces_spied_on_whole,
+        ];
+        for module in lists.into_iter().flatten() {
+            *module = modules.module_behind(*module);
+        }
+    }
     let imported_namespaces = imports.iter().flat_map(|file| &file.imported_namespaces);
     let imported_namespaces: Vec<ModuleRef> = imported_namespaces.copied().collect();
     let replaced_variables = imports.iter().flat_map(|file| &file.replaced_variables);
@@ -466,6 +508,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         })
         .collect();
     debug_assert!(compiled_files.next().is_none());
+    let files_left_to_loader = modules.files_left_to_loader();
     let rows = map_each(drafts, input.in_parallel, &|(file, requests, imports)| {
         let (files, sources) = (input.files, input.sources);
         let interop = modules.interop(ModuleRef::File(file));
@@ -548,6 +591,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             exports,
             unread_exports: Vec::new(),
             is_data_linked_by_names_alone: false,
+            is_left_to_loader: files_left_to_loader.contains(&file),
             required_names: imports.required_names,
             names_searched_behind_stars: imports.names_searched_behind_stars,
         }
@@ -612,6 +656,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         left_out_inner_modules: Vec::new(),
         other_modules: modules.other_modules,
         external_kinds: modules.external_kinds,
+        statements_left_to_loader: modules.left_to_loader,
         importers_that_stand_for_all: Vec::new(),
         synthetic_exports: synthetic.into_list(),
         errors,

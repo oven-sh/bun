@@ -909,27 +909,27 @@ function f7 name="inTwoLoops" module=m0 position=1151 flags=[IsChecked, HasExpli
 # CHECK-NEXT: v203: 0 = Integer
 # CHECK-NEXT: Jump -> next b78(v202, v203)
 # CHECK-NEXT: b78(v204: int|whole ~ 0, v205: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: v206: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=42
 # CHECK-NEXT: Jump -> next b79(v204, v205)
-# CHECK-NEXT: b79(v206: int|whole ~ 0, v207: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b80(v206, v207)
-# CHECK-NEXT: b80(v208: int|whole, v209: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: b79(v207: int|whole ~ 0, v208: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b80(v207, v208)
+# CHECK-NEXT: b80(v209: int|whole, v210: int[0, 4294967295] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v211: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v209 castType=int|whole
-# CHECK-NEXT: v212: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=42
-# CHECK-NEXT: v213: boolean = Less v211, v212
+# CHECK-NEXT: v212: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v210 castType=int|whole
+# CHECK-NEXT: v213: boolean = Less v212, v206
 # CHECK-NEXT: Branch v213 -> taken b81(| 0), notTaken b95()
 # CHECK-NEXT: b81(v214: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v215: boolean = IsInBounds v1, v214
+# CHECK-NEXT: v215: boolean = IsInBounds v1, v214, v206
 # CHECK-NEXT: Branch v215 -> taken b82(| 0), notTaken b86()
 # CHECK-NEXT: b82(v216: guard):
-# CHECK-NEXT: v217: int[-2, 8] = GetArrayElement v1, v214, v216 arrayStorage=Int32 level=Proven accessSite=43 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v217: int[-2, 8] = GetArrayElement v1, v214, v216, v206 arrayStorage=Int32 level=Proven accessSite=43 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v218: 2 = Integer integer=2
 # CHECK-NEXT: v219: int[-1, 1]|whole = Mod v217, v218
 # CHECK-NEXT: v220: 0 = Integer
 # CHECK-NEXT: v221: boolean = StrictEq v219, v220
-# CHECK-NEXT: Branch v221 -> taken b83(), notTaken b85(v208)
+# CHECK-NEXT: Branch v221 -> taken b83(), notTaken b85(v209)
 # CHECK-NEXT: b83():
-# CHECK-NEXT: v222: int|whole = ToNumeric v208
+# CHECK-NEXT: v222: int|whole = ToNumeric v209
 # CHECK-NEXT: v223: int|whole = Increment v222
 # CHECK-NEXT: v224: boolean = HasArrayStorage v201 arrayStorage=Int32 [isWritable]
 # CHECK-NEXT: Branch v224 -> taken b84(| 0), notTaken b93(v222, v223, v217)
@@ -940,7 +940,7 @@ function f7 name="inTwoLoops" module=m0 position=1151 flags=[IsChecked, HasExpli
 # CHECK-NEXT: v228: int[1, 4294967295] ~ int[1, 2147483648] = Increment v214
 # CHECK-NEXT: Jump -> next b80(v227, v228)
 # CHECK-NEXT: b86() frequency=Rare:
-# CHECK-NEXT: v229: undefined|int[-2, 8] = GetArrayElement v1, v214 arrayStorage=Int32 level=Proven accessSite=43 [keyIsIntegral]
+# CHECK-NEXT: v229: undefined|int[-2, 8] = GetArrayElement v1, v214, -, v206 arrayStorage=Int32 level=Proven accessSite=43 [keyIsIntegral]
 # CHECK-NEXT: v230: undefined|int[-2, 8] ~ int[-2, 8] = Expect v229 expectedType=number
 # CHECK-NEXT: v231: boolean ~ true = TypeTest v230 testedType=i32
 # CHECK-NEXT: Branch v231 -> taken b87(| 0), notTaken b91()
@@ -949,9 +949,9 @@ function f7 name="inTwoLoops" module=m0 position=1151 flags=[IsChecked, HasExpli
 # CHECK-NEXT: v234: int[-1, 1]|whole = Mod v232, v233
 # CHECK-NEXT: v235: 0 = Integer
 # CHECK-NEXT: v236: boolean = StrictEq v234, v235
-# CHECK-NEXT: Branch v236 -> taken b88(), notTaken b90(v208)
+# CHECK-NEXT: Branch v236 -> taken b88(), notTaken b90(v209)
 # CHECK-NEXT: b88() frequency=Rare:
-# CHECK-NEXT: v237: int|whole = ToNumeric v208
+# CHECK-NEXT: v237: int|whole = ToNumeric v209
 # CHECK-NEXT: v238: int|whole = Increment v237
 # CHECK-NEXT: v239: boolean = HasArrayStorage v201 arrayStorage=Int32 [isWritable]
 # CHECK-NEXT: Branch v239 -> taken b89(| 0), notTaken b93(v237, v238, v229)
@@ -968,9 +968,9 @@ function f7 name="inTwoLoops" module=m0 position=1151 flags=[IsChecked, HasExpli
 # CHECK-NEXT: v247: number = Mod v245, v246
 # CHECK-NEXT: v248: 0 = Integer
 # CHECK-NEXT: v249: boolean = StrictEq v247, v248
-# CHECK-NEXT: Branch v249 -> taken b92(), notTaken b94(v208)
+# CHECK-NEXT: Branch v249 -> taken b92(), notTaken b94(v209)
 # CHECK-NEXT: b92() frequency=Rare:
-# CHECK-NEXT: v250: int|whole = ToNumeric v208
+# CHECK-NEXT: v250: int|whole = ToNumeric v209
 # CHECK-NEXT: v251: int|whole = Increment v250
 # CHECK-NEXT: Jump -> next b93(v250, v251, v244)
 # CHECK-NEXT: b93(v252: int|whole, v253: int|whole, v254: undefined|int[-2, 8] ~ int[-2, 8]) frequency=Rare:

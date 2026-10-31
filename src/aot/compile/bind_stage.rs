@@ -134,6 +134,7 @@ impl Build<'_> {
             platform: self.platform,
             external_packages,
             replaced_exports,
+            replaced_builtins: &self.options.load.replaced_builtins,
             runs_in_place: self.options.aot.runs_in_place,
             mocked_modules: match project {
                 ProjectId::Application => &self.options.load.mocked_modules,
@@ -155,11 +156,20 @@ impl Build<'_> {
                 ProjectId::Runtime => &[],
             },
             evicts_any_module: self.options.load.evicts_any_module,
+            loads_below_files_left_to_loader: match project {
+                ProjectId::Application => &self.options.load.loads_below_files_left_to_loader,
+                ProjectId::Runtime => &[],
+            },
             files_that_tests_load: &self.options.load.files_that_tests_load,
             runs_tests: self.options.load.runs_tests,
+            runner_starts_entry_points: project == ProjectId::Application
+                && self.options.load.runs_tests
+                && (self.options.aot.is_part_of_test_files || !self.options.aot.shares_realms),
             stores_path_of_main_module: self.options.load.stores_path_of_main_module,
             entry_points_run_again: project == ProjectId::Application
                 && self.options.aot.entry_points_run_again,
+            typescript_drops_absent_exports: project == ProjectId::Application
+                && self.options.aot.typescript_drops_absent_exports,
             loads_code_from_disk: self.options.aot.loads_code_from_disk,
             host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
             stand_in_for_files_from_disk,

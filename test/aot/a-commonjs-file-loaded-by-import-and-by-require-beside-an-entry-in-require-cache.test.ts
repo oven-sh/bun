@@ -130,15 +130,13 @@ for (const isolation of [["--isolate"], []]) {
   }
 }
 
-test.concurrent("in layers with a process for each test file, each file goes by its own loads", async () => {
-  using dir = tempDir("a-commonjs-file-loaded-by-import-and-by-require-in-two-processes", project);
-  const alone: string[] = [];
-  for (const name of Object.keys(project).filter(name => name.includes(".test.")))
-    alone.push(...(await runTests(String(dir), {}, `./${name}`)).printed);
-  expect(alone).toContain("second test file: function number function");
-  expect(alone).toContain("in a test of its own: number");
-  const words = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
-  const { printed, exitCode } = await runTests(String(dir), words, "--aot");
-  expect(printed.sort()).toEqual(alone.sort());
-  expect(exitCode).toBe(0);
-});
+test.concurrent(
+  "in layers with a process for each test file, the first load of the run decides as in one process",
+  async () => {
+    using dir = tempDir("a-commonjs-file-loaded-by-import-and-by-require-in-two-processes", project);
+    const plain = await runTests(String(dir), {}, "--isolate");
+    expect(plain.printed).toContain("second test file: number function number");
+    const words = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
+    expect(await runTests(String(dir), words, "--aot", "--isolate")).toEqual(plain);
+  },
+);

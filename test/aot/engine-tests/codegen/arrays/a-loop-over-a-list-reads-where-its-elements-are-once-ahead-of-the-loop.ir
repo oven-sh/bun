@@ -1,6 +1,6 @@
 # `for (let k = 0; k < from.length; k++) list.push(from[k])`. The push that has to grow `list` leaves the fast loop for one turn, and the loop is entered again behind that turn.
-# Each turn ends by reading where the elements of `from` are, for `k < from.length`, and writes nothing after that. So what the turn hands to the next one is up to date, as it is
-# where the loop is first entered, and the code in front of the fast loop neither reads it again nor compares the two.
+# The loop leaves `from` alone: its length is read once, in front of everything, so no turn reads where the elements of `from` are to ask `k < from.length`.
+# That is read where the fast loop is entered, at first and behind a turn that grew `list`, and nothing there compares it with an earlier reading. No turn of the fast loop reads it.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized
@@ -18,7 +18,9 @@
 # CHECK-LABEL: name="appendAll" role=Source
 # CHECK: = Load(b@[[from]], offset = 8, {{*}}Reads:JSArray_butterfly
 # CHECK: Branch({{*}}:Less)
+# CHECK: = Load(b@[[from]], offset = 8, {{*}}Reads:JSArray_butterfly
 # CHECK-NOT: = Load(b@[[from]], offset = 8,
+# CHECK-NOT: Reads:Butterfly_publicLength, {{*}}:GetArrayElement
 # CHECK: Writes:indexedDoubleProperties
 # CHECK-LABEL: end of function
 

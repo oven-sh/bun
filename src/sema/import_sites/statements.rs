@@ -11,8 +11,9 @@ fn has_macro_type(hir: &File<'_>, attributes: ExprId) -> bool {
     hir.import_attribute(attributes, known::r#type) == Some(known::r#macro)
 }
 
+/// `import { m } from x with { type: "macro" }` is a syntax error that the parser recovers from: it names no module to run.
 pub(super) fn is_macro_import(hir: &File<'_>, import: ImportId) -> bool {
-    has_macro_type(hir, hir[import].attributes)
+    hir[import].spec.is_some() && has_macro_type(hir, hir[import].attributes)
 }
 
 pub(crate) fn is_runtime_import(hir: &File<'_>, import: ImportId) -> bool {

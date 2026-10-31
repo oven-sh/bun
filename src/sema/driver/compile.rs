@@ -11,7 +11,7 @@ mod runtime_json;
 mod tests;
 mod threads;
 
-pub use check::{Passes, check_and_lower, check_and_lower_noting_commits};
+pub use check::{PassCount, Passes, check_and_lower, check_and_lower_noting_commits};
 pub use load::{
     find_configuration_of_each_entry_point, load_program, load_program_of_loaded_files,
     load_program_with_parsed_files, resolve_entry_point, resolve_import_to_file,
@@ -270,6 +270,11 @@ pub(crate) struct FileWork<'a, 's> {
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
     pub first_round: u32,
     pub left_out_bodies: Option<&'a LeftOutBodies>,
+    /// The files are one part of those that the caller has. What a checker answers at one of its limits depends on what it was
+    /// asked before. So a file that meets a limit in the last round or behind it, where no other file of the part is left to
+    /// wait for, is left to the caller, who has a checker that was asked about the other parts too:
+    /// `Report::left_for_last_round`. And no tree is freed for good.
+    pub is_one_part_of_files: bool,
 }
 
 pub(crate) fn file_of_related(at: Option<(FileId, u32, u32)>) -> Option<FileId> {

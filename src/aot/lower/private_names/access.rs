@@ -14,6 +14,14 @@ impl StoredValue {
             class: binding.class,
             member,
             holder: binding.holder,
+            written: None,
+        }
+    }
+
+    fn written_as(self, name: Atom) -> StoredValue {
+        StoredValue {
+            written: Some(name),
+            ..self
         }
     }
 }
@@ -40,13 +48,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.strict_eq(object, class_object)
     }
 
-    fn emit_class_object_test(&mut self, class: ClassId, object: ValueId, error: RuntimeErrorKind) {
+    /// `field`: the name of a static field that the program reads or stores here.
+    fn emit_class_object_test(
+        &mut self,
+        class: ClassId,
+        object: ValueId,
+        error: RuntimeErrorKind,
+        field: Option<Atom>,
+    ) {
         let is_class_object = self.emit_class_object_comparison(class, object);
         let admitted = self.create_block();
         let rejected = self.create_unlikely_block();
         self.builder
             .branch(is_class_object, Edge::to(admitted), Edge::to(rejected));
         self.continue_in(rejected);
+        // JSC asks for an object before it looks for the field: `undefined.#s` fails as `undefined.s` does.
+        if let Some(name) = field {
+            let split = self.split_on_type(object, TypeTable::NULLISH);
+            self.builder.switch_to(split.taken);
+            let key = self.file.name_key(name);
+            self.builder.prop_get(split.taken_value, key, false, false);
+            self.builder.unreachable();
+            self.builder.switch_to(split.not_taken);
+        }
         self.emit_throw_runtime_error(error, None);
         self.continue_in(admitted);
     }
@@ -63,7 +87,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let token = self.get_class_slot(class, ClassSlot::ClassToken);
                 self.builder.private_get(object, token, layout, field);
             }
-            PrivateHolder::ClassObject => self.emit_class_object_test(class, object, error),
+            PrivateHolder::ClassObject => self.emit_class_object_test(class, object, error, None),
         }
     }
 
@@ -73,7 +97,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         object: ValueId,
         error: RuntimeErrorKind,
     ) -> ValueId {
-        self.emit_class_object_test(stored.class, object, error);
+        self.emit_class_object_test(stored.class, object, error, stored.written);
         let slot = ClassSlot::StaticField(stored.member);
         let value = self.get_class_slot(stored.class, slot);
         let split = self.split_on_type(value, TypeTable::ABSENT);
@@ -163,7 +187,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 call::emit_call(self, getter, Some(object), &[])
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                self.emit_stored_read(StoredValue::of_name(binding, member), object)
+                let written = self.file.bound.private_name(name).name;
+                let stored = StoredValue::of_name(binding, member).written_as(written);
+                self.emit_stored_read(stored, object)
             }
             PrivateMembers::Method(member) => {
                 self.emit_admission(class, holder, object, RuntimeErrorKind::InvalidPrivateBrand);
@@ -199,7 +225,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 call::emit_call(self, setter, Some(object), &[value]);
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                let stored = StoredValue::of_name(binding, member);
+                let written = self.file.bound.private_name(name).name;
+                let stored = StoredValue::of_name(binding, member).written_as(written);
                 self.emit_stored_write(stored, object, value, source);
             }
             PrivateMembers::Method(_) => {

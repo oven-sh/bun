@@ -165,6 +165,8 @@ pub struct RequiredName {
     pub asked_by: Option<ExportStatement>,
     /// The build has found the name. A link misses it only where a mock stands for the whole module and leaves it out.
     pub is_found_unless_mocked: bool,
+    /// A link that does not find the name goes on, and nobody sees the export that asks for it: `BindInput::typescript_drops_absent_exports`.
+    pub drops_export_if_absent: bool,
 }
 
 impl RequiredName {
@@ -174,6 +176,7 @@ impl RequiredName {
             name,
             asked_by: None,
             is_found_unless_mocked: false,
+            drops_export_if_absent: false,
         }
     }
 }

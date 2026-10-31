@@ -11,6 +11,7 @@ use bun_sema::hir::FnId;
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
+use bun_sema::util::FxHashSet;
 use bun_sema::util::SharedSort;
 
 pub(super) struct ModuleSet {
@@ -18,6 +19,8 @@ pub(super) struct ModuleSet {
     pub record_files: Vec<FileId>,
     pub other_modules: Vec<ModuleRef>,
     pub external_kinds: Vec<((FileId, Atom), ExternalKind)>,
+    /// `FileScan::left_to_loader` of every importer, by `external_key`.
+    pub(super) left_to_loader: Vec<((FileId, Atom), FileId)>,
     /// The callbacks of `__commonJS(cb)` and `__esm(fn)` that are modules of their own.
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
@@ -108,6 +111,27 @@ impl ModuleSet {
         }
     }
 
+    /// The compiled file that a test file names in a statement that the loader of the run time links. What the test file does to the namespace object it does to that
+    /// of the file. Any other module stands for itself.
+    pub(super) fn module_behind(&self, module: ModuleRef) -> ModuleRef {
+        let ModuleRef::External {
+            importer,
+            specifier,
+            ..
+        } = module
+        else {
+            return module;
+        };
+        let left = &self.left_to_loader;
+        let key = external_key((importer, specifier));
+        let index = left.binary_search_by_key(&key, |entry| external_key(entry.0));
+        index.map_or(module, |index| ModuleRef::File(left[index].1))
+    }
+
+    pub(super) fn files_left_to_loader(&self) -> FxHashSet<FileId> {
+        self.left_to_loader.iter().map(|entry| entry.1).collect()
+    }
+
     fn external_kind(&self, importer: FileId, specifier: Atom) -> ExternalKind {
         let kinds = &self.external_kinds;
         let key = external_key((importer, specifier));
@@ -156,8 +180,11 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     }
     let mut other_modules = Vec::new();
     let mut external_kinds = Vec::new();
+    let mut left_to_loader = Vec::new();
     for &importer in &compiled_files {
         let scan = scans.of(importer);
+        let left = scan.left_to_loader.iter();
+        left_to_loader.extend(left.map(|&(specifier, file)| ((importer, specifier), file)));
         let site_modules = scan.sites.iter().filter_map(|site| match site {
             ScannedSite::Module(module) => Some(*module),
             _ => None,
@@ -192,6 +219,8 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     other_modules.shared_sort_unstable_by(|&a, &b| compare_modules(a, b, &files.atoms));
     other_modules.dedup();
     merge_external_kinds(&mut external_kinds);
+    left_to_loader
+        .shared_sort_unstable_by_key(|entry: &((FileId, Atom), FileId)| external_key(entry.0));
     let all_files = (0..interops.len() as u32).map(FileId);
     let with_record = all_files.filter(|file| interops[file.idx()].is_some());
     let callbacks_of = |&file: &FileId| {
@@ -210,6 +239,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         record_files: with_record.collect(),
         other_modules,
         external_kinds,
+        left_to_loader,
         wrapped,
         inner_modules,
         interops,
@@ -347,6 +377,7 @@ fn leave_require_of_data_imported_later_to_loader(
     };
     for &importer in compiled_files {
         let scan = scans.of(importer);
+        scan.left_to_loader.iter().for_each(|it| leave(it.1));
         let sites = input.files.analysis(importer).import_sites.iter();
         for (site, scanned) in sites.zip(&scan.sites) {
             let imports = matches!(

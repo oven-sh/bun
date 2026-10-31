@@ -380,7 +380,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f17 visibility=Private
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="roundedOtherwise"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 52, patchpoints: 14, rare instructions: 78
+# CHECK-NEXT: instructions: 51, patchpoints: 14, rare instructions: 78
 # CHECK-NEXT: end of function f21
 # CHECK-LABEL: function {{*}}name="roundedOtherwise"
 # CHECK: role=GenericVersion

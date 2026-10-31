@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
-use bun_core::strings::contains_char;
+use bun_core::strings::{index_of, index_of_char_usize};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
@@ -12,7 +12,7 @@ use bun_sema::hir::{
 use super::{is_identifier_name, needs_no_escape};
 use crate::lower::FileLowering;
 use crate::lower::operator::needs_parentheses;
-use crate::lower::transpiled::{PrintedFunction, Rewrite, WrittenFunction, find_written_literal};
+use crate::lower::transpiled::{Rewrite, WrittenFunction, find_written_literal};
 
 enum PrintedText {
     Bytes(Vec<u8>),
@@ -69,6 +69,116 @@ const MARK_OF_INDENTATION: u8 = 2;
 /// `markOfTextFromPrinter` in the engine.
 const MARK_OF_TEXT_FROM_PRINTER: u8 = 3;
 
+/// `markOfDifferences`, `copyOfWrittenText`, `lineBreakWithIndentation` and `textWithPieceOfItsOwn` in the engine.
+const MARK_OF_DIFFERENCES: u8 = 4;
+const COPY_OF_WRITTEN_TEXT: u8 = 5;
+const LINE_BREAK_WITH_INDENTATION: u8 = 6;
+const TEXT_WITH_PIECE_OF_ITS_OWN: u8 = 7;
+
+struct TextFromPrinter {
+    start: u32,
+    end: u32,
+    printed: Vec<u8>,
+}
+
+const SMALLEST_COPY: usize = 4;
+
+fn find_where_written_goes_on(written: &[u8], from: usize, next: &[u8]) -> Option<usize> {
+    let (mut at, mut passed_over) = (from, 0);
+    while at + SMALLEST_COPY <= written.len() && passed_over < 64 {
+        if written[at..at + SMALLEST_COPY] == next[..SMALLEST_COPY] {
+            return Some(at);
+        }
+        let rest = &written[at..];
+        at = match rest {
+            [b'/', b'/', ..] => {
+                index_of_char_usize(rest, b'\n').map_or(written.len(), |end| at + end)
+            }
+            [b'/', b'*', ..] => {
+                index_of(&rest[2..], b"*/").map_or(written.len(), |end| at + end + 4)
+            }
+            _ => {
+                passed_over += usize::from(!rest[0].is_ascii_whitespace());
+                at + 1
+            }
+        };
+    }
+    None
+}
+
+/// What stands behind `markOfDifferences`. `written` starts at `start` in the file. `is_kept_whole`: no type is cut out of that piece of the file.
+fn find_differences_from_written(
+    printed: &[u8],
+    written: &[u8],
+    start: u32,
+    inner: &[&TextFromPrinter],
+    is_kept_whole: impl Fn(u32, u32) -> bool,
+) -> Vec<u8> {
+    let mut differences = Vec::with_capacity(printed.len() / 8 + 8);
+    let mut inner = inner.iter().peekable();
+    let (mut at, mut end_of_copied) = (0, 0);
+    while at < printed.len() {
+        let next = &printed[at..];
+        while inner
+            .next_if(|inner| ((inner.start - start) as usize) < end_of_copied)
+            .is_some()
+        {}
+        let next_inner = inner.peek().map(|inner| {
+            (
+                (inner.start - start) as usize,
+                (inner.end - start) as usize,
+                &inner.printed[..],
+            )
+        });
+        let may_be_copied = next.len() >= SMALLEST_COPY && !matches!(next[0], b' ' | b'\n');
+        let found = match may_be_copied {
+            true => find_where_written_goes_on(written, end_of_copied, next),
+            false => None,
+        };
+        if let Some((start_of_inner, end_of_inner, printed_inner)) = next_inner
+            && found.is_none_or(|found| found >= start_of_inner)
+            && next.starts_with(printed_inner)
+        {
+            differences.push(TEXT_WITH_PIECE_OF_ITS_OWN);
+            push_number(&mut differences, (start_of_inner - end_of_copied) as u64);
+            push_number(&mut differences, (end_of_inner - start_of_inner) as u64);
+            end_of_copied = end_of_inner;
+            at += printed_inner.len();
+            continue;
+        }
+        if let Some(found) = found {
+            let both = next.iter().zip(&written[found..]);
+            let mut size = both
+                .take_while(|(printed, written)| printed == written)
+                .count();
+            if let Some((start_of_inner, end_of_inner, _)) = next_inner
+                && found < start_of_inner
+                && (start_of_inner..end_of_inner).contains(&(found + size))
+            {
+                size = start_of_inner - found;
+            }
+            if is_kept_whole(start + found as u32, start + (found + size) as u32) {
+                differences.push(COPY_OF_WRITTEN_TEXT);
+                push_number(&mut differences, (found - end_of_copied) as u64);
+                push_number(&mut differences, size as u64);
+                end_of_copied = found + size;
+                at += size;
+                continue;
+            }
+        }
+        let blanks = next[1..].iter().take_while(|&&byte| byte == b' ').count();
+        if next[0] == b'\n' && blanks % 2 == 0 {
+            differences.push(LINE_BREAK_WITH_INDENTATION);
+            push_number(&mut differences, blanks as u64 / 2);
+            at += 1 + blanks;
+            continue;
+        }
+        differences.push(next[0]);
+        at += 1;
+    }
+    differences
+}
+
 fn zigzag(number: i64) -> u64 {
     ((number << 1) ^ (number >> 63)) as u64
 }
@@ -104,7 +214,7 @@ impl FileLowering<'_, '_, '_, '_> {
             .filter_map(|it| Some((self.find_text_printed_in_place_of(it)?, it)))
             .collect();
         // The bracket, one mark, and one more for each indentation of its line.
-        let brackets = transpiled.brackets_over_lines_in_lists().iter();
+        let brackets = transpiled.quoted_brackets_over_lines().iter();
         replaced.extend(brackets.filter_map(|&(start, indentation)| {
             let bracket = *hir.text.get(start as usize)?;
             let mut printed = vec![MARK_OF_INDENTATION; indentation as usize + 2];
@@ -120,8 +230,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprId::NONE,
             ))
         }));
-        let functions = self.find_text_from_printer(transpiled.printed_functions_in_lists());
-        replaced.extend(functions.into_iter().map(|text| (text, ExprId::NONE)));
+        let functions = self.find_text_from_printer().into_iter();
+        replaced.extend(functions.map(|text| (text, ExprId::NONE)));
         replaced.sort_unstable_by_key(|(text, of)| (text.start, Reverse(text.end), *of));
         let mut bytes = Vec::with_capacity(replaced.len() * 5);
         let (mut last_start, mut last_end, mut end_of_bytes) = (0, 0, 0);
@@ -161,7 +271,82 @@ impl FileLowering<'_, '_, '_, '_> {
         bytes
     }
 
-    fn find_text_from_printer(&self, functions: &[PrintedFunction]) -> Vec<ReplacedText> {
+    fn find_text_from_printer(&self) -> Vec<ReplacedText> {
+        let transpiled = self.transpiled.as_ref();
+        let functions = transpiled.map_or(&[][..], |transpiled| transpiled.printed_functions());
+        let places = self.find_places_of_text_from_printer();
+        let is_mark =
+            |byte: &u8| (MARK_OF_TEXT_FROM_PRINTER..=TEXT_WITH_PIECE_OF_ITS_OWN).contains(byte);
+        let mut texts: Vec<TextFromPrinter> = functions
+            .iter()
+            .zip(places)
+            .filter(|(function, _)| !function.text.iter().any(is_mark))
+            .filter_map(|(function, place)| {
+                let (start, end, is_in_brackets) = place?;
+                let mut printed = Vec::with_capacity(function.text.len() + 2);
+                if is_in_brackets {
+                    printed.push(b'(');
+                }
+                printed.extend_from_slice(&function.text);
+                if is_in_brackets {
+                    printed.push(b')');
+                }
+                Some(TextFromPrinter {
+                    start,
+                    end,
+                    printed,
+                })
+            })
+            .collect();
+        texts.sort_unstable_by_key(|text| (text.start, Reverse(text.end)));
+        texts.dedup_by_key(|text| (text.start, text.end));
+        let mut inner: Vec<Vec<&TextFromPrinter>> = vec![Vec::new(); texts.len()];
+        let mut around: Vec<usize> = Vec::new();
+        for (index, text) in texts.iter().enumerate() {
+            while around
+                .pop_if(|&mut last| texts[last].end <= text.start)
+                .is_some()
+            {}
+            if let Some(&last) = around.last() {
+                inner[last].push(text);
+            }
+            around.push(index);
+        }
+        let is_kept_whole = |from: u32, to: u32| {
+            self.type_ranges.map_offset(to) - self.type_ranges.map_offset(from) == to - from
+        };
+        let told = texts.iter().zip(&inner).map(|(text, inner)| {
+            let written = &self.hir.text[text.start as usize..text.end as usize];
+            let differences = find_differences_from_written(
+                &text.printed,
+                written,
+                text.start,
+                inner,
+                is_kept_whole,
+            );
+            let mut printed = vec![MARK_OF_TEXT_FROM_PRINTER];
+            if differences.len() <= text.printed.len() {
+                printed.push(MARK_OF_DIFFERENCES);
+                printed.extend_from_slice(&differences);
+            } else {
+                printed.extend_from_slice(&text.printed);
+                printed.push(MARK_OF_TEXT_FROM_PRINTER);
+            }
+            ReplacedText {
+                start: text.start,
+                end: text.end,
+                printed: PrintedText::FromPrinter(printed),
+            }
+        });
+        told.collect()
+    }
+
+    /// For each of `printed_functions`: where it starts and ends in the file, and whether it is printed in round brackets.
+    pub(in crate::lower) fn find_places_of_text_from_printer(
+        &self,
+    ) -> Vec<Option<(u32, u32, bool)>> {
+        let transpiled = self.transpiled.as_ref();
+        let functions = transpiled.map_or(&[][..], |transpiled| transpiled.printed_functions());
         if functions.is_empty() {
             return Vec::new();
         }
@@ -192,7 +377,7 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(ExprId(classes[found.ok()?].1))
         };
         let owner_of = |function: FnId| self.bound.fns[function.idx()].owner;
-        let texts = functions.iter().filter_map(|function| {
+        let places = functions.iter().map(|function| {
             let expression = match function.written {
                 WrittenFunction::Expression { body } => match owner_of(find_function(body)?) {
                     FnOwner::Expr(expression) => Some(expression),
@@ -219,26 +404,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 (None, _) => return None,
             };
-            if start >= end || contains_char(&function.text, MARK_OF_TEXT_FROM_PRINTER) {
-                return None;
-            }
-            let mut printed = Vec::with_capacity(function.text.len() + 4);
-            printed.push(MARK_OF_TEXT_FROM_PRINTER);
-            if is_in_brackets {
-                printed.push(b'(');
-            }
-            printed.extend_from_slice(&function.text);
-            if is_in_brackets {
-                printed.push(b')');
-            }
-            printed.push(MARK_OF_TEXT_FROM_PRINTER);
-            Some(ReplacedText {
-                start,
-                end,
-                printed: PrintedText::FromPrinter(printed),
-            })
+            (start < end).then_some((start, end, is_in_brackets))
         });
-        texts.collect()
+        places.collect()
     }
 
     /// `f as T` and `f!` of `f`.

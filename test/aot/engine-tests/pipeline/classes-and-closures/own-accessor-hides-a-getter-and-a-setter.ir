@@ -621,22 +621,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: v6: L0 = NewObject -, v4, v5 layout=L0 fields=[0, 1] allocationSite=17 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: v7: guard = AllGuards v6
+# CHECK-NEXT: Jump -> next b3(v6, v7)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v7: object = GetConstructPrototype v2 layout=L0
-# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v8: object = GetConstructPrototype v2 layout=L0
 # CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: L0 = NewObject v7, v8, v9 layout=L0 fields=[0, 1] allocationSite=17 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b3(v11: L0):
-# CHECK-NEXT: v12: boolean = HasNoFieldOutsideSlot v11
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v13: guard):
-# CHECK-NEXT: PutSlot v11, v13, v1 key="held" receivers=[L0] level=Expected accessSite=36
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: PropSet v11, v1 key="held" accessSite=36 receivers=[L0]
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: L0 = NewObject v8, v9, v10 layout=L0 fields=[0, 1] allocationSite=17 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v12: guard = AllGuards v11
+# CHECK-NEXT: Jump -> next b3(v11, v12)
+# CHECK-NEXT: b3(v13: L0, v14: guard):
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b4(v15: guard):
+# CHECK-NEXT: PutSlot v13, v15, v1 key="held" receivers=[L0] level=Expected accessSite=36
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="size"
 # CHECK: module=m0 position=272 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 site=w8} results=[{type=undefined|int site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

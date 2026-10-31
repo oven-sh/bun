@@ -1488,7 +1488,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v25: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v26: boolean = Less v23, v25
-# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b27(v22)
+# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b28(v22)
 # CHECK-NEXT: b11(v27: int[0, 4294967294]):
 # CHECK-NEXT: v28: boolean = IsElementPresent v15, v27, v21 arrayStorage=Int32 [keyIsIntegral]
 # CHECK-NEXT: Branch v28 -> taken b12(), notTaken b15(v22, v27)
@@ -1501,7 +1501,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v34: boolean = Less v19, v33
-# CHECK-NEXT: Branch v34 -> taken b14(| 0), notTaken b27(v18)
+# CHECK-NEXT: Branch v34 -> taken b14(| 0), notTaken b28(v18)
 # CHECK-NEXT: b14(v35: int[0, 4294967294] ~ 0) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b15(v18, v35)
 # CHECK-NEXT: b15(v36: int|whole, v37: int[0, 4294967294]) frequency=Unlikely:
@@ -1530,7 +1530,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v55: undefined = MapNext v47, v52, v53
 # CHECK-NEXT: v56: boolean = ResultAt v55
 # CHECK-NEXT: v57: int[0, 2147483647] = ResultAt v55 index=1
-# CHECK-NEXT: Branch v56 -> taken b21(), notTaken b27(v51)
+# CHECK-NEXT: Branch v56 -> taken b21(), notTaken b28(v51)
 # CHECK-NEXT: b21():
 # CHECK-NEXT: v58: anything = CollectionTable v47
 # CHECK-NEXT: v59: 1 = Integer integer=1
@@ -1556,17 +1556,19 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v74: undefined = CallDirect v73 function=f52 [isNeverInlined]
 # CHECK-NEXT: v75: object = ResultAt v74
 # CHECK-NEXT: v76: anything = ResultAt v74 index=1
-# CHECK-NEXT: v77: undefined = CallDirect v75, v76 function=f53 [isNeverInlined]
-# CHECK-NEXT: v78: boolean = ResultAt v77
-# CHECK-NEXT: Branch v78 -> taken b27(v1), notTaken b26(v1)
-# CHECK-NEXT: b26(v79: int|whole) frequency=Rare:
-# CHECK-NEXT: v80: int|whole = Increment v79
+# CHECK-NEXT: Jump -> next b26(v1)
+# CHECK-NEXT: b26(v77: int|whole) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v82: undefined = CallDirect v75, v76 function=f53 [isNeverInlined]
-# CHECK-NEXT: v83: boolean = ResultAt v82
-# CHECK-NEXT: Branch v83 -> taken b27(v80), notTaken b26(v80)
-# CHECK-NEXT: b27(v84: int|whole):
-# CHECK-NEXT: Return v84
+# CHECK-NEXT: v79: undefined = CallDirect v75, v76 function=f53 [isNeverInlined]
+# CHECK-NEXT: v80: boolean = ResultAt v79
+# CHECK-NEXT: Branch v80 -> taken b27(), notTaken b29()
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v77)
+# CHECK-NEXT: b28(v81: int|whole):
+# CHECK-NEXT: Return v81
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: v82: int|whole = Increment v77
+# CHECK-NEXT: Jump -> next b26(v82)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="iterateValues"
 # CHECK: module=m0 position=510 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object}] results=[{type=int|whole}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1607,7 +1609,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v25: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v26: boolean = Less v23, v25
-# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b27(v22)
+# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b28(v22)
 # CHECK-NEXT: b11(v27: int[0, 4294967294]):
 # CHECK-NEXT: v28: boolean = IsElementPresent v15, v27, v21 arrayStorage=Int32 [keyIsIntegral]
 # CHECK-NEXT: Branch v28 -> taken b12(), notTaken b15(v22, v27)
@@ -1620,7 +1622,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v34: boolean = Less v19, v33
-# CHECK-NEXT: Branch v34 -> taken b14(| 0), notTaken b27(v18)
+# CHECK-NEXT: Branch v34 -> taken b14(| 0), notTaken b28(v18)
 # CHECK-NEXT: b14(v35: int[0, 4294967294] ~ 0) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b15(v18, v35)
 # CHECK-NEXT: b15(v36: int|whole, v37: int[0, 4294967294]) frequency=Unlikely:
@@ -1649,7 +1651,7 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v55: undefined = MapNext v47, v52, v53
 # CHECK-NEXT: v56: boolean = ResultAt v55
 # CHECK-NEXT: v57: int[0, 2147483647] = ResultAt v55 index=1
-# CHECK-NEXT: Branch v56 -> taken b21(), notTaken b27(v51)
+# CHECK-NEXT: Branch v56 -> taken b21(), notTaken b28(v51)
 # CHECK-NEXT: b21():
 # CHECK-NEXT: v58: anything = CollectionTable v47
 # CHECK-NEXT: v59: 1 = Integer integer=1
@@ -1675,17 +1677,19 @@ runtimefunction id=ArraySearchIncludes function=f37
 # CHECK-NEXT: v74: undefined = CallDirect v73 function=f52 [isNeverInlined]
 # CHECK-NEXT: v75: object = ResultAt v74
 # CHECK-NEXT: v76: anything = ResultAt v74 index=1
-# CHECK-NEXT: v77: undefined = CallDirect v75, v76 function=f53 [isNeverInlined]
-# CHECK-NEXT: v78: boolean = ResultAt v77
-# CHECK-NEXT: Branch v78 -> taken b27(v1), notTaken b26(v1)
-# CHECK-NEXT: b26(v79: int|whole) frequency=Rare:
-# CHECK-NEXT: v80: int|whole = Increment v79
+# CHECK-NEXT: Jump -> next b26(v1)
+# CHECK-NEXT: b26(v77: int|whole) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v82: undefined = CallDirect v75, v76 function=f53 [isNeverInlined]
-# CHECK-NEXT: v83: boolean = ResultAt v82
-# CHECK-NEXT: Branch v83 -> taken b27(v80), notTaken b26(v80)
-# CHECK-NEXT: b27(v84: int|whole):
-# CHECK-NEXT: Return v84
+# CHECK-NEXT: v79: undefined = CallDirect v75, v76 function=f53 [isNeverInlined]
+# CHECK-NEXT: v80: boolean = ResultAt v79
+# CHECK-NEXT: Branch v80 -> taken b27(), notTaken b29()
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v77)
+# CHECK-NEXT: b28(v81: int|whole):
+# CHECK-NEXT: Return v81
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: v82: int|whole = Increment v77
+# CHECK-NEXT: Jump -> next b26(v82)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=628 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type="array"|"getter throws"|"map"|"method is a number"|"method takes a trace"|"method throws"|"no method"}, {type=f2|f3}, {type=L0|L1|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>|Map<int, int, proven, pristine[Storage, Names]>|Object}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

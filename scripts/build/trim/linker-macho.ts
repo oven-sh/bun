@@ -185,6 +185,7 @@ export function machO(linker: Linker): LinkerFormat {
     supportObjects: room => [linker.assemble("room.s", roomSource(room))],
     prepareInput: path => path,
     prepareCompiledObjects: () => undefined,
+    relinksSameInputs: () => false,
     compiledObjects: listCompiledObjects,
     firstLinkArguments: () => createLinkArguments(compiled),
     secondLinkArguments(order) {

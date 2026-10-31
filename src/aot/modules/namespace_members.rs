@@ -212,7 +212,13 @@ impl FileBinder<'_, '_> {
             self.imports.namespaces_spied_on_whole.push(module);
             return true;
         };
-        let Some(NamedMember::Binding(binding)) = self.resolve_member(stands_for, name) else {
+        let spied_on = match stands_for {
+            StandsFor::ImportedNamespace(module) => {
+                StandsFor::ImportedNamespace(self.context.modules.module_behind(module))
+            }
+            _ => stands_for,
+        };
+        let Some(NamedMember::Binding(binding)) = self.resolve_member(spied_on, name) else {
             return true;
         };
         match binding {

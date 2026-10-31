@@ -1026,6 +1026,7 @@ impl<'s> Program<'s> {
             containers_inside_exprs: Default::default(),
             spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
+            met_limit: std::cell::Cell::new(false),
             exprs_by_kind: None,
             provisional_shapes: Default::default(),
             provisional: Default::default(),
@@ -2037,6 +2038,8 @@ pub struct Checker<'p, 's> {
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
     times_cut_short: std::cell::Cell<u64>,
+    /// `take_met_limit`
+    met_limit: std::cell::Cell<bool>,
     /// For the most recently queried file.
     exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
     /// See `provisional_shape`, which returns a reference to one and pushes the next.
@@ -4265,6 +4268,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[cold]
     #[inline(never)]
     pub(super) fn note_gave_up(&self) {
+        self.met_limit.set(true);
         self.note_state_was_read();
         self.task.discard();
     }

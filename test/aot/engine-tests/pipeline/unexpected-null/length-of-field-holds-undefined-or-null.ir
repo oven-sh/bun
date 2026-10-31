@@ -1180,27 +1180,23 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f51 visibility=Private
 # CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: v8: L0 = NewObject -, v5, v6, v7 layout=L0 fields=[0, 1, 2] allocationSite=32 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b3(v8)
+# CHECK-NEXT: v9: guard = AllGuards v8
+# CHECK-NEXT: Jump -> next b3(v8, v9)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v9: object = GetConstructPrototype v3 layout=L0
-# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: v10: object = GetConstructPrototype v3 layout=L0
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: L0 = NewObject v9, v10, v11, v12 layout=L0 fields=[0, 1, 2] allocationSite=32 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b3(v13)
-# CHECK-NEXT: b3(v14: L0):
-# CHECK-NEXT: v15: boolean = HasNoFieldOutsideSlot v14
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v16: guard):
-# CHECK-NEXT: PutSlot v14, v16, v1 key="name" receivers=[L0] level=Expected accessSite=90
-# CHECK-NEXT: PutSlot v14, v16, v2 key="list" receivers=[L0] level=Expected accessSite=91
-# CHECK-NEXT: PutSlot v14, -, v14 key="next" receivers=[L0] level=Proven accessSite=92
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: PropSet v14, v1 key="name" accessSite=90 receivers=[L0]
-# CHECK-NEXT: PropSet v14, v2 key="list" accessSite=91 receivers=[L0]
-# CHECK-NEXT: PutSlot v14, -, v14 key="next" receivers=[L0] level=Proven accessSite=92
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: L0 = NewObject v10, v11, v12, v13 layout=L0 fields=[0, 1, 2] allocationSite=32 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v15: guard = AllGuards v14
+# CHECK-NEXT: Jump -> next b3(v14, v15)
+# CHECK-NEXT: b3(v16: L0, v17: guard):
+# CHECK-NEXT: Jump -> next b4(v17)
+# CHECK-NEXT: b4(v18: guard):
+# CHECK-NEXT: PutSlot v16, v18, v1 key="name" receivers=[L0] level=Expected accessSite=90
+# CHECK-NEXT: PutSlot v16, v18, v2 key="list" receivers=[L0] level=Expected accessSite=91
+# CHECK-NEXT: PutSlot v16, -, v16 key="next" receivers=[L0] level=Proven accessSite=92
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
 # CHECK: m0 position=2839 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number site=w49}] functionTypes=[f35] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f64 fallback=f87} {

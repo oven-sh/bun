@@ -693,14 +693,26 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// How many queries the task has listed as members of those cycles.
+    #[cfg(any(test, feature = "test_support"))]
     pub fn cycle_members_added(&self) -> u64 {
         self.task.cycle_members_added()
+    }
+
+    /// A commit with a cycle discards the task if it lists one of the keys that the task has logged since it was idle.
+    pub fn most_logged_between_idle_moments(&self) -> usize {
+        self.task.most_logged_between_idle_moments()
     }
 
     /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
     /// before the last round.
     pub fn can_recheck_early(&self) -> bool {
         self.task.can_recheck_early()
+    }
+
+    /// True if the checker has given up at a limit since the last call (`note_gave_up`). A task that is trusted isn't discarded
+    /// for that.
+    pub fn take_met_limit(&self) -> bool {
+        self.met_limit.replace(false)
     }
 
     /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.

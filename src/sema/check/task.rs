@@ -158,6 +158,7 @@ pub struct Task<'s> {
     logged_at_cycles: RefCell<Vec<[[usize; 2]; 2]>>,
     /// `Buffer::log_lengths` when the task was last idle.
     logged_when_idle: Cell<[usize; 2]>,
+    most_logged_between_idle_moments: Cell<usize>,
     /// The tables the task writes to immediately, as a bit set by slot. See `may_write_immediately`. 0 means none, or
     /// none until the next commit (`stop_writing_immediately`).
     immediate_tables: Cell<u128>,
@@ -199,6 +200,7 @@ impl<'s> Task<'s> {
             cycle_ends_below: Cell::new(0),
             logged_at_cycles: RefCell::default(),
             logged_when_idle: Cell::new([0; 2]),
+            most_logged_between_idle_moments: Cell::new(0),
             immediate_tables: Cell::new(0),
             immediate_tables_after_commit: 0,
             diagnostics_logged_before_stop: Cell::new(usize::MAX),
@@ -399,24 +401,31 @@ impl<'s> Task<'s> {
             || self.is_trusted
             || self.is_first_in_component.get() && is_reachable_only_by_importers()
         {
-            if self.cycle_since_idle.get().is_none() {
-                let logged = self.buffer().log_lengths();
-                self.cycle_since_idle.set(Some(logged));
-                self.cycle_ends_below.set(from);
-            } else {
-                self.cycle_ends_below
-                    .set(self.cycle_ends_below.get().min(from));
-            }
-            self.stop_writing_immediately();
+            self.keep_results_of_cycle(from);
         } else {
             self.discard_until_recheck();
         }
+    }
+
+    /// For a cycle whose members are `stack[from..]`, in a task that isn't discarded because of it.
+    #[inline(never)]
+    fn keep_results_of_cycle(&self, from: usize) {
+        if self.cycle_since_idle.get().is_none() {
+            let logged = self.buffer().log_lengths();
+            self.cycle_since_idle.set(Some(logged));
+            self.cycle_ends_below.set(from);
+        } else {
+            self.cycle_ends_below
+                .set(self.cycle_ends_below.get().min(from));
+        }
+        self.stop_writing_immediately();
     }
 
     pub(super) fn closed_cycle_count(&self) -> u32 {
         self.closed_cycles.get()
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub(super) fn cycle_members_added(&self) -> u64 {
         self.cycle_members_added.get()
     }
@@ -462,7 +471,15 @@ impl<'s> Task<'s> {
     /// range of a resolved cycle.
     pub(super) fn note_idle(&self) {
         self.end_log_range_of_cycles();
-        self.logged_when_idle.set(self.buffer().log_lengths());
+        let (before, now) = (self.logged_when_idle.get(), self.buffer().log_lengths());
+        let logged = (now[0] + now[1]).saturating_sub(before[0] + before[1]);
+        let most = self.most_logged_between_idle_moments.get();
+        self.most_logged_between_idle_moments.set(most.max(logged));
+        self.logged_when_idle.set(now);
+    }
+
+    pub(super) fn most_logged_between_idle_moments(&self) -> usize {
+        self.most_logged_between_idle_moments.get()
     }
 
     /// Call when a query has left the checker's stack, which now has `height` entries. Ends the log range of the cycles
@@ -560,6 +577,7 @@ impl<'s> Task<'s> {
             cycle_ends_below,
             logged_at_cycles,
             logged_when_idle,
+            most_logged_between_idle_moments,
             immediate_tables,
             immediate_tables_after_commit,
             diagnostics_logged_before_stop,
@@ -585,6 +603,7 @@ impl<'s> Task<'s> {
         cycle_ends_below.set(0);
         logged_at_cycles.get_mut().clear();
         logged_when_idle.set([0; 2]);
+        most_logged_between_idle_moments.set(0);
         immediate_tables.set(0);
         *immediate_tables_after_commit = 0;
         diagnostics_logged_before_stop.set(usize::MAX);

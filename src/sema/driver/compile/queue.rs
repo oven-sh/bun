@@ -6,6 +6,8 @@ use std::time::Instant;
 
 pub(super) const ROLE_ROUNDS: u32 = 0;
 pub(super) const LOWERING_ROUNDS: u32 = 1 << 31;
+/// More than the rounds of one call of `run_queue`: the tasks of two calls with one checker have numbers of their own.
+pub(super) const ROUNDS_OF_A_RUN: u32 = 1 << 24;
 
 pub(super) fn run_queue<'s>(
     loaded: &LoadedProgram<'s>,

@@ -70,6 +70,7 @@ fn source_text_file(file: FileId) -> FileRow {
         exports: Vec::new(),
         unread_exports: Vec::new(),
         is_data_linked_by_names_alone: false,
+        is_left_to_loader: false,
         required_names: Vec::new(),
         names_searched_behind_stars: Vec::new(),
     }
@@ -93,6 +94,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         left_out_inner_modules: Vec::new(),
         other_modules: Vec::new(),
         external_kinds: Vec::new(),
+        statements_left_to_loader: Vec::new(),
         importers_that_stand_for_all: Vec::new(),
         synthetic_exports: Vec::new(),
         errors: Vec::new(),
@@ -256,6 +258,7 @@ fn modules_without_files_have_no_export_table() {
     let graph = ModuleGraph {
         other_modules: vec![runtime, external],
         external_kinds: vec![((FileId(0), specifier), ExternalKind::HostValue)],
+        statements_left_to_loader: Vec::new(),
         ..unfinished_graph(0, Vec::new())
     }
     .finish(&run_serially);

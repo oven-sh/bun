@@ -355,3 +355,11 @@ function turn(i: number): number {
   for (let k = 0; k < 100; k++) sum += ask(keys[(i + k) % 100]!, 1);
   return sum;
 }
+//// map-get-by-names-split-out-of-one-line-twice
+const line = process.env.NO_SUCH_LINE_OF_NAMES ?? "ann,bob,cy,dee,eve,fay,gus,hal,ivy,jon,kim,lee,max,ned,oda,pam";
+const ages = new Map<string, number>();
+line.split(",").forEach((name, k) => ages.set(name, k));
+const asked = line.split(",");
+function turn(i: number): number {
+  return ages.get(asked[i & 15]!) ?? 99;
+}

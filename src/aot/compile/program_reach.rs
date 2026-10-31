@@ -1947,6 +1947,8 @@ struct Walk<'a, 's> {
     tests_own_parent: FxHashSet<ModuleRef>,
     // The files in which reached code names a way from one such object to another.
     files_naming_ways: Vec<ModuleRef>,
+    // `require.main.filename`: they name a way if somebody holds the object of the entry point.
+    files_reading_fields_of_main: Vec<ModuleRef>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
     // By a module: the modules that have a call of `require` for it. Made when something asks.
     requirers: Option<FxHashMap<ModuleRef, Vec<ModuleRef>>>,
@@ -2095,6 +2097,7 @@ impl<'a, 's> Walk<'a, 's> {
             files_asking_loader_functions: Vec::new(),
             tests_own_parent: FxHashSet::default(),
             files_naming_ways: Vec::new(),
+            files_reading_fields_of_main: Vec::new(),
             required: FxHashSet::default(),
             requirers: None,
             reaches_load_by_unknown_name: false,
@@ -2893,8 +2896,13 @@ impl<'a, 's> Walk<'a, 's> {
             ModuleObjectUse::Field(ModuleField::Id) if self.find_commonjs_main().is_none() => {
                 return self.files_naming_ways.push(ModuleRef::File(file));
             }
-            // The record of the module answers these.
-            ModuleObjectUse::Field(_) => return,
+            // The record of the module answers these, as long as nobody holds the object, who could store into it: `try_lower_module_field`.
+            ModuleObjectUse::Field(_) => {
+                if owner == ModuleObjectOwner::EntryPoint {
+                    (self.files_reading_fields_of_main).push(ModuleRef::File(file));
+                }
+                return;
+            }
             // The host answers whether there is such an object, and it answers undefined in a program that names no way.
             ModuleObjectUse::Tested => return self.files_naming_ways.push(ModuleRef::File(file)),
             ModuleObjectUse::Object => (false, false),
@@ -3170,6 +3178,11 @@ impl<'a, 's> Walk<'a, 's> {
             } else {
                 break;
             }
+        }
+        // Then the field is read off what `require.main` answers, and the host answers undefined in a program that names no way.
+        let mut mains = self.commonjs_files_that_may_be_main.iter();
+        if mains.any(|&main| self.has_module_object.contains(&ModuleRef::File(main))) {
+            (self.files_naming_ways).append(&mut self.files_reading_fields_of_main);
         }
     }
 }

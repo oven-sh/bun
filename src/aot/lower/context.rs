@@ -6,7 +6,9 @@ mod tests;
 
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound};
-use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef, NamedValues, Queries, QueryInputs};
+use bun_sema::check::aot::{
+    BuiltinTypeSymbols, ConstLocalPrefixes, FunctionRef, NamedValues, Queries, QueryInputs,
+};
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
@@ -172,6 +174,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     has_bundled_positions: bool,
     runs_as_written: bool,
     pub(in crate::lower) transpiled: Option<TranspiledFile>,
+    pub(in crate::lower) const_local_prefixes: ConstLocalPrefixes,
     /// The position of each plain function that has a header, and `FileLowering::position_of_making_this_in`.
     pub(in crate::lower) where_this_is_made: Vec<(u32, u32)>,
     pub(in crate::lower) printed_operators: PrintedOperators,
@@ -348,6 +351,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             runs_as_written,
             transpiled,
+            const_local_prefixes: ConstLocalPrefixes::default(),
             where_this_is_made: Vec::new(),
             printed_operators: PrintedOperators::default(),
             counted_places,

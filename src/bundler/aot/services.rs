@@ -11,8 +11,8 @@ use bun_aot::load::source_provider::{
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{
-    ASTMemoryAllocator, ExportsKind, Indentation, Loader, Log, Part, Stmt, StoreSlice, Target,
-    symbol,
+    ASTMemoryAllocator, ExportsKind, Indentation, Loader, Log, Part, Source, Stmt, StoreSlice,
+    Target, symbol,
 };
 use bun_js_parser::Define;
 use bun_js_printer::renamer::{NoOpRenamer, Renamer};
@@ -301,6 +301,8 @@ impl SourceProvider for BundlerServices {
             arena,
         } = file;
         let renamer = NoOpRenamer::init(symbol::Map::init_with_one_list(symbols), source);
+        // The printer reserves as much as its source holds, on every call.
+        let source_without_text = Source::init_path_string(source.path.text, b"");
         let print = |&(statement, indentation): &(Stmt, u32)| {
             let mut statements = [statement];
             let part = Part {
@@ -329,7 +331,7 @@ impl SourceProvider for BundlerServices {
                 arena,
                 Target::Bun,
                 tree,
-                source,
+                &source_without_text,
                 options,
                 tree.import_records.as_slice(),
                 &[part],

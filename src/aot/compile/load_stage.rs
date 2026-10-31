@@ -609,8 +609,13 @@ impl<'a> Build<'a> {
         }
         let is_joined = self.programs.is_some_and(|programs| programs.is_joined);
         // Whoever started the build of a part is told which of its test files do not run, be it the only one.
-        if (options.aot.checks_only || options.aot.runs_tests || is_joined)
-            && (options.entry_points.len() > 1 || options.aot.is_part_of_test_files)
+        self.names_refused_entry_points =
+            (options.aot.checks_only || options.aot.runs_tests || is_joined)
+                && (options.entry_points.len() > 1 || options.aot.is_part_of_test_files);
+        // `find_files_to_leave_to_loader`: what such a file loads is known here for the last time.
+        if self.names_refused_entry_points
+            || options.load.runs_tests
+            || ImportGraph::holds_files_that_no_site_spells(application.files())
         {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }

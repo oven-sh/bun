@@ -111,10 +111,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_synthetic_read(&mut self, export: SyntheticExportId, name: StringId) -> ValueId {
+        let may_stay_empty = self.file.inputs.modules.commonjs().may_stay_empty(export);
         match self.find_synthetic_variable(export) {
+            Ok(key) if may_stay_empty => self.emit_read_of_copy_that_may_stay_empty(key),
             Ok(key) => self.emit_variable_read(key, name),
             Err(value) => value,
         }
+    }
+
+    // `import { A } from "./a.cjs"; export { A }` in a TypeScript module that is linked without the export where the file lacks the name: `A` reads as `undefined` there.
+    fn emit_read_of_copy_that_may_stay_empty(&mut self, key: VariableKey) -> ValueId {
+        let variable = self.file.ensure_variable(key);
+        let value = self.builder.get_module_variable(variable);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        let split = self.split_on_type(value, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
+        self.builder.switch_to(split.taken);
+        let undefined = self.builder.undefined();
+        self.builder.write_variable(result, undefined);
+        self.jump(join);
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     // Another module imports the name, so its variable stays empty where the module turns out to lack the name. The namespace object knows what `ns.x` finds then.

@@ -600,7 +600,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 44, patchpoints: 5, rare instructions: 44
+# CHECK-NEXT: instructions: 43, patchpoints: 5, rare instructions: 44
 # CHECK-NEXT: end of function f41
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: role=GenericVersion

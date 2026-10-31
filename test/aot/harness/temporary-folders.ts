@@ -16,6 +16,7 @@ import {
   statSync,
   writeSync,
 } from "node:fs";
+import { constants } from "node:os";
 import { dirname, join } from "node:path";
 
 const nameOfLists = "bun-test-temporary-folders";
@@ -93,4 +94,29 @@ function forgetListsOfRemovedFolders() {
     closeSync(file);
     if (!folders.some(folder => existsSync(folder))) rmSync(path, { force: true });
   }
+}
+
+function removeOwnFolders() {
+  for (const { folders } of listsOfThisProcess.values()) {
+    for (const folder of folders) {
+      try {
+        rmSync(folder, { recursive: true, force: true, maxRetries: 2 });
+      } catch {
+        // A child that is still running writes into it. The next process removes what is left.
+      }
+    }
+  }
+}
+
+let removesOwnFoldersWhenStopped = false;
+
+/**
+ * For a program of its own, not for a test file. From here on the process removes the folders it has made when it ends, however it ends but for a
+ * signal nobody can catch: at its exit, after an exception, and when `timeout`, `pkill`, a service manager or Ctrl-C asks it to stop. Call it before the first folder is made.
+ */
+export function removeOwnFoldersWhenStopped() {
+  if (removesOwnFoldersWhenStopped) return;
+  removesOwnFoldersWhenStopped = true;
+  process.on("exit", removeOwnFolders);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => process.exit(128 + constants.signals[signal]));
 }

@@ -312,7 +312,9 @@ impl RecordBuilder<'_, '_, '_> {
                 if graph.may_be_evicted(ModuleRef::File(file.file)) {
                     record.flags |= ModuleFlags::MAY_BE_EVICTED;
                 }
-                if graph.is_found_by_name(ModuleRef::File(file.file)) {
+                if graph.is_found_by_name(ModuleRef::File(file.file))
+                    || graph.is_named_by_copies(ModuleRef::File(file.file))
+                {
                     record.flags |= ModuleFlags::IS_FOUND_BY_NAME;
                 }
                 if interop.answers_loader_with_namespace {
@@ -519,6 +521,7 @@ impl RecordBuilder<'_, '_, '_> {
                 may_be_absent: required.is_found_unless_mocked,
                 export_name: (required.asked_by).map(|it| self.intern_atom(it.export_name)),
                 specifier: (required.asked_by).map(|it| self.intern_atom(it.specifier)),
+                drops_export_if_absent: required.drops_export_if_absent,
             })
             .collect();
         // The loader may be left with an empty record of such a file, which lacks even `default`. A link asks for what the module hands on before what it imports.
@@ -569,6 +572,7 @@ impl RecordBuilder<'_, '_, '_> {
                 may_be_absent: false,
                 export_name: export_name.map(|name| self.intern_atom(name)),
                 specifier: export_name.map(|_| self.strings.intern(path)),
+                drops_export_if_absent: false,
             });
         }
     }
@@ -617,9 +621,15 @@ impl RecordBuilder<'_, '_, '_> {
             ExportBinding::Variable(_) | ExportBinding::Synthetic(_) => {
                 let key = exported_variable_key(input.projects.get(project).graph, binding);
                 let key = key.expect("the binding is a variable");
+                let commonjs = input.projects.get(project).graph.commonjs();
+                let is_dropped_while_empty = match binding {
+                    ExportBinding::Synthetic(copy) => commonjs.may_stay_empty(copy),
+                    _ => false,
+                };
                 generated::ModuleExport {
                     kind: ModuleExportKind::Variable,
                     variable: Some(input.exported_variable(project, key)),
+                    is_dropped_while_empty,
                     ..unbound
                 }
             }

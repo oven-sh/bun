@@ -194,7 +194,7 @@ impl RuntimeTranspiler<'_> {
         let parts = tree.parts.iter().map(|part| part.stmts.slice());
         let (first_recorded_positions, first_recorded_positions_of_functions) =
             walker.find_first_recorded_positions(parts);
-        let functions_in_lists = std::mem::take(&mut walker.functions_in_lists);
+        let quoted_functions = std::mem::take(&mut walker.quoted_functions);
         let mut transpiled = TranspiledFile {
             identifiers: walker.identifiers,
             bindings: walker.bindings,
@@ -204,21 +204,20 @@ impl RuntimeTranspiler<'_> {
             require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
             classes_that_assign_fields: walker.classes_that_assign_fields,
-            brackets_over_lines_in_lists: walker.brackets_over_lines_in_lists,
-            printed_functions_in_lists: Vec::new(),
-            lists_that_hold_functions: walker.lists_that_hold_functions,
+            quoted_brackets_over_lines: walker.quoted_brackets_over_lines,
+            printed_functions: Vec::new(),
             first_recorded_positions,
             first_recorded_positions_of_functions,
             rewrites: rewrites.unwrap_or_default(),
         };
-        transpiled.printed_functions_in_lists =
-            self.print_functions(&functions_in_lists, &mut tree, &source, arena);
+        transpiled.printed_functions =
+            self.print_functions(&quoted_functions, &mut tree, &source, arena);
         Ok(transpiled)
     }
 
     fn print_functions(
         &self,
-        functions: &[FunctionInList],
+        functions: &[QuotedFunction],
         tree: &mut Ast<'_>,
         source: &Source<'_>,
         arena: &Arena,
@@ -250,6 +249,7 @@ impl RuntimeTranspiler<'_> {
                 let text = printed.strip_prefix(in_front)?.strip_suffix(behind)?;
                 Some(PrintedFunction {
                     written: function.written,
+                    is_in_list: function.is_in_list,
                     text: text.into(),
                 })
             })
@@ -268,9 +268,10 @@ pub(super) enum WrittenFunction {
     Class { keyword: u32 },
 }
 
-/// A function or a class that lies in a list that takes values.
-struct FunctionInList {
+/// A function or a class that lies in what an error may quote.
+struct QuotedFunction {
     written: WrittenFunction,
+    is_in_list: bool,
     /// Of the line that it starts in.
     indentation: u32,
     /// `return f;`, or `return { m() {} };` for a method.
@@ -279,6 +280,7 @@ struct FunctionInList {
 
 pub(super) struct PrintedFunction {
     pub(super) written: WrittenFunction,
+    pub(super) is_in_list: bool,
     /// As `bun run` has it.
     pub(super) text: Box<[u8]>,
 }
@@ -326,12 +328,10 @@ pub(super) struct TranspiledFile {
     joined_declarators: Vec<JoinedDeclarator>,
     // The `class` of each class whose instance fields are printed as assignments in its constructor.
     classes_that_assign_fields: Vec<u32>,
-    // The `[` or `{` of each list and object that is printed over several lines and is, or lies in, a list that takes values. With how often its line is indented.
-    brackets_over_lines_in_lists: Vec<(u32, u32)>,
-    // The functions and classes in each list that takes values, but for what is written in one of them.
-    printed_functions_in_lists: Vec<PrintedFunction>,
-    // The `[` of each list that takes values and has a function or a class written in it. Not of a list in such a list.
-    lists_that_hold_functions: Vec<u32>,
+    // The `[` or `{` of each list and object that is printed over several lines and lies in what an error may quote. With how often its line is indented.
+    quoted_brackets_over_lines: Vec<(u32, u32)>,
+    // The functions and classes in what an error may quote.
+    printed_functions: Vec<PrintedFunction>,
     // The `class` of each class without a parent, and the first position that its constructor records.
     first_recorded_positions: Vec<(u32, u32)>,
     // The `(` of each function that may be constructed, and the first position that it records as strict code and as sloppy code.
@@ -385,16 +385,12 @@ impl TranspiledFile {
         index.ok().map(|index| joined[index])
     }
 
-    pub(super) fn brackets_over_lines_in_lists(&self) -> &[(u32, u32)] {
-        &self.brackets_over_lines_in_lists
+    pub(super) fn quoted_brackets_over_lines(&self) -> &[(u32, u32)] {
+        &self.quoted_brackets_over_lines
     }
 
-    pub(super) fn printed_functions_in_lists(&self) -> &[PrintedFunction] {
-        &self.printed_functions_in_lists
-    }
-
-    pub(super) fn lists_that_hold_functions(&self) -> &[u32] {
-        &self.lists_that_hold_functions
+    pub(super) fn printed_functions(&self) -> &[PrintedFunction] {
+        &self.printed_functions
     }
 
     pub(super) fn assigns_fields_of_class_at(&self, position: u32) -> bool {
@@ -441,9 +437,8 @@ struct Walker<'a> {
     require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
     classes_that_assign_fields: Vec<u32>,
-    brackets_over_lines_in_lists: Vec<(u32, u32)>,
-    functions_in_lists: Vec<FunctionInList>,
-    lists_that_hold_functions: Vec<u32>,
+    quoted_brackets_over_lines: Vec<(u32, u32)>,
+    quoted_functions: Vec<QuotedFunction>,
     // The `[` and `{` of `[a, { b }] = v`.
     assigned_patterns: PositionSet,
     classes_without_parent: Vec<StmtOrExpr>,
@@ -466,9 +461,9 @@ struct Walker<'a> {
 #[derive(Copy, Clone, Default)]
 struct PrintedPlace {
     indentation: u32,
+    // In a list that takes values, or in a call, a read, an `in` or an `instanceof` that may fail: an error quotes that whole.
+    is_quoted: bool,
     is_in_list_that_takes_values: bool,
-    // The `[` of the outermost such list.
-    list_that_takes_values: Loc,
 }
 
 fn may_be_constructed(function: &G::Fn) -> bool {
@@ -508,9 +503,8 @@ impl<'a> Walker<'a> {
             require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
             classes_that_assign_fields: Vec::new(),
-            brackets_over_lines_in_lists: Vec::new(),
-            functions_in_lists: Vec::new(),
-            lists_that_hold_functions: Vec::new(),
+            quoted_brackets_over_lines: Vec::new(),
+            quoted_functions: Vec::new(),
             assigned_patterns: PositionSet::new(text_length),
             classes_without_parent: Vec::new(),
             functions: Vec::new(),
@@ -564,22 +558,15 @@ impl<'a> Walker<'a> {
     fn record_bracket(&mut self, position: Loc, is_single_line: bool) {
         if let Ok(position) = u32::try_from(position.start)
             && !is_single_line
-            && self.place.is_in_list_that_takes_values
+            && self.place.is_quoted
         {
             let indentation = self.place.indentation;
-            self.brackets_over_lines_in_lists
+            self.quoted_brackets_over_lines
                 .push((position, indentation));
         }
     }
 
-    fn enter_list_that_takes_values(&mut self, open_bracket: Loc) {
-        if !self.place.is_in_list_that_takes_values {
-            self.place.list_that_takes_values = open_bracket;
-        }
-        self.place.is_in_list_that_takes_values = true;
-    }
-
-    /// `walk` pushes what a function or a class holds. A list around it has it as the printer prints it, whole: so what it holds lies in no list but its own.
+    /// `walk` pushes what a function or a class holds. A quote around it has it as the printer prints it, whole: so what it holds lies in no quote but its own.
     /// `returned`: the function or the class, or an object that holds nothing but the method.
     fn walk_function_or_class(
         &mut self,
@@ -588,23 +575,25 @@ impl<'a> Walker<'a> {
         walk: impl FnOnce(&mut Self),
     ) {
         self.settle();
-        let is_in_list = self.place.is_in_list_that_takes_values;
-        if is_in_list && let Some(written) = written {
+        let is_quoted = self.place.is_quoted;
+        if is_quoted && let Some(written) = written {
             let returned = returned();
             let statement = S::Return {
                 value: Some(returned),
             };
-            self.functions_in_lists.push(FunctionInList {
+            self.quoted_functions.push(QuotedFunction {
                 written,
+                is_in_list: self.place.is_in_list_that_takes_values,
                 indentation: self.place.indentation,
                 printed_alike: Stmt::alloc(statement, returned.loc),
             });
-            let list = self.place.list_that_takes_values;
-            push_position(&mut self.lists_that_hold_functions, list);
         }
+        let is_in_list = self.place.is_in_list_that_takes_values;
+        self.place.is_quoted = false;
         self.place.is_in_list_that_takes_values = false;
         walk(self);
         self.settle();
+        self.place.is_quoted = is_quoted;
         self.place.is_in_list_that_takes_values = is_in_list;
     }
 
@@ -642,9 +631,7 @@ impl<'a> Walker<'a> {
             }
             self.settle();
         }
-        self.brackets_over_lines_in_lists.sort_unstable();
-        self.lists_that_hold_functions.sort_unstable();
-        self.lists_that_hold_functions.dedup();
+        self.quoted_brackets_over_lines.sort_unstable();
         self.accessed_constructions.sort_unstable();
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
@@ -875,7 +862,8 @@ impl<'a> Walker<'a> {
         match binding.data {
             B::BIdentifier(_) | B::BMissing(_) => {}
             B::BArray(array) => {
-                self.enter_list_that_takes_values(binding.loc);
+                self.place.is_quoted = true;
+                self.place.is_in_list_that_takes_values = true;
                 self.record_bracket(binding.loc, array.is_single_line);
                 self.push_indented(!array.is_single_line, |walker| {
                     for item in array.items() {
@@ -902,6 +890,57 @@ impl<'a> Walker<'a> {
         }
     }
 
+    fn find_kind_of_declaration(&self, name: E::Identifier) -> Option<SymbolKind> {
+        let symbol = &self.symbols[follow_symbols(self.symbols, name.ref_).inner_index() as usize];
+        let is_declaration = matches!(
+            symbol.kind,
+            SymbolKind::HoistedFunction | SymbolKind::GeneratorOrAsyncFunction | SymbolKind::Class
+        );
+        let is_stable = !name.must_keep_due_to_with_stmt() && !symbol.has_been_assigned_to();
+        (is_declaration && is_stable).then_some(symbol.kind)
+    }
+
+    fn may_be_no_function(&self, callee: Expr) -> bool {
+        match callee.data {
+            ExprData::EFunction(_) | ExprData::EArrow(_) => false,
+            ExprData::EIdentifier(name) => !matches!(
+                self.find_kind_of_declaration(name),
+                Some(SymbolKind::HoistedFunction | SymbolKind::GeneratorOrAsyncFunction)
+            ),
+            _ => true,
+        }
+    }
+
+    fn may_be_no_constructor(&self, callee: Expr) -> bool {
+        match callee.data {
+            ExprData::EClass(_) => false,
+            ExprData::EFunction(function) => !may_be_constructed(&function.func),
+            ExprData::EIdentifier(name) => !matches!(
+                self.find_kind_of_declaration(name),
+                Some(SymbolKind::HoistedFunction | SymbolKind::Class)
+            ),
+            _ => true,
+        }
+    }
+
+    fn is_written_as_object(object: Expr) -> bool {
+        matches!(
+            object.data,
+            ExprData::EFunction(_)
+                | ExprData::EArrow(_)
+                | ExprData::EClass(_)
+                | ExprData::EObject(_)
+                | ExprData::EArray(_)
+                | ExprData::ERegExp(_)
+                | ExprData::ENew(_)
+        )
+    }
+
+    fn walk_read_from(&mut self, object: Expr) {
+        self.place.is_quoted |= !Self::is_written_as_object(object);
+        self.walk_accessed(object);
+    }
+
     fn walk_accessed(&mut self, object: Expr) {
         if let ExprData::ENew(_) = object.data {
             push_position(&mut self.accessed_constructions, object.loc);
@@ -918,7 +957,8 @@ impl<'a> Walker<'a> {
             }
             ExprData::EArray(list) => {
                 if self.is_assigned_pattern(expression) {
-                    self.enter_list_that_takes_values(expression.loc);
+                    self.place.is_quoted = true;
+                    self.place.is_in_list_that_takes_values = true;
                     for &item in list.items.iter() {
                         self.mark_assigned_pattern(item);
                     }
@@ -933,6 +973,11 @@ impl<'a> Walker<'a> {
                 if operator.op == OpCode::BinAssign {
                     self.mark_assigned_pattern(operator.left);
                 }
+                self.place.is_quoted |= match operator.op {
+                    OpCode::BinIn => !Self::is_written_as_object(operator.right),
+                    OpCode::BinInstanceof => self.may_be_no_constructor(operator.right),
+                    _ => false,
+                };
                 self.pending_expressions
                     .extend([operator.left, operator.right]);
             }
@@ -950,6 +995,7 @@ impl<'a> Walker<'a> {
             }
             ExprData::ENew(site) => {
                 self.push_call_at(expression.loc, expression);
+                self.place.is_quoted |= self.may_be_no_constructor(site.target);
                 self.pending_expressions.push(site.target);
                 self.pending_expressions.extend_from_slice(&site.args);
             }
@@ -966,12 +1012,13 @@ impl<'a> Walker<'a> {
             }
             ExprData::ECall(site) => {
                 self.push_call_at(site.close_paren_loc, expression);
+                self.place.is_quoted |= self.may_be_no_function(site.target);
                 self.walk_accessed(site.target);
                 self.pending_expressions.extend_from_slice(&site.args);
             }
-            ExprData::EDot(access) => self.walk_accessed(access.target),
+            ExprData::EDot(access) => self.walk_read_from(access.target),
             ExprData::EIndex(access) => {
-                self.walk_accessed(access.target);
+                self.walk_read_from(access.target);
                 self.pending_expressions.push(access.index);
             }
             ExprData::EArrow(arrow) => {
@@ -1008,6 +1055,7 @@ impl<'a> Walker<'a> {
             ExprData::ESpread(spread) => self.pending_expressions.push(spread.value),
             ExprData::ETemplate(template) => {
                 if let Some(tag) = template.tag {
+                    self.place.is_quoted |= self.may_be_no_function(tag);
                     self.walk_accessed(tag);
                 }
                 let parts = template.parts().iter();

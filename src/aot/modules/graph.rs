@@ -51,6 +51,8 @@ pub struct ModuleGraph {
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
+    /// `ModuleSet::left_to_loader`, sorted the same way.
+    pub(super) statements_left_to_loader: Vec<((FileId, Atom), FileId)>,
     /// `join_externals_that_spell_paths`. Ascending by the number of the atom.
     pub(super) importers_that_stand_for_all: Vec<(Atom, FileId)>,
     pub(super) synthetic_exports: Vec<SyntheticExport>,
@@ -95,6 +97,8 @@ pub(super) struct FileRow {
     pub unread_exports: Vec<SymbolId>,
     /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
     pub is_data_linked_by_names_alone: bool,
+    /// A statement of a test file names the file to the loader of the run time, which may ask it for any name.
+    pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
 }
@@ -210,6 +214,14 @@ impl ModuleGraph {
         importers.shared_sort_unstable();
         importers.dedup();
         importers
+    }
+
+    /// Whether the loader of the run time links a statement of the test file that spells the specifier so.
+    pub fn leaves_statement_to_loader(&self, importer: FileId, specifier: Atom) -> bool {
+        let left = &self.statements_left_to_loader;
+        let key = external_key((importer, specifier));
+        left.binary_search_by_key(&key, |entry| external_key(entry.0))
+            .is_ok()
     }
 
     pub fn external_kind(&self, module: ModuleRef) -> Option<ExternalKind> {

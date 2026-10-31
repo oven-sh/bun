@@ -223,7 +223,7 @@ function f5 name="ranToTheEnd" module=m0 position=1211 flags=[IsChecked, HasExpl
 # CHECK-NEXT: v7: 0 = Integer
 # CHECK-NEXT: v8: i32 = BitOr v0, v7
 # CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: int[0, 4294967295] = URShift v0, v9
+# CHECK-NEXT: v10: int[2147483640, 4294967280] = URShift v0, v9
 # CHECK-NEXT: v11: 2 = Integer integer=2
 # CHECK-NEXT: v12: number = Div v0, v11
 # CHECK-NEXT: v13: "," = String string=","

@@ -45,7 +45,7 @@
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or all of a kind:
 //                                      operations (calls into the run time), arrivals (accesses that look a name up), branches (two-way branches of compiled code
-//                                      that ran), cells and bytes (what compiled code and its stubs allocate), allCells (with what the run time allocates). The run has no collection. What the program starts counts too
+//                                      that ran), arrivalsAndBranches (the two added up: a lookup that became a test counts the same), cells and bytes (what compiled code and its stubs allocate), allCells (with what the run time allocates). The run has no collection. What the program starts counts too
 //   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name as shell/expectations.py reads it, which asks the `jsc` shell: without its kind
 //                                      (CompiledStructuresMade, LookupTableBases, operationAOTGetById)
 //                                      Each of the three may end with ` Todo: <why>`: it is not met today. It is asked all the same, and fails once it is met: the words go out.
@@ -736,6 +736,7 @@ function countedByRun(text: string) {
     ["operations", 0],
     ["arrivals", 0],
     ["branches", 0],
+    ["arrivalsAndBranches", 0],
     ["cells", 0],
     ["bytes", 0],
     ["allCells", 0],
@@ -758,6 +759,7 @@ function countedByRun(text: string) {
       add("operations", Number(count));
     else if (name.startsWith("arrival:")) add("arrivals", Number(count));
     else if (name.startsWith("branch:")) add("branches", Number(count));
+    if (name.startsWith("arrival:") || name.startsWith("branch:")) add("arrivalsAndBranches", Number(count));
   }
   return counted;
 }
@@ -776,14 +778,21 @@ function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string)
     if (isASAN && name === "operations") return [];
     // A Bun built with AddressSanitizer folds no null check into an access: it counts 0.
     if (isASAN && name === "NullChecksFoldedIntoAccesses") return [];
-    // A function of the run time that nothing called has no line. The same shorter free lists make a function that also refills one count more: those entries are not the ones asked about.
+    // A function of the run time that nothing called has no line.
     const operation = /^(?:operation:)?(operationAOT\w+)$/.exec(name)?.[1];
+    const most = counted.has(name) ? counted.get(name)! : operation ? 0 : undefined;
+    if (most === undefined) return [`${name} ${relation} ${bound}, but the ${who} counted nothing of that name`];
+    // The same shorter free lists make a function that also refills one count more. An entry that refilled one came for that alone, or is one of those
+    // asked about and found the list empty on its way: the counts do not tell. Those asked about are as many as one of the numbers from `least` to `most`.
     const refills = isASAN && operation ? (counted.get("refilled:" + operation) ?? 0) : 0;
-    const value = counted.has(name) ? counted.get(name)! - refills : operation ? 0 : undefined;
-    if (value === undefined) return [`${name} ${relation} ${bound}, but the ${who} counted nothing of that name`];
-    const isMet = relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound;
-    if (todo !== undefined) return isMet ? [`${name} ${relation} ${bound} is met: its \`Todo:\` goes out`] : [];
-    return isMet ? [] : [`${name} ${relation} ${bound}, but the ${who} counted ${counted.get(name) ?? 0}`];
+    const least = most - refills;
+    const meets = (value: number) =>
+      relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound;
+    if (todo !== undefined)
+      return meets(least) && meets(most) ? [`${name} ${relation} ${bound} is met: its \`Todo:\` goes out`] : [];
+    const someNumberMeets = relation === "=" ? least <= bound && bound <= most : meets(least) || meets(most);
+    const refilled = refills > 0 ? `, ${refills} of them with a free list to refill` : "";
+    return someNumberMeets ? [] : [`${name} ${relation} ${bound}, but the ${who} counted ${most}${refilled}`];
   });
 }
 
@@ -875,9 +884,13 @@ async function run(programs: Program[]): Promise<void> {
     ...first.flags,
     ...(first.way === "erased" ? ["--aot-erase-types"] : []),
     ...(first.statistics.length ? ["--explain=statistics"] : []),
-    ...(first.counts.some(({ name }) => name === "arrivals") ? ["--aot-count-arrivals"] : []),
+    ...(first.counts.some(({ name }) => ["arrivals", "arrivalsAndBranches"].includes(name))
+      ? ["--aot-count-arrivals"]
+      : []),
     // Only such a build counts every cell. Any other books a whole free list to the place that finds it used up.
-    ...(first.counts.some(({ name }) => ["branches", "cells", "bytes"].includes(name)) ? ["--aot-count-branches"] : []),
+    ...(first.counts.some(({ name }) => ["branches", "arrivalsAndBranches", "cells", "bytes"].includes(name))
+      ? ["--aot-count-branches"]
+      : []),
     ...entryPoints,
     ...first.entryPoints,
     "--outfile",

@@ -290,7 +290,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v60: boolean = ResultAt v59
 # CHECK-NEXT: v61: 1 = Integer integer=1
 # CHECK-NEXT: v62: int[0, 1] = ToNumber v60
-# CHECK-NEXT: v63: i32 = LShift v61, v62
+# CHECK-NEXT: v63: int[1, 2] = LShift v61, v62
 # CHECK-NEXT: v64: anything = ResultAt v59 index=1
 # CHECK-NEXT: v65: anything = ResultAt v59 index=4
 # CHECK-NEXT: v66: boolean|number|string|object ~ L0 = RequireObjectCoercible v56 name="kind"
@@ -371,7 +371,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v118: boolean = ResultAt v117
 # CHECK-NEXT: v119: 1 = Integer integer=1
 # CHECK-NEXT: v120: int[0, 1] = ToNumber v118
-# CHECK-NEXT: v121: i32 = LShift v119, v120
+# CHECK-NEXT: v121: int[1, 2] = LShift v119, v120
 # CHECK-NEXT: v122: anything = ResultAt v117 index=1
 # CHECK-NEXT: v123: anything = ResultAt v117 index=4
 # CHECK-NEXT: v124: boolean ~ true = TypeTest v114 testedType=undefined|null|L0
@@ -485,10 +485,10 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: b59() frequency=Rare:
 # CHECK-NEXT: v246: anything = PropGet v236 key="symbol" accessSite=21
 # CHECK-NEXT: Jump -> next b70(v246, v235)
-# CHECK-NEXT: b60(v247: i32, v248: anything, v249: anything, v250: int[1, 4294967295], v251: boolean|number|string|object ~ L0) frequency=Rare:
+# CHECK-NEXT: b60(v247: int[1, 2], v248: anything, v249: anything, v250: int[1, 4294967295], v251: boolean|number|string|object ~ L0) frequency=Rare:
 # CHECK-NEXT: v252: anything ~ number = PropGet v251 key="kind" accessSite=6
 # CHECK-NEXT: Jump -> next b61(v252, v247, v248, v249, v250, v251)
-# CHECK-NEXT: b61(v253: anything ~ number, v254: i32, v255: anything, v256: anything, v257: int[1, 4294967295], v258: boolean|number|string|object ~ L0) frequency=Rare:
+# CHECK-NEXT: b61(v253: anything ~ number, v254: int[1, 2], v255: anything, v256: anything, v257: int[1, 4294967295], v258: boolean|number|string|object ~ L0) frequency=Rare:
 # CHECK-NEXT: v259: anything = PropGet v258 key="symbol" accessSite=7
 # CHECK-NEXT: v260: string = TypeOf v259
 # CHECK-NEXT: v261: 2 = Integer integer=2

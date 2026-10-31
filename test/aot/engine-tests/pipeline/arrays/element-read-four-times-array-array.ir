@@ -207,7 +207,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v22: int[0, 4294967295] = CallBuiltin v17 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v23: boolean = Less v20, v22
-# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b30()
+# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b31()
 # CHECK-NEXT: b10(v24: int[0, 4294967294]):
 # CHECK-NEXT: v25: boolean = IsPristine v17 builtinClass=Array aspects=[Storage]
 # CHECK-NEXT: Branch v25 -> taken b11(| 0), notTaken b12()
@@ -240,7 +240,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v48: int[0, 2147483647] = GetStringLength v44
 # CHECK-NEXT: v49: boolean = Less v46, v48
-# CHECK-NEXT: Branch v49 -> taken b17(| 0), notTaken b30()
+# CHECK-NEXT: Branch v49 -> taken b17(| 0), notTaken b31()
 # CHECK-NEXT: b17(v50: int[0, 2147483646]):
 # CHECK-NEXT: v51: int[0, 65535] = GetStringCodeUnit v44, v50
 # CHECK-NEXT: v52: 55296 = Integer integer=55296
@@ -293,18 +293,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v80: undefined = CallDirect v77, v78 function=f8 [isNeverInlined]
 # CHECK-NEXT: v81: boolean = ResultAt v80
-# CHECK-NEXT: v82: anything = ResultAt v80 index=1
-# CHECK-NEXT: Branch v81 -> taken b30(), notTaken b31()
-# CHECK-NEXT: b30():
-# CHECK-NEXT: v83: undefined = Undefined
-# CHECK-NEXT: Return v83
-# CHECK-NEXT: b31() frequency=Unlikely handler=b32():
+# CHECK-NEXT: Branch v81 -> taken b30(), notTaken b32()
+# CHECK-NEXT: b30() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v82: undefined = Undefined
+# CHECK-NEXT: Return v82
+# CHECK-NEXT: b32() frequency=Unlikely handler=b33():
+# CHECK-NEXT: v83: anything = ResultAt v80 index=1
 # CHECK-NEXT: v84: fact = Specified
-# CHECK-NEXT: v85: undefined|null|boolean|number|string|object = AssumeType v82, v84 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: v85: undefined|null|boolean|number|string|object = AssumeType v83, v84 provenType=undefined|null|boolean|number|string|object
 # CHECK-NEXT: v86: boolean = CallDirect v85 function=f1 accessSite=4
 # CHECK-NEXT: v87: undefined = CallBuiltin -, v86 overload=ConsoleLog/0 accessSite=5
 # CHECK-NEXT: Jump -> next b29()
-# CHECK-NEXT: b32() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: b33() role=CleanupHandler frequency=Unlikely:
 # CHECK-NEXT: v88: exception = CatchException
 # CHECK-NEXT: v89: undefined = CallDirect v77 function=f7 [isNeverInlined]
 # CHECK-NEXT: Rethrow v88

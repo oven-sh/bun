@@ -21,7 +21,10 @@ use super::frame::{self, Frame};
 use super::parts::{self, Part, PartBuilder, PartState, Parts};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::cli::command::TestOptions;
-use crate::cli::run_compiled::{PART_HAS_NO_PROGRAM, PART_IS_BUILT_AGAIN, TestPartKind};
+use crate::cli::run_compiled::{
+    PART_HAS_NO_PROGRAM, PART_HAS_NO_ROOM, PART_IS_BUILT_AGAIN, PROGRAMS_CAN_WAIT_IN_MEMORY,
+    TestPartKind,
+};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -772,6 +775,7 @@ impl<'a> Coordinator<'a> {
                 let rd_growth = rd.u32();
                 let largest_child = rd.u32();
                 let exit_code_left = rd.u32();
+                let first_loads = rd.str();
                 // Of the two views of the children, one sees the short-lived and one sees those that run at once.
                 let growth = rd_growth + largest_child.max(self.take_highest_of_children(w));
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
@@ -795,6 +799,8 @@ impl<'a> Coordinator<'a> {
                 {
                     self.exit_code_left_by_tests = Some(code as u8);
                 }
+                w.first_loads.clear();
+                w.first_loads.extend_from_slice(first_loads);
 
                 // Reshaped for borrowck — `summary()` mutably borrows
                 // `self.reporter`, so the unhandled-errors counter (also on
@@ -852,6 +858,9 @@ impl<'a> Coordinator<'a> {
                         bun_core::handle_oom(self.coverage_files.get_or_put(&report.source_url));
                     bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
+            }
+            frame::Kind::RefusedChange => {
+                crate::cli::run_compiled::add_refused_change(rd.str().to_vec());
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
@@ -1278,6 +1287,24 @@ impl<'a> Coordinator<'a> {
                 if parts.layers[layer].state == PartState::Finished {
                     continue;
                 }
+                // Plain `bun test` needs no room there. The next build says again what this one has said.
+                if exit_code == Some(PART_HAS_NO_ROOM)
+                    && PROGRAMS_CAN_WAIT_IN_MEMORY
+                    && !parts.layers[layer].is_in_memory
+                {
+                    parts.temporary_directory_is_full = true;
+                    parts.layers[layer].state = PartState::Waiting;
+                    parts.layers[layer].file = None;
+                    // It holds the file that had no room.
+                    parts.tell_build_above(layer, None);
+                    self.break_dots();
+                    bun_core::pretty_error!(
+                        "<r><yellow>warn<r>: the temporary directory {} has no room for what the test files import, compiled. It is compiled again and kept in memory\n",
+                        bstr::BStr::new(bun_resolver::fs::RealFS::tmpdir_path()),
+                    );
+                    Output::flush();
+                    continue;
+                }
                 parts.print_messages(&messages);
                 if exit_code == Some(0) {
                     parts.layers[layer].state = PartState::Ready;
@@ -1298,6 +1325,11 @@ impl<'a> Coordinator<'a> {
                 }
                 parts.tell_build_above(layer, None);
                 a_layer_failed = true;
+                let failed = match parts.kind_of(index as u32) {
+                    TestPartKind::SharedPackages => "the packages",
+                    TestPartKind::SharedComputed => "what imports with computed names reach",
+                    _ => "the files of the project",
+                };
                 // No test file has a program without it. That is said once, not for each of them.
                 let file_count: u32 = parts.list.iter().map(|part| part.range.len()).sum();
                 for part in parts.layers.iter_mut().chain(&mut parts.list) {
@@ -1308,8 +1340,9 @@ impl<'a> Coordinator<'a> {
                 let mut buf = [0u8; 32];
                 self.break_dots();
                 bun_core::pretty_error!(
-                    "<r><red>error<r>: what the test files import {}. None of the {} test files ran\n",
+                    "<r><red>error<r>: what the test files import {}, in the build of {}. None of the {} test files ran\n",
                     bstr::BStr::new(&describe_failed_build(&mut buf, &status)),
+                    failed,
                     file_count,
                 );
                 Output::flush();
@@ -1400,6 +1433,7 @@ impl<'a> Coordinator<'a> {
             let kind = parts.kind_of(index);
             let below = parts.programs_below(layer.unwrap_or(parts.layers.len()));
             let is_above_library = parts.stands_on_library_of_this_bun;
+            let in_memory = layer.is_some() && parts.temporary_directory_is_full;
             let pipe = match layer {
                 Some(layer) if parts.begins_beside_build_below(layer) => {
                     let Ok(pipe) = bun_sys::pipe() else {
@@ -1430,6 +1464,7 @@ impl<'a> Coordinator<'a> {
                 &self.envps[0],
                 parts_ptr,
                 kind,
+                in_memory,
                 &below,
                 is_above_library,
                 threads,
@@ -1443,6 +1478,7 @@ impl<'a> Coordinator<'a> {
             match started {
                 Ok((builder, file)) => {
                     part.file = Some(file);
+                    part.is_in_memory = in_memory;
                     part.state = PartState::Building;
                     parts.builders.push(builder);
                 }
@@ -1686,6 +1722,13 @@ fn describe_failed_build(buf: &mut [u8; 32], status: &SpawnStatus) -> Vec<u8> {
         SpawnStatus::Signaled(SIGKILL) => {
             b"could not be compiled: the system killed the build (SIGKILL), as it does when memory runs out"
                 .to_vec()
+        }
+        SpawnStatus::Exited(exited) if u32::from(exited.code) == PART_HAS_NO_ROOM => {
+            match PROGRAMS_CAN_WAIT_IN_MEMORY {
+                true => &b"could not be compiled: neither memory nor the temporary directory has room for the program"[..],
+                false => b"could not be compiled: the temporary directory has no room for the program",
+            }
+            .to_vec()
         }
         _ => [b"could not be compiled: ", describe_status(buf, status)].concat(),
     }

@@ -432,7 +432,7 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   const room = estimateRoom(first, analysis, order, session);
   stopwatch.lap("section order and table room");
 
-  const reused = prepared ?? native;
+  const reused = format.relinksSameInputs() ? undefined : (prepared ?? native);
   const namedNativeInput = (path: string) => {
     const prepared = preparedNativeInput(path);
     return prepared === undefined ? undefined : (copies.get(prepared) ?? prepared);
@@ -442,8 +442,8 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
     room,
     request: tableRoom => ({
       name: "second",
-      rewrite: namedNativeInput,
-      first: [...format.supportObjects(tableRoom), ...format.firstInputs, ...reused],
+      rewrite: reused === undefined ? preparedInput : namedNativeInput,
+      first: [...format.supportObjects(tableRoom), ...format.firstInputs, ...(reused ?? [])],
       ...format.secondLinkArguments(order),
     }),
   };

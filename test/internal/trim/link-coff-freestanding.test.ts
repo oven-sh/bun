@@ -178,6 +178,34 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     expect(summary.removed).toContain(Extra);
   });
 
+  // As `??_E..`, the vector deleting destructor, is an alias of `??_G..` in every C++ class with a virtual destructor.
+  testLink("links where a member of bitcode refers to a weak alias, which what is compiled from it does not define", async () => {
+    using dir = tempDir("trim-coff-freestanding", {
+      ...smallSources,
+      "aliased.c": `
+        __attribute__((noinline)) int aliased_target(int value) { return value + 1; }
+        extern __typeof(aliased_target) aliased_name __attribute__((weak, alias("aliased_target")));
+        __attribute__((noinline)) int beside_the_alias(int value) { return value * 3; }
+        int (*const volatile aliased_table[])(int) = { aliased_name, beside_the_alias };`,
+      "main.c": mainReturning(
+        "extern int (*const volatile aliased_table[])(int);",
+        "aliased_table[argc & 1](argc)",
+      ),
+    });
+    const objects = ["feature_code", "entry", "table", "embedder", "main", "aliased"];
+    const { addressOf, featuresOf, summary } = await linked(
+      String(dir),
+      optionsWith({
+        objects,
+        archives: { "shelf.lib": objects },
+        compileFlags: Object.fromEntries(objects.map(name => [name, thinLtoFlags])),
+      }),
+    );
+    expect(addressOf("beside_the_alias")).toBeGreaterThan(0);
+    expect(["entered", "main", "aliased_target"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
+    expect(summary.removed).toContain(Extra);
+  });
+
   testLink("writes the four review files, the table and the state", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
@@ -805,11 +833,12 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
       "equal read-only data without an external name": {
         more: `static const int feature_primes[64] = { 2, 3, 5, 7, 11 }; int more(int x) { return feature_primes[x & 63]; }`,
         declarations: "static const int retained_primes[64] = { 2, 3, 5, 7, 11 };",
-        result: "retained_primes[argc] == 3 ? 0 : 1",
+        // Asked only whether it is 3, the number is never read: LLVM 23 asks whether argc is 1, and the list is gone.
+        result: "retained_primes[argc] - 3",
         retained: [],
         check({ addressOf, featuresOf }) {
-          const listed = ["retained_primes", "feature_primes"].filter(name => !Number.isNaN(addressOf(name)));
-          expect(listed).not.toEqual([]);
+          const listed = ["retained_primes", "feature_primes"];
+          expect(addressOf("retained_primes")).toBe(addressOf("feature_primes"));
           expect(listed.map(featuresOf)).toEqual(listed.map(() => undefined));
         },
       },
@@ -886,11 +915,38 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
         return rust_call_default(1) + rust_body_default(1) + rust_body_default(-1) + rust_call_or(1) + rust_is_removed();
       }
     `;
+    // What Rust's core asks of the C library and of the C++ run time, which are not linked.
+    const whatCoreAsksFor = `
+      typedef __SIZE_TYPE__ size_t;
+      void *memcpy(void *to, const void *from, size_t count) {
+        for (size_t i = 0; i < count; i++) ((char *)to)[i] = ((const char *)from)[i];
+        return to;
+      }
+      void *memmove(void *to, const void *from, size_t count) {
+        if (to < from) return memcpy(to, from, count);
+        while (count--) ((char *)to)[count] = ((const char *)from)[count];
+        return to;
+      }
+      void *memset(void *to, int byte, size_t count) {
+        for (size_t i = 0; i < count; i++) ((char *)to)[i] = (char)byte;
+        return to;
+      }
+      int memcmp(const void *a, const void *b, size_t count) {
+        for (size_t i = 0; i < count; i++) {
+          int difference = ((const unsigned char *)a)[i] - ((const unsigned char *)b)[i];
+          if (difference) return difference;
+        }
+        return 0;
+      }
+      int __CxxFrameHandler3(void) { __builtin_trap(); }
+      int _fltused;
+    `;
     const rustFiles = (toy: string) => ({
       ...smallSources,
       "embedder.c": embedderSource("coff", { stateFromRust: true, exit: () => "__builtin_trap();" }),
       "toy.rs": toy,
       "main.c": rustMain,
+      "asked_for.c": whatCoreAsksFor,
     });
 
     async function compileRustInputs(folder: string): Promise<LinkOptions | undefined> {
@@ -904,7 +960,7 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
         return undefined;
       }
       const library = await compileRust(folder, rustc!, crate, "toy.rs", { target });
-      return optionsWith({ objects: ["feature_code", "embedder", "main"], inputs: [library] });
+      return optionsWith({ objects: ["feature_code", "embedder", "main", "asked_for"], inputs: [library] });
     }
 
     testLink("mark the functions they call, and bring the one state", async () => {

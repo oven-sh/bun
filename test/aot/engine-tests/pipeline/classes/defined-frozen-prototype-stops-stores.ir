@@ -730,13 +730,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: v113: 2 = Integer integer=2
 # CHECK-NEXT: v114: L2 = NewObject -, v112, v113 layout=L2 fields=[0, 1] allocationClass=2 [listsOnlyStoredValues]
 # CHECK-NEXT: v115: Array<string> = CallBuiltin -, v114 overload=ObjectKeys/0 accessSite=28
-# CHECK-NEXT: v116: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v115 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v116: Array<"height"|"width", proven, pristine[Storage, Names, Dense]> = AssumeType v115 provenType=Array<"height"|"width", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v117: string = CallBuiltin v116 overload=ArrayPrototypeJoin/0 accessSite=30
 # CHECK-NEXT: v118: 1 = Integer integer=1
 # CHECK-NEXT: v119: 2 = Integer integer=2
 # CHECK-NEXT: v120: L3 = NewObject -, v118, v119 layout=L3 fields=[0, 1] allocationClass=3 [listsOnlyStoredValues]
 # CHECK-NEXT: v121: Array<string> = CallBuiltin -, v120 overload=ObjectKeys/0 accessSite=32
-# CHECK-NEXT: v122: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v121 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v122: Array<"first"|"second", proven, pristine[Storage, Names, Dense]> = AssumeType v121 provenType=Array<"first"|"second", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v123: string = CallBuiltin v122 overload=ArrayPrototypeJoin/0 accessSite=34
 # CHECK-NEXT: v124: undefined = CallBuiltin -, v69, v93, v110, v117, v123 overload=ConsoleLog/0 accessSite=35
 # CHECK-NEXT: v125: builtin(Console) = Builtin builtin=Console
@@ -936,7 +936,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Branch v50 -> taken b25(), notTaken b26()
 # CHECK-NEXT: b25() frequency=Unlikely handler=b46():
 # CHECK-NEXT: v51: "kept" = String string="kept"
-# CHECK-NEXT: v52: Array<string, Contiguous> = NewArray v51 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v52: Array<"area"|"describe"|"kept"|"limit", Contiguous> = NewArray v51 contents="area"|"describe"|"kept"|"limit" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b33(v52)
 # CHECK-NEXT: b26() frequency=Unlikely:
 # CHECK-NEXT: v53: boolean = ShapeTest v26 layouts=[L1]
@@ -946,7 +946,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Branch v55 -> taken b28(), notTaken b29()
 # CHECK-NEXT: b28() frequency=Unlikely handler=b46():
 # CHECK-NEXT: v56: "kept" = String string="kept"
-# CHECK-NEXT: v57: Array<string, Contiguous> = NewArray v56 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v57: Array<"area"|"describe"|"kept"|"limit", Contiguous> = NewArray v56 contents="area"|"describe"|"kept"|"limit" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b33(v57)
 # CHECK-NEXT: b29() frequency=Unlikely:
 # CHECK-NEXT: v58: boolean = ShapeTest v26 layouts=[L4]
@@ -956,13 +956,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Branch v60 -> taken b31(), notTaken b32()
 # CHECK-NEXT: b31() frequency=Unlikely handler=b46():
 # CHECK-NEXT: v61: "kept" = String string="kept"
-# CHECK-NEXT: v62: Array<string, Contiguous> = NewArray v61 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v62: Array<"area"|"describe"|"kept"|"limit", Contiguous> = NewArray v61 contents="area"|"describe"|"kept"|"limit" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b33(v62)
 # CHECK-NEXT: b32() frequency=Rare handler=b46():
 # CHECK-NEXT: v63: Array<string> = CallBuiltin -, v26 overload=ObjectKeys/0 accessSite=68
 # CHECK-NEXT: Jump -> next b33(v63)
 # CHECK-NEXT: b33(v64: Array<string>) frequency=Unlikely handler=b46():
-# CHECK-NEXT: v65: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v64 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v65: Array<"area"|"describe"|"kept"|"limit", proven, pristine[Storage, Names, Dense]> = AssumeType v64 provenType=Array<"area"|"describe"|"kept"|"limit", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v66: string = CallBuiltin v65 overload=ArrayPrototypeJoin/0 accessSite=70
 # CHECK-NEXT: v67: Array<undefined|int|string, Contiguous> = NewArray v25, v24, v35, v46, v66 contents=undefined|int|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v68: Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v67 provenType=Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>
@@ -981,7 +981,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Branch v76 -> taken b37(), notTaken b38()
 # CHECK-NEXT: b37() handler=b46():
 # CHECK-NEXT: v77: "kept" = String string="kept"
-# CHECK-NEXT: v78: Array<string, Contiguous> = NewArray v77 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v78: Array<"area"|"describe"|"kept"|"limit", Contiguous> = NewArray v77 contents="area"|"describe"|"kept"|"limit" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b45(v78)
 # CHECK-NEXT: b38():
 # CHECK-NEXT: v79: boolean = ShapeTest v26 layouts=[L1]
@@ -991,7 +991,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Branch v81 -> taken b40(), notTaken b41()
 # CHECK-NEXT: b40() handler=b46():
 # CHECK-NEXT: v82: "kept" = String string="kept"
-# CHECK-NEXT: v83: Array<string, Contiguous> = NewArray v82 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v83: Array<"area"|"describe"|"kept"|"limit", Contiguous> = NewArray v82 contents="area"|"describe"|"kept"|"limit" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b45(v83)
 # CHECK-NEXT: b41():
 # CHECK-NEXT: v84: boolean = ShapeTest v26 layouts=[L4]
@@ -1001,13 +1001,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Branch v86 -> taken b43(), notTaken b44()
 # CHECK-NEXT: b43() handler=b46():
 # CHECK-NEXT: v87: "kept" = String string="kept"
-# CHECK-NEXT: v88: Array<string, Contiguous> = NewArray v87 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v88: Array<"area"|"describe"|"kept"|"limit", Contiguous> = NewArray v87 contents="area"|"describe"|"kept"|"limit" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b45(v88)
 # CHECK-NEXT: b44() frequency=Rare handler=b46():
 # CHECK-NEXT: v89: Array<string> = CallBuiltin -, v26 overload=ObjectKeys/0 accessSite=68
 # CHECK-NEXT: Jump -> next b45(v89)
-# CHECK-NEXT: b45(v90: Array<string> ~ Array<string, Contiguous>) handler=b46():
-# CHECK-NEXT: v91: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v90 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b45(v90: Array<string> ~ Array<"area"|"describe"|"kept"|"limit", Contiguous>) handler=b46():
+# CHECK-NEXT: v91: Array<"area"|"describe"|"kept"|"limit", proven, pristine[Storage, Names, Dense]> = AssumeType v90 provenType=Array<"area"|"describe"|"kept"|"limit", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v92: string = CallBuiltin v91 overload=ArrayPrototypeJoin/0 accessSite=70
 # CHECK-NEXT: v93: Array<undefined|int|string, Contiguous> = NewArray v25, v24, v35, v72, v92 contents=undefined|int|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v94: Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v93 provenType=Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>

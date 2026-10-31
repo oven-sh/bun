@@ -292,6 +292,7 @@ fn module_that_cannot_load_fails_nothing_else_that_the_stand_in_for_files_from_d
         let fails_load = |stand_in: Option<FileId>| {
             let graph = bind_modules(&BindInput {
                 runs_tests: true,
+                runner_starts_entry_points: true,
                 host_runs_files_from_disk: true,
                 stand_in_for_files_from_disk: stand_in,
                 ..*input
@@ -307,6 +308,61 @@ fn module_that_cannot_load_fails_nothing_else_that_the_stand_in_for_files_from_d
         assert_eq!(fails_load(None), ([true, true, true, false], true));
         let stand_in = Some(file("stand-in.js"));
         assert_eq!(fails_load(stand_in), ([false, true, true, false], false));
+    });
+}
+
+#[test]
+fn typescript_module_is_bound_without_the_exports_that_find_nothing_where_the_run_drops_them() {
+    let files = [
+        (
+            "main.js",
+            "import './again.ts'; import './imported.ts'; import './file.ts'; import './again.js';",
+        ),
+        ("esm.js", "export const one = 1;"),
+        ("file.cjs", "exports[name()] = 1;"),
+        ("again.ts", "export { absent, one } from './esm.js';"),
+        (
+            "imported.ts",
+            "import { absent, one } from './esm.js'; export { absent, one };",
+        ),
+        ("file.ts", "export { perhaps } from './file.cjs';"),
+        ("again.js", "export { absent } from './esm.js';"),
+    ];
+    with_graph(&files, |graph, input| {
+        let file = |name: &str| file_named(input, name);
+        let importers = |graph: &ModuleGraph| -> Vec<FileId> {
+            let failures = graph.errors().iter().chain(graph.failures());
+            failures.map(|failure| failure.importer).collect()
+        };
+        let every_importer = ["again.ts", "imported.ts", "file.ts", "again.js"].map(file);
+        let mut failing = importers(graph);
+        failing.sort_unstable();
+        let mut expected = every_importer.to_vec();
+        expected.sort_unstable();
+        assert_eq!(failing, expected);
+
+        let graph = bind_modules(&BindInput {
+            typescript_drops_absent_exports: true,
+            ..*input
+        })
+        .graph;
+        assert_eq!(importers(&graph), [file("again.js")]);
+        let names_of = |name: &str| -> Vec<&BStr> {
+            let exports = graph.exports(file(name)).iter();
+            exports
+                .map(|export| BStr::new(input.files.atoms.bytes(export.name)))
+                .collect()
+        };
+        assert_eq!(names_of("again.ts"), ["one"]);
+        assert_eq!(names_of("imported.ts"), ["one"]);
+        // Only the run knows whether the file has the name: the export is there while its copy holds something.
+        let [perhaps] = graph.exports(file("file.ts")) else {
+            panic!("file.ts does not have exactly one export");
+        };
+        let ExportBinding::Synthetic(copy) = perhaps.binding else {
+            panic!("{:?}", perhaps.binding);
+        };
+        assert!(graph.commonjs().may_stay_empty(copy));
     });
 }
 

@@ -361,6 +361,7 @@ mod tests {
             has_early_errors: false,
             replaced_builtins: Vec::new(),
             left_to_loader: Vec::new(),
+            loads_below_files_left_to_loader: None,
         }
     }
 

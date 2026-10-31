@@ -155,10 +155,15 @@ pub struct AotOptions {
     pub test_run_part_files: Option<u32>,
     /// The word `TestRunLayers:0` of `BUN_DEBUG_TEST_AOT_WORDS`, for measuring: the test files and what they import are one program, as where a run has few test files.
     pub test_run_is_one_program: bool,
+    /// `bun test --aot`: how many bytes of source a program may hold for its build to fit into the memory that the run can get.
+    /// `None`: nobody has measured the memory, and the build takes the form that is soonest done.
+    pub source_that_fits_in_memory: Option<u64>,
     /// `bun test --aot`: the entry points are test files. Their types stop at them.
     pub is_part_of_test_files: bool,
     /// `bun test --aot --rerun-each`: the runner loads each test file several times in one realm, and what the file imports stays as it is.
     pub entry_points_run_again: bool,
+    /// `bun test --aot --isolate` or `--parallel`: a TypeScript module that exports a name of another module is linked without the export where that module lacks the name, as under plain `bun test` with those flags.
+    pub typescript_drops_absent_exports: bool,
     /// `bun test --aot`: the build compiles its entry points and nothing else. What they import is in another image, which the process that runs them holds too.
     pub imports_are_in_other_images: bool,
     /// `bun test --aot`: a realm that runs the program runs other programs too, each built alone.
@@ -394,8 +399,10 @@ impl Default for AotOptions {
             before_read: None,
             test_run_part_files: None,
             test_run_is_one_program: false,
+            source_that_fits_in_memory: None,
             is_part_of_test_files: false,
             entry_points_run_again: false,
+            typescript_drops_absent_exports: false,
             imports_are_in_other_images: false,
             shares_realms: false,
             images_below: ImagesBelow::default(),
@@ -517,8 +524,10 @@ mod tests {
             before_read,
             test_run_part_files,
             test_run_is_one_program,
+            source_that_fits_in_memory,
             is_part_of_test_files,
             entry_points_run_again,
+            typescript_drops_absent_exports,
             imports_are_in_other_images,
             shares_realms,
             images_below,
@@ -565,8 +574,10 @@ mod tests {
         assert!(before_read.is_none());
         assert!(test_run_part_files.is_none());
         assert!(!test_run_is_one_program);
+        assert!(source_that_fits_in_memory.is_none());
         assert!(!is_part_of_test_files);
         assert!(!entry_points_run_again);
+        assert!(!typescript_drops_absent_exports);
         assert!(!imports_are_in_other_images);
         assert!(!shares_realms);
         assert!(images_below.is_empty());

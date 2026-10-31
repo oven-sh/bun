@@ -602,7 +602,9 @@ impl CommonJsExports {
             .chain(owners)
             .collect();
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.
-        for &(imported, _) in &tables.absent_commonjs_names {
+        let absent_names = tables.absent_commonjs_names.iter();
+        let absent_names = absent_names.map(|&(imported, _)| imported);
+        for imported in absent_names.chain(tables.dropped_commonjs_names.iter().copied()) {
             let exporter = ModuleRef::File(imported.exporter);
             let owner = self.owner_of(exporter, imported.name);
             modules.push(owner.map_or(exporter, |owner| owner.0));

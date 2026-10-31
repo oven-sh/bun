@@ -1,3 +1,6 @@
+// Env: BUN_JSC_useDFGJIT=0
+// `call1 = (f, a) => f(a)` ends in a tail call, so an error out of Object.getPrototypeOf(undefined) quotes the caller: (evaluating 'action()'). With plain Bun's optimizing tier it quotes 'f(a)' now and then:
+// 6 to 12 of 40 runs, on glibc and on musl, and none where that tier is off or compiles on the main thread. So it goes by how far the compiler's thread has come. Without the tier there is one answer.
 // Getters of Map, Set and typed arrays, Object.getPrototypeOf, trim, toLowerCase, slice and JSON.stringify called by value: the guarded stubs answer as the host functions do, for every receiver and argument that fails a guard too.
 import "../../fixtures/jsc-shell-functions.ts";
 

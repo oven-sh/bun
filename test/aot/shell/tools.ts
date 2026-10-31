@@ -22,7 +22,7 @@ export const testaot = process.env.TESTAOT ?? findTool(bunExe(), "testaot");
 // CI packs both wherever Bun has the compiler, and unpacks them in a shard that has one of the tests that start them.
 if (isCI && !isWindows && !unsupported && !(jsc && testaot))
   throw new Error(
-    `There is no jsc or no testaot beside ${bunExe()}: is ${Bun.main} in aotTestsThatStartToolsOfTheEngine of scripts/runner.node.ts?`,
+    `There is no jsc or no testaot beside ${bunExe()}: does ../harness/tests-that-start-tools-of-the-engine.ts see how ${Bun.main} imports this file?`,
   );
 export const python = Bun.which("python3");
 export const frontEnd =

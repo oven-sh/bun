@@ -90,7 +90,7 @@ pub struct FoundInFile {
     pub required: Vec<Vec<u8>>,
     /// `ResolvedBuiltins::holders_named_from_outside`, by their numbers.
     pub holders_named_from_outside: Vec<u32>,
-    /// The texts that it passes to what it imports from a file beside it: the file as it writes it, and the text. `plant("polluted")`.
+    /// The texts that it passes to what it imports from another file: the file as it writes it, and the text. `plant("polluted")`.
     pub texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
     /// `export { a as b } from "./c"`, `import { a } from "./c"; export { a as b }`: b, "./c", a.
     pub names_exported_again: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
@@ -98,7 +98,7 @@ pub struct FoundInFile {
     pub modules_exported_again: Vec<Vec<u8>>,
 }
 
-fn is_relative(specifier: &[u8]) -> bool {
+pub(super) fn is_relative(specifier: &[u8]) -> bool {
     specifier.starts_with(b"./") || specifier.starts_with(b"../")
 }
 
@@ -379,6 +379,31 @@ impl<'s> Look<'s> {
                 _ => {}
             }
         }
+        let source_of = |symbol: SymbolId| {
+            let made = made_by.iter().find(|it| it.0 == symbol).map(|it| it.1);
+            import_of(symbol).or(made)
+        };
+        // `function start(watch: Tracker["watch"]) { watch(holder, "read"); }`, `start(tracker.watch)`: what goes into a call may be what a parameter of this file holds.
+        let is_parameter =
+            |symbol: SymbolId| matches!(*bound.symbol(symbol).decls, [Decl::Param(_)]);
+        let mut handed_to_calls: Vec<ImportId> = Vec::new();
+        for call in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Call(call) = hir[call].kind else {
+                continue;
+            };
+            for operand in hir.ids(hir[call].args) {
+                let operand: ExprId = hir.skip_type_assertions(operand);
+                let name = hir
+                    .member_key(operand)
+                    .map_or(operand, |(object, _)| object);
+                if let Binding::Symbol(symbol) = bound.binding(hir.skip_type_assertions(name))
+                    && let Some(import) = source_of(symbol)
+                    && !handed_to_calls.contains(&import)
+                {
+                    handed_to_calls.push(import);
+                }
+            }
+        }
         for call in (0..hir.exprs.len() as u32).map(ExprId) {
             let ExprKind::Call(call) = hir[call].kind else {
                 continue;
@@ -386,24 +411,29 @@ impl<'s> Look<'s> {
             let Some(symbol) = root_of(call) else {
                 continue;
             };
-            let made = made_by.iter().find(|it| it.0 == symbol).map(|it| it.1);
-            let Some(import) = import_of(symbol).or(made) else {
-                continue;
+            let import = source_of(symbol);
+            let imports = match import {
+                Some(ref import) => core::slice::from_ref(import),
+                None if is_parameter(symbol) => &handed_to_calls[..],
+                None => continue,
             };
-            // `import a from ;` in a text whose substitution stood for the name: the parser goes on without one.
-            if hir[import].spec.is_none() {
-                continue;
-            }
-            let file = atoms.bytes(hir[import].spec);
-            if !is_relative(file) {
-                continue;
-            }
-            for operand in hir.ids(hir[call].args) {
-                let operand = hir.skip_type_assertions(operand);
-                if let FoldedValue::Constant(Constant::String(text)) =
-                    analysis.decisions.constant(&hir, operand)
-                {
-                    found.texts_passed.push((file.to_vec(), bytes_of(text)));
+            for &import in imports {
+                // `import a from ;` in a text whose substitution stood for the name: the parser goes on without one.
+                if hir[import].spec.is_none() {
+                    continue;
+                }
+                let file = atoms.bytes(hir[import].spec);
+                // "@/test/tracker" may be a file of the project: its tsconfig.json says.
+                if find_module_named(file).is_some() {
+                    continue;
+                }
+                for operand in hir.ids(hir[call].args) {
+                    let operand = hir.skip_type_assertions(operand);
+                    if let FoldedValue::Constant(Constant::String(text)) =
+                        analysis.decisions.constant(&hir, operand)
+                    {
+                        found.texts_passed.push((file.to_vec(), bytes_of(text)));
+                    }
                 }
             }
         }
@@ -1087,6 +1117,172 @@ mod tests {
         assert_eq!(found, expected);
         let own = find("class Proxy { constructor(target) {} } new Proxy(Math).max = () => 1;");
         assert!(own.is_empty(), "{own:?}");
+    }
+
+    #[test]
+    fn a_write_on_what_a_helper_answers_is_a_write_on_what_the_helper_was_handed_or_returns() {
+        let found = find(
+            r#"
+            import { spyOn, beforeEach } from "bun:test";
+            import { wrapElsewhere } from "./helper";
+            const wrap = object => new Proxy(object, {});
+            function wrapDeclared(object) {
+                if (!object) return null;
+                const proxy = new Proxy(object, {});
+                return proxy;
+            }
+            const tools = { wrap(object) { return new Proxy(object, {}); }, ofJSON: () => new Proxy(JSON, {}) };
+            class Tools { static wrap(object) { return new Proxy(object, {}); } }
+            const twice = object => wrap(wrap(object));
+            const ofIntl = () => new Proxy(Intl, {});
+            const inObject = () => ({ proxy: new Proxy(performance, {}) });
+            const inList = object => [new Proxy(object, {})];
+            const later = async object => new Proxy(object, {});
+            wrap(Math).max = () => 1;
+            delete wrapDeclared(Atomics).load;
+            const kept = wrap(Date);
+            kept.now = () => 1;
+            wrapElsewhere(String).raw = () => 1;
+            tools.wrap(Object).keys = () => 1;
+            tools.ofJSON().parse = () => 1;
+            Tools.wrap(Reflect).has = () => 1;
+            twice(ArrayBuffer).isView = () => 1;
+            ofIntl().getCanonicalLocales = () => 1;
+            inObject().proxy.now = () => 1;
+            inList(URL)[0].canParse = () => 1;
+            (await later(Buffer)).isBuffer = () => 1;
+            Proxy.revocable(Error, {}).proxy.captureStackTrace = () => 1;
+            Object.defineProperty(wrap(Map), "groupBy", { value() {} });
+            Reflect.set({}, "cwd", () => 1, wrap(process));
+            spyOn(wrap(console), "table");
+            wrap(Array.prototype).at = () => 1;
+            const { proxy } = wrapElsewhere(Number);
+            proxy.isNaN = () => 1;
+            const [first] = inList(Symbol);
+            first.keyFor = () => 1;
+            let made;
+            beforeEach(() => { made = wrap(BigInt); });
+            made.asIntN = () => 1;
+            "#,
+        );
+        for member in [
+            BuiltinId::MathMax,
+            BuiltinId::AtomicsLoad,
+            BuiltinId::DateNow,
+            BuiltinId::StringRaw,
+            BuiltinId::ObjectKeys,
+            BuiltinId::JSONParse,
+            BuiltinId::ReflectHas,
+            BuiltinId::ArrayBufferIsView,
+            BuiltinId::IntlGetCanonicalLocales,
+            BuiltinId::PerformanceNow,
+            BuiltinId::URLCanParse,
+            BuiltinId::BufferIsBuffer,
+            BuiltinId::ErrorCaptureStackTrace,
+            BuiltinId::MapGroupBy,
+            BuiltinId::ProcessCwd,
+            BuiltinId::ConsoleTable,
+            BuiltinId::ArrayPrototypeAt,
+            BuiltinId::NumberIsNaN,
+            BuiltinId::SymbolKeyFor,
+            BuiltinId::BigIntAsIntN,
+        ] {
+            assert!(found.contains(&member), "{member:?} in {found:?}");
+        }
+        // A `return` of a function inside the helper is not the helper's, and what a function of the table answers is known.
+        let other = find(
+            r#"
+            function makes() { const inner = () => { return new Proxy(Math, {}); }; return {}; }
+            makes().max = () => 1;
+            Object.keys(Atomics).load = () => 1;
+            "#,
+        );
+        assert!(other.is_empty(), "{other:?}");
+    }
+
+    #[test]
+    fn follows_constructors_callbacks_getters_and_functions_that_helpers_answer() {
+        let found = find(
+            r#"
+            import { ObservedElsewhere, withProxyElsewhere } from "./helper";
+            const wrap = object => new Proxy(object, {});
+            class Observed { constructor(target) { return new Proxy(target, {}); } }
+            class ObservedBelow extends Observed {}
+            function ObservedOld(target) { return new Proxy(target, {}); }
+            class Keeps { constructor(target) { this.proxy = new Proxy(target, {}); } }
+            class Holds { proxy = new Proxy(Intl, {}); }
+            class Tools {
+                static ofSet() { return new Proxy(Set.prototype, {}); }
+                ofWeakSet() { return new Proxy(WeakSet.prototype, {}); }
+            }
+            function withProxy(object, use) { return use(new Proxy(object, {})); }
+            const holder = { get proxy() { return new Proxy(DataView.prototype, {}); } };
+            const makeWrap = target => () => new Proxy(target, {});
+            new Observed(Atomics).load = () => 1;
+            new ObservedBelow(Reflect).has = () => 1;
+            new ObservedOld(Number).isNaN = () => 1;
+            new ObservedElsewhere(Object).keys = () => 1;
+            new Keeps(BigInt).proxy.asIntN = () => 1;
+            new Holds().proxy.getCanonicalLocales = () => 1;
+            Tools.ofSet().has = () => 1;
+            new Tools().ofWeakSet().has = () => 1;
+            withProxy(Symbol, it => { it.for = () => 1; });
+            withProxyElsewhere(String, ({ proxy }) => { proxy.raw = () => 1; });
+            holder.proxy.getInt8 = () => 1;
+            makeWrap(Array)().of = () => 1;
+            wrap.bind(null, JSON)().parse = () => 1;
+            Promise.resolve(wrap(Promise)).then(it => { it.any = () => 1; });
+            const list = [performance].map(wrap);
+            list[0].now = () => 1;
+            for (const it of [URL].map(each => wrap(each))) it.canParse = () => 1;
+            "#,
+        );
+        for member in [
+            BuiltinId::AtomicsLoad,
+            BuiltinId::ReflectHas,
+            BuiltinId::NumberIsNaN,
+            BuiltinId::ObjectKeys,
+            BuiltinId::BigIntAsIntN,
+            BuiltinId::IntlGetCanonicalLocales,
+            BuiltinId::SetPrototypeHas,
+            BuiltinId::WeakSetPrototypeHas,
+            BuiltinId::SymbolFor,
+            BuiltinId::StringRaw,
+            BuiltinId::DataViewPrototypeGetInt8,
+            BuiltinId::ArrayOf,
+            BuiltinId::JSONParse,
+            BuiltinId::PromiseAny,
+            BuiltinId::PerformanceNow,
+            BuiltinId::URLCanParse,
+        ] {
+            assert!(found.contains(&member), "{member:?} in {found:?}");
+        }
+        // A constructor that does nothing with what it is handed makes an object of the program's own, and so does one that extends a class of the table.
+        let own = find(
+            r#"
+            class Counts { constructor(target) { this.count = 1; } }
+            class List extends Array {}
+            new Counts(Math).max = () => 1;
+            new List(Atomics).load = () => 1;
+            "#,
+        );
+        assert!(own.is_empty(), "{own:?}");
+    }
+
+    // Each helper returns two calls of the one below, so there are 2^60 ways from the first to the last, and two that return each other's calls beside them.
+    #[test]
+    fn follows_helpers_that_many_ways_lead_through() {
+        let mut text = String::from("function f0(a) { return new Proxy(a, {}); }\n");
+        for level in 1..=60 {
+            let below = level - 1;
+            text += &format!(
+                "function f{level}(a) {{ if (a) return f{below}(a); return f{below}(f{below}(a)); }}\n"
+            );
+        }
+        text += "function ring(a) { return other(a); }\nfunction other(b) { return ring(b); }\n";
+        text += "f60(Math).max = () => 1;\nring().min = () => 1;\n";
+        let found = find(&text);
+        assert_eq!(found, [BuiltinId::MathMax]);
     }
 
     #[test]

@@ -255,7 +255,7 @@ function f1 name="lengths" module=m0 position=67 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: v68: 0 = Integer
 # CHECK-NEXT: v69: i32 = BitOr v67, v68
 # CHECK-NEXT: v70: 3 = Integer integer=3
-# CHECK-NEXT: v71: i32 = LShift v54, v70
+# CHECK-NEXT: v71: int[0, 32] = LShift v54, v70
 # CHECK-NEXT: v72: i32 = BitXor v69, v71
 # CHECK-NEXT: v73: int[1, 6] = Increment v53
 # CHECK-NEXT: Jump -> next b13(v72, v73)
@@ -265,7 +265,7 @@ function f1 name="lengths" module=m0 position=67 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: v76: 0 = Integer
 # CHECK-NEXT: v77: i32 = BitOr v75, v76
 # CHECK-NEXT: v78: 3 = Integer integer=3
-# CHECK-NEXT: v79: i32 = LShift v54, v78
+# CHECK-NEXT: v79: int[0, 32] = LShift v54, v78
 # CHECK-NEXT: v80: i32 = BitXor v77, v79
 # CHECK-NEXT: v81: int[1, 6] = Increment v53
 # CHECK-NEXT: Jump -> next b11(v80, v81)
@@ -275,7 +275,7 @@ function f1 name="lengths" module=m0 position=67 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: v84: 0 = Integer
 # CHECK-NEXT: v85: i32 = BitOr v83, v84
 # CHECK-NEXT: v86: 3 = Integer integer=3
-# CHECK-NEXT: v87: i32 = LShift v54, v86
+# CHECK-NEXT: v87: int[0, 32] = LShift v54, v86
 # CHECK-NEXT: v88: i32 = BitXor v85, v87
 # CHECK-NEXT: v89: int[1, 6] = Increment v53
 # CHECK-NEXT: Jump -> next b12(v88, v89)

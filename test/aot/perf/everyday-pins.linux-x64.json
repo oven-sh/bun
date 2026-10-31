@@ -736,36 +736,36 @@
     "untyped": 30.2
   },
   "everyday-code-out-of-run-time-text/a-key-parsed-as-a-schema-library-writes-it": {
-    "typed": 1945.5,
-    "untyped": 1989
+    "typed": 1922.7,
+    "untyped": 1966.1
   },
   "everyday-code-out-of-run-time-text/a-path-cut-out-of-a-url-as-a-composed-handler-writes-it": {
-    "typed": 1092.5,
-    "untyped": 1108.5
+    "typed": 1067.5,
+    "untyped": 1085.5
   },
   "everyday-code-out-of-run-time-text/a-prefix-compared-character-by-character": {
-    "typed": 736.5,
-    "untyped": 736.5
+    "typed": 711.5,
+    "untyped": 711.5
   },
   "everyday-code-out-of-run-time-text/a-result-asked-for-its-class-as-a-composed-handler-writes-it": {
-    "typed": 501.8,
-    "untyped": 501.8
+    "typed": 478.7,
+    "untyped": 478.8
   },
   "everyday-code-out-of-run-time-text/integers-validated-as-a-schema-compiler-writes-it": {
-    "typed": 1559,
-    "untyped": 1559
+    "typed": 1534,
+    "untyped": 1534
   },
   "everyday-code-out-of-run-time-text/methods-of-the-program-bound-in-the-text": {
-    "typed": 1530.8,
-    "untyped": 1461
+    "typed": 1506.1,
+    "untyped": 1439.5
   },
   "everyday-code-out-of-run-time-text/names-stored-on-an-object-of-a-constructor-of-the-program": {
-    "typed": 664.3,
-    "untyped": 664.3
+    "typed": 641.6,
+    "untyped": 641.4
   },
   "everyday-code-out-of-run-time-text/the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it": {
-    "typed": 949,
-    "untyped": 948
+    "typed": 924,
+    "untyped": 923
   },
   "everyday-collections/map-entries-to-an-object": {
     "typed": 322.2,
@@ -788,12 +788,12 @@
     "untyped": 68
   },
   "everyday-collections/map-get-by-string": {
-    "typed": 65,
-    "untyped": 65
+    "typed": 61,
+    "untyped": 62
   },
   "everyday-collections/map-get-missing": {
-    "typed": 56.5,
-    "untyped": 56.5
+    "typed": 52,
+    "untyped": 52
   },
   "everyday-collections/map-get-or-create": {
     "typed": 89.4,
@@ -1332,7 +1332,7 @@
     "untyped": 222158.3
   },
   "everyday-data-and-control/event-emitter": {
-    "typed": 8,
+    "typed": 6,
     "untyped": 6
   },
   "everyday-data-and-control/headers": {
@@ -1908,16 +1908,16 @@
     "untyped": 9
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
-    "typed": 16,
-    "untyped": 16
+    "typed": 15,
+    "untyped": 15
   },
   "everyday-emitters/emitter-made-listened-to-and-dropped": {
     "typed": 446.6,
     "untyped": 446.2
   },
   "everyday-emitters/five-arguments": {
-    "typed": 12,
-    "untyped": 12
+    "typed": 4.6,
+    "untyped": 10
   },
   "everyday-emitters/four-emitters-by-turn": {
     "typed": 82,
@@ -1956,12 +1956,12 @@
     "untyped": 115
   },
   "everyday-emitters/one-listener-one-argument": {
-    "typed": 11,
-    "untyped": 11
+    "typed": 3.5,
+    "untyped": 3.5
   },
   "everyday-emitters/three-arguments": {
-    "typed": 12,
-    "untyped": 12
+    "typed": 4.6,
+    "untyped": 10
   },
   "everyday-emitters/two-listeners": {
     "typed": 139,
@@ -5018,5 +5018,13 @@
   "everyday-collections/map-get-by-string-among-a-hundred-keys-one-call-at-a-time": {
     "typed": 8302.0,
     "untyped": 8302.0
+  },
+  "everyday-small-programs/a-parser-that-copies-its-options-and-nodes-name-by-name": {
+    "typed": 3830.3,
+    "untyped": 3873.6
+  },
+  "everyday-collections/map-get-by-names-split-out-of-one-line-twice": {
+    "typed": 72.7,
+    "untyped": 72.7
   }
 }

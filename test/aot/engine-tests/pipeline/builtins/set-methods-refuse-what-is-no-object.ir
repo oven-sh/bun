@@ -326,7 +326,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v103: boolean = ResultAt v102
 # CHECK-NEXT: v104: 1 = Integer integer=1
 # CHECK-NEXT: v105: int[0, 1] = ToNumber v103
-# CHECK-NEXT: v106: i32 = LShift v104, v105
+# CHECK-NEXT: v106: int[1, 2] = LShift v104, v105
 # CHECK-NEXT: v107: anything = ResultAt v102 index=1
 # CHECK-NEXT: v108: 1 = Integer integer=1
 # CHECK-NEXT: v109: int[0, 1] = BitAnd v106, v108
@@ -346,7 +346,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v117: boolean = ResultAt v116
 # CHECK-NEXT: v118: 1 = Integer integer=1
 # CHECK-NEXT: v119: int[0, 1] = ToNumber v117
-# CHECK-NEXT: v120: i32 = LShift v118, v119
+# CHECK-NEXT: v120: int[1, 2] = LShift v118, v119
 # CHECK-NEXT: v121: anything = ResultAt v116 index=1
 # CHECK-NEXT: v122: 1 = Integer integer=1
 # CHECK-NEXT: v123: int[0, 1] = BitAnd v120, v122

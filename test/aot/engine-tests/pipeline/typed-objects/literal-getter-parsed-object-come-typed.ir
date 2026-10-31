@@ -345,7 +345,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v106: boolean = ResultAt v105
 # CHECK-NEXT: v107: 1 = Integer integer=1
 # CHECK-NEXT: v108: int[0, 1] = ToNumber v106
-# CHECK-NEXT: v109: i32 = LShift v107, v108
+# CHECK-NEXT: v109: int[1, 2] = LShift v107, v108
 # CHECK-NEXT: v110: anything = ResultAt v105 index=3
 # CHECK-NEXT: v111: 1 = Integer integer=1
 # CHECK-NEXT: v112: int[0, 1] = BitAnd v109, v111
@@ -372,7 +372,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v127: boolean = ResultAt v126
 # CHECK-NEXT: v128: 1 = Integer integer=1
 # CHECK-NEXT: v129: int[0, 1] = ToNumber v127
-# CHECK-NEXT: v130: i32 = LShift v128, v129
+# CHECK-NEXT: v130: int[1, 2] = LShift v128, v129
 # CHECK-NEXT: v131: anything = ResultAt v126 index=3
 # CHECK-NEXT: v132: 1 = Integer integer=1
 # CHECK-NEXT: v133: int[0, 1] = BitAnd v130, v132

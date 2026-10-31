@@ -385,7 +385,7 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v74: boolean = ResultAt v73
 # CHECK-NEXT: v75: 1 = Integer integer=1
 # CHECK-NEXT: v76: int[0, 1] = ToNumber v74
-# CHECK-NEXT: v77: i32 = LShift v75, v76
+# CHECK-NEXT: v77: int[1, 2] = LShift v75, v76
 # CHECK-NEXT: v78: anything = ResultAt v73 index=3
 # CHECK-NEXT: v79: 1 = Integer integer=1
 # CHECK-NEXT: v80: int[0, 1] = BitAnd v77, v79

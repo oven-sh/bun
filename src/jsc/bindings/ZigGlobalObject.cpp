@@ -3128,6 +3128,8 @@ void GlobalObject::finishCreation(VM& vm)
                 *globalObject, Bun::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
 
             init.set(process);
+            // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
+            JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);

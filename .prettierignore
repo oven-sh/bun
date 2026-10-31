@@ -59,3 +59,4 @@ test/aot/parallel/errors/quoted-from-typed-expressions-written-over-several-line
 
 # in which column and line each private name stands is what is tested
 test/aot/parallel/errors/frames-of-private-names-read-from-paths.js
+test/aot/parallel/errors/static-private-fields-of-other-values-are-refused-in-the-words-of-plain-bun.js

@@ -51,6 +51,11 @@ const ofServers = (member: string, classes: string, text: string[]) =>
 
 export const calls: Record<string, string[]> = {
   "crypto > Crypto": ["crypto"],
+  "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
+  "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
+  "Performance.prototype.timing > PerformanceTiming": ["const timing = performance.timing;\ntiming"],
+  "Performance.prototype.toJSON > PerformanceTiming": ["const timing = performance.toJSON().timing;\ntiming"],
+  "PerformanceTiming.prototype.toJSON": ["performance.timing.toJSON()"],
   "Bun.serve > ServerWebSocket": [
     handedToServer(`${upgrades}, websocket: { open: resolve, message() {} }`, dials(closes)).join("\n"),
   ],
@@ -419,6 +424,11 @@ export const families: { rows: RegExp; callee(path: string, mode: string): strin
 /** Objects of the table whose link upwards a library module changes when it is loaded, which the compiler sees it do. */
 export const linkedByLibraryCode: Record<string, string> = {
   "%EventEmitter%.prototype": "node:events puts it below its own EventEmitter.prototype",
+};
+
+/** Names that a library module puts on an object of the table when it is loaded, which the compiler sees it do. */
+export const addedByLibraryCode: Record<string, string[]> = {
+  "%NativeZlib%.prototype": ["jsref"],
 };
 
 const ofTheEngine = "a private function of the engine's own library code: no other text can name it";

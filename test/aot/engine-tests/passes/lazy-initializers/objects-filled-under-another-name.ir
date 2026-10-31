@@ -766,7 +766,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f49 visibility=Private
 # CHECK-NEXT: BB#37: ; frequency = 0.500193
 # CHECK-NEXT: Predecessors: #10
 # CHECK-NEXT: Void b@9 = Branch(b@83, Terminal, v35:TypeTest)
-# CHECK-NEXT: Successors: Then:#38, Else:Rare:#29
+# CHECK-NEXT: Successors: Then:#38, Else:Rare:#31
 # CHECK-NEXT: BB#38: ; frequency = 0.499705
 # CHECK-NEXT: Predecessors: #37
 # CHECK-NEXT: Void b@192 = Upsilon(b@22, ^165, WritesLocalState, v29:Parameter)
@@ -826,16 +826,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f49 visibility=Private
 # CHECK-NEXT: Void b@156 = Upsilon(b@83, ^167, WritesLocalState)
 # CHECK-NEXT: Void b@149 = Jump(Terminal)
 # CHECK-NEXT: Successors: #44
-# CHECK-NEXT: BB#29: ; frequency = 0.000488
+# CHECK-NEXT: BB#31: ; frequency = 0.000488
 # CHECK-NEXT: Predecessors: #37
-# CHECK-NEXT: Int64 b@189 = Identity(b@22, v29:Parameter)
-# CHECK-NEXT: Int32 b@191 = Identity(b@82, v30:Parameter)
-# CHECK-NEXT: Void b@93 = Upsilon(b@191, ^27, WritesLocalState)
-# CHECK-NEXT: Void b@94 = Upsilon(b@189, ^28, WritesLocalState)
+# CHECK-NEXT: Void b@93 = Upsilon(b@82, ^27, WritesLocalState)
+# CHECK-NEXT: Void b@94 = Upsilon(b@22, ^28, WritesLocalState)
 # CHECK-NEXT: Void b@95 = Jump(Terminal)
 # CHECK-NEXT: Successors: #12
 # CHECK-NEXT: BB#12: ; frequency = 0.000488
-# CHECK-NEXT: Predecessors: #26, #29
+# CHECK-NEXT: Predecessors: #26, #31
 # CHECK-NEXT: Int32 b@27 = Phi(ReadsLocalState, v36:Parameter)
 # CHECK-NEXT: Int64 b@28 = Phi(ReadsLocalState, v37:Parameter)
 # CHECK-NEXT: Void b@98 = Patchpoint(resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ModuleVariables.4, ModuleVariables.16, ModuleVariables.42, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v38:CallDirect)

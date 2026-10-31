@@ -1,7 +1,7 @@
 // `class C extends parents[n] { #a = 1; }`: nothing says what super() answers, so the object may have the name already, and then the definition throws.
 // C's layout has a field for the name: an empty slot says that the object has not got it, and the definition is a store. Each one went to the run time once: 5 calls an instance here.
 // A slot that is filled, or an object of no such layout, still goes to the run time, as every case below this loop shows.
-// COUNT: operation:operationAOTPrivateDefine <= 130
+// COUNT: operation:operationAOTPrivateDefine <= 160
 const say = (...words) => console.log(words.join(" "));
 const attempt = run => {
   try {
@@ -241,3 +241,86 @@ say(Reflected.read(viaReflect), viaReflect instanceof Node, viaReflect instanceo
 const swapped = new Reflected({});
 Object.setPrototypeOf(swapped, null);
 say(Reflected.read(swapped), attempt(() => new Reflected(swapped)));
+
+// Nothing makes an instance of these classes by themselves: new.target is always another class, so no object has their layout.
+class BelowArray extends Array {}
+class BelowMap extends Map {}
+class BelowError extends Error {}
+function Ordinary() {}
+function describe(Class, object, target) {
+  say(Class.name, target.name, Class.isMarked(object), attempt(() => Class.markOf(object)), object instanceof target, object instanceof Class, Array.isArray(object));
+}
+class OverFunction extends function (a) {} {
+  #mark = 2;
+  static isMarked(object) {
+    return #mark in object;
+  }
+  static markOf(object) {
+    return object.#mark;
+  }
+}
+describe(OverFunction, Reflect.construct(OverFunction, [1], BelowArray), BelowArray);
+class OverOneOfSeveral extends [Node, Other][pick] {
+  #mark = "several";
+  #method() {
+    return this.#mark;
+  }
+  static isMarked(object) {
+    return #method in object;
+  }
+  static markOf(object) {
+    return object.#method();
+  }
+}
+for (const target of [BelowArray, BelowMap, BelowError, Ordinary, Plain]) describe(OverOneOfSeveral, Reflect.construct(OverOneOfSeveral, [1, 2], target), target);
+class WithoutParent {
+  #mark = "no parent";
+  static isMarked(object) {
+    return #mark in object;
+  }
+  static markOf(object) {
+    return object.#mark;
+  }
+}
+for (const target of [BelowArray, BelowError, Ordinary]) describe(WithoutParent, Reflect.construct(WithoutParent, [], target), target);
+class AlsoReturns {
+  constructor(object) {
+    return object;
+  }
+}
+class OverReturned extends [AlsoReturns, Other][pick] {
+  #mark = "returned";
+  static isMarked(object) {
+    return #mark in object;
+  }
+  static markOf(object) {
+    return object.#mark;
+  }
+}
+const givenTwice = [];
+describe(OverReturned, Reflect.construct(OverReturned, [givenTwice], BelowMap), Array);
+say(attempt(() => Reflect.construct(OverReturned, [givenTwice], BelowMap)));
+for (let i = 0; i < 20; i++) Reflect.construct(OverFunction, [i], i & 1 ? BelowArray : BelowError);
+
+// Only the classes below are made, and they keep the names of the class between in fields.
+class Between extends [Node, Other][pick] {
+  #between = 3;
+  get between() {
+    return this.#between;
+  }
+}
+class Lowest extends Between {
+  #lowest = 4;
+  get lowest() {
+    return this.#lowest;
+  }
+}
+class AlsoLowest extends Between {}
+{
+  let sum = 0;
+  for (let i = 0; i < 20000; i++) {
+    const made = i & 1 ? new Lowest(i, i) : new AlsoLowest(i, i);
+    sum += made.between + (made.lowest ?? 0);
+  }
+  say("below", sum);
+}

@@ -466,7 +466,10 @@ layout L32 fields=[{key="middle" declared={type=undefined|null|string flags=[IsE
 layout L33 fields=[{key="middle" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 layout L34 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="after" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="before" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] declaredOrder=[0, 2, 4, 3, 1] ownFieldCount=5
 layout L35 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f42 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
-layout L36 module=m0 position=10249 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=undefined|null|function|f98 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L36 module=m0 position=7719
+layout L37 module=m0 position=10249 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=undefined|null|function|f98 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L38 module=m0 position=9577
+layout L39 module=m0 position=9644
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Object{layout=L16 members=[{key="x" value=Number{value=1}}, {key="middle" value=String{value="from the first spread"}}]} module=m0
 data d2 root=Object{layout=L17 members=[{key="y" value=Number{value=2}}, {key="middle" value=String{value="from the second spread"}}]} module=m0
@@ -548,11 +551,11 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v26 = String string="a getter and its setter around a value" @1490
     v27 = Integer integer=1 @1537
     v28 = Call v3, -, v27 calleeName="pair" @1532
-    v29 = Convert v28 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @1532
+    v29 = Convert v28 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @1532
     v30 = Call v1, -, v26, v29 calleeName="report" @1483
     v31 = Integer integer=1 @1562
     v32 = Call v3, -, v31 calleeName="pair" @1557
-    v33 = Convert v32 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @1557
+    v33 = Convert v32 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @1557
     v34 = Integer integer=10 @1577
     PropSet v33, v34 key="b" @1566
     v36 = String string="after the setter ran" @1588
@@ -688,7 +691,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v166 = Convert v165 declared={type=number flags=[IsExpected]} @3055
     PropDefine v162, v166 key="a" @3052
     v168 = FinishObject v162 @3015
-    v169 = Convert v168 declared={type=undefined|null|L14|L15|L22|L23|L24|L25|L26|L27|L28|L29|L30|L34|L36 flags=[IsExpected]} @3015
+    v169 = Convert v168 declared={type=undefined|null|L14|L15|L22|L23|L24|L25|L26|L27|L28|L29|L30|L34|L37 flags=[IsExpected]} @3015
     v170 = String string="an accessor named __proto__" @3067
     v171 = Call v1, -, v170, v169 calleeName="report" @3060
     v172 = GetModuleVariable variable=g0 @3111
@@ -770,7 +773,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     PropDefine v243, v242 key="before" @4094
     v245 = Integer integer=1 @4113
     v246 = Call v3, -, v245 calleeName="pair" @4108
-    v247 = Convert v246 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @4108
+    v247 = Convert v246 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @4108
     CopyDataProperties v243, v247 @4108
     v249 = Integer integer=1 @4124
     v250 = Convert v249 declared={type=number flags=[IsExpected]} @4124
@@ -801,7 +804,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v272 = Add v268, v271 @4284
     PropSet v270, v272 key="three" @4271
     v274 = Call v3, -, v268 calleeName="pair" @4308
-    v275 = Convert v274 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @4308
+    v275 = Convert v274 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @4308
     v276 = Integer integer=2 @4334
     v277 = Mul v268, v276 @4330
     PropSet v275, v277 key="b" @4319
@@ -811,7 +814,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v282 = ElemGet v255, v281 @4362
     v283 = Convert v282 declared={type=undefined|null|string flags=[IsExpected]} @4362
     v284 = Call v7, -, v283, v268 calleeName="computed" @4353
-    v285 = Convert v284 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @4353
+    v285 = Convert v284 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @4353
     v286 = PropGet v270 key="one" @4402
     v287 = PropGet v270 key="two" @4413
     v288 = Add v286, v287 @4402
@@ -899,7 +902,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v365 = Call v352, -, v353, v364 calleeName="say" @4655
     v366 = Integer integer=1 @4738
     v367 = Call v3, -, v366 calleeName="pair" @4733
-    v368 = Convert v367 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @4733
+    v368 = Convert v367 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @4733
     v369 = PropDelete v368 key="b" @4757
     v370 = String string="again" @4772
     PropSet v368, v370 key="b" @4760
@@ -907,7 +910,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v373 = Call v1, -, v372, v368 calleeName="report" @4781
     v374 = Integer integer=1 @4865
     v375 = Call v3, -, v374 calleeName="pair" @4860
-    v376 = Convert v375 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @4860
+    v376 = Convert v375 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @4860
     v377 = Integer integer=4 @4882
     PropSet v376, v377 key="d" @4869
     v379 = Builtin builtin=Object @4885
@@ -938,9 +941,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v404 = Builtin builtin=ObjectFreeze @5144
     v405 = Integer integer=1 @5163
     v406 = Call v3, -, v405 calleeName="pair" @5158
-    v407 = Convert v406 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @5158
+    v407 = Convert v406 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @5158
     v408 = Call v404, v403, v407 calleeName="Object.freeze" @5151
-    v409 = Convert v408 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @5144
+    v409 = Convert v408 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @5144
     v410 = Call v1, -, v402, v409 calleeName="report" @5127
     v411 = NewClosure function=f43 @5170
     v412 = NewClass v411 layout=L0 @5170
@@ -1220,20 +1223,20 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v680 = ResultAt v678 index=1 @7588
     Branch v679 -> taken b13(), notTaken b43() @7588
   b13():
-    v681 = NewDictionary @7719
-    v682 = String string="StaticMethod" @7730
-    v683 = Add v484, v682 @7724
-    v684 = String string="computedStaticMethod" @7724
-    v685 = ToPropertyKey v684 @7724
-    v686 = NewClosure function=f77 @7747
-    SetFunctionName v686, v685 @7747
-    v688 = NewClass v686 layout=L4 @7747
-    PutModuleVariable v688 variable=g14 @7747
-    v690 = NewClosure function=f78 @7762
-    DefineMethod v688, v690 layout=L4 side=Static key="name" @7762
-    v692 = FinishClass v688 layout=L4 @7747
-    v693 = Convert v692 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @7747
-    ElemDefine v681, v685, v693 @7723
+    v681 = String string="StaticMethod" @7730
+    v682 = Add v484, v681 @7724
+    v683 = String string="computedStaticMethod" @7724
+    v684 = ToPropertyKey v683 @7724
+    v685 = NewClosure function=f77 @7747
+    SetFunctionName v685, v684 @7747
+    v687 = NewClass v685 layout=L4 @7747
+    PutModuleVariable v687 variable=g14 @7747
+    v689 = NewClosure function=f78 @7762
+    DefineMethod v687, v689 layout=L4 side=Static key="name" @7762
+    v691 = FinishClass v687 layout=L4 @7747
+    v692 = Convert v691 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @7747
+    v693 = NewObject layout=L36 @7723
+    ElemDefine v693, v684, v692 @7723
     v695 = String string="StaticGetter" @7784
     v696 = Add v484, v695 @7778
     v697 = String string="computedStaticGetter" @7778
@@ -1246,7 +1249,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     DefineMethod v701, v703 layout=L5 side=Static methodKind=Getter key="name" @7820
     v705 = FinishClass v701 layout=L5 @7801
     v706 = Convert v705 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @7801
-    ElemDefine v681, v698, v706 @7777
+    ElemDefine v693, v698, v706 @7777
     v708 = String string="StaticField" @7869
     v709 = Add v484, v708 @7863
     v710 = String string="computedStaticField" @7863
@@ -1259,7 +1262,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v717 = Convert v716 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @7885
     v718 = CallDirect v717 function=f82 @7885
     v719 = Convert v716 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @7885
-    ElemDefine v681, v711, v719 @7862
+    ElemDefine v693, v711, v719 @7862
     v721 = String string="StaticComputedField" @7937
     v722 = Add v484, v721 @7931
     v723 = String string="computedStaticComputedField" @7931
@@ -1274,7 +1277,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v732 = Convert v731 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @7961
     v733 = CallDirect v732 function=f84 @7961
     v734 = Convert v731 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @7961
-    ElemDefine v681, v724, v734 @7930
+    ElemDefine v693, v724, v734 @7930
     v736 = String string="StaticComputedMethod" @8031
     v737 = Add v484, v736 @8025
     v738 = String string="computedStaticComputedMethod" @8025
@@ -1287,7 +1290,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     DefineMethod v742, v744 layout=L8 side=Static key="name" @8071
     v746 = FinishClass v742 layout=L8 @8056
     v747 = Convert v746 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @8056
-    ElemDefine v681, v739, v747 @8024
+    ElemDefine v693, v739, v747 @8024
     v749 = String string="OtherStatics" @8102
     v750 = Add v484, v749 @8096
     v751 = String string="computedOtherStatics" @8096
@@ -1300,7 +1303,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v758 = Convert v757 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @8119
     v759 = CallDirect v758 function=f88 @8119
     v760 = Convert v757 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @8119
-    ElemDefine v681, v752, v760 @8095
+    ElemDefine v693, v752, v760 @8095
     v762 = String string="Derived" @8182
     v763 = Add v484, v762 @8176
     v764 = String string="computedDerived" @8176
@@ -1312,494 +1315,495 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     PutModuleVariable v769 variable=g24 @8194
     v771 = FinishClass v769 layout=L10 @8194
     v772 = Convert v771 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @8194
-    ElemDefine v681, v765, v772 @8175
-    v774 = Convert v681 declared={type=undefined|null|object flags=[IsExpected]} @7719
-    v775 = Builtin builtin=Reflect @8240
-    v776 = Builtin builtin=ReflectOwnKeys @8240
-    v777 = Call v776, v775, v774 calleeName="Reflect.ownKeys" @8248
-    v778 = Convert v777 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[IsExpected]} @8240
-    v779 = IteratorOpen v778 @8232
+    ElemDefine v693, v765, v772 @8175
+    v774 = FinishObject v693 @7719
+    v775 = Convert v774 declared={type=undefined|null|object flags=[IsExpected]} @7719
+    v776 = Builtin builtin=Reflect @8240
+    v777 = Builtin builtin=ReflectOwnKeys @8240
+    v778 = Call v777, v776, v775 calleeName="Reflect.ownKeys" @8248
+    v779 = Convert v778 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[IsExpected]} @8240
+    v780 = IteratorOpen v779 @8232
     Jump -> next b14() @8232
   b14():
     LoopHint @8232
-    v781 = IteratorResume v779 @8232
-    v782 = ResultAt v781 @8232
-    v783 = ResultAt v781 index=1 @8232
-    Branch v782 -> taken b15(), notTaken b40() @8232
+    v782 = IteratorResume v780 @8232
+    v783 = ResultAt v782 @8232
+    v784 = ResultAt v782 index=1 @8232
+    Branch v783 -> taken b15(), notTaken b40() @8232
   b15():
-    v784 = NewClosure function=f90 @8331
-    v785 = NewClass v784 layout=L11 @8331
-    PutModuleVariable v785 variable=g25 @8331
-    v787 = String string="Method" @8356
-    v788 = Add v484, v787 @8350
-    v789 = String string="computedMethod" @8350
-    v790 = ToPropertyKey v789 @8350
-    v791 = NewClosure function=f91 @8349
-    SetFunctionName v791, v790 @8349
-    DefineMethod v785, v791, v790 layout=L11 @8349
-    v794 = String string="Static" @8387
-    v795 = Add v484, v794 @8381
-    v796 = String string="computedStatic" @8381
-    v797 = ToPropertyKey v796 @8381
-    v798 = NewClosure function=f92 @8380
-    SetFunctionName v798, v797 @8380
-    DefineMethod v785, v798, v797 layout=L11 side=Static index=1 @8380
-    v801 = String string="Getter" @8415
-    v802 = Add v484, v801 @8409
-    v803 = String string="computedGetter" @8409
-    v804 = ToPropertyKey v803 @8409
-    v805 = NewClosure function=f93 @8408
-    SetFunctionName v805, v804 methodKind=Getter @8408
-    DefineMethod v785, v805, v804 layout=L11 methodKind=Getter index=2 @8408
-    v808 = String string="Setter" @8461
-    v809 = Add v484, v808 @8455
-    v810 = String string="computedSetter" @8455
-    v811 = ToPropertyKey v810 @8455
-    v812 = NewClosure function=f94 @8454
-    SetFunctionName v812, v811 methodKind=Setter @8454
-    DefineMethod v785, v812, v811 layout=L11 side=Static methodKind=Setter index=3 @8454
-    v815 = ToPropertyKey v488 @8484
-    v816 = NewClosure function=f95 @8483
-    SetFunctionName v816, v815 @8483
-    DefineMethod v785, v816, v815 layout=L11 index=4 @8483
-    v819 = String string="Field" @8509
-    v820 = Add v484, v819 @8503
-    v821 = String string="computedField" @8503
-    v822 = ToPropertyKey v821 @8503
-    PutModuleVariable v822 variable=g26 @8502
-    v824 = String string="FunctionField" @8539
-    v825 = Add v484, v824 @8533
-    v826 = String string="computedFunctionField" @8533
-    v827 = ToPropertyKey v826 @8533
-    PutModuleVariable v827 variable=g27 @8532
-    v829 = String string="ClassField" @8583
-    v830 = Add v484, v829 @8577
-    v831 = String string="computedClassField" @8577
-    v832 = ToPropertyKey v831 @8577
-    PutModuleVariable v832 variable=g28 @8576
-    v834 = String string="NamedField" @8618
-    v835 = Add v484, v834 @8612
-    v836 = String string="computedNamedField" @8612
-    v837 = ToPropertyKey v836 @8612
-    PutModuleVariable v837 variable=g29 @8611
-    v839 = Builtin builtin=Symbol @8656
-    v840 = Builtin builtin=SymbolFor @8656
-    v841 = String string="field description" @8667
-    v842 = Call v840, v839, v841 calleeName="Symbol.for" @8663
-    v843 = Convert v842 declared={type=undefined|null|symbol flags=[IsExpected]} @8656
-    v844 = ToPropertyKey v843 @8663
-    PutModuleVariable v844 variable=g30 @8655
-    v846 = String string="StaticField" @8717
-    v847 = Add v484, v846 @8711
-    v848 = String string="computedStaticField" @8711
-    v849 = ToPropertyKey v848 @8711
-    v850 = String string="prototype" @8710
-    v851 = StrictEq v849, v850 @8710
-    Branch v851 -> taken b16(), notTaken b17() @8710
+    v785 = NewClosure function=f90 @8331
+    v786 = NewClass v785 layout=L11 @8331
+    PutModuleVariable v786 variable=g25 @8331
+    v788 = String string="Method" @8356
+    v789 = Add v484, v788 @8350
+    v790 = String string="computedMethod" @8350
+    v791 = ToPropertyKey v790 @8350
+    v792 = NewClosure function=f91 @8349
+    SetFunctionName v792, v791 @8349
+    DefineMethod v786, v792, v791 layout=L11 @8349
+    v795 = String string="Static" @8387
+    v796 = Add v484, v795 @8381
+    v797 = String string="computedStatic" @8381
+    v798 = ToPropertyKey v797 @8381
+    v799 = NewClosure function=f92 @8380
+    SetFunctionName v799, v798 @8380
+    DefineMethod v786, v799, v798 layout=L11 side=Static index=1 @8380
+    v802 = String string="Getter" @8415
+    v803 = Add v484, v802 @8409
+    v804 = String string="computedGetter" @8409
+    v805 = ToPropertyKey v804 @8409
+    v806 = NewClosure function=f93 @8408
+    SetFunctionName v806, v805 methodKind=Getter @8408
+    DefineMethod v786, v806, v805 layout=L11 methodKind=Getter index=2 @8408
+    v809 = String string="Setter" @8461
+    v810 = Add v484, v809 @8455
+    v811 = String string="computedSetter" @8455
+    v812 = ToPropertyKey v811 @8455
+    v813 = NewClosure function=f94 @8454
+    SetFunctionName v813, v812 methodKind=Setter @8454
+    DefineMethod v786, v813, v812 layout=L11 side=Static methodKind=Setter index=3 @8454
+    v816 = ToPropertyKey v488 @8484
+    v817 = NewClosure function=f95 @8483
+    SetFunctionName v817, v816 @8483
+    DefineMethod v786, v817, v816 layout=L11 index=4 @8483
+    v820 = String string="Field" @8509
+    v821 = Add v484, v820 @8503
+    v822 = String string="computedField" @8503
+    v823 = ToPropertyKey v822 @8503
+    PutModuleVariable v823 variable=g26 @8502
+    v825 = String string="FunctionField" @8539
+    v826 = Add v484, v825 @8533
+    v827 = String string="computedFunctionField" @8533
+    v828 = ToPropertyKey v827 @8533
+    PutModuleVariable v828 variable=g27 @8532
+    v830 = String string="ClassField" @8583
+    v831 = Add v484, v830 @8577
+    v832 = String string="computedClassField" @8577
+    v833 = ToPropertyKey v832 @8577
+    PutModuleVariable v833 variable=g28 @8576
+    v835 = String string="NamedField" @8618
+    v836 = Add v484, v835 @8612
+    v837 = String string="computedNamedField" @8612
+    v838 = ToPropertyKey v837 @8612
+    PutModuleVariable v838 variable=g29 @8611
+    v840 = Builtin builtin=Symbol @8656
+    v841 = Builtin builtin=SymbolFor @8656
+    v842 = String string="field description" @8667
+    v843 = Call v841, v840, v842 calleeName="Symbol.for" @8663
+    v844 = Convert v843 declared={type=undefined|null|symbol flags=[IsExpected]} @8656
+    v845 = ToPropertyKey v844 @8663
+    PutModuleVariable v845 variable=g30 @8655
+    v847 = String string="StaticField" @8717
+    v848 = Add v484, v847 @8711
+    v849 = String string="computedStaticField" @8711
+    v850 = ToPropertyKey v849 @8711
+    v851 = String string="prototype" @8710
+    v852 = StrictEq v850, v851 @8710
+    Branch v852 -> taken b16(), notTaken b17() @8710
   b16() frequency=Unlikely:
-    v852 = NewRuntimeError runtimeError=StaticPrototypeKey @8710
-    Throw v852 @8710
+    v853 = NewRuntimeError runtimeError=StaticPrototypeKey @8710
+    Throw v853 @8710
   b17():
-    PutModuleVariable v849 variable=g31 @8710
-    v854 = FinishClass v785 layout=L11 @8331
-    v855 = Convert v854 declared={type=f90 flags=[IsFromCompiler]} illTypedCause=FromLooseType @8331
-    v856 = Convert v854 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @8331
-    v857 = CallDirect v856 function=f96 @8331
-    v858 = Convert v854 declared={type=f90 flags=[IsFromCompiler]} illTypedCause=FromLooseType @8331
-    v859 = Construct v858 calleeName="Members" @8787
-    v860 = Convert v859 declared={type=undefined|null|L11 flags=[IsExpected]} @8787
-    v861 = GetModuleVariable variable=g0 @8802
-    v862 = String string="members of a class with computed names" @8806
-    v863 = GetModuleVariable variable=g6 @8852
-    v864 = PropGet v858 key="prototype" @8859
-    v865 = Convert v864 declared={type=undefined|null|L11 flags=[IsExpected]} @8859
-    v866 = String string="Method" @8883
-    v867 = Add v484, v866 @8877
-    v868 = String string="computedMethod" @8877
-    v869 = PropGet v865 key="computedMethod" @8867
-    v870 = Call v863, -, v869 calleeName="nameOf" @8852
-    v871 = Convert v870 declared={type=undefined|null|string flags=[IsExpected]} @8852
-    v872 = GetModuleVariable variable=g6 @8897
-    v873 = String string="Static" @8918
-    v874 = Add v484, v873 @8912
-    v875 = String string="computedStatic" @8912
-    v876 = PropGet v858 key="computedStatic" @8904
-    v877 = Call v872, -, v876 calleeName="nameOf" @8897
-    v878 = Convert v877 declared={type=undefined|null|string flags=[IsExpected]} @8897
-    v879 = PropGet v858 key="prototype" @8948
-    v880 = Convert v879 declared={type=undefined|null|L11 flags=[IsExpected]} @8948
-    v881 = String string="Getter" @8973
-    v882 = Add v484, v881 @8967
-    v883 = String string="computedGetter" @8967
-    v884 = Call v9, -, v880, v883 calleeName="namesOfAccessor" @8932
-    v885 = Convert v884 declared={type=undefined|null|string flags=[IsExpected]} @8932
-    v886 = String string="Setter" @9017
-    v887 = Add v484, v886 @9011
-    v888 = String string="computedSetter" @9011
-    v889 = Call v9, -, v858, v888 calleeName="namesOfAccessor" @8986
-    v890 = Convert v889 declared={type=undefined|null|string flags=[IsExpected]} @8986
-    v891 = GetModuleVariable variable=g6 @9030
-    v892 = PropGet v858 key="prototype" @9037
-    v893 = Convert v892 declared={type=undefined|null|L11 flags=[IsExpected]} @9037
-    v894 = ElemGet v893, v488 @9045
-    v895 = Convert v894 declared={type=undefined|null|function|f95 flags=[IsExpected]} @9037
-    v896 = Call v891, -, v895 calleeName="nameOf" @9030
-    v897 = Convert v896 declared={type=undefined|null|string flags=[IsExpected]} @9030
-    v898 = GetModuleVariable variable=g6 @9070
-    v899 = String string="Field" @9091
-    v900 = Add v484, v899 @9085
-    v901 = String string="computedField" @9085
-    v902 = PropGet v860 key="computedField" @9077
-    v903 = Call v898, -, v902 calleeName="nameOf" @9070
-    v904 = Convert v903 declared={type=undefined|null|string flags=[IsExpected]} @9070
-    v905 = GetModuleVariable variable=g6 @9104
-    v906 = String string="FunctionField" @9125
-    v907 = Add v484, v906 @9119
-    v908 = String string="computedFunctionField" @9119
-    v909 = PropGet v860 key="computedFunctionField" @9111
-    v910 = Call v905, -, v909 calleeName="nameOf" @9104
-    v911 = Convert v910 declared={type=undefined|null|string flags=[IsExpected]} @9104
-    v912 = GetModuleVariable variable=g6 @9146
-    v913 = String string="ClassField" @9167
-    v914 = Add v484, v913 @9161
-    v915 = String string="computedClassField" @9161
-    v916 = PropGet v860 key="computedClassField" @9153
-    v917 = Call v912, -, v916 calleeName="nameOf" @9146
-    v918 = Convert v917 declared={type=undefined|null|string flags=[IsExpected]} @9146
-    v919 = GetModuleVariable variable=g6 @9185
-    v920 = String string="NamedField" @9206
-    v921 = Add v484, v920 @9200
-    v922 = String string="computedNamedField" @9200
-    v923 = PropGet v860 key="computedNamedField" @9192
-    v924 = Call v919, -, v923 calleeName="nameOf" @9185
-    v925 = Convert v924 declared={type=undefined|null|string flags=[IsExpected]} @9185
-    v926 = GetModuleVariable variable=g6 @9224
-    v927 = Builtin builtin=Symbol @9239
-    v928 = Builtin builtin=SymbolFor @9239
-    v929 = String string="field description" @9250
-    v930 = Call v928, v927, v929 calleeName="Symbol.for" @9246
-    v931 = Convert v930 declared={type=undefined|null|symbol flags=[IsExpected]} @9239
-    v932 = ElemGet v860, v931 @9231
-    v933 = Call v926, -, v932 calleeName="nameOf" @9224
-    v934 = Convert v933 declared={type=undefined|null|string flags=[IsExpected]} @9224
-    v935 = GetModuleVariable variable=g6 @9276
-    v936 = String string="StaticField" @9297
-    v937 = Add v484, v936 @9291
-    v938 = String string="computedStaticField" @9291
-    v939 = PropGet v858 key="computedStaticField" @9283
-    v940 = Call v935, -, v939 calleeName="nameOf" @9276
-    v941 = Convert v940 declared={type=undefined|null|string flags=[IsExpected]} @9276
-    v942 = GetModuleVariable variable=g6 @9316
-    v943 = PropGet v860 key="plainField" @9323
-    v944 = Convert v943 declared={type=undefined|null|function|f129 flags=[IsExpected]} @9323
-    v945 = Call v942, -, v944 calleeName="nameOf" @9316
-    v946 = Convert v945 declared={type=undefined|null|string flags=[IsExpected]} @9316
-    v947 = NewArray v871, v878, v885, v890, v897, v904, v911, v918, v925, v934, v941, v946 contents=undefined|null|string @8848
-    v948 = Convert v947 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @8848
-    v949 = PropGet v948 key="join" @9344
-    v950 = Convert v949 declared={type=undefined|null|function flags=[IsExpected]} @8848
-    v951 = String string=" | " @9351
-    v952 = Call v950, v948, v951 calleeKey="join" calleeName="join" @9346
-    v953 = Convert v952 declared={type=undefined|null|string flags=[IsExpected]} @8848
-    v954 = Call v861, -, v862, v953 calleeName="say" @8802
-    v955 = String string="method" @9706
-    v956 = NewArray v955, v11 contents=undefined|null|string|function|f13 @9705
-    v957 = Convert v956 declared={type=undefined|null|Array<undefined|null|string|function|f13> flags=[IsExpected]} @9705
-    v958 = String string="getter" @9731
-    v959 = NewArray v958, v13 contents=undefined|null|string|function|f13|f14|f15 @9730
-    v960 = Convert v959 declared={type=undefined|null|Array<undefined|null|string|function|f13|f14|f15> flags=[IsExpected]} @9730
-    v961 = String string="arrow function" @9756
-    v962 = NewArray v961, v15 contents=undefined|null|string|function|f15 @9755
-    v963 = Convert v962 declared={type=undefined|null|Array<undefined|null|string|function|f15> flags=[IsExpected]} @9755
-    v964 = String string="class" @9788
-    v965 = NewArray v964, v17 contents=undefined|null|string|function|f16 @9787
-    v966 = Convert v965 declared={type=undefined|null|Array<undefined|null|string|function|f16> flags=[IsExpected]} @9787
-    v967 = NewArray v957, v960, v963, v966 contents=undefined|null|Array<undefined|null|string|function|f13|f14|f15|f16> @9704
-    v968 = Convert v967 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f13|f14|f15|f16>> flags=[IsExpected]} @9704
-    v969 = IteratorOpen v968 @9693
+    PutModuleVariable v850 variable=g31 @8710
+    v855 = FinishClass v786 layout=L11 @8331
+    v856 = Convert v855 declared={type=f90 flags=[IsFromCompiler]} illTypedCause=FromLooseType @8331
+    v857 = Convert v855 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @8331
+    v858 = CallDirect v857 function=f96 @8331
+    v859 = Convert v855 declared={type=f90 flags=[IsFromCompiler]} illTypedCause=FromLooseType @8331
+    v860 = Construct v859 calleeName="Members" @8787
+    v861 = Convert v860 declared={type=undefined|null|L11 flags=[IsExpected]} @8787
+    v862 = GetModuleVariable variable=g0 @8802
+    v863 = String string="members of a class with computed names" @8806
+    v864 = GetModuleVariable variable=g6 @8852
+    v865 = PropGet v859 key="prototype" @8859
+    v866 = Convert v865 declared={type=undefined|null|L11 flags=[IsExpected]} @8859
+    v867 = String string="Method" @8883
+    v868 = Add v484, v867 @8877
+    v869 = String string="computedMethod" @8877
+    v870 = PropGet v866 key="computedMethod" @8867
+    v871 = Call v864, -, v870 calleeName="nameOf" @8852
+    v872 = Convert v871 declared={type=undefined|null|string flags=[IsExpected]} @8852
+    v873 = GetModuleVariable variable=g6 @8897
+    v874 = String string="Static" @8918
+    v875 = Add v484, v874 @8912
+    v876 = String string="computedStatic" @8912
+    v877 = PropGet v859 key="computedStatic" @8904
+    v878 = Call v873, -, v877 calleeName="nameOf" @8897
+    v879 = Convert v878 declared={type=undefined|null|string flags=[IsExpected]} @8897
+    v880 = PropGet v859 key="prototype" @8948
+    v881 = Convert v880 declared={type=undefined|null|L11 flags=[IsExpected]} @8948
+    v882 = String string="Getter" @8973
+    v883 = Add v484, v882 @8967
+    v884 = String string="computedGetter" @8967
+    v885 = Call v9, -, v881, v884 calleeName="namesOfAccessor" @8932
+    v886 = Convert v885 declared={type=undefined|null|string flags=[IsExpected]} @8932
+    v887 = String string="Setter" @9017
+    v888 = Add v484, v887 @9011
+    v889 = String string="computedSetter" @9011
+    v890 = Call v9, -, v859, v889 calleeName="namesOfAccessor" @8986
+    v891 = Convert v890 declared={type=undefined|null|string flags=[IsExpected]} @8986
+    v892 = GetModuleVariable variable=g6 @9030
+    v893 = PropGet v859 key="prototype" @9037
+    v894 = Convert v893 declared={type=undefined|null|L11 flags=[IsExpected]} @9037
+    v895 = ElemGet v894, v488 @9045
+    v896 = Convert v895 declared={type=undefined|null|function|f95 flags=[IsExpected]} @9037
+    v897 = Call v892, -, v896 calleeName="nameOf" @9030
+    v898 = Convert v897 declared={type=undefined|null|string flags=[IsExpected]} @9030
+    v899 = GetModuleVariable variable=g6 @9070
+    v900 = String string="Field" @9091
+    v901 = Add v484, v900 @9085
+    v902 = String string="computedField" @9085
+    v903 = PropGet v861 key="computedField" @9077
+    v904 = Call v899, -, v903 calleeName="nameOf" @9070
+    v905 = Convert v904 declared={type=undefined|null|string flags=[IsExpected]} @9070
+    v906 = GetModuleVariable variable=g6 @9104
+    v907 = String string="FunctionField" @9125
+    v908 = Add v484, v907 @9119
+    v909 = String string="computedFunctionField" @9119
+    v910 = PropGet v861 key="computedFunctionField" @9111
+    v911 = Call v906, -, v910 calleeName="nameOf" @9104
+    v912 = Convert v911 declared={type=undefined|null|string flags=[IsExpected]} @9104
+    v913 = GetModuleVariable variable=g6 @9146
+    v914 = String string="ClassField" @9167
+    v915 = Add v484, v914 @9161
+    v916 = String string="computedClassField" @9161
+    v917 = PropGet v861 key="computedClassField" @9153
+    v918 = Call v913, -, v917 calleeName="nameOf" @9146
+    v919 = Convert v918 declared={type=undefined|null|string flags=[IsExpected]} @9146
+    v920 = GetModuleVariable variable=g6 @9185
+    v921 = String string="NamedField" @9206
+    v922 = Add v484, v921 @9200
+    v923 = String string="computedNamedField" @9200
+    v924 = PropGet v861 key="computedNamedField" @9192
+    v925 = Call v920, -, v924 calleeName="nameOf" @9185
+    v926 = Convert v925 declared={type=undefined|null|string flags=[IsExpected]} @9185
+    v927 = GetModuleVariable variable=g6 @9224
+    v928 = Builtin builtin=Symbol @9239
+    v929 = Builtin builtin=SymbolFor @9239
+    v930 = String string="field description" @9250
+    v931 = Call v929, v928, v930 calleeName="Symbol.for" @9246
+    v932 = Convert v931 declared={type=undefined|null|symbol flags=[IsExpected]} @9239
+    v933 = ElemGet v861, v932 @9231
+    v934 = Call v927, -, v933 calleeName="nameOf" @9224
+    v935 = Convert v934 declared={type=undefined|null|string flags=[IsExpected]} @9224
+    v936 = GetModuleVariable variable=g6 @9276
+    v937 = String string="StaticField" @9297
+    v938 = Add v484, v937 @9291
+    v939 = String string="computedStaticField" @9291
+    v940 = PropGet v859 key="computedStaticField" @9283
+    v941 = Call v936, -, v940 calleeName="nameOf" @9276
+    v942 = Convert v941 declared={type=undefined|null|string flags=[IsExpected]} @9276
+    v943 = GetModuleVariable variable=g6 @9316
+    v944 = PropGet v861 key="plainField" @9323
+    v945 = Convert v944 declared={type=undefined|null|function|f129 flags=[IsExpected]} @9323
+    v946 = Call v943, -, v945 calleeName="nameOf" @9316
+    v947 = Convert v946 declared={type=undefined|null|string flags=[IsExpected]} @9316
+    v948 = NewArray v872, v879, v886, v891, v898, v905, v912, v919, v926, v935, v942, v947 contents=undefined|null|string @8848
+    v949 = Convert v948 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @8848
+    v950 = PropGet v949 key="join" @9344
+    v951 = Convert v950 declared={type=undefined|null|function flags=[IsExpected]} @8848
+    v952 = String string=" | " @9351
+    v953 = Call v951, v949, v952 calleeKey="join" calleeName="join" @9346
+    v954 = Convert v953 declared={type=undefined|null|string flags=[IsExpected]} @8848
+    v955 = Call v862, -, v863, v954 calleeName="say" @8802
+    v956 = String string="method" @9706
+    v957 = NewArray v956, v11 contents=undefined|null|string|function|f13 @9705
+    v958 = Convert v957 declared={type=undefined|null|Array<undefined|null|string|function|f13> flags=[IsExpected]} @9705
+    v959 = String string="getter" @9731
+    v960 = NewArray v959, v13 contents=undefined|null|string|function|f13|f14|f15 @9730
+    v961 = Convert v960 declared={type=undefined|null|Array<undefined|null|string|function|f13|f14|f15> flags=[IsExpected]} @9730
+    v962 = String string="arrow function" @9756
+    v963 = NewArray v962, v15 contents=undefined|null|string|function|f15 @9755
+    v964 = Convert v963 declared={type=undefined|null|Array<undefined|null|string|function|f15> flags=[IsExpected]} @9755
+    v965 = String string="class" @9788
+    v966 = NewArray v965, v17 contents=undefined|null|string|function|f16 @9787
+    v967 = Convert v966 declared={type=undefined|null|Array<undefined|null|string|function|f16> flags=[IsExpected]} @9787
+    v968 = NewArray v958, v961, v964, v967 contents=undefined|null|Array<undefined|null|string|function|f13|f14|f15|f16> @9704
+    v969 = Convert v968 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f13|f14|f15|f16>> flags=[IsExpected]} @9704
+    v970 = IteratorOpen v969 @9693
     Jump -> next b18() @9693
   b18():
     LoopHint @9693
-    v971 = IteratorResume v969 @9693
-    v972 = ResultAt v971 @9693
-    v973 = ResultAt v971 index=1 @9693
-    Branch v972 -> taken b19(), notTaken b20() @9693
+    v972 = IteratorResume v970 @9693
+    v973 = ResultAt v972 @9693
+    v974 = ResultAt v972 index=1 @9693
+    Branch v973 -> taken b19(), notTaken b20() @9693
   b19():
-    v974 = String string="no accessors" @10111
-    v975 = Data data=d5 @10127
-    v976 = Call v1, -, v974, v975 calleeName="report" @10104
-    v977 = String string="no accessors, a computed key" @10157
-    v978 = Data data=d6 @10189
-    v979 = Call v1, -, v977, v978 calleeName="report" @10150
-    v980 = String string="no accessors, a method" @10223
-    v981 = Integer integer=1 @10254
-    v982 = Convert v981 declared={type=number flags=[IsExpected]} @10254
-    v983 = NewObject layout=L36 @10251
-    PropDefine v983, v982 key="a" @10251
-    v985 = NewClosure function=f98 @10257
-    v986 = Convert v985 declared={type=undefined|null|function|f98 flags=[IsExpected]} @10258
-    PropDefine v983, v986 key="b" @10257
-    v988 = Integer integer=3 @10268
-    v989 = Convert v988 declared={type=number flags=[IsExpected]} @10268
-    PropDefine v983, v989 key="c" @10265
-    v991 = FinishObject v983 @10249
-    v992 = Call v1, -, v980, v991 calleeName="report" @10216
-    v993 = NewClosure function=f99 @10292
-    v994 = Convert v993 declared={type=undefined|null|function|f99 flags=[IsExpected]} @10298
-    v995 = NewObject layout=L20 @10292
-    PropDefine v995, v994 key="method" @10292
-    v997 = NewClosure function=f100 @10312
-    v998 = Convert v997 declared={type=undefined|null|function|f100 flags=[IsExpected]} @10312
-    PropDefine v995, v998 key="arrow" @10305
-    v1000 = NewClosure function=f101 @10334
-    v1001 = Convert v1000 declared={type=undefined|null|function|f101 flags=[IsExpected]} @10334
-    PropDefine v995, v1001 key="expression" @10322
-    v1003 = NewClosure function=f102 @10357
-    v1004 = Convert v1003 declared={type=undefined|null|function|f102 flags=[IsExpected]} @10357
-    PropDefine v995, v1004 key="named" @10350
-    v1006 = NewClosure function=f103 @10376
-    v1007 = Convert v1006 declared={type=undefined|null|function|f103 flags=[IsExpected]} @10389
-    PropDefine v995, v1007 key="quoted name" @10376
-    v1009 = NewClosure function=f104 @10396
-    v1010 = Integer integer=7 @10396
-    ElemDefine v995, v1010, v1009 @10396
-    v1012 = NewClosure function=f105 @10408
-    DefineGetter v995, v1012 key="getter" @10408
-    v1014 = NewClosure function=f106 @10436
-    DefineSetter v995, v1014 key="setter" @10436
-    v1016 = FinishObject v995 @10290
-    v1017 = Convert v1016 declared={type=undefined|null|L20 flags=[IsExpected]} @10290
-    PutModuleVariable v1017 variable=g8 @10280
-    v1019 = GetModuleVariable variable=g0 @10456
-    v1020 = String string="names that are not computed" @10460
-    v1021 = Data data=d7 @10491
-    v1022 = Convert v1021 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @10491
-    v1023 = PropGet v1022 key="map" @10552
-    v1024 = Convert v1023 declared={type=undefined|null|function flags=[IsExpected]} @10491
-    v1025 = NewClosure function=f107 @10558
-    v1026 = Call v1024, v1022, v1025 calleeKey="map" calleeName="map" @10554
-    v1027 = Convert v1026 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @10491
-    v1028 = PropGet v1027 key="join" @10587
-    v1029 = Convert v1028 declared={type=undefined|null|function flags=[IsExpected]} @10491
-    v1030 = String string=" | " @10594
-    v1031 = Call v1029, v1027, v1030 calleeKey="join" calleeName="join" @10589
-    v1032 = Convert v1031 declared={type=undefined|null|string flags=[IsExpected]} @10491
-    v1033 = String string=" | " @10603
-    v1034 = Add v1032, v1033 @10589
-    v1035 = String string="getter" @10636
-    v1036 = Call v9, -, v1017, v1035 calleeName="namesOfAccessor" @10611
-    v1037 = Convert v1036 declared={type=undefined|null|string flags=[IsExpected]} @10611
-    v1038 = Add v1034, v1037 @10611
-    v1039 = String string=" | " @10648
-    v1040 = Add v1038, v1039 @10611
-    v1041 = String string="setter" @10681
-    v1042 = Call v9, -, v1017, v1041 calleeName="namesOfAccessor" @10656
-    v1043 = Convert v1042 declared={type=undefined|null|string flags=[IsExpected]} @10656
-    v1044 = Add v1040, v1043 @10656
-    v1045 = Call v1019, -, v1020, v1044 calleeName="say" @10456
-    v1046 = Builtin builtin=GlobalThis @10694
-    v1047 = PropGet v1046 key="console" [isFreeName] @10694
-    v1048 = Convert v1047 declared={type=builtin(Console) flags=[IsExpected]} @10694
-    v1049 = PropGet v1048 key="log" @10694
-    v1050 = Convert v1049 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @10694
-    v1051 = PropGet v20 key="join" @10706
-    v1052 = Convert v1051 declared={type=undefined|null|function flags=[IsExpected]} @10706
-    v1053 = String string="\n" @10717
-    v1054 = Call v1052, v20, v1053 calleeKey="join" calleeName="lines.join" @10712
-    v1055 = Convert v1054 declared={type=undefined|null|string flags=[IsExpected]} @10706
-    v1056 = Call v1050, v1048, v1055 calleeKey="log" calleeName="console.log" @10702
-    v1057 = Undefined @10694
-    Return v1057 @10694
+    v975 = String string="no accessors" @10111
+    v976 = Data data=d5 @10127
+    v977 = Call v1, -, v975, v976 calleeName="report" @10104
+    v978 = String string="no accessors, a computed key" @10157
+    v979 = Data data=d6 @10189
+    v980 = Call v1, -, v978, v979 calleeName="report" @10150
+    v981 = String string="no accessors, a method" @10223
+    v982 = Integer integer=1 @10254
+    v983 = Convert v982 declared={type=number flags=[IsExpected]} @10254
+    v984 = NewObject layout=L37 @10251
+    PropDefine v984, v983 key="a" @10251
+    v986 = NewClosure function=f98 @10257
+    v987 = Convert v986 declared={type=undefined|null|function|f98 flags=[IsExpected]} @10258
+    PropDefine v984, v987 key="b" @10257
+    v989 = Integer integer=3 @10268
+    v990 = Convert v989 declared={type=number flags=[IsExpected]} @10268
+    PropDefine v984, v990 key="c" @10265
+    v992 = FinishObject v984 @10249
+    v993 = Call v1, -, v981, v992 calleeName="report" @10216
+    v994 = NewClosure function=f99 @10292
+    v995 = Convert v994 declared={type=undefined|null|function|f99 flags=[IsExpected]} @10298
+    v996 = NewObject layout=L20 @10292
+    PropDefine v996, v995 key="method" @10292
+    v998 = NewClosure function=f100 @10312
+    v999 = Convert v998 declared={type=undefined|null|function|f100 flags=[IsExpected]} @10312
+    PropDefine v996, v999 key="arrow" @10305
+    v1001 = NewClosure function=f101 @10334
+    v1002 = Convert v1001 declared={type=undefined|null|function|f101 flags=[IsExpected]} @10334
+    PropDefine v996, v1002 key="expression" @10322
+    v1004 = NewClosure function=f102 @10357
+    v1005 = Convert v1004 declared={type=undefined|null|function|f102 flags=[IsExpected]} @10357
+    PropDefine v996, v1005 key="named" @10350
+    v1007 = NewClosure function=f103 @10376
+    v1008 = Convert v1007 declared={type=undefined|null|function|f103 flags=[IsExpected]} @10389
+    PropDefine v996, v1008 key="quoted name" @10376
+    v1010 = NewClosure function=f104 @10396
+    v1011 = Integer integer=7 @10396
+    ElemDefine v996, v1011, v1010 @10396
+    v1013 = NewClosure function=f105 @10408
+    DefineGetter v996, v1013 key="getter" @10408
+    v1015 = NewClosure function=f106 @10436
+    DefineSetter v996, v1015 key="setter" @10436
+    v1017 = FinishObject v996 @10290
+    v1018 = Convert v1017 declared={type=undefined|null|L20 flags=[IsExpected]} @10290
+    PutModuleVariable v1018 variable=g8 @10280
+    v1020 = GetModuleVariable variable=g0 @10456
+    v1021 = String string="names that are not computed" @10460
+    v1022 = Data data=d7 @10491
+    v1023 = Convert v1022 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @10491
+    v1024 = PropGet v1023 key="map" @10552
+    v1025 = Convert v1024 declared={type=undefined|null|function flags=[IsExpected]} @10491
+    v1026 = NewClosure function=f107 @10558
+    v1027 = Call v1025, v1023, v1026 calleeKey="map" calleeName="map" @10554
+    v1028 = Convert v1027 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @10491
+    v1029 = PropGet v1028 key="join" @10587
+    v1030 = Convert v1029 declared={type=undefined|null|function flags=[IsExpected]} @10491
+    v1031 = String string=" | " @10594
+    v1032 = Call v1030, v1028, v1031 calleeKey="join" calleeName="join" @10589
+    v1033 = Convert v1032 declared={type=undefined|null|string flags=[IsExpected]} @10491
+    v1034 = String string=" | " @10603
+    v1035 = Add v1033, v1034 @10589
+    v1036 = String string="getter" @10636
+    v1037 = Call v9, -, v1018, v1036 calleeName="namesOfAccessor" @10611
+    v1038 = Convert v1037 declared={type=undefined|null|string flags=[IsExpected]} @10611
+    v1039 = Add v1035, v1038 @10611
+    v1040 = String string=" | " @10648
+    v1041 = Add v1039, v1040 @10611
+    v1042 = String string="setter" @10681
+    v1043 = Call v9, -, v1018, v1042 calleeName="namesOfAccessor" @10656
+    v1044 = Convert v1043 declared={type=undefined|null|string flags=[IsExpected]} @10656
+    v1045 = Add v1041, v1044 @10656
+    v1046 = Call v1020, -, v1021, v1045 calleeName="say" @10456
+    v1047 = Builtin builtin=GlobalThis @10694
+    v1048 = PropGet v1047 key="console" [isFreeName] @10694
+    v1049 = Convert v1048 declared={type=builtin(Console) flags=[IsExpected]} @10694
+    v1050 = PropGet v1049 key="log" @10694
+    v1051 = Convert v1050 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @10694
+    v1052 = PropGet v20 key="join" @10706
+    v1053 = Convert v1052 declared={type=undefined|null|function flags=[IsExpected]} @10706
+    v1054 = String string="\n" @10717
+    v1055 = Call v1053, v20, v1054 calleeKey="join" calleeName="lines.join" @10712
+    v1056 = Convert v1055 declared={type=undefined|null|string flags=[IsExpected]} @10706
+    v1057 = Call v1051, v1049, v1056 calleeKey="log" calleeName="console.log" @10702
+    v1058 = Undefined @10694
+    Return v1058 @10694
   b20():
     Jump -> next b21() @9693
   b21() handler=b39():
-    v1058 = IteratorOpen v973 elementCount=2 [isDestructuring] @9674
+    v1059 = IteratorOpen v974 elementCount=2 [isDestructuring] @9685 constructs
     Jump -> next b22() @9674
   b22() handler=b38():
-    v1059 = IteratorResume v1058 stepIndex=0 @9674
-    v1060 = ResultAt v1059 @9674
-    v1061 = ResultAt v1059 index=1 @9674
-    v1062 = Convert v1061 declared={type=undefined|null|string|function|f13|f14|f15|f16 flags=[IsExpected]} @9686
+    v1060 = IteratorResume v1059 stepIndex=0 @9674
+    v1061 = ResultAt v1060 @9674
+    v1062 = ResultAt v1060 index=1 @9674
+    v1063 = Convert v1062 declared={type=undefined|null|string|function|f13|f14|f15|f16 flags=[IsExpected]} @9686
     Jump -> next b23() @9686
   b23() handler=b38():
-    v1063 = IteratorResume v1058 stepIndex=1 @9674
-    v1064 = ResultAt v1063 @9674
-    v1065 = ResultAt v1063 index=1 @9674
-    v1066 = Convert v1065 declared={type=undefined|null|string|function|f13|f14|f15|f16 flags=[IsExpected]} @9693
+    v1064 = IteratorResume v1059 stepIndex=1 @9674
+    v1065 = ResultAt v1064 @9674
+    v1066 = ResultAt v1064 index=1 @9674
+    v1067 = Convert v1066 declared={type=undefined|null|string|function|f13|f14|f15|f16 flags=[IsExpected]} @9693
     Jump -> next b24() @9693
   b24() handler=b38():
     Jump -> next b25() @9693
   b25() handler=b39():
-    IteratorClose v1058 @9674
+    IteratorClose v1059 @9674
     Jump -> next b26() @9674
   b26() handler=b39():
-    v1068 = Data data=d4 @9831
-    v1069 = Convert v1068 declared={type=undefined|null|Array<never> flags=[IsExpected]} @9831
-    v1070 = Convert v1069 declared={type=undefined|null|Array flags=[IsExpected]} @9831
-    v1071 = Integer @9850
-    v1072 = Convert v1071 declared={type=number flags=[IsExpected]} @9850
-    Jump -> next b27(v1072) @9846
-  b27(v1073) handler=b39():
+    v1069 = Data data=d4 @9831
+    v1070 = Convert v1069 declared={type=undefined|null|Array<never> flags=[IsExpected]} @9831
+    v1071 = Convert v1070 declared={type=undefined|null|Array flags=[IsExpected]} @9831
+    v1072 = Integer @9850
+    v1073 = Convert v1072 declared={type=number flags=[IsExpected]} @9850
+    Jump -> next b27(v1073) @9846
+  b27(v1074) handler=b39():
     LoopHint @9846
-    v1075 = Integer integer=100 @9857
-    v1076 = Less v1073, v1075 @9853
-    Branch v1076 -> taken b28(| 0), notTaken b36(| 0) @9853
-  b28(v1077) handler=b39():
+    v1076 = Integer integer=100 @9857
+    v1077 = Less v1074, v1076 @9853
+    Branch v1077 -> taken b28(| 0), notTaken b36(| 0) @9853
+  b28(v1078) handler=b39():
     Jump -> next b29() @9853
   b29() handler=b39():
-    v1078 = PropGet v1070 key="push" @9867
-    v1079 = Convert v1078 declared={type=undefined|null|function flags=[IsExpected]} @9867
-    v1080 = Integer integer=10 @9891
-    v1081 = Mod v1077, v1080 @9887
-    v1082 = ToBoolean v1081 @9887
-    Branch v1082 -> taken b30(| 0), notTaken b32(| 0) @9887
-  b30(v1083) handler=b39():
+    v1079 = PropGet v1071 key="push" @9867
+    v1080 = Convert v1079 declared={type=undefined|null|function flags=[IsExpected]} @9867
+    v1081 = Integer integer=10 @9891
+    v1082 = Mod v1078, v1081 @9887
+    v1083 = ToBoolean v1082 @9887
+    Branch v1083 -> taken b30(| 0), notTaken b32(| 0) @9887
+  b30(v1084) handler=b39():
     Jump -> next b31() @9887
   b31() handler=b39():
-    v1084 = String string="n" @9896
-    v1085 = Integer integer=10 @9907
-    v1086 = Mod v1077, v1085 @9896
-    v1087 = Add v1084, v1086 @9896
-    Jump -> next b34(v1087) @9896
-  b32(v1088) handler=b39():
+    v1085 = String string="n" @9896
+    v1086 = Integer integer=10 @9907
+    v1087 = Mod v1078, v1086 @9896
+    v1088 = Add v1085, v1087 @9896
+    Jump -> next b34(v1088) @9896
+  b32(v1089) handler=b39():
     Jump -> next b33() @9887
   b33() handler=b39():
     Jump -> next b34(v488) @9913
-  b34(v1089) handler=b39():
-    v1090 = Call v1066, -, v1089 calleeName="create" @9880
-    v1091 = Call v1079, v1070, v1090 calleeKey="push" calleeName="created.push" @9875
+  b34(v1090) handler=b39():
+    v1091 = Call v1067, -, v1090 calleeName="create" @9880
+    v1092 = Call v1080, v1071, v1091 calleeKey="push" calleeName="created.push" @9875
     Jump -> next b35() @9867
   b35() handler=b39():
-    v1092 = Increment v1077 @9875
-    v1093 = Convert v1092 declared={type=number flags=[IsExpected]} @9862
-    Jump -> next b27(v1093) @9862
-  b36(v1094) handler=b39():
+    v1093 = Increment v1078 @9875
+    v1094 = Convert v1093 declared={type=number flags=[IsExpected]} @9862
+    Jump -> next b27(v1094) @9862
+  b36(v1095) handler=b39():
     Jump -> next b37() @9853
   b37() handler=b39():
-    v1095 = GetModuleVariable variable=g0 @9928
-    v1096 = String string="100 closures of one " @9932
-    v1097 = Add v1096, v1062 @9932
-    v1098 = NewArray contents=anything @9964
-    v1099 = Builtin builtin=Set @9972
-    v1100 = PropGet v1070 key="map" @9976
-    v1101 = Convert v1100 declared={type=undefined|null|function flags=[IsExpected]} @9976
-    v1102 = NewClosure function=f97 @9988
-    v1103 = Call v1101, v1070, v1102 calleeKey="map" calleeName="created.map" @9984
-    v1104 = Convert v1103 declared={type=undefined|null|Array flags=[IsExpected]} @9976
-    v1105 = Construct v1099, -, v1104 calleeName="Set" @9972 constructs
-    v1106 = Convert v1105 declared={type=undefined|null|Set flags=[IsExpected]} @9968
-    AppendSpread v1098, v1106 @9968
-    v1108 = Convert v1098 declared={type=undefined|null|Array flags=[IsExpected]} @9968
-    v1109 = PropGet v1108 key="join" @10015
-    v1110 = Convert v1109 declared={type=undefined|null|function flags=[IsExpected]} @9964
-    v1111 = Call v1110, v1108 calleeKey="join" calleeName="join" @10017
-    v1112 = Convert v1111 declared={type=undefined|null|string flags=[IsExpected]} @9964
-    v1113 = String string=" | " @10026
-    v1114 = Add v1112, v1113 @10017
-    v1115 = Integer @10034
-    v1116 = ElemGet v1070, v1115 @10034
-    v1117 = PropGet v1116 key="name" @10042
-    v1118 = Add v1114, v1117 @10042
-    v1119 = String string=" " @10052
-    v1120 = Add v1118, v1119 @10042
-    v1121 = Integer integer=1 @10058
-    v1122 = ElemGet v1070, v1121 @10058
-    v1123 = PropGet v1122 key="name" @10066
-    v1124 = Add v1120, v1123 @10066
-    v1125 = String string=" " @10076
-    v1126 = Add v1124, v1125 @10066
-    v1127 = Integer integer=99 @10082
-    v1128 = ElemGet v1070, v1127 @10082
-    v1129 = PropGet v1128 key="name" @10090
-    v1130 = Add v1126, v1129 @10090
-    v1131 = Call v1095, -, v1097, v1130 calleeName="say" @9928
+    v1096 = GetModuleVariable variable=g0 @9928
+    v1097 = String string="100 closures of one " @9932
+    v1098 = Add v1097, v1063 @9932
+    v1099 = NewArray contents=anything @9964
+    v1100 = Builtin builtin=Set @9972
+    v1101 = PropGet v1071 key="map" @9976
+    v1102 = Convert v1101 declared={type=undefined|null|function flags=[IsExpected]} @9976
+    v1103 = NewClosure function=f97 @9988
+    v1104 = Call v1102, v1071, v1103 calleeKey="map" calleeName="created.map" @9984
+    v1105 = Convert v1104 declared={type=undefined|null|Array flags=[IsExpected]} @9976
+    v1106 = Construct v1100, -, v1105 calleeName="Set" @9972 constructs
+    v1107 = Convert v1106 declared={type=undefined|null|Set flags=[IsExpected]} @9968
+    AppendSpread v1099, v1107 @9968
+    v1109 = Convert v1099 declared={type=undefined|null|Array flags=[IsExpected]} @9968
+    v1110 = PropGet v1109 key="join" @10015
+    v1111 = Convert v1110 declared={type=undefined|null|function flags=[IsExpected]} @9964
+    v1112 = Call v1111, v1109 calleeKey="join" calleeName="join" @10017
+    v1113 = Convert v1112 declared={type=undefined|null|string flags=[IsExpected]} @9964
+    v1114 = String string=" | " @10026
+    v1115 = Add v1113, v1114 @10017
+    v1116 = Integer @10034
+    v1117 = ElemGet v1071, v1116 @10034
+    v1118 = PropGet v1117 key="name" @10042
+    v1119 = Add v1115, v1118 @10042
+    v1120 = String string=" " @10052
+    v1121 = Add v1119, v1120 @10042
+    v1122 = Integer integer=1 @10058
+    v1123 = ElemGet v1071, v1122 @10058
+    v1124 = PropGet v1123 key="name" @10066
+    v1125 = Add v1121, v1124 @10066
+    v1126 = String string=" " @10076
+    v1127 = Add v1125, v1126 @10066
+    v1128 = Integer integer=99 @10082
+    v1129 = ElemGet v1071, v1128 @10082
+    v1130 = PropGet v1129 key="name" @10090
+    v1131 = Add v1127, v1130 @10090
+    v1132 = Call v1096, -, v1098, v1131 calleeName="say" @9928
     Jump -> next b18() @9928
-  b38() role=IterationCleanup subject=v1058 handler=b39():
-    v1132 = CatchException @9674
-    IteratorClose v1058 completion=Throw @9674
-    Rethrow v1132 @9674
-  b39() role=IterationCleanup subject=v969:
-    v1134 = CatchException @9693
-    IteratorClose v969 completion=Throw @9693
-    Rethrow v1134 @9693
+  b38() role=IterationCleanup subject=v1059 handler=b39():
+    v1133 = CatchException @9674
+    IteratorClose v1059 completion=Throw @9674
+    Rethrow v1133 @9674
+  b39() role=IterationCleanup subject=v970:
+    v1135 = CatchException @9693
+    IteratorClose v970 completion=Throw @9693
+    Rethrow v1135 @9693
   b40():
     Jump -> next b41() @8232
   b41() handler=b42():
-    v1136 = Convert v783 declared={type=undefined|null|string|symbol flags=[IsExpected]} @8232
-    v1137 = GetModuleVariable variable=g0 @8266
-    v1138 = String string="the class under " @8270
-    v1139 = GetModuleVariable variable=g1 @8291
-    v1140 = Call v1139, -, v1136 calleeName="keyText" @8291
-    v1141 = Convert v1140 declared={type=undefined|null|string flags=[IsExpected]} @8291
-    v1142 = Add v1138, v1141 @8270
-    v1143 = GetModuleVariable variable=g6 @8306
-    v1144 = ElemGet v774, v1136 @8313
-    v1145 = Convert v1144 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @8313
-    v1146 = Call v1143, -, v1145 calleeName="nameOf" @8306
-    v1147 = Convert v1146 declared={type=undefined|null|string flags=[IsExpected]} @8306
-    v1148 = Call v1137, -, v1142, v1147 calleeName="say" @8266
+    v1137 = Convert v784 declared={type=undefined|null|string|symbol flags=[IsExpected]} @8232
+    v1138 = GetModuleVariable variable=g0 @8266
+    v1139 = String string="the class under " @8270
+    v1140 = GetModuleVariable variable=g1 @8291
+    v1141 = Call v1140, -, v1137 calleeName="keyText" @8291
+    v1142 = Convert v1141 declared={type=undefined|null|string flags=[IsExpected]} @8291
+    v1143 = Add v1139, v1142 @8270
+    v1144 = GetModuleVariable variable=g6 @8306
+    v1145 = ElemGet v775, v1137 @8313
+    v1146 = Convert v1145 declared={type=undefined|null|function|f77|f79|f81|f83|f85|f87|f89 flags=[IsExpected]} @8313
+    v1147 = Call v1144, -, v1146 calleeName="nameOf" @8306
+    v1148 = Convert v1147 declared={type=undefined|null|string flags=[IsExpected]} @8306
+    v1149 = Call v1138, -, v1143, v1148 calleeName="say" @8266
     Jump -> next b14() @8266
-  b42() role=IterationCleanup subject=v779:
-    v1149 = CatchException @8232
-    IteratorClose v779 completion=Throw @8232
-    Rethrow v1149 @8232
+  b42() role=IterationCleanup subject=v780:
+    v1150 = CatchException @8232
+    IteratorClose v780 completion=Throw @8232
+    Rethrow v1150 @8232
   b43():
     Jump -> next b44() @7588
   b44() handler=b45():
-    v1151 = Convert v680 declared={type=undefined|null|string|symbol flags=[IsExpected]} @7588
-    v1152 = GetModuleVariable variable=g0 @7624
-    v1153 = String string="the accessor under " @7628
-    v1154 = GetModuleVariable variable=g1 @7652
-    v1155 = Call v1154, -, v1151 calleeName="keyText" @7652
-    v1156 = Convert v1155 declared={type=undefined|null|string flags=[IsExpected]} @7652
-    v1157 = Add v1153, v1156 @7628
-    v1158 = Call v9, -, v671, v1151 calleeName="namesOfAccessor" @7667
-    v1159 = Convert v1158 declared={type=undefined|null|string flags=[IsExpected]} @7667
-    v1160 = Call v1152, -, v1157, v1159 calleeName="say" @7624
+    v1152 = Convert v680 declared={type=undefined|null|string|symbol flags=[IsExpected]} @7588
+    v1153 = GetModuleVariable variable=g0 @7624
+    v1154 = String string="the accessor under " @7628
+    v1155 = GetModuleVariable variable=g1 @7652
+    v1156 = Call v1155, -, v1152 calleeName="keyText" @7652
+    v1157 = Convert v1156 declared={type=undefined|null|string flags=[IsExpected]} @7652
+    v1158 = Add v1154, v1157 @7628
+    v1159 = Call v9, -, v671, v1152 calleeName="namesOfAccessor" @7667
+    v1160 = Convert v1159 declared={type=undefined|null|string flags=[IsExpected]} @7667
+    v1161 = Call v1153, -, v1158, v1160 calleeName="say" @7624
     Jump -> next b12() @7624
   b45() role=IterationCleanup subject=v676:
-    v1161 = CatchException @7588
+    v1162 = CatchException @7588
     IteratorClose v676 completion=Throw @7588
-    Rethrow v1161 @7588
+    Rethrow v1162 @7588
   b46():
     Jump -> next b47() @7179
   b47() handler=b48():
-    v1163 = Convert v623 declared={type=undefined|null|string|symbol flags=[IsExpected]} @7179
-    v1164 = GetModuleVariable variable=g0 @7215
-    v1165 = String string="the function under " @7219
-    v1166 = GetModuleVariable variable=g1 @7243
-    v1167 = Call v1166, -, v1163 calleeName="keyText" @7243
-    v1168 = Convert v1167 declared={type=undefined|null|string flags=[IsExpected]} @7243
-    v1169 = Add v1165, v1168 @7219
-    v1170 = GetModuleVariable variable=g6 @7258
-    v1171 = ElemGet v614, v1163 @7265
-    v1172 = Convert v1171 declared={type=undefined|null|function|f50|f56|f63|f65 flags=[IsExpected]} @7265
-    v1173 = Call v1170, -, v1172 calleeName="nameOf" @7258
-    v1174 = Convert v1173 declared={type=undefined|null|string flags=[IsExpected]} @7258
-    v1175 = Call v1164, -, v1169, v1174 calleeName="say" @7215
+    v1164 = Convert v623 declared={type=undefined|null|string|symbol flags=[IsExpected]} @7179
+    v1165 = GetModuleVariable variable=g0 @7215
+    v1166 = String string="the function under " @7219
+    v1167 = GetModuleVariable variable=g1 @7243
+    v1168 = Call v1167, -, v1164 calleeName="keyText" @7243
+    v1169 = Convert v1168 declared={type=undefined|null|string flags=[IsExpected]} @7243
+    v1170 = Add v1166, v1169 @7219
+    v1171 = GetModuleVariable variable=g6 @7258
+    v1172 = ElemGet v614, v1164 @7265
+    v1173 = Convert v1172 declared={type=undefined|null|function|f50|f56|f63|f65 flags=[IsExpected]} @7265
+    v1174 = Call v1171, -, v1173 calleeName="nameOf" @7258
+    v1175 = Convert v1174 declared={type=undefined|null|string flags=[IsExpected]} @7258
+    v1176 = Call v1165, -, v1170, v1175 calleeName="say" @7215
     Jump -> next b10() @7215
   b48() role=IterationCleanup subject=v619:
-    v1176 = CatchException @7179
+    v1177 = CatchException @7179
     IteratorClose v619 completion=Throw @7179
-    Rethrow v1176 @7179
+    Rethrow v1177 @7179
   b49():
     Jump -> next b50() @3364
   b50() handler=b51():
-    v1178 = Convert v192 declared={type=undefined|null|number|string|symbol flags=[IsExpected]} @3364
-    v1179 = String string="computed accessors, " @3421
-    v1180 = GetModuleVariable variable=g1 @3446
-    v1181 = Call v1180, -, v1178 calleeName="keyText" @3446
-    v1182 = Convert v1181 declared={type=undefined|null|string flags=[IsExpected]} @3446
-    v1183 = Add v1179, v1182 @3421
-    v1184 = Integer integer=1 @3474
-    v1185 = Call v7, -, v1178, v1184 calleeName="computed" @3460
-    v1186 = Convert v1185 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @3460
-    v1187 = Call v1, -, v1183, v1186 calleeName="report" @3414
+    v1179 = Convert v192 declared={type=undefined|null|number|string|symbol flags=[IsExpected]} @3364
+    v1180 = String string="computed accessors, " @3421
+    v1181 = GetModuleVariable variable=g1 @3446
+    v1182 = Call v1181, -, v1179 calleeName="keyText" @3446
+    v1183 = Convert v1182 declared={type=undefined|null|string flags=[IsExpected]} @3446
+    v1184 = Add v1180, v1183 @3421
+    v1185 = Integer integer=1 @3474
+    v1186 = Call v7, -, v1179, v1185 calleeName="computed" @3460
+    v1187 = Convert v1186 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @3460
+    v1188 = Call v1, -, v1184, v1187 calleeName="report" @3414
     Jump -> next b2() @3414
   b51() role=IterationCleanup subject=v188:
-    v1188 = CatchException @3364
+    v1189 = CatchException @3364
     IteratorClose v188 completion=Throw @3364
-    Rethrow v1188 @3364
+    Rethrow v1189 @3364
 }
 function f1 name="say" module=m0 position=270 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|boolean|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: undefined|null|boolean|string):
@@ -2126,7 +2130,7 @@ function f8 name="report" module=m0 position=1185 flags=[HasExplicitName] length
     v30 = Undefined @1220
     Return v30 @1220
 }
-function f9 name="pair" module=m0 position=1367 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f9 name="pair" module=m0 position=1367 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @1367
   b1():
@@ -2140,7 +2144,7 @@ function f9 name="pair" module=m0 position=1367 flags=[HasExplicitName] length=1
     v8 = Add v1, v7 @1438
     PropDefine v2, v8 key="c" @1435
     v10 = FinishObject v2 @1395
-    v11 = Convert v10 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @1395
+    v11 = Convert v10 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @1395
     Return v11 @1395
 }
 function f10 name="five" module=m0 position=1622 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L21 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -2171,7 +2175,7 @@ function f10 name="five" module=m0 position=1622 flags=[HasExplicitName] length=
     v22 = Convert v21 declared={type=undefined|null|L21 flags=[IsExpected]} @1650
     Return v22 @1650
 }
-function f11 name="computed" module=m0 position=3203 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f11 name="computed" module=m0 position=3203 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|number|string|symbol, v1: anything):
     Jump -> next b1() @3203
   b1():
@@ -2193,7 +2197,7 @@ function f11 name="computed" module=m0 position=3203 flags=[HasExplicitName] len
     v17 = Add v2, v16 @3342
     PropDefine v3, v17 key="c" @3339
     v19 = FinishObject v3 @3240
-    v20 = Convert v19 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @3240
+    v20 = Convert v19 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @3240
     Return v20 @3240
 }
 function f12 name="namesOfAccessor" module=m0 position=6261 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|L11|L19|L20|f90 flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -2282,29 +2286,31 @@ function f15 name="arrowUnder" module=m0 position=9540 flags=[HasExplicitName] l
   b0(v0: anything):
     Jump -> next b1() @9540
   b1():
-    v1 = NewDictionary @9577
-    v2 = ToPropertyKey v0 @9580
-    v3 = NewClosure function=f120 @9587
-    SetFunctionName v3, v2 @9587
-    ElemDefine v1, v2, v3 @9579
-    v6 = ElemGet v1, v0 @9596
-    v7 = Convert v6 declared={type=undefined|null|function|f120 flags=[IsExpected]} @9577
-    Return v7 @9577
+    v1 = ToPropertyKey v0 @9580
+    v2 = NewClosure function=f120 @9587
+    SetFunctionName v2, v1 @9587
+    v4 = NewObject layout=L38 @9579
+    ElemDefine v4, v1, v2 @9579
+    v6 = FinishObject v4 @9577
+    v7 = ElemGet v6, v0 @9596
+    v8 = Convert v7 declared={type=undefined|null|function|f120 flags=[IsExpected]} @9577
+    Return v8 @9577
 }
 function f16 name="classUnder" module=m0 position=9607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|function|f121 flags=[IsExpected]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @9607
   b1():
-    v1 = NewDictionary @9644
-    v2 = ToPropertyKey v0 @9647
-    v3 = NewClosure function=f121 @9654
-    SetFunctionName v3, v2 @9654
-    v5 = NewClass v3 layout=L12 @9654
-    v6 = FinishClass v5 layout=L12 @9654
-    ElemDefine v1, v2, v6 @9646
-    v8 = ElemGet v1, v0 @9663
-    v9 = Convert v8 declared={type=undefined|null|function|f121 flags=[IsExpected]} @9644
-    Return v9 @9644
+    v1 = ToPropertyKey v0 @9647
+    v2 = NewClosure function=f121 @9654
+    SetFunctionName v2, v1 @9654
+    v4 = NewClass v2 layout=L12 @9654
+    v5 = FinishClass v4 layout=L12 @9654
+    v6 = NewObject layout=L39 @9646
+    ElemDefine v6, v1, v5 @9646
+    v8 = FinishObject v6 @9644
+    v9 = ElemGet v8, v0 @9663
+    v10 = Convert v9 declared={type=undefined|null|function|f121 flags=[IsExpected]} @9644
+    Return v10 @9644
 }
 function f17 name="a" module=m0 position=2002 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -2508,9 +2514,9 @@ function f42 name="get" module=m0 position=4924 kind=Method flags=[HasExplicitNa
     v1 = Convert v0 declared={type=number flags=[IsExpected]} @4939
     Return v1 @4939
 }
-function f43 name="Shape" module=m0 position=5222 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f43 name="Shape" module=m0 position=5197 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @5222
+    Jump -> next b1() @5197
   b1():
     v2 = GetConstructPrototype v0 layout=L0 @5222
     v3 = NewObject v2 layout=L0 @5222
@@ -3064,7 +3070,7 @@ function f109 name="b" module=m0 position=1403 kind=Getter flags=[HasThis, HasEx
   b0(v0: anything):
     Jump -> next b1() @1403
   b1():
-    v1 = Convert v0 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @1420
+    v1 = Convert v0 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @1420
     v2 = PropGet v1 key="a" @1420
     v3 = Convert v2 declared={type=number flags=[IsExpected]} @1420
     v4 = Integer integer=1 @1429
@@ -3075,7 +3081,7 @@ function f110 name="b" module=m0 position=1445 kind=Setter flags=[HasThis, HasEx
   b0(v0: anything, v1: anything):
     Jump -> next b1() @1445
   b1():
-    v2 = Convert v0 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @1460
+    v2 = Convert v0 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @1460
     PropSet v2, v1 key="a" @1460
     v4 = Undefined @1460
     Return v4 @1460
@@ -3147,7 +3153,7 @@ function f117 module=m0 position=3294 kind=Setter flags=[HasThis] length=1 thisT
   b0(v0: anything, v1: anything):
     Jump -> next b1() @3294
   b1():
-    v2 = Convert v0 declared={type=undefined|null|L14|L22|L23|L26|L34|L36 flags=[IsExpected]} @3313
+    v2 = Convert v0 declared={type=undefined|null|L14|L22|L23|L26|L34|L37 flags=[IsExpected]} @3313
     PropSet v2, v1 key="received" @3313
     v4 = Undefined @3313
     Return v4 @3313
@@ -4907,10 +4913,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="pair"
 # CHECK: module=m0 position=1367 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 99]}] results=[{type=L14}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: int[0, 99]):
-# CHECK-NEXT: v1: L14 = NewObject -, v0 layout=L14 fields=[0] allocationSite=138 allocationClass=2
-# CHECK-NEXT: v2: f109 = NewClosure function=f109 allocationSite=139
+# CHECK-NEXT: v1: L14 = NewObject -, v0 layout=L14 fields=[0] allocationSite=139 allocationClass=2
+# CHECK-NEXT: v2: f109 = NewClosure function=f109 allocationSite=140
 # CHECK-NEXT: DefineGetter v1, v2 key="b"
-# CHECK-NEXT: v4: f110 = NewClosure function=f110 allocationSite=140 [isHeldByClosureTable]
+# CHECK-NEXT: v4: f110 = NewClosure function=f110 allocationSite=141 [isHeldByClosureTable]
 # CHECK-NEXT: DefineSetter v1, v4 key="b"
 # CHECK-NEXT: v6: 2 = Integer integer=2
 # CHECK-NEXT: v7: int[2, 101] = Add v0, v6
@@ -4929,19 +4935,19 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="five"
 # CHECK: module=m0 position=1622 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 99]}] results=[{type=L21}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: int[0, 99]):
-# CHECK-NEXT: v1: L21 = NewObject -, v0 layout=L21 fields=[5] allocationSite=141 allocationClass=9
-# CHECK-NEXT: v2: f111 = NewClosure function=f111 allocationSite=142
+# CHECK-NEXT: v1: L21 = NewObject -, v0 layout=L21 fields=[5] allocationSite=142 allocationClass=9
+# CHECK-NEXT: v2: f111 = NewClosure function=f111 allocationSite=143
 # CHECK-NEXT: DefineGetter v1, v2 key="one"
-# CHECK-NEXT: v4: f112 = NewClosure function=f112 allocationSite=143
+# CHECK-NEXT: v4: f112 = NewClosure function=f112 allocationSite=144
 # CHECK-NEXT: DefineGetter v1, v4 key="two"
 # CHECK-NEXT: v6: 2 = Integer integer=2
 # CHECK-NEXT: v7: int[0, 198] = Mul v0, v6
 # CHECK-NEXT: PutSlotOrAdd v1, -, v7 key="middle" receivers=[L21] level=Proven accessSite=290
-# CHECK-NEXT: v9: f113 = NewClosure function=f113 allocationSite=144 [isHeldByClosureTable]
+# CHECK-NEXT: v9: f113 = NewClosure function=f113 allocationSite=145 [isHeldByClosureTable]
 # CHECK-NEXT: DefineSetter v1, v9 key="three"
-# CHECK-NEXT: v11: f114 = NewClosure function=f114 allocationSite=145
+# CHECK-NEXT: v11: f114 = NewClosure function=f114 allocationSite=146
 # CHECK-NEXT: DefineGetter v1, v11 key="four"
-# CHECK-NEXT: v13: f115 = NewClosure function=f115 allocationSite=146
+# CHECK-NEXT: v13: f115 = NewClosure function=f115 allocationSite=147
 # CHECK-NEXT: DefineGetter v1, v13 key="five"
 # CHECK-NEXT: v15: 3 = Integer integer=3
 # CHECK-NEXT: v16: int[0, 297] = Mul v0, v15
@@ -4952,9 +4958,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="computed"
 # CHECK: module=m0 position=3203 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|int|"0"|"__proto__"|"a"|"c"|"k"|"longer name"|symbol("tag")@m0:20}, {type=int[0, 99]}] results=[{type=L22}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|int|"0"|"__proto__"|"a"|"c"|"k"|"longer name"|symbol("tag")@m0:20, v1: int[0, 99]):
-# CHECK-NEXT: v2: L22 = NewObject -, v1 layout=L22 fields=[0] allocationSite=147 allocationClass=10
+# CHECK-NEXT: v2: L22 = NewObject -, v1 layout=L22 fields=[0] allocationSite=148 allocationClass=10
 # CHECK-NEXT: v3: string|symbol = ToPropertyKey v0
-# CHECK-NEXT: v4: f116 = NewClosure v1 function=f116 allocationSite=148
+# CHECK-NEXT: v4: f116 = NewClosure v1 function=f116 allocationSite=149
 # CHECK-NEXT: SetFunctionName v4, v3 methodKind=Getter
 # CHECK-NEXT: DefineGetter v2, v4, v3
 # CHECK-NEXT: v7: 1 = Integer integer=1
@@ -4966,7 +4972,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v12: string|symbol = ToPropertyKey v0
-# CHECK-NEXT: v13: f117 = NewClosure function=f117 allocationSite=149
+# CHECK-NEXT: v13: f117 = NewClosure function=f117 allocationSite=150
 # CHECK-NEXT: SetFunctionName v13, v12 methodKind=Setter
 # CHECK-NEXT: DefineSetter v2, v13, v12
 # CHECK-NEXT: v16: 2 = Integer integer=2
@@ -4995,7 +5001,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: v5: boolean = ResultAt v4
 # CHECK-NEXT: v6: 1 = Integer integer=1
 # CHECK-NEXT: v7: int[0, 1] = ToNumber v5
-# CHECK-NEXT: v8: i32 = LShift v6, v7
+# CHECK-NEXT: v8: int[1, 2] = LShift v6, v7
 # CHECK-NEXT: v9: anything = ResultAt v4 index=3
 # CHECK-NEXT: v10: anything = ResultAt v4 index=4
 # CHECK-NEXT: v11: 1 = Integer integer=1
@@ -5035,69 +5041,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="methodUnder"
-# CHECK: module=m0 position=9361 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f118 flags=[IsExpected]}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
-# CHECK-NEXT: v1: object = NewDictionary
-# CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
-# CHECK-NEXT: v3: f118 = NewClosure function=f118 allocationSite=150
-# CHECK-NEXT: SetFunctionName v3, v0
-# CHECK-NEXT: ElemDefine v2, v0, v3 accessSite=302
-# CHECK-NEXT: v6: anything = ElemGet v2, v0 accessSite=303
-# CHECK-NEXT: v7: undefined|f118|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v6 provenType=undefined|f118|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: }
+# CHECK: module=m0 position=9361 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f118 flags=[IsExpected]}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="getterUnder"
-# CHECK: module=m0 position=9424 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|f119}] functionTypes=[f141] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
-# CHECK-NEXT: v1: object = NewDictionary
-# CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
-# CHECK-NEXT: v3: f119 = NewClosure function=f119 allocationSite=151
-# CHECK-NEXT: SetFunctionName v3, v0 methodKind=Getter
-# CHECK-NEXT: DefineGetter v2, v3, v0
-# CHECK-NEXT: v6: undefined = CallBuiltin -, v2, v0 overload=ReflectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=304
-# CHECK-NEXT: v7: boolean = ResultAt v6
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: int[0, 1] = ToNumber v7
-# CHECK-NEXT: v10: i32 = LShift v8, v9
-# CHECK-NEXT: v11: anything = ResultAt v6 index=3
-# CHECK-NEXT: v12: 1 = Integer integer=1
-# CHECK-NEXT: v13: int[0, 1] = BitAnd v10, v12
-# CHECK-NEXT: v14: boolean = ToBoolean v13
-# CHECK-NEXT: Branch v14 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: v16: never = RequireObjectCoercible v15 name="get"
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v17: undefined|f119 = AssumeType v11 provenType=undefined|f119
-# CHECK-NEXT: Return v17
-# CHECK-NEXT: }
+# CHECK: module=m0 position=9424 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|f119}] functionTypes=[f141] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="arrowUnder"
-# CHECK: module=m0 position=9540 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f120 flags=[IsExpected]}] functionTypes=[f143] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
-# CHECK-NEXT: v1: object = NewDictionary
-# CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
-# CHECK-NEXT: v3: f120 = NewClosure function=f120 allocationSite=152
-# CHECK-NEXT: SetFunctionName v3, v0
-# CHECK-NEXT: ElemDefine v2, v0, v3 accessSite=306
-# CHECK-NEXT: v6: anything = ElemGet v2, v0 accessSite=307
-# CHECK-NEXT: v7: undefined|f120|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v6 provenType=undefined|f120|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: }
+# CHECK: module=m0 position=9540 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f120 flags=[IsExpected]}] functionTypes=[f143] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="classUnder"
-# CHECK: module=m0 position=9607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f121 flags=[IsExpected]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
-# CHECK-NEXT: v1: object = NewDictionary
-# CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
-# CHECK-NEXT: v3: f121 = NewClosure function=f121 allocationSite=153
-# CHECK-NEXT: SetFunctionName v3, v0
-# CHECK-NEXT: v5: f121 = NewClass v3 layout=L12
-# CHECK-NEXT: v6: f121 = FinishClass v5 layout=L12
-# CHECK-NEXT: ElemDefine v2, v0, v6 accessSite=308
-# CHECK-NEXT: v8: anything = ElemGet v2, v0 accessSite=309
-# CHECK-NEXT: v9: undefined|f121|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v8 provenType=undefined|f121|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: }
+# CHECK: module=m0 position=9607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f121 flags=[IsExpected]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=2025 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="get"
@@ -5107,17 +5057,17 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Shape"
-# CHECK: module=m0 position=5222 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=L0 flags=[IsFromCompiler]}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK: module=m0 position=5197 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=L0 flags=[IsFromCompiler]}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything, v1: int[1, 2]):
 # CHECK-NEXT: v2: f43 = AssumeType v0 provenType=f43
 # CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v4: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=154 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v4: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=157 allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: object = GetConstructPrototype v2 layout=L0
-# CHECK-NEXT: v6: object ~ L0 = NewObject v5 layout=L0 allocationSite=154 allocationClass=0
+# CHECK-NEXT: v6: object ~ L0 = NewObject v5 layout=L0 allocationSite=157 allocationClass=0
 # CHECK-NEXT: v7: L0 = AssumeType v6 provenType=L0
 # CHECK-NEXT: PutSlotOrAdd v7, -, v1 key="side" receivers=[L0] level=Proven accessSite=310
 # CHECK-NEXT: Return v7
@@ -5188,7 +5138,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f90 = AssumeType v0 provenType=f90
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L11
-# CHECK-NEXT: v3: object ~ L11 = NewObject v2 layout=L11 allocationSite=155 allocationClass=1
+# CHECK-NEXT: v3: object ~ L11 = NewObject v2 layout=L11 allocationSite=158 allocationClass=1
 # CHECK-NEXT: v4: L11 = AssumeType v3 provenType=L11
 # CHECK-NEXT: v5: undefined = CallDirect v4 function=f122 accessSite=322
 # CHECK-NEXT: Return v4
@@ -5197,7 +5147,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: m0 position=8337 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=f90 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f90):
 # CHECK-NEXT: v1: "computedStaticField" = String string="computedStaticField"
-# CHECK-NEXT: v2: f123 = NewClosure function=f123 allocationSite=156
+# CHECK-NEXT: v2: f123 = NewClosure function=f123 allocationSite=159
 # CHECK-NEXT: SetFunctionName v2, v1
 # CHECK-NEXT: PropDefine v0, v2 key="computedStaticField" accessSite=323
 # CHECK-NEXT: v5: undefined = Undefined
@@ -5225,7 +5175,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=1403 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: anything ~ undefined|null|L14|L22|L23|L26|L34|L36 = Upcast v0 castType=anything
+# CHECK-NEXT: v1: anything ~ undefined|null|L14|L22|L23|L26|L34|L37 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: anything = PropGet v1 key="a" accessSite=328 receivers=[L14, L34]
 # CHECK-NEXT: v3: undefined|int|whole|string = AssumeType v2 provenType=undefined|int|whole|string
 # CHECK-NEXT: v4: undefined|int|whole|string ~ int|whole = Upcast v3 castType=anything
@@ -5381,26 +5331,26 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: m0 position=8337 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L11 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L11):
 # CHECK-NEXT: v1: "computedField" = String string="computedField"
-# CHECK-NEXT: v2: f124 = NewClosure function=f124 allocationSite=157
+# CHECK-NEXT: v2: f124 = NewClosure function=f124 allocationSite=160
 # CHECK-NEXT: SetFunctionName v2, v1
 # CHECK-NEXT: PutSlot v0, -, v2 key="computedField" receivers=[L11] level=Proven accessSite=336
 # CHECK-NEXT: v5: "computedFunctionField" = String string="computedFunctionField"
-# CHECK-NEXT: v6: f125 = NewClosure function=f125 allocationSite=158
+# CHECK-NEXT: v6: f125 = NewClosure function=f125 allocationSite=161
 # CHECK-NEXT: SetFunctionName v6, v5
 # CHECK-NEXT: PutSlot v0, -, v6 key="computedFunctionField" receivers=[L11] level=Proven accessSite=337
 # CHECK-NEXT: v9: "computedClassField" = String string="computedClassField"
-# CHECK-NEXT: v10: f126 = NewClosure function=f126 allocationSite=159
+# CHECK-NEXT: v10: f126 = NewClosure function=f126 allocationSite=162
 # CHECK-NEXT: SetFunctionName v10, v9
 # CHECK-NEXT: v12: f126 = NewClass v10 layout=L13
 # CHECK-NEXT: v13: f126 = FinishClass v12 layout=L13
 # CHECK-NEXT: PutSlot v0, -, v13 key="computedClassField" receivers=[L11] level=Proven accessSite=338
-# CHECK-NEXT: v15: f127 = NewClosure function=f127 allocationSite=160
+# CHECK-NEXT: v15: f127 = NewClosure function=f127 allocationSite=163
 # CHECK-NEXT: PutSlot v0, -, v15 key="computedNamedField" receivers=[L11] level=Proven accessSite=339
 # CHECK-NEXT: v17: Symbol.for("field description") = GetModuleVariable variable=g30
-# CHECK-NEXT: v18: f128 = NewClosure function=f128 allocationSite=161
+# CHECK-NEXT: v18: f128 = NewClosure function=f128 allocationSite=164
 # CHECK-NEXT: SetFunctionName v18, v17
 # CHECK-NEXT: PutSlot v0, -, v18 key=Symbol.for("field description") receivers=[L11] level=Proven accessSite=340
-# CHECK-NEXT: v21: f129 = NewClosure function=f129 allocationSite=162
+# CHECK-NEXT: v21: f129 = NewClosure function=f129 allocationSite=165
 # CHECK-NEXT: PutSlot v0, -, v21 key="plainField" receivers=[L11] level=Proven accessSite=341
 # CHECK-NEXT: v23: undefined = Undefined
 # CHECK-NEXT: Return v23
@@ -5411,7 +5361,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: v3: string|symbol("description")@m0:88 = AssumeType v2 provenType=string|symbol("description")@m0:88
 # CHECK-NEXT: v4: object = NewDictionary
 # CHECK-NEXT: v5: Object = AssumeType v4 provenType=Object
-# CHECK-NEXT: v6: f118 = NewClosure function=f118 allocationSite=150
+# CHECK-NEXT: v6: f118 = NewClosure function=f118 allocationSite=151
 # CHECK-NEXT: SetFunctionName v6, v3
 # CHECK-NEXT: ElemDefine v5, v3, v6 accessSite=302
 # CHECK-NEXT: v9: anything = ElemGet v5, v3 accessSite=303
@@ -5424,14 +5374,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: v3: string|symbol("description")@m0:88 = AssumeType v2 provenType=string|symbol("description")@m0:88
 # CHECK-NEXT: v4: object = NewDictionary
 # CHECK-NEXT: v5: Object = AssumeType v4 provenType=Object
-# CHECK-NEXT: v6: f119 = NewClosure function=f119 allocationSite=151
+# CHECK-NEXT: v6: f119 = NewClosure function=f119 allocationSite=152
 # CHECK-NEXT: SetFunctionName v6, v3 methodKind=Getter
 # CHECK-NEXT: DefineGetter v5, v6, v3
 # CHECK-NEXT: v9: undefined = CallBuiltin -, v5, v3 overload=ReflectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=304
 # CHECK-NEXT: v10: boolean = ResultAt v9
 # CHECK-NEXT: v11: 1 = Integer integer=1
 # CHECK-NEXT: v12: int[0, 1] = ToNumber v10
-# CHECK-NEXT: v13: i32 = LShift v11, v12
+# CHECK-NEXT: v13: int[1, 2] = LShift v11, v12
 # CHECK-NEXT: v14: anything = ResultAt v9 index=3
 # CHECK-NEXT: v15: 1 = Integer integer=1
 # CHECK-NEXT: v16: int[0, 1] = BitAnd v13, v15
@@ -5449,12 +5399,12 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: module=m0 position=9540 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f15}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f15} creator=Entrypoint{target=f15 arguments=Registers} inlineFrames=[{}, {callee=f15 callPosition=9540 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f15, v1: anything, v2: anything):
 # CHECK-NEXT: v3: string|symbol("description")@m0:88 = AssumeType v2 provenType=string|symbol("description")@m0:88
-# CHECK-NEXT: v4: object = NewDictionary
-# CHECK-NEXT: v5: Object = AssumeType v4 provenType=Object
-# CHECK-NEXT: v6: f120 = NewClosure function=f120 allocationSite=152
-# CHECK-NEXT: SetFunctionName v6, v3
-# CHECK-NEXT: ElemDefine v5, v3, v6 accessSite=306
-# CHECK-NEXT: v9: anything = ElemGet v5, v3 accessSite=307
+# CHECK-NEXT: v4: f120 = NewClosure function=f120 allocationSite=153
+# CHECK-NEXT: SetFunctionName v4, v3
+# CHECK-NEXT: v6: object = NewDictionary
+# CHECK-NEXT: v7: Object = AssumeType v6 provenType=Object
+# CHECK-NEXT: ElemDefine v7, v3, v4 accessSite=306
+# CHECK-NEXT: v9: anything = ElemGet v7, v3 accessSite=307
 # CHECK-NEXT: v10: undefined|f120|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v9 provenType=undefined|f120|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
@@ -5462,14 +5412,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: module=m0 position=9607 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} inlineFrames=[{}, {callee=f16 callPosition=9607 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f16, v1: anything, v2: anything):
 # CHECK-NEXT: v3: string|symbol("description")@m0:88 = AssumeType v2 provenType=string|symbol("description")@m0:88
-# CHECK-NEXT: v4: object = NewDictionary
-# CHECK-NEXT: v5: Object = AssumeType v4 provenType=Object
-# CHECK-NEXT: v6: f121 = NewClosure function=f121 allocationSite=153
-# CHECK-NEXT: SetFunctionName v6, v3
-# CHECK-NEXT: v8: f121 = NewClass v6 layout=L12
-# CHECK-NEXT: v9: f121 = FinishClass v8 layout=L12
-# CHECK-NEXT: ElemDefine v5, v3, v9 accessSite=308
-# CHECK-NEXT: v11: anything = ElemGet v5, v3 accessSite=309
+# CHECK-NEXT: v4: f121 = NewClosure function=f121 allocationSite=155
+# CHECK-NEXT: SetFunctionName v4, v3
+# CHECK-NEXT: v6: f121 = NewClass v4 layout=L12
+# CHECK-NEXT: v7: f121 = FinishClass v6 layout=L12
+# CHECK-NEXT: v8: object = NewDictionary
+# CHECK-NEXT: v9: Object = AssumeType v8 provenType=Object
+# CHECK-NEXT: ElemDefine v9, v3, v7 accessSite=308
+# CHECK-NEXT: v11: anything = ElemGet v9, v3 accessSite=309
 # CHECK-NEXT: v12: undefined|f121|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v11 provenType=undefined|f121|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
@@ -5486,14 +5436,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Shape"
-# CHECK: module=m0 position=5222 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f43}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f43} creator=Entrypoint{target=f43 arguments=Registers takesNewTarget=true} {
+# CHECK: module=m0 position=5197 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f43}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f43} creator=Entrypoint{target=f43 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f43, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: int[1, 2] = AssumeType v3 provenType=int[1, 2]
 # CHECK-NEXT: v5: L0 = CallDirect v2, v4 function=f43
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Shape"
-# CHECK: module=m0 position=5222 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0|L10} parameters=[{type=int[1, 2]}] results=[{type=undefined}] functionTypes=[f133] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f43 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f43} constructedClass=L0
+# CHECK: module=m0 position=5197 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0|L10} parameters=[{type=int[1, 2]}] results=[{type=undefined}] functionTypes=[f133] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f43 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f43} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="area"
 # CHECK: module=m0 position=5234 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f44}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f44} creator=Entrypoint{target=f44 arguments=Registers} inlineFrames=[{}, {callee=f44 callPosition=5234 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f44, v1: anything):

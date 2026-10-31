@@ -531,6 +531,19 @@ impl Look<'_, '_> {
                     let name = self.constant_name(hir.id_at::<ExprId>(hir[call].args, 1));
                     self.replace_export(modules, name);
                 }
+                // `tracker.watch(math, "twice")`: whatever the callee is and however it came here, the object of a module with a text behind it reads as a spy.
+                // One export that is open for nothing costs less than a spy that is refused.
+                (_, ExprKind::Call(call))
+                    if hir[call].args.len() >= 2
+                        && hir.id_at::<ExprId>(hir[call].args, 0) == object =>
+                {
+                    let name = self.constant_name(hir.id_at::<ExprId>(hir[call].args, 1));
+                    // A guess opens a name of a module that the file spells, and nothing else.
+                    if modules.is_some() && name.is_some() {
+                        self.replace_export(modules, name);
+                    }
+                    self.hand_on(modules);
+                }
                 _ => self.hand_on(modules),
             },
             Parent::VarInit(declaration) if self.reads_names_alone(hir[declaration].pat) => {}

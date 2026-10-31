@@ -184,6 +184,7 @@ pub(crate) fn run_as_coordinator(
             startup_failures: 0,
             part: 0,
             waits_for_heavy_file_to_end: false,
+            first_loads: Vec::new(),
         });
     }
 
@@ -567,16 +568,22 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
+pub(crate) struct PendingFile {
+    idx: u32,
+    /// What the files before this one have left in `process.exitCode`, in whichever worker they ran.
+    exit_code: Option<u8>,
+}
+
 pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Reused across all worker → coordinator emits.
     frame: Frame,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
-    pub(crate) pending_idx: Option<u32>,
+    pub(crate) pending_file: Option<PendingFile>,
     pub(crate) pending_path: Vec<u8>,
-    /// What the files before this one have left in `process.exitCode`, in whichever worker they ran.
-    pub(crate) pending_exit_code: Option<u8>,
+    /// `first_loads` of the process that ran in this one's place before it.
+    pub(crate) pending_first_loads: Vec<u8>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
 }
@@ -595,10 +602,13 @@ impl ChannelOwner for WorkerCommands {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {
-                self.pending_idx = Some(rd.u32());
+                let idx = rd.u32();
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
-                self.pending_exit_code = rd.u32().checked_sub(1).map(|code| code as u8);
+                let exit_code = rd.u32().checked_sub(1).map(|code| code as u8);
+                self.pending_file = Some(PendingFile { idx, exit_code });
+                self.pending_first_loads.clear();
+                self.pending_first_loads.extend_from_slice(rd.str());
             }
             frame::Kind::Shutdown => self.done = true,
             _ => {}
@@ -651,17 +661,19 @@ impl<'a> WorkerLoop<'a> {
         self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
-            while self.cmds.pending_idx.is_none() && !self.cmds.done {
+            while self.cmds.pending_file.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
-                if self.cmds.pending_idx.is_some() || self.cmds.done {
+                if self.cmds.pending_file.is_some() || self.cmds.done {
                     break;
                 }
                 vm.event_loop_ref().auto_tick();
             }
-            let Some(idx) = self.cmds.pending_idx else {
+            let Some(PendingFile { idx, exit_code }) = self.cmds.pending_file.take() else {
                 break;
             };
-            self.cmds.pending_idx = None;
+            if self.files_run == 0 {
+                note_first_loads_of_earlier_process(vm, &self.cmds.pending_first_loads);
+            }
             self.files_run += 1;
 
             self.reporter.worker_ipc_file_idx = Some(idx);
@@ -669,7 +681,7 @@ impl<'a> WorkerLoop<'a> {
 
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
-            if let Some(code) = self.cmds.pending_exit_code.take() {
+            if let Some(code) = exit_code {
                 vm.exit_handler.exit_code = code;
             }
             let exit_code_before = vm.exit_handler.exit_code;
@@ -709,6 +721,11 @@ impl<'a> WorkerLoop<'a> {
             let after = *self.reporter.summary();
             // What the file printed goes out ahead of the word that it is done, so that it is printed under the file's name.
             Output::flush();
+            for refusal in crate::cli::run_compiled::refused_changes() {
+                self.cmds
+                    .emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
+            }
+            let first_loads = first_loads(vm);
             self.cmds.emit(frame::Kind::FileDone, |wf| {
                 for v in [
                     idx,
@@ -730,8 +747,36 @@ impl<'a> WorkerLoop<'a> {
                     code if code == exit_code_before => 0,
                     code => u32::from(code) + 1,
                 });
+                wf.str(&first_loads);
             });
         }
+    }
+}
+
+/// For each file of `compiled_program::for_each_first_load`: u32, 1 where the load was synchronous, and str path.
+fn first_loads(vm: &VirtualMachine) -> Vec<u8> {
+    let mut list = Vec::new();
+    bun_jsc::compiled_program::for_each_first_load(vm.global(), &mut |path, was_synchronous| {
+        list.extend_from_slice(&u32::from(was_synchronous).to_le_bytes());
+        list.extend_from_slice(&(path.len() as u32).to_le_bytes());
+        list.extend_from_slice(path);
+    });
+    list
+}
+
+fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
+    let mut rd = frame::Reader { p: list };
+    while !rd.p.is_empty() {
+        let was_synchronous = rd.u32() != 0;
+        let path = rd.str();
+        if path.is_empty() {
+            break;
+        }
+        bun_jsc::compiled_program::note_first_load_in_earlier_process(
+            vm.global(),
+            path,
+            was_synchronous,
+        );
     }
 }
 
@@ -805,9 +850,9 @@ pub(crate) fn run_as_worker(
         cmds: WorkerCommands {
             channel: Channel::default(),
             frame: Frame::default(),
-            pending_idx: None,
+            pending_file: None,
             pending_path: Vec::new(),
-            pending_exit_code: None,
+            pending_first_loads: Vec::new(),
             done: false,
         },
         files_run: 0,

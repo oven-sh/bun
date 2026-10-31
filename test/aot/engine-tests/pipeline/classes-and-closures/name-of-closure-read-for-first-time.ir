@@ -2035,7 +2035,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: v67: boolean = ResultAt v66
 # CHECK-NEXT: v68: 1 = Integer integer=1
 # CHECK-NEXT: v69: int[0, 1] = ToNumber v67
-# CHECK-NEXT: v70: i32 = LShift v68, v69
+# CHECK-NEXT: v70: int[1, 2] = LShift v68, v69
 # CHECK-NEXT: v71: anything = ResultAt v66 index=3
 # CHECK-NEXT: v72: 1 = Integer integer=1
 # CHECK-NEXT: v73: int[0, 1] = BitAnd v70, v72

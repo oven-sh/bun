@@ -43,6 +43,7 @@ CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what an
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersSortByDifference/0: it is not called: this realm does not have it
 CompilerHelpersSortByReversedDifference/0: it is not called: this realm does not have it
+CompilerHelpersSortWhereNobodySeesTheComparator/0: it is not called: this realm does not have it
 CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0: it is not called: the compiler hands it bounds that it has clamped itself, and takes them on trust
 CrashHandlerJscCrashHandlerAbort/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerFastfail/0: the process ended or did not come back

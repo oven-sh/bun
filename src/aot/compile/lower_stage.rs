@@ -7,6 +7,7 @@ use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessa
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id, extend_from_boxes};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
+use crate::load::source_provider::WithoutServices;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
@@ -270,6 +271,8 @@ struct ProjectToLower<'a, 'b, 's> {
     keys: KeyContext<'a>,
     inputs: &'a LoweringInputs<'a>,
     threads: NonZeroUsize,
+    // `AotOptions::source_that_fits_in_memory`
+    source_that_fits_in_memory: Option<u64>,
     // --aot-sabotage=LoweringPanics
     panics: bool,
 }
@@ -282,6 +285,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         project: ProjectId,
         inputs: &'a LoweringInputs<'a>,
         threads: NonZeroUsize,
+        source_that_fits_in_memory: Option<u64>,
     ) -> ProjectToLower<'a, 'b, 's> {
         ProjectToLower {
             loaded: loaded.project(project),
@@ -294,12 +298,17 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             },
             inputs,
             threads,
+            source_that_fits_in_memory,
             panics: false,
         }
     }
 
     fn lower(&self) -> CheckedProgram<Option<LoweredUnit>> {
-        let by_word = checker_passes_by_word();
+        let pass_count = match (checker_passes_by_word(), self.source_that_fits_in_memory) {
+            (Some(count), _) => driver::PassCount::Exactly(count),
+            (None, Some(bytes)) => driver::PassCount::TwoAboveBytesOfText(bytes),
+            (None, None) => driver::PassCount::Exactly(1),
+        };
         let request = &CompileRequest {
             threads: self.threads,
             left_out_bodies: Some(&self.decided.left_out_bodies),
@@ -337,8 +346,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 defined.publish_names_of_file(file);
             },
             &driver::Passes {
-                count: by_word.unwrap_or(2),
-                wait_for_no_file: by_word.is_none(),
+                count: pass_count,
                 before_next: &|| self.inputs.defined_object_types.forget_names_of_types(),
             },
         )
@@ -346,9 +354,10 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
 }
 
 // What the checker holds only grows, and at the end of this stage it is a third of all that the build holds: the most that a large
-// typed program's build holds anywhere. With two passes that is 500 MB less on 200 MB of source, and what is built is the same to
-// the byte. The second pass works out again what the stage before this one had found about its files: a sixth of the time of this
-// stage. The word `TestRunCheckerPasses:<n>` of `BUN_DEBUG_TEST_AOT_WORDS` says how many there are, whatever the files are like.
+// typed program's build holds anywhere. With two passes that is 500 MB less on 200 MB of source. The second pass works out again
+// what the first knew about the files that its own refer to: from a sixth to two thirds of the time of this stage. That is memory
+// for time, so there are two only where the run has measured its memory and the program does not fit: a build with room has one.
+// The word `TestRunCheckerPasses:<n>` of `BUN_DEBUG_TEST_AOT_WORDS` says how many there are, whatever the files are like.
 fn checker_passes_by_word() -> Option<usize> {
     let words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS.get_not_empty();
     let mut words = (words.into_iter()).flat_map(|words| bun_core::strings::split(words, b","));
@@ -851,6 +860,7 @@ impl Build<'_> {
             },
             canonical_symbol: &|symbol| files.canonical(symbol),
         };
+        let fits = self.options.aot.source_that_fits_in_memory;
         let checked = self.with_inputs_for_reached_code(
             &world_build,
             &bound,
@@ -859,7 +869,7 @@ impl Build<'_> {
             left_out.functions.clone(),
             |inputs| {
                 let mut project =
-                    ProjectToLower::new(&world_build, &bound, &decided, id, inputs, threads);
+                    ProjectToLower::new(&world_build, &bound, &decided, id, inputs, threads, fits);
                 project.keys.rehoming = Some(&rehoming);
                 project.lower()
             },
@@ -921,8 +931,9 @@ impl Build<'_> {
             &decided.application.roles,
             left_out.application,
             |inputs| {
+                let fits = self.options.aot.source_that_fits_in_memory;
                 let mut of_application =
-                    ProjectToLower::new(loaded, bound, decided, application, inputs, threads);
+                    ProjectToLower::new(loaded, bound, decided, application, inputs, threads, fits);
                 let words = &self.options.aot.option_words;
                 of_application.panics =
                     (words.iter()).any(|it| **it == *b"sabotage=LoweringPanics");
@@ -940,6 +951,7 @@ impl Build<'_> {
                             runtime,
                             inputs,
                             runtime_threads,
+                            fits,
                         );
                         #[cfg(bun_fuzzilli)]
                         if let Some(key) = runtime_key {
@@ -1186,7 +1198,8 @@ impl Build<'_> {
                 &self.provider.enabled_features(),
                 self.provider,
             ),
-            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[], self.provider),
+            // `bun run` does not print Bun's own modules.
+            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[], &WithoutServices),
         };
         // Bun's own modules hand no FinalizationRegistry from one file to another.
         let mut lowered_files = file_inputs.iter().flatten();

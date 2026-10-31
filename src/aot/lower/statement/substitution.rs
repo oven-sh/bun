@@ -349,6 +349,40 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    pub(in crate::lower) fn find_inlined_constant(&mut self, name: ExprId) -> Option<Constant> {
+        let (hir, bound) = (self.hir, self.bound);
+        if self.transpiled.as_ref()?.has_identifier_at(hir[name].pos) {
+            return None;
+        }
+        let Binding::Symbol(symbol) = bound.binding(name) else {
+            return None;
+        };
+        let [Decl::Var(pattern)] = *bound.symbol(symbol).decls else {
+            return None;
+        };
+        let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+            return None;
+        };
+        let statement = bound.var_stmt[declaration.idx()];
+        let declaration = &hir[declaration];
+        let is_inlined = declaration.kind == VarKind::Const
+            && declaration.loc.end <= hir[name].pos
+            && self.const_local_prefixes.contains(hir, bound, statement);
+        if !is_inlined {
+            return None;
+        }
+        let initializer = declaration.init.some()?;
+        if let Decision::Constant(constant) = self.decisions().decision(initializer) {
+            return Some(constant);
+        }
+        match self.decisions().constant(hir, initializer) {
+            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+                Some(constant)
+            }
+            FoldedValue::Unknown => None,
+        }
+    }
+
     // The transpiler prints no declaration of the variable.
     pub(in crate::lower) fn is_initializer_moved(&self, declaration: VarDeclId) -> bool {
         let position = self.hir[self.hir[declaration].pat].pos;

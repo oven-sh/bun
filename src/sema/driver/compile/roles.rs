@@ -56,6 +56,7 @@ pub fn decide_roles<'s>(
             frees_tree: &|_| false,
             first_round: ROLE_ROUNDS,
             left_out_bodies: request.left_out_bodies,
+            is_one_part_of_files: false,
         },
     );
     let mut diagnostics = loaded.program_origins().apply_effects(report.diagnostics);

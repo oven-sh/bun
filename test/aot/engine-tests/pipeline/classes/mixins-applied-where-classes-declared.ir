@@ -3617,16 +3617,16 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: b8():
 # CHECK-NEXT: v30: fact = Entered function=f112 @2432 tail
 # CHECK-NEXT: v31: classtoken = GetModuleVariable fact=v30 variable=g39
-# CHECK-NEXT: v32: boolean ~ true = TypeTest v16 testedType=L5|L6|L15
+# CHECK-NEXT: v32: boolean ~ true = TypeTest v16 testedType=L5|L6
 # CHECK-NEXT: Branch v32 -> taken b9(| 0), notTaken b11()
-# CHECK-NEXT: b9(v33: L5|L6|L15 ~ L6):
-# CHECK-NEXT: v34: boolean = IsSlotFilled v33 key=#"#ticks"@L15 receivers=[L5, L6, L15] level=Expected
+# CHECK-NEXT: b9(v33: L5|L6 ~ L6):
+# CHECK-NEXT: v34: boolean = IsSlotFilled v33 key=#"#ticks"@L15 receivers=[L5, L6] level=Expected
 # CHECK-NEXT: Branch v34 -> taken b10(| 0), notTaken b11()
 # CHECK-NEXT: b10(v35: guard):
 # CHECK-NEXT: v36: undefined|int|whole = GetSlot v33, v35 key=#"#ticks"@L15 receivers=[L5, L6] level=Expected accessSite=438
 # CHECK-NEXT: Jump -> next b12(v36)
 # CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v37: anything ~ undefined|int|whole = PrivateGet v16, v31 layout=L15 field=2 accessSite=438 receivers=[L5, L6, L15, ..]
+# CHECK-NEXT: v37: anything ~ undefined|int|whole = PrivateGet v16, v31 layout=L15 field=2 accessSite=438 receivers=[L5, L6, ..]
 # CHECK-NEXT: Jump -> next b12(v37)
 # CHECK-NEXT: b12(v38: anything ~ undefined|int|whole):
 # CHECK-NEXT: v39: int|whole = AssumeType v38 provenType=int|whole
@@ -3716,7 +3716,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v21: fact = Entered function=f112 @2668 tail
 # CHECK-NEXT: v22: classtoken = GetModuleVariable fact=v21 variable=g39
-# CHECK-NEXT: v23: anything = PrivateGet v7, v22 layout=L15 field=2 accessSite=438 receivers=[L5, L6, L15, ..]
+# CHECK-NEXT: v23: anything = PrivateGet v7, v22 layout=L15 field=2 accessSite=438 receivers=[L5, L6, ..]
 # CHECK-NEXT: v24: int|whole = AssumeType v23 provenType=int|whole
 # CHECK-NEXT: Return v24
 # CHECK-NEXT: b6(v25: undefined|f123|f134|f145|f156):

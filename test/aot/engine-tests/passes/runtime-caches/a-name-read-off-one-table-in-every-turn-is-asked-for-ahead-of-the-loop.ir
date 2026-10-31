@@ -462,57 +462,51 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v15: 1 = Integer integer=1
 # CHECK-NEXT: v16: anything|absent = GetCachedValue v0 key="step" valueType=anything|absent
 # CHECK-NEXT: v17: boolean = TypeTest v16 testedType=anything
-# CHECK-NEXT: TestAndBranch v17 -> taken b4(| 0), notTaken b10(v14, v15)
+# CHECK-NEXT: TestAndBranch v17 -> taken b4(| 0), notTaken b8()
 # CHECK-NEXT: b4(v18: anything):
-# CHECK-NEXT: Jump -> next b5(v14, v15)
-# CHECK-NEXT: b5(v19: i32, v20: int[1, 100]):
+# CHECK-NEXT: v19: undefined|int|"one" = AssumeType v18 provenType=undefined|int|"one"
+# CHECK-NEXT: v20: undefined|int|"one" = Expect v19 expectedType=number
+# CHECK-NEXT: v21: boolean = TypeTest v20 testedType=i32
+# CHECK-NEXT: TestAndBranch v21 -> taken b5(| 0), notTaken b9(v14, v15)
+# CHECK-NEXT: b5(v22: i32):
+# CHECK-NEXT: Jump -> next b6(v14, v15)
+# CHECK-NEXT: b6(v23: i32, v24: int[1, 100]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v22: boolean = Less v20, v1 form=Integers
-# CHECK-NEXT: TestAndBranch v22 -> taken b6(| 0), notTaken b15(v19)
-# CHECK-NEXT: b6(v23: int[1, 99]):
-# CHECK-NEXT: v24: fact = Specified
-# CHECK-NEXT: v25: undefined|int|"one" = AssumeType v18, v24 provenType=undefined|int|"one"
-# CHECK-NEXT: v26: undefined|int|"one" = Expect v25 expectedType=number
-# CHECK-NEXT: v27: boolean = TypeTest v26 testedType=i32
-# CHECK-NEXT: TestAndBranch v27 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v28: i32):
-# CHECK-NEXT: v29: int[-4294967296, 4294967294] = Add v19, v28 form=Integers
-# CHECK-NEXT: v30: 0 = Integer
-# CHECK-NEXT: v31: i32 = BitOr v29, v30 form=Numbers
-# CHECK-NEXT: Jump -> next b9(v31)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v32: number|string|bigint = Add v19, v26 form=Generic
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: v34: i32 = BitOr v32, v33 form=Generic
-# CHECK-NEXT: Jump -> next b9(v34)
-# CHECK-NEXT: b9(v35: i32):
-# CHECK-NEXT: v36: int[2, 100] = Increment v23 form=Integers
-# CHECK-NEXT: Jump -> next b5(v35, v36)
-# CHECK-NEXT: b10(v37: i32, v38: int[1, 100]):
+# CHECK-NEXT: v26: boolean = Less v24, v1 form=Integers
+# CHECK-NEXT: TestAndBranch v26 -> taken b7(| 0), notTaken b14(v23)
+# CHECK-NEXT: b7(v27: int[1, 99]):
+# CHECK-NEXT: v28: int[-4294967296, 4294967294] = Add v23, v22 form=Integers
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: v30: i32 = BitOr v28, v29 form=Numbers
+# CHECK-NEXT: v31: int[2, 100] = Increment v27 form=Integers
+# CHECK-NEXT: Jump -> next b6(v30, v31)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b9(v14, v15)
+# CHECK-NEXT: b9(v32: i32, v33: int[1, 100]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v40: boolean = Less v38, v1 form=Integers
-# CHECK-NEXT: TestAndBranch v40 -> taken b11(| 0), notTaken b15(v37)
-# CHECK-NEXT: b11(v41: int[1, 99]):
-# CHECK-NEXT: v42: anything = PropGet v0 key="step" accessSite=12
-# CHECK-NEXT: v43: undefined|int|"one" = AssumeType v42 provenType=undefined|int|"one"
-# CHECK-NEXT: v44: undefined|int|"one" = Expect v43 expectedType=number
-# CHECK-NEXT: v45: boolean = TypeTest v44 testedType=i32
-# CHECK-NEXT: TestAndBranch v45 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v46: i32):
-# CHECK-NEXT: v47: int[-4294967296, 4294967294] = Add v37, v46 form=Integers
-# CHECK-NEXT: v48: 0 = Integer
-# CHECK-NEXT: v49: i32 = BitOr v47, v48 form=Numbers
-# CHECK-NEXT: Jump -> next b14(v49)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v50: number|string|bigint = Add v37, v44 form=Generic
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: i32 = BitOr v50, v51 form=Generic
-# CHECK-NEXT: Jump -> next b14(v52)
-# CHECK-NEXT: b14(v53: i32):
-# CHECK-NEXT: v54: int[2, 100] = Increment v41 form=Integers
-# CHECK-NEXT: Jump -> next b10(v53, v54)
-# CHECK-NEXT: b15(v55: i32):
-# CHECK-NEXT: Return v55
+# CHECK-NEXT: v35: boolean = Less v33, v1 form=Integers
+# CHECK-NEXT: TestAndBranch v35 -> taken b10(| 0), notTaken b14(v32)
+# CHECK-NEXT: b10(v36: int[1, 99]):
+# CHECK-NEXT: v37: anything = PropGet v0 key="step" accessSite=12
+# CHECK-NEXT: v38: undefined|int|"one" = AssumeType v37 provenType=undefined|int|"one"
+# CHECK-NEXT: v39: undefined|int|"one" = Expect v38 expectedType=number
+# CHECK-NEXT: v40: boolean = TypeTest v39 testedType=i32
+# CHECK-NEXT: TestAndBranch v40 -> taken b11(| 0), notTaken b12()
+# CHECK-NEXT: b11(v41: i32):
+# CHECK-NEXT: v42: int[-4294967296, 4294967294] = Add v32, v41 form=Integers
+# CHECK-NEXT: v43: 0 = Integer
+# CHECK-NEXT: v44: i32 = BitOr v42, v43 form=Numbers
+# CHECK-NEXT: Jump -> next b13(v44)
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v45: number|string|bigint = Add v32, v39 form=Generic
+# CHECK-NEXT: v46: 0 = Integer
+# CHECK-NEXT: v47: i32 = BitOr v45, v46 form=Generic
+# CHECK-NEXT: Jump -> next b13(v47)
+# CHECK-NEXT: b13(v48: i32):
+# CHECK-NEXT: v49: int[2, 100] = Increment v36 form=Integers
+# CHECK-NEXT: Jump -> next b9(v48, v49)
+# CHECK-NEXT: b14(v50: i32):
+# CHECK-NEXT: Return v50
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="decided"
 # CHECK: module=m0 position=625 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Object site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}, {original=2}]} {
@@ -544,60 +538,56 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v16: 1 = Integer integer=1
 # CHECK-NEXT: v17: anything|absent = GetCachedValue v0 key="step" valueType=anything|absent
 # CHECK-NEXT: v18: boolean = TypeTest v17 testedType=anything
-# CHECK-NEXT: TestAndBranch v18 -> taken b7(| 0), notTaken b13(v15, v16)
+# CHECK-NEXT: TestAndBranch v18 -> taken b7(| 0), notTaken b12()
 # CHECK-NEXT: b7(v19: anything):
-# CHECK-NEXT: v20: boolean = TypeTest v2 testedType=f6
-# CHECK-NEXT: TestAndBranch v20 -> taken b8(v15, v16), notTaken b13(v15, v16)
-# CHECK-NEXT: b8(v21: i32, v22: int[1, 100]):
+# CHECK-NEXT: v20: undefined|int|"one" = AssumeType v19 provenType=undefined|int|"one"
+# CHECK-NEXT: v21: boolean = TypeTest v20 testedType=number
+# CHECK-NEXT: TestAndBranch v21 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13(v15, v16)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v22: boolean = TypeTest v2 testedType=f6
+# CHECK-NEXT: TestAndBranch v22 -> taken b10(v16), notTaken b13(v15, v16)
+# CHECK-NEXT: b10(v23: int[1, 100]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v24: boolean = Less v22, v1 form=Integers
-# CHECK-NEXT: TestAndBranch v24 -> taken b9(| 0), notTaken b21(v21)
-# CHECK-NEXT: b9(v25: int[1, 99]):
-# CHECK-NEXT: v26: fact = Specified
-# CHECK-NEXT: v27: undefined|int|"one" = AssumeType v19, v26 provenType=undefined|int|"one"
-# CHECK-NEXT: v28: boolean = TypeTest v27 testedType=number
-# CHECK-NEXT: TestAndBranch v28 -> taken b10(| 0), notTaken b11()
-# CHECK-NEXT: b10(v29: int):
-# CHECK-NEXT: v30: int|whole = Add v21, v29 form=CheckedIntegers
-# CHECK-NEXT: v31: 0 = Integer
-# CHECK-NEXT: v32: i32 = BitOr v30, v31 form=Numbers
-# CHECK-NEXT: Jump -> next b12(v32)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v33: undefined = CallDirect v25 function=f6 accessSite=14
-# CHECK-NEXT: Jump -> next b12(v21)
-# CHECK-NEXT: b12(v34: i32):
-# CHECK-NEXT: v35: int[2, 100] = Increment v25 form=Integers
-# CHECK-NEXT: Jump -> next b8(v34, v35)
-# CHECK-NEXT: b13(v36: i32, v37: int[1, 100]):
+# CHECK-NEXT: v25: boolean = Less v23, v1 form=Integers
+# CHECK-NEXT: TestAndBranch v25 -> taken b11(| 0), notTaken b21(v15)
+# CHECK-NEXT: b11(v26: int[1, 99]):
+# CHECK-NEXT: v27: undefined = CallDirect v26 function=f6 accessSite=14
+# CHECK-NEXT: v28: int[2, 100] = Increment v26 form=Integers
+# CHECK-NEXT: Jump -> next b10(v28)
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13(v15, v16)
+# CHECK-NEXT: b13(v29: i32, v30: int[1, 100]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v39: boolean = Less v37, v1 form=Integers
-# CHECK-NEXT: TestAndBranch v39 -> taken b14(| 0), notTaken b21(v36)
-# CHECK-NEXT: b14(v40: int[1, 99]):
-# CHECK-NEXT: v41: anything = PropGet v0 key="step" accessSite=13
-# CHECK-NEXT: v42: undefined|int|"one" = AssumeType v41 provenType=undefined|int|"one"
-# CHECK-NEXT: v43: boolean = TypeTest v42 testedType=number
-# CHECK-NEXT: TestAndBranch v43 -> taken b15(| 0), notTaken b16()
-# CHECK-NEXT: b15(v44: int):
-# CHECK-NEXT: v45: int|whole = Add v36, v44 form=CheckedIntegers
-# CHECK-NEXT: v46: 0 = Integer
-# CHECK-NEXT: v47: i32 = BitOr v45, v46 form=Numbers
-# CHECK-NEXT: Jump -> next b20(v47)
+# CHECK-NEXT: v32: boolean = Less v30, v1 form=Integers
+# CHECK-NEXT: TestAndBranch v32 -> taken b14(| 0), notTaken b21(v29)
+# CHECK-NEXT: b14(v33: int[1, 99]):
+# CHECK-NEXT: v34: anything = PropGet v0 key="step" accessSite=13
+# CHECK-NEXT: v35: undefined|int|"one" = AssumeType v34 provenType=undefined|int|"one"
+# CHECK-NEXT: v36: boolean = TypeTest v35 testedType=number
+# CHECK-NEXT: TestAndBranch v36 -> taken b15(| 0), notTaken b16()
+# CHECK-NEXT: b15(v37: int):
+# CHECK-NEXT: v38: int|whole = Add v29, v37 form=CheckedIntegers
+# CHECK-NEXT: v39: 0 = Integer
+# CHECK-NEXT: v40: i32 = BitOr v38, v39 form=Numbers
+# CHECK-NEXT: Jump -> next b20(v40)
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v48: boolean = TypeTest v2 testedType=f6
-# CHECK-NEXT: TestAndBranch v48 -> taken b17(), notTaken b18()
+# CHECK-NEXT: v41: boolean = TypeTest v2 testedType=f6
+# CHECK-NEXT: TestAndBranch v41 -> taken b17(), notTaken b18()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v49: undefined = CallDirect v40 function=f6 accessSite=14
+# CHECK-NEXT: v42: undefined = CallDirect v33 function=f6 accessSite=14
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v50: undefined = CallDirect v40 function=f7 accessSite=14
+# CHECK-NEXT: v43: undefined = CallDirect v33 function=f7 accessSite=14
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: Jump -> next b20(v36)
-# CHECK-NEXT: b20(v51: i32):
-# CHECK-NEXT: v52: int[2, 100] = Increment v40 form=Integers
-# CHECK-NEXT: Jump -> next b13(v51, v52)
-# CHECK-NEXT: b21(v53: i32):
-# CHECK-NEXT: Return v53
+# CHECK-NEXT: Jump -> next b20(v29)
+# CHECK-NEXT: b20(v44: i32):
+# CHECK-NEXT: v45: int[2, 100] = Increment v33 form=Integers
+# CHECK-NEXT: Jump -> next b13(v44, v45)
+# CHECK-NEXT: b21(v46: i32):
+# CHECK-NEXT: Return v46
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="calls"
 # CHECK: module=m0 position=885 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Object site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=0}]} {

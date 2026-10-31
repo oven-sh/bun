@@ -1204,13 +1204,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v7: "run" = String string="run"
-# CHECK-NEXT: v8: Array<string, Contiguous> = NewArray v7 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v8: Array<"closed"|"run"|"stop", Contiguous> = NewArray v7 contents="closed"|"run"|"stop" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b4(v8)
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: v9: Array<string> = CallBuiltin -, v4 overload=ObjectKeys/0 accessSite=54
 # CHECK-NEXT: Jump -> next b4(v9)
-# CHECK-NEXT: b4(v10: Array<string> ~ Array<string, Contiguous>):
-# CHECK-NEXT: v11: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b4(v10: Array<string> ~ Array<"closed"|"run"|"stop", Contiguous>):
+# CHECK-NEXT: v11: Array<"closed"|"run"|"stop", proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<"closed"|"run"|"stop", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: string = CallBuiltin v11 overload=ArrayPrototypeJoin/0 accessSite=56 @0 tail
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: b5() frequency=Unlikely:
@@ -1224,13 +1224,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-NEXT: Branch v19 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6() frequency=Unlikely:
 # CHECK-NEXT: v20: "run" = String string="run"
-# CHECK-NEXT: v21: Array<string, Contiguous> = NewArray v20 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v21: Array<"closed"|"run"|"stop", Contiguous> = NewArray v20 contents="closed"|"run"|"stop" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b8(v21)
 # CHECK-NEXT: b7() frequency=Rare:
 # CHECK-NEXT: v22: Array<string> = CallBuiltin -, v18 overload=ObjectKeys/0 accessSite=54
 # CHECK-NEXT: Jump -> next b8(v22)
 # CHECK-NEXT: b8(v23: Array<string>) frequency=Unlikely:
-# CHECK-NEXT: v24: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v24: Array<"closed"|"run"|"stop", proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<"closed"|"run"|"stop", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v25: string = CallBuiltin v24 overload=ArrayPrototypeJoin/0 accessSite=56 @0 tail
 # CHECK-NEXT: Return v25
 # CHECK-NEXT: }

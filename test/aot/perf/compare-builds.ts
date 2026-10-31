@@ -22,7 +22,7 @@ import { parseArgs } from "util";
 import { openInstructionCounter } from "../analysis-scaling/measure-check";
 import { routes as routesOfTheServers, type Route } from "../servers/answers";
 import { idiomsAgainstTheJit, isWhole } from "./measure-idioms";
-import { ownTemporaryFolder } from "../harness/temporary-folders";
+import { ownTemporaryFolder, removeOwnFoldersWhenStopped } from "../harness/temporary-folders";
 
 /** One measured number. `yardstick` is the same work under the same binary's JIT: when it moves like the row, the runtime changed and not the compiler. */
 export type Reading = { instructions: number; yardstick?: number };
@@ -307,6 +307,8 @@ if (import.meta.main) {
   for (const size of wantedSizes) if (!(size in sizes)) throw new Error(`Unknown size: ${size}`);
   const servers = options.servers === "none" ? [] : options.servers.split(",").filter(Boolean);
   for (const server of servers) if (!allServers.includes(server)) throw new Error(`Unknown server: ${server}`);
+  // With --jobs 32 the folder holds 64 executables at a time, 30 GB of them where Bun has its debug information.
+  removeOwnFoldersWhenStopped();
   const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "compare-builds-")));
 
   async function measureAll(side: "before" | "after", only: RegExp, onlyServers: string[], round: string): Promise<Readings> {

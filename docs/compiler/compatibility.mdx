@@ -78,6 +78,8 @@ await import(name); // finds the entry points, and files whose path is a string 
 
 The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
 
+A file that only a non-constant path can reach doesn't stop the build if it has a syntax error, like a `.json` file with comments or a broken fixture in a package. Importing it throws when your program runs. A file that you import by a constant path still stops the build.
+
 With a `baseUrl` in `tsconfig.json`, or a key like `"*"` in its `paths`, a name like the last one can also mean one of your own files. An executable then holds your files that match and leaves the package's files on disk, as `bun build --compile` does without `--aot`. `bun test --aot` compiles both.
 
 A file that the build compiled is also found by a relative path that's written out as a string somewhere in your code, like `"./plugins/a.ts"` or the `"/plugins/a.ts"` in `import.meta.dir + "/plugins/a.ts"`, however that string and the loader meet: through a variable, a function, or a `require` that's stored in an object.
@@ -152,7 +154,7 @@ bun compile  TypeError: null is not an object (evaluating 'o.a.c')
 bun compile  TypeError: null is not an object (evaluating 'null.c')  without the text
 ```
 
-`bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, and `const r = f(x); return r.y` reads `f(x).y`. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source without its types. The quote can differ in other rewrites, such as `if (a) return b; return c`, and it's shorter where a call spans several lines. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
+`bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, `const r = f(x); return r.y` reads `f(x).y`, and a callback in the arguments of a call is reformatted. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source without its types. The quote is shorter or missing where what's called isn't a name or a path of names, such as `f()()`, `o["a" + "b"]()` or a tagged template. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 
@@ -169,6 +171,8 @@ async function watch(target: object) {
 ```
 
 Keep a `FinalizationRegistry` at module level, or somewhere your program reads it again later.
+
+A variable that nothing in your program can read is removed. So is an object that only that variable held, unless your program could notice that it's gone, for example through a `WeakRef`. A [heap snapshot](/compiler/debugging#profiles) doesn't list what was removed.
 
 ## Not supported
 

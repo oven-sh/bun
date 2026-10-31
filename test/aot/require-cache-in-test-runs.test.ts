@@ -306,6 +306,260 @@ test("a test file that imports what an earlier test file has taken out still run
   });
 });
 
+const countingState = `globalThis.loads = (globalThis.loads ?? 0) + 1;\nexport let count = 0;\nexport function bump() { return ++count; }\nexport default { held: 0 };`;
+const takesStateOutAndLoadsItAgain = `
+      import { test } from "bun:test";
+      test("takes it out and loads it again", () => {
+        const path = require.resolve("./state.js");
+        const first = require(path);
+        first.bump(); first.bump();
+        delete require.cache[path];
+        const second = require(path);
+        second.bump(); second.default.held = 7;
+        console.log(first.count, second.count, first === second);
+      });`;
+const takesNothingOut = takesStateOutAndLoadsItAgain.replace("delete ", "if (globalThis.never) delete ");
+
+test("the import statements of a later test file name the instance that require() answers", async () => {
+  await expectCompiledToRunAsPlain({
+    "package.json": `{ "type": "module" }`,
+    "state.js": countingState,
+    "a.test.js": takesStateOutAndLoadsItAgain,
+    "b.test.js": `
+      import { test } from "bun:test";
+      console.log("at load", count, bump());
+      import box, { bump, count } from "./state.js";
+      import * as all from "./state";
+      export { bump as again } from "./state.js";
+      test("names, the namespace object and the default export", async () => {
+        const now = require(require.resolve("./state.js"));
+        console.log(count, bump(), count, now.count, now.bump(), count, globalThis.loads);
+        console.log(all === now, all.count, Object.keys(all).join(), box === now.default, box.held);
+        console.log((await import("./b.test.js")).again(), count);
+      });
+      test("a binding stays with its instance", () => {
+        const path = require.resolve("./state.js");
+        delete require.cache[path];
+        const fresh = require(path);
+        console.log(bump(), count, all.count, fresh.count, fresh.bump === bump, globalThis.loads);
+      });`,
+    "c.test.js": `
+      import { test } from "bun:test";
+      import { bump, count } from "./state.js";
+      test("the next test file gets the newest", () => { console.log(count, bump(), count, globalThis.loads); });`,
+  });
+});
+
+test("an import statement of a later test file loads a file again that nothing has loaded since, in its turn", async () => {
+  const says = (word: string) => `(globalThis.order ??= []).push("${word}");\nexport const word = "${word}";`;
+  await expectCompiledToRunAsPlain({
+    "package.json": `{ "type": "module" }`,
+    "state.js": `(globalThis.order ??= []).push("state");\n${countingState}`,
+    "before.js": says("before"),
+    "after.js": says("after"),
+    "a.test.js": `
+      import { test } from "bun:test";
+      import { bump } from "./state.js";
+      test("takes it out", () => { bump(); bump(); delete require.cache[require.resolve("./state.js")]; });`,
+    "b.test.js": `
+      import { test } from "bun:test";
+      import { word as first } from "./before.js";
+      import { bump, count } from "./state.js";
+      import { word as last } from "./after.js";
+      test("loads", () => { console.log(globalThis.order.join(), first, last, count, bump(), require("./state.js").count, globalThis.loads); });`,
+  });
+});
+
+test("a later test file sees a file that was taken out as the modules between them do", async () => {
+  const user = `import { bump, count } from "./state.js";\nexport const seenWhenLoaded = count;\nexport const next = () => bump();\nexport const now = () => count;`;
+  await expectCompiledToRunAsPlain({
+    "package.json": `{ "type": "module" }`,
+    "state.js": countingState,
+    "ran.js": user,
+    "late.js": user,
+    "a.test.js": `
+      import { test } from "bun:test";
+      import { next } from "./ran.js";
+      test("takes it out", () => { next(); next(); next(); const path = require.resolve("./state.js"); delete require.cache[path]; require(path).bump(); });`,
+    "b.test.js": `
+      import { test } from "bun:test";
+      import * as ran from "./ran.js";
+      import * as late from "./late.js";
+      import { bump, count } from "./state.js";
+      test("one importer has run and one has not", () => {
+        console.log(ran.seenWhenLoaded, ran.now(), late.seenWhenLoaded, late.now(), count);
+        console.log(ran.next(), late.next(), bump(), ran.now(), late.now(), count);
+      });`,
+  });
+});
+
+test("a spy and a mock reach a file that may be taken out, whether or not it was", async () => {
+  const spies = `
+      import { mock, spyOn, test } from "bun:test";
+      import * as state from "./state.js";
+      import { next } from "./user.js";
+      test("a spy", () => {
+        const spy = spyOn(state, "bump").mockReturnValue(42);
+        console.log(next(), state.bump(), spy.mock.calls.length);
+        spy.mockRestore();
+        console.log(next(), state.bump(), state.count);
+      });
+      test("a mock", () => {
+        mock.module("./state.js", () => ({ bump: () => "mocked", count: -1 }));
+        console.log(next(), state.bump(), state.count, require("./state.js").bump());
+      });`;
+  for (const first of [takesStateOutAndLoadsItAgain, takesNothingOut]) {
+    await expectCompiledToRunAsPlain({
+      "package.json": `{ "type": "module" }`,
+      "state.js": countingState,
+      "user.js": `import { bump } from "./state.js";\nexport const next = () => bump();`,
+      "a.test.js": first,
+      "b.test.js": spies,
+    });
+  }
+});
+
+test("a preload takes a file out that the test files import", async () => {
+  for (const flags of [[], ["--isolate"]]) {
+    await expectCompiledToRunAsPlain(
+      {
+        "package.json": `{ "type": "module" }`,
+        "bunfig.toml": `[test]\npreload = ["./setup.js"]`,
+        "state.js": countingState,
+        "setup.js": `const path = require.resolve("./state.js");\nrequire(path).bump();\ndelete require.cache[path];\nrequire(path).bump();\nrequire(path).bump();`,
+        "a.test.js": `
+      import { test } from "bun:test";
+      import { bump, count } from "./state.js";
+      test("imports", () => { console.log(count, bump(), globalThis.loads); });`,
+      },
+      ...flags,
+    );
+  }
+});
+
+test("a later test file imports a CommonJS file that was taken out as require() answers it", async () => {
+  const imports = `
+      import { test } from "bun:test";
+      import state, { bump, made } from "./state.cjs";
+      import * as all from "./state.cjs";
+      test("imports", () => {
+        const now = require("./state.cjs");
+        console.log(state === now, state.count, bump(), now.count, made === now.made, all.default === now, globalThis.loads);
+      });`;
+  for (const loadsAgain of ["", "require(path).bump();"]) {
+    await expectCompiledToRunAsPlain({
+      "package.json": `{ "type": "module" }`,
+      "state.cjs": `globalThis.loads = (globalThis.loads ?? 0) + 1;\nlet count = 0;\nmodule.exports = { bump() { return ++count; }, get count() { return count; }, made: {} };`,
+      "a.test.js": `
+      import { test } from "bun:test";
+      import state from "./state.cjs";
+      test("takes it out", () => { const path = require.resolve("./state.cjs"); state.bump(); state.bump(); delete require.cache[path]; ${loadsAgain} });`,
+      "b.test.js": imports,
+    });
+  }
+});
+
+test("a later test file imports a file of data that was taken out anew", async () => {
+  const imports = `
+      import { test } from "bun:test";
+      import data, { inner } from "./d.json";
+      import * as all from "./d.json";
+      import typed from "./d.txt" with { type: "toml" };
+      import text from "./d.txt";
+      test("imports", () => {
+        const now = require("./d.json");
+        console.log(data.n, data === now, inner === now.inner, all.default === now, all.n, typed.n, JSON.stringify(text));
+      });`;
+  for (const flags of [[], ["--isolate"]]) {
+    for (const loadsAgain of ["", "require(path).n = 7;"]) {
+      await expectCompiledToRunAsPlain(
+        {
+          "package.json": `{ "type": "module" }`,
+          "d.json": `{ "n": 1, "inner": { "m": 2 } }`,
+          "d.txt": `n = 1\n`,
+          "a.test.js": `
+      import { test } from "bun:test";
+      import data from "./d.json";
+      import typed from "./d.txt" with { type: "toml" };
+      test("takes them out", () => {
+        const path = require.resolve("./d.json");
+        data.n = 5; typed.n = 5;
+        delete require.cache[path];
+        delete require.cache[require.resolve("./d.txt")];
+        ${loadsAgain}
+      });`,
+          "b.test.js": imports,
+        },
+        ...flags,
+      );
+    }
+  }
+});
+
+test("the JSX of a later test file calls the runtime that require() answers", async () => {
+  await expectCompiledToRunAsPlain({
+    "package.json": `{ "type": "module" }`,
+    "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "own" } }`,
+    "node_modules/own/package.json": `{ "name": "own", "type": "module", "exports": { "./jsx-runtime": "./jsx.js", "./jsx-dev-runtime": "./jsx.js" } }`,
+    "node_modules/own/jsx.js": `export let made = 0;\nexport const jsx = (type, props) => ({ type, props, number: ++made });\nexport const jsxs = jsx;\nexport const jsxDEV = jsx;\nexport const Fragment = "fragment";`,
+    "a.test.jsx": `
+      import { test } from "bun:test";
+      test("takes it out", () => {
+        const [one, two] = [<p />, <p />];
+        const path = require.resolve("own/jsx-dev-runtime");
+        delete require.cache[path];
+        const fresh = require(path);
+        fresh.jsx("q", {});
+        console.log(one.number, two.number, fresh.made);
+      });`,
+    "b.test.jsx": `
+      import { test } from "bun:test";
+      test("makes an element", () => { const made = <p id="x" />; console.log(made.type, made.number, require("own/jsx-dev-runtime").made); });`,
+  });
+});
+
+test("a file that may be taken out imports the test file that imports it", async () => {
+  await expectCompiledToRunAsPlain({
+    "package.json": `{ "type": "module" }`,
+    "state.js": `import { fromTestFile } from "./b.test.js";\n${countingState}\nexport const ask = () => fromTestFile();`,
+    "a.test.js": `
+      import { test } from "bun:test";
+      test("takes nothing out", () => { if (globalThis.never) delete require.cache[require.resolve("./state.js")]; });`,
+    "b.test.js": `
+      import { test } from "bun:test";
+      import { ask, bump, count } from "./state.js";
+      export function fromTestFile() { return "from the test file"; }
+      test("on a cycle", () => { console.log(count, bump(), ask()); });`,
+  });
+});
+
+test("a test file that imports a file that may be taken out is compiled, and so is the file until it is taken out", async () => {
+  const project = (first: string) => ({
+    "package.json": `{ "type": "module" }`,
+    "state.js": countingState,
+    "stays.js": `export function stays() {}`,
+    "a.test.js": first,
+    "b.test.js": `
+      import { test } from "bun:test";
+      import { jscDescribe } from "bun:jsc";
+      import { bump } from "./state.js";
+      import { stays } from "./stays.js";
+      function here() {}
+      const kind = made => /Structure 0x[0-9a-f]+:\\[(0x[0-9a-f]+)/.exec(jscDescribe(made))[1];
+      test("who is compiled", () => { console.log(bump(), kind(here) === kind(stays), kind(bump) === kind(stays)); });`,
+  });
+  const lastLine = async (first: string, env: Record<string, string | undefined>) => {
+    using dir = tempDir("require-cache-in-test-runs", project(first));
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
+    if (exitCode !== 0) console.error(stderr);
+    return { last: stdout.trim().split("\n").at(-1), exitCode };
+  };
+  // A function of compiled code has a structure of its own.
+  expect(await lastLine(takesStateOutAndLoadsItAgain, bunEnv)).toEqual({ last: "2 true false", exitCode: 0 });
+  const withTripwire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+  expect(await lastLine(takesNothingOut, withTripwire)).toEqual({ last: "4 true true", exitCode: 0 });
+});
+
 test("a module that runs again imports the modules that were not taken out", async () => {
   await expectCompiledToRunAsPlain({
     "package.json": `{ "type": "module" }`,

@@ -106,7 +106,7 @@ function f1 name="scene" module=m0 position=186 flags=[IsChecked, HasExplicitNam
   b1():
     v1 = NewArray v0, v0 contents=undefined|null|Array<undefined|null|Array<number>> @268
     v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|Array<number>>> site=w7 flags=[OmitsNull, OmitsUndefined]} @268
-    v3 = IteratorOpen v2 elementCount=1 [isDestructuring, hasRest] @232
+    v3 = IteratorOpen v2 elementCount=1 [isDestructuring, hasRest] @238 constructs
     Jump -> next b2() @232
   b2() handler=b17():
     v4 = IteratorResume v3 stepIndex=0 @232
@@ -134,7 +134,7 @@ function f1 name="scene" module=m0 position=186 flags=[IsChecked, HasExplicitNam
     v16 = Convert v15 declared={type=undefined|null|Array<undefined|null|Array<number>> site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @319
     v17 = NewArray v16 contents=undefined|null|Array<undefined|null|Array<number>> @318
     v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|Array<number>>> site=w9 flags=[OmitsNull, OmitsUndefined]} @318
-    v19 = IteratorOpen v18 elementCount=1 [isDestructuring] @281
+    v19 = IteratorOpen v18 elementCount=1 [isDestructuring] @294 constructs
     Jump -> next b8() @281
   b8() handler=b15():
     v20 = IteratorResume v19 stepIndex=0 @281
@@ -294,11 +294,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: v3: Array<undefined|@@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|@@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v4: Array<undefined|@@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|@@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: 2 = Integer integer=2
 # CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v5: int[1, 2]):
+# CHECK-NEXT: b1(v6: int[1, 2]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: 2 = Integer integer=2
-# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: v8: boolean = Less v6, v5
 # CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v9: 2 = Integer integer=2

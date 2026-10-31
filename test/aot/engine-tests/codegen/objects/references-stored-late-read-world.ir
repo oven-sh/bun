@@ -4415,9 +4415,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
-# CHECK: m0 position=10526 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w325 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w326}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string):
-# CHECK-NEXT: v1: string = RequireObjectCoercible v0 name="startsWith"
+# CHECK: m0 position=10526 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|"id"|"late"|"later"|"q00"|"q01"|"q02"|"q03"|"q04"|"q05"|"q06"|"q07"|"q08"|"q09"|"q10"|"q11"|"q12"|"q13"|"q14"|"q15"|"q16"|"q17"|"q18"|"q19"|"q20"|"q21"|"q22"|"q23"|"q24"|"q25"|"q26"|"q27"|"q28"|"q29"|"q30"|"q31"|"q32"|"q33"|"q34"|"q35"|"q36"|"q37"|"q38"|"q39"|"q40"|"q41"|"q42"|"q43"|"q44"|"q45"|"q46"|"q47"|"q48"|"q49"|"q50"|"q51"|"q52"|"q53"|"q54"|"q55"|"q56"|"q57"|"q58"|"q59" site=w325 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w326}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"id"|"late"|"later"|"q00"|"q01"|"q02"|"q03"|"q04"|"q05"|"q06"|"q07"|"q08"|"q09"|"q10"|"q11"|"q12"|"q13"|"q14"|"q15"|"q16"|"q17"|"q18"|"q19"|"q20"|"q21"|"q22"|"q23"|"q24"|"q25"|"q26"|"q27"|"q28"|"q29"|"q30"|"q31"|"q32"|"q33"|"q34"|"q35"|"q36"|"q37"|"q38"|"q39"|"q40"|"q41"|"q42"|"q43"|"q44"|"q45"|"q46"|"q47"|"q48"|"q49"|"q50"|"q51"|"q52"|"q53"|"q54"|"q55"|"q56"|"q57"|"q58"|"q59"):
+# CHECK-NEXT: v1: "id"|"late"|"later"|"q00"|"q01"|"q02"|"q03"|"q04"|"q05"|"q06"|"q07"|"q08"|"q09"|"q10"|"q11"|"q12"|"q13"|"q14"|"q15"|"q16"|"q17"|"q18"|"q19"|"q20"|"q21"|"q22"|"q23"|"q24"|"q25"|"q26"|"q27"|"q28"|"q29"|"q30"|"q31"|"q32"|"q33"|"q34"|"q35"|"q36"|"q37"|"q38"|"q39"|"q40"|"q41"|"q42"|"q43"|"q44"|"q45"|"q46"|"q47"|"q48"|"q49"|"q50"|"q51"|"q52"|"q53"|"q54"|"q55"|"q56"|"q57"|"q58"|"q59" = RequireObjectCoercible v0 name="startsWith"
 # CHECK-NEXT: v2: "l" = String string="l"
 # CHECK-NEXT: v3: boolean = CallBuiltin v1, v2 overload=StringPrototypeStartsWith/1 accessSite=393 @10537 tail
 # CHECK-NEXT: Return v3

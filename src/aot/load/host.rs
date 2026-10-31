@@ -471,7 +471,11 @@ impl<'a> LoadHost<'a> {
             b"", b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
         ];
         let left = &self.input.options.load.left_to_loader;
-        if left.is_empty() || !matches!(request.specifier, [b'/', ..] | [b'.', b'/' | b'.', ..]) {
+        // An executable has no loader to leave it to: the file stays in the program, and its load throws.
+        if left.is_empty()
+            || !self.input.options.load.runs_tests
+            || !matches!(request.specifier, [b'/', ..] | [b'.', b'/' | b'.', ..])
+        {
             return None;
         }
         let path = bun_sema::resolve::join(request.directory, request.specifier);

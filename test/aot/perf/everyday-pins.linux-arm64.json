@@ -1340,8 +1340,8 @@
     "untyped": 163132.2
   },
   "everyday-data-and-control/event-emitter": {
-    "typed": 81,
-    "untyped": 80
+    "typed": 6,
+    "untyped": 6
   },
   "everyday-data-and-control/headers": {
     "typed": 4565.4,
@@ -1853,14 +1853,14 @@
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
     "typed": 20,
-    "untyped": 20
+    "untyped": 18
   },
   "everyday-emitters/emitter-made-listened-to-and-dropped": {
     "typed": 601.6,
     "untyped": 597.5
   },
   "everyday-emitters/five-arguments": {
-    "typed": 8,
+    "typed": 4.4,
     "untyped": 8
   },
   "everyday-emitters/four-emitters-by-turn": {
@@ -1900,11 +1900,11 @@
     "untyped": 125
   },
   "everyday-emitters/one-listener-one-argument": {
-    "typed": 73,
-    "untyped": 71
+    "typed": 3.4,
+    "untyped": 3.4
   },
   "everyday-emitters/three-arguments": {
-    "typed": 8,
+    "typed": 4.4,
     "untyped": 8
   },
   "everyday-emitters/two-listeners": {

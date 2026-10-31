@@ -141,6 +141,12 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v17
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v18 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v18
+// CHECK-NEXT: v18 = TypeTest v1 testedType=undefined|null
+// CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v19):
+// CHECK-NEXT: v20 = PropGet v19 key="#o"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v21):
+// CHECK-NEXT: v22 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v22
 // CHECK-NEXT: }

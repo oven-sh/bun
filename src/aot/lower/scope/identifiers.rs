@@ -65,6 +65,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         identifier: ExprId,
     ) -> (ValueId, Option<ValueId>) {
+        if self.file.find_inlined_constant(identifier).is_some() {
+            return (self.lower_identifier(identifier), None);
+        }
         if let Some(found) = self.resolve_dynamic_binding(identifier) {
             let function = self.get_dynamic_value(identifier, found.holder, BindingRead::Value);
             return (function, Some(found.with_base));
@@ -187,6 +190,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn read_identifier(&mut self, identifier: ExprId, read: BindingRead) -> ValueId {
+        if let Some(constant) = self.file.find_inlined_constant(identifier) {
+            return self.emit_constant(constant);
+        }
         if let Some(found) = self.resolve_dynamic_binding(identifier) {
             return self.get_dynamic_value(identifier, found.holder, read);
         }

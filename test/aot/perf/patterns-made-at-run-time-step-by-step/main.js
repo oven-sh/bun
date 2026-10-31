@@ -2,6 +2,8 @@
 const made = text => text + String(Date.now()).slice(99);
 const manySteps = "^[^,;](?:[^,;][,;]){100}$";
 const rows = {
+  "a-run-behind-a-letter": ["x[a-z]*", "", "xabcdef1"],
+  "a-digit-behind-a-run-behind-a-letter": ["x[a-z]*[0-9]", "", "xabcdef1"],
   "three-runs-in-groups": ["<([^a-z<>/]*)/([^a-z<>]*)e([\\u200b\\u2060]*)n", "iu", "<一/en>"],
   "three-runs-in-lookaheads-read-again": ["<(?=([^a-z<>/]*))\\1/(?=([^a-z<>]*))(?:\\2)e(?=([\\u200b\\u2060]*))\\3n", "iu", "<一/en>"],
   "many-steps-behind-a-wide-character": [manySteps, "u", "一" + "a,b;".repeat(50)],

@@ -15,17 +15,14 @@ import { countsInstructions } from "../analysis-scaling/measure-check";
 import { slot, slots } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
 import { sharedSlot } from "../harness/shared-slots";
+import { findTool } from "../shell/find-tools";
 
 const repository = join(import.meta.dir, "..", "..", "..");
 const besideBun = dirname(bunExe());
 const suffix = isWindows ? ".exe" : "";
-const findTool = (name: string) =>
-  [besideBun, join(repository, "build", "release-local"), join(repository, "build", "release")]
-    .map(folder => join(folder, name + suffix))
-    .find(existsSync);
 
-export const testaot = process.env.TESTAOT ?? findTool("testaot");
-export const jsc = process.env.JSC ?? findTool("jsc");
+export const testaot = process.env.TESTAOT ?? findTool(bunExe(), "testaot");
+export const jsc = process.env.JSC ?? findTool(bunExe(), "jsc");
 export const engineTests =
   process.env.AOT_ENGINE_TESTS ??
   [
@@ -114,7 +111,7 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
 const skipOrFail = (why: string) =>
   // CI packs the tools wherever Bun has the compiler.
   isCI && !isWindows && !unsupported
-    ? test(`${why}: is this file in aotTestsThatStartToolsOfTheEngine of scripts/runner.node.ts?`, () =>
+    ? test(`${why}: does ../harness/tests-that-start-tools-of-the-engine.ts see that this file imports ./testaot.ts?`, () =>
         expect(why).toBeUndefined())
     : test.skip(`${why}: test/aot/engine/testaot.ts says where it is looked for`, () => {});
 

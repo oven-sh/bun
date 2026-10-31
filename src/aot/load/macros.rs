@@ -122,7 +122,7 @@ fn collect_macro_bindings(hir: &File<'_>, bound: &Bound<'_>) -> Vec<MacroBinding
     let mut bindings = Vec::new();
     for (index, import) in hir.imports.iter().enumerate() {
         let type_attribute = hir.import_attribute(import.attributes, known::r#type);
-        if import.type_only || type_attribute != Some(known::r#macro) {
+        if import.type_only || import.spec.is_none() || type_attribute != Some(known::r#macro) {
             continue;
         }
         let id = ImportId(index as u32);

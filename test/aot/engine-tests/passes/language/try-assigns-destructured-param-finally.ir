@@ -256,7 +256,7 @@ function f2 name="leave" module=m0 position=234 flags=[HasExplicitName] thisType
 # CHECK-NEXT: Jump -> next b14(v12, v13)
 # CHECK-NEXT: b13() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b14(v3, v8)
-# CHECK-NEXT: b14(v26: string, v27: int[0, 8589934591]) handler=b24(v26):
+# CHECK-NEXT: b14(v26: "default"|"k1"|"k2", v27: int[0, 8589934591]) handler=b24(v26):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v29: undefined = ForInStep v7, v6 position=v27
 # CHECK-NEXT: v30: int[0, 8589934590] = ResultAt v29 index=2
@@ -283,26 +283,29 @@ function f2 name="leave" module=m0 position=234 flags=[HasExplicitName] thisType
 # CHECK-NEXT: v44: boolean = StrictEq v34, v2
 # CHECK-NEXT: Branch v44 -> taken b19(| 0), notTaken b21()
 # CHECK-NEXT: b19(v45: "k1"|"k2"|"never") handler=b24(v45):
-# CHECK-NEXT: v46: "returned at " = String string="returned at "
-# CHECK-NEXT: v47: string = Add v46, v45
+# CHECK-NEXT: v46: "k1"|"k2" = AssumeType v45 provenType="k1"|"k2"
+# CHECK-NEXT: v47: "returned at " = String string="returned at "
+# CHECK-NEXT: v48: string = Add v47, v46
 # CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v48: "finally" = String string="finally"
-# CHECK-NEXT: v49: undefined = CallBuiltin -, v48, v45 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v49: "finally" = String string="finally"
+# CHECK-NEXT: v50: undefined = CallBuiltin -, v49, v46 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: Return v48
 # CHECK-NEXT: b21() handler=b24(v34):
-# CHECK-NEXT: v50: boolean = StrictEq v34, v1
-# CHECK-NEXT: Branch v50 -> taken b22(| 0), notTaken b23()
-# CHECK-NEXT: b22(v51: "k1"|"k2"|"k2 stored"|"never") frequency=Rare handler=b24(v34):
-# CHECK-NEXT: v52: "stopped at " = String string="stopped at "
-# CHECK-NEXT: v53: string = Add v52, v51
-# CHECK-NEXT: v54: Error = CallBuiltin -, v53 overload=Error/1 accessSite=2
-# CHECK-NEXT: Throw v54
-# CHECK-NEXT: b23():
-# CHECK-NEXT: Jump -> next b14(v34, v32)
-# CHECK-NEXT: b24(v55: string) role=CleanupHandler:
-# CHECK-NEXT: v56: anything = CatchValue
-# CHECK-NEXT: v57: "finally" = String string="finally"
-# CHECK-NEXT: v58: undefined = CallBuiltin -, v57, v55 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v51: fact = Specified
+# CHECK-NEXT: v52: "k1"|"k2" = AssumeType v34, v51 provenType="k1"|"k2"
+# CHECK-NEXT: v53: boolean = StrictEq v52, v1
+# CHECK-NEXT: Branch v53 -> taken b22(), notTaken b23()
+# CHECK-NEXT: b22() frequency=Rare handler=b24(v34):
+# CHECK-NEXT: v54: "stopped at " = String string="stopped at "
+# CHECK-NEXT: v55: string = Add v54, v52
+# CHECK-NEXT: v56: Error = CallBuiltin -, v55 overload=Error/1 accessSite=2
 # CHECK-NEXT: Throw v56
+# CHECK-NEXT: b23():
+# CHECK-NEXT: Jump -> next b14(v52, v32)
+# CHECK-NEXT: b24(v57: string) role=CleanupHandler:
+# CHECK-NEXT: v58: anything = CatchValue
+# CHECK-NEXT: v59: "finally" = String string="finally"
+# CHECK-NEXT: v60: undefined = CallBuiltin -, v59, v57 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: Throw v58
 # CHECK-NEXT: }

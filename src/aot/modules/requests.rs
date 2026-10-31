@@ -23,6 +23,7 @@ use crate::statistics::ComputedImport;
 use bun_core::strings;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Atom;
+use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{self, ExportId, ImportId, NodeData, StmtId, StmtKind};
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, is_module_call_of_plugin,
@@ -59,6 +60,8 @@ pub(super) struct FileScan {
     pub candidates: Vec<ModuleRef>,
     pub spellings: Vec<SpelledModule>,
     pub externals: Vec<(Atom, ExternalKind)>,
+    /// The compiled files behind specifiers that the loader of the run time answers for: `leave_imports_of_test_files_to_loader`.
+    pub left_to_loader: Vec<(Atom, FileId)>,
     pub requests: Vec<RequestDraft>,
     pub failures: Vec<PendingFailure>,
     pub computed_imports: Vec<ComputedImport<Span>>,
@@ -104,6 +107,116 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
         by_file[file.idx()] = scan;
     }
     Scans { by_file }
+}
+
+/// The runner starts a test file after the test files before it, and one of those may have taken a file out of `require.cache`. An import statement
+/// is bound to the instance that the loader holds when the importer is linked: behind `delete require.cache[path]` that is one from disk, and code that reads the
+/// variables of the compiled instance would see another module than `require(path)` answers. So the loader of the run time links such a statement of a test file,
+/// as it links an import of code that the build has not seen. It answers with the compiled module as long as nothing has taken that out.
+/// Modules on a cycle are linked together: by the time one of them can be taken out, the test file is bound to it.
+/// Returns whether there is such a statement.
+pub(super) fn leave_imports_of_test_files_to_loader(
+    input: &BindInput<'_, '_>,
+    scans: &mut Scans,
+    may_load_again: &dyn Fn(FileId) -> bool,
+) -> bool {
+    struct Statement {
+        importer: FileId,
+        site: usize,
+        specifier: Atom,
+        type_attribute: Option<bun_ast::Loader>,
+        target: FileId,
+    }
+    // The entry points of a program that test files are built upon are all of its files.
+    if input.application.is_none() && !input.runner_starts_entry_points {
+        return false;
+    }
+    // A test file under a tsconfig.json of its own is lowered as a program of its own, by the application's word: both have to say the same of each statement.
+    let is_left = |importer: FileId, specifier: Atom, target: FileId| match input.application {
+        Some(application) => (application.to_application)(importer).is_some_and(|file| {
+            application
+                .graph
+                .leaves_statement_to_loader(file, specifier)
+        }),
+        None => may_load_again(target),
+    };
+    let mut statements = Vec::new();
+    for &importer in input.files.entry_points() {
+        let Some(scan) = scans.find(importer) else {
+            continue;
+        };
+        let sites = input.files.analysis(importer).import_sites.iter();
+        for (index, (site, answer)) in sites.zip(&scan.sites).enumerate() {
+            let is_statement = matches!(site_form(site.kind), SiteForm::Declaration);
+            if let (
+                true,
+                ImportSpecifier::Constant(specifier),
+                &ScannedSite::Module(ModuleRef::File(target)),
+            ) = (is_statement, site.specifier, answer)
+                && is_left(importer, specifier, target)
+            {
+                let hir = input.files.hir(importer);
+                statements.push(Statement {
+                    importer,
+                    site: index,
+                    specifier,
+                    type_attribute: find_type_attribute(input.files, hir, site),
+                    target,
+                });
+            }
+        }
+    }
+    if statements.is_empty() {
+        return false;
+    }
+    let imported_files = |file: u32| -> Vec<u32> {
+        let requests = scans
+            .find(FileId(file))
+            .map_or(&[][..], |scan| &scan.requests);
+        let files = requests.iter().filter_map(|request| match request.target {
+            ModuleRef::File(target) => Some(target.0),
+            _ => None,
+        });
+        files.collect()
+    };
+    let edges: Vec<Vec<u32>> = (0..input.files.modules.len() as u32)
+        .map(imported_files)
+        .collect();
+    let (cycle_of, _) = strongly_connected_components(&edges);
+    statements.retain(|it| cycle_of[it.importer.idx()] != cycle_of[it.target.idx()]);
+    for statement in &statements {
+        let &Statement {
+            importer,
+            site,
+            specifier,
+            type_attribute,
+            target,
+        } = statement;
+        let scan = scans.find_mut(importer).expect("the file was scanned");
+        // The loader has one module under two spellings of its path. So has the importer: the first spelling stands for both.
+        let known = scan.left_to_loader.iter().find(|it| it.1 == target);
+        let is_new = known.is_none();
+        let left = ModuleRef::External {
+            importer,
+            specifier: known.map_or(specifier, |it| it.0),
+            type_attribute,
+        };
+        scan.sites[site] = ScannedSite::Module(left);
+        if !scan.left_to_loader.contains(&(specifier, target)) {
+            scan.left_to_loader.push((specifier, target));
+        }
+        if !is_new {
+            continue;
+        }
+        for request in &mut scan.requests {
+            if request.target == ModuleRef::File(target) {
+                request.target = left;
+            }
+        }
+        scan.externals
+            .push((specifier, ExternalKind::UncompiledCode));
+    }
+    !statements.is_empty()
 }
 
 // What `specifier` names from the file: the path of a relative one, else its text.
@@ -208,6 +321,7 @@ fn scan_file(
         candidates: scanner.candidates,
         spellings: scanner.spellings,
         externals: scanner.externals,
+        left_to_loader: Vec::new(),
         requests,
         failures: scanner.failures,
         computed_imports: scanner.computed_imports,
@@ -257,10 +371,6 @@ impl FileScanner<'_, '_> {
     // `import data from "./data.txt" with { type: "toml" }` of a file outside the program. `bun run` hands the loader the types that it knows, of import statements alone.
     // An import() hands over its options when it runs.
     fn with_type_attribute(&self, site: &ImportSite, scanned: ScannedSite) -> ScannedSite {
-        let (ImportSiteKind::Import(_), Some(attributes)) = (site.kind, site.attributes.some())
-        else {
-            return scanned;
-        };
         let ScannedSite::Module(ModuleRef::External {
             importer,
             specifier,
@@ -269,12 +379,10 @@ impl FileScanner<'_, '_> {
         else {
             return scanned;
         };
-        let written = (self.hir).import_attribute(attributes, bun_sema::atom::known::r#type);
-        let written = written.map(|it| self.files.atoms.bytes(it));
         ScannedSite::Module(ModuleRef::External {
             importer,
             specifier,
-            type_attribute: written.and_then(bun_ast::Loader::from_string),
+            type_attribute: find_type_attribute(self.files, self.hir, site),
         })
     }
 
@@ -534,6 +642,19 @@ impl FileScanner<'_, '_> {
         }
         requests.drafts
     }
+}
+
+fn find_type_attribute(
+    files: &Files<'_>,
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+) -> Option<bun_ast::Loader> {
+    let (ImportSiteKind::Import(_), Some(attributes)) = (site.kind, site.attributes.some()) else {
+        return None;
+    };
+    let written = hir.import_attribute(attributes, bun_sema::atom::known::r#type);
+    let written = written.map(|it| files.atoms.bytes(it));
+    written.and_then(bun_ast::Loader::from_string)
 }
 
 /// `import .. from "bun"` runs as `var .. = Bun` and loads no module.

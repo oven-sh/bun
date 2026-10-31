@@ -1,5 +1,6 @@
 //! Which files of a test run may load a second time. `delete require.cache[path]` makes the next `require()` or `import()` of the file load it again, from
 //! disk, and so does `require.cache[path] = undefined`. Code that asks for such a file asks the run time which instance answers, and knows nothing of what it gets, so the fewer the better.
+//! So does an import statement of a test file, which may be linked behind the `delete` of an earlier one: `leave_imports_of_test_files_to_loader`.
 
 use super::module_set::ModuleSet;
 use super::plan::ModuleRef;
@@ -22,6 +23,7 @@ use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
 use bun_sema::program::FileId;
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema_driver::host::to_native;
 
 #[derive(Default)]
 pub(super) struct EvictedModules {
@@ -411,11 +413,48 @@ pub(super) fn find_evicted_modules(
             }
         }
     }
+    add_files_named_below_files_left_to_loader(input, modules, &mut evicted);
     let forms: Vec<ModuleRef> = (evicted.named_by_copies.iter())
         .flat_map(|&it| modules.forms_of(it))
         .collect();
     evicted.named_by_copies.extend(forms);
     evicted
+}
+
+// The loader reads a file that is left to it from disk, as it reads a copy, and asks for what the text names. `export { absent } from "./lib.js"`:
+// it is the link to lib.js that fails. A mock of lib.js may have the name, and then the file runs.
+fn add_files_named_below_files_left_to_loader(
+    input: &BindInput<'_, '_>,
+    modules: &ModuleSet,
+    evicted: &mut EvictedModules,
+) {
+    if input.loads_below_files_left_to_loader.is_empty() {
+        return;
+    }
+    let held = modules.record_files.iter();
+    let held: FxHashMap<&[u8], FileId> = held
+        .map(|&file| (to_native(input.files.module(file).file_name()), file))
+        .collect();
+    for below in input.loads_below_files_left_to_loader {
+        let mut is_followed = vec![false; below.files.len()];
+        let mut to_follow: Vec<u32> = (0..below.left_count as u32).collect();
+        while let Some(place) = to_follow.pop() {
+            if core::mem::replace(&mut is_followed[place as usize], true) {
+                continue;
+            }
+            let file = &below.files[place as usize];
+            let is_left = (place as usize) < below.left_count;
+            if let Some(&held) = held.get(&file.path[..]).filter(|_| !is_left) {
+                evicted.named_by_copies.insert(ModuleRef::File(held));
+                continue;
+            }
+            if file.loads_unknown_files {
+                evicted.is_every_export_asked_for = true;
+                evicted.copies_name_any_file = true;
+            }
+            to_follow.extend_from_slice(&file.loads);
+        }
+    }
 }
 
 /// `require.cache["fs"] = { exports: fake }`: from then on `require("fs")` answers with what the entry exports, and `require("node:fs")` with the module.

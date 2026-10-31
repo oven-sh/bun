@@ -272,6 +272,15 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
 pub(crate) const PART_HAS_NO_PROGRAM: u32 = 3;
 /// The build began beside the build of the program below and guessed wrongly what that would hold. It is started again, above the program.
 pub(crate) const PART_IS_BUILT_AGAIN: u32 = 4;
+/// The build has made the program, and the file that it was given has no room for it. What the build prints goes to a file of the
+/// same directory, so only the exit status is sure to arrive.
+pub(crate) const PART_HAS_NO_ROOM: u32 = 5;
+/// Whether a program can wait in memory in place of a file of the temporary directory: `ProgramFile`.
+pub(crate) const PROGRAMS_CAN_WAIT_IN_MEMORY: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd"
+));
 static TEST_PART_DESCRIPTOR: OnceLock<Fd> = OnceLock::new();
 /// The programs that the part is built above, the first of them first.
 static BELOW_TEST_PART: Guarded<Vec<(&'static [u8], &'static Graph)>> = Guarded::new(Vec::new());
@@ -751,8 +760,18 @@ fn wait_for(still_built: &StillBuiltBelow) {
         match bun_sys::read(still_built.ended, &mut answer) {
             Ok(1) => break answer[0] == b'1',
             Err(error) if error.get_errno() == bun_sys::E::EINTR => {}
-            // The build below failed, or `bun test` is gone. Nobody waits for this program.
-            Ok(_) | Err(_) => exit_builder(1),
+            // The build below failed, or `bun test` is gone: nobody waits for this program. Or that build is started again, with
+            // another file to write to than the one that this build holds: then so is this one.
+            Ok(_) => exit_builder(PART_IS_BUILT_AGAIN),
+            Err(error) => {
+                Output::err(
+                    error,
+                    "--aot-build-test-part: how the build of the program below ended could not be read",
+                    (),
+                );
+                Output::flush();
+                exit_builder(1)
+            }
         }
     };
     log_step_of_build("the program below is there");
@@ -869,10 +888,12 @@ pub(crate) fn splits_test_files(
         // never sooner done, and a small run loses seconds (what the test files share has to be open to whatever they may do
         // with it, and the lowest layer holds all of Bun's own code). So a run is one program where the build of that fits into
         // the memory that the run can get.
-        && (is_told_to || {
-            let memory = memory_of_job::find(ctx.test_options.aot_memory_limit);
-            reach_more_source_than(memory / BYTES_HELD_FOR_A_BYTE_OF_SOURCE)
-        })
+        && (is_told_to || reach_more_source_than(source_that_fits_in_memory(ctx)))
+}
+
+/// How many bytes of source a program may hold for its build to fit into the memory that this `bun test --aot` can get.
+pub(crate) fn source_that_fits_in_memory(ctx: &ContextData) -> u64 {
+    memory_of_job::find(ctx.test_options.aot_memory_limit) / BYTES_HELD_FOR_A_BYTE_OF_SOURCE
 }
 
 /// What a build holds at its highest for each byte of source that it compiles: the most that was measured, since a guess that is
@@ -979,9 +1000,11 @@ pub(crate) struct TestPartFile {
 
 impl TestPartFile {
     /// Holds the paths of the part's test files, until the process that builds it replaces them with the program.
+    /// `in_memory`: the temporary directory has had no room for a program of this run.
     pub(crate) fn create<'p>(
         paths: impl Iterator<Item = &'p [u8]>,
         kind: TestPartKind,
+        in_memory: bool,
     ) -> Maybe<TestPartFile> {
         let mut list = Vec::new();
         for path in paths {
@@ -995,6 +1018,7 @@ impl TestPartFile {
                 &[],
                 match kind {
                     TestPartKind::TestFiles => ProgramFile::Memfd,
+                    _ if in_memory => ProgramFile::Memfd,
                     // Every process of the run maps it, to the end of the run, and reads some of it. Of a file on disk the system
                     // drops the pages that nobody reads when memory is short. Memory that stands in for a file it cannot drop.
                     TestPartKind::Shared
@@ -1006,7 +1030,7 @@ impl TestPartFile {
         });
         #[cfg(windows)]
         {
-            let _ = kind;
+            let _ = (kind, in_memory);
             let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
             let descriptor = write_to_named_file(&path, &list, &[])?;
             // SAFETY: `descriptor` is the open handle this function just made.
@@ -1408,15 +1432,28 @@ fn write_to_unnamed_file(bytes: &[u8], bytes_after: &[u8], first: ProgramFile) -
         Some(b"deleted") => ProgramFile::Deleted,
         _ => first,
     };
+    let mut is_last_try = false;
     loop {
-        let (descriptor, kind) = create_unnamed_file(first)?;
-        let file = File::from_fd(descriptor);
-        match write_to_empty_file(descriptor, [bytes, bytes_after]) {
-            Ok(()) => return Ok(file.into_raw()),
-            // Memory can be full where the disk is not.
-            Err(_) if kind < ProgramFile::Deleted => first = ProgramFile::Deleted,
-            Err(error) => return Err(error),
+        let (error, kind) = match create_unnamed_file(first) {
+            Ok((descriptor, kind)) => {
+                let file = File::from_fd(descriptor);
+                match write_to_empty_file(descriptor, [bytes, bytes_after]) {
+                    Ok(()) => return Ok(file.into_raw()),
+                    Err(error) => (error, kind),
+                }
+            }
+            // The kinds before it are passed over where they cannot be made.
+            Err(error) => (error, ProgramFile::Deleted),
+        };
+        if is_last_try {
+            return Err(error);
         }
+        is_last_try = true;
+        // Memory can be full where the disk is not, and the disk where memory is not.
+        first = match kind {
+            ProgramFile::Deleted => ProgramFile::Memfd,
+            ProgramFile::Memfd | ProgramFile::SharedMemory => ProgramFile::Deleted,
+        };
     }
 }
 
@@ -1487,6 +1524,15 @@ fn exit_write_failed(error: &bun_sys::Error) -> ! {
         "--aot could not write the compiled program to a temporary file: {}",
         (error,),
     );
+    use bun_sys::E;
+    let errno = error.get_errno();
+    let has_no_room = matches!(errno, E::ENOSPC | E::EFBIG | E::ENOMEM);
+    #[cfg(unix)]
+    let has_no_room = has_no_room || errno == E::EDQUOT;
+    if has_no_room && TEST_PART_DESCRIPTOR.get().is_some() {
+        Output::flush();
+        exit_builder(PART_HAS_NO_ROOM)
+    }
     Global::exit(1)
 }
 
@@ -1879,13 +1925,13 @@ unsafe extern "C" {
 }
 
 pub(crate) fn list_refused_changes() {
-    if is_checked() {
+    if runs_compiled_code() {
         Bun__AOT__listRefusedChanges();
     }
 }
 
 pub(crate) fn will_run_test_file(title: &[u8]) {
-    if is_checked() {
+    if runs_compiled_code() {
         *RUNNING_TEST_FILE.lock() = title.to_vec();
     }
 }
@@ -1914,9 +1960,14 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
         BStr::new(&RUNNING_TEST_FILE.lock()[..]),
     )
     .into_bytes();
+    add_refused_change(text);
+}
+
+/// In the process that prints the summary, and in a worker until the file is done.
+pub(crate) fn add_refused_change(line: Vec<u8>) {
     let mut refused = REFUSED_CHANGES.lock();
-    if refused.len() < MAX_LISTED_REFUSED_CHANGES && !refused.contains(&text) {
-        refused.push(text);
+    if refused.len() < MAX_LISTED_REFUSED_CHANGES && !refused.contains(&line) {
+        refused.push(line);
     }
 }
 

@@ -752,8 +752,10 @@ fn names_resolved_at_run_time_are_required() {
         may_be_absent,
         export_name,
         specifier,
+        drops_export_if_absent,
     } = *required;
     assert!(!may_be_absent);
+    assert!(!drops_export_if_absent);
     assert_eq!((export_name, specifier), (None, None));
     assert_eq!(module, module_named(&program, "barrel.js"));
     assert_eq!(program.strings.get(name), b"x");

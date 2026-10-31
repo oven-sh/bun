@@ -1,5 +1,6 @@
 // Where the compiler's own tools are looked for. tools.ts goes by it for the tests, and ../run-parallel.ts, which is no test and has no
 // "harness", for the programs that ask the `jsc` shell what compiled code did. The head of tools.ts says what is looked for where.
+// CI unpacks the tools for the tests that import this file: ../harness/tests-that-start-tools-of-the-engine.ts. Look for them through it alone.
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";

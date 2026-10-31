@@ -161,3 +161,50 @@ test.concurrent.skipIf(!canMount).each(["noexec", "size=64k"])(
     expect(exitCode).toBe(0);
   },
 );
+
+// What the test files import waits in deleted files, which every process of the run maps: ./test-run-in-parts.test.ts. What a build
+// prints goes to a file of the same directory.
+describe.skipIf(!canMount)("a temporary directory without room for what the test files import", () => {
+  const runTests = (dir: string, kind?: string) =>
+    run(
+      [
+        ...inOwnMounts,
+        "sh",
+        "-c",
+        `mount -t tmpfs -o size=1m tmpfs "$BUN_TMPDIR" && exec "$@"`,
+        "sh",
+        bunExe(),
+        "test",
+        "--aot",
+      ],
+      dir,
+      {
+        ...bunEnv,
+        BUN_TMPDIR: join(dir, "tmp"),
+        BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1",
+        BUN_DEBUG_TEST_AOT_PROGRAM_FILE: kind,
+      },
+    );
+  const about = (stderr: string, word: string) => stderr.split("\n").filter(line => line.includes(word));
+
+  test.concurrent("it is compiled again and waits in memory", async () => {
+    using dir = tempDir("aot-program-handover", files);
+    const { stdout, stderr, exitCode } = await runTests(String(dir));
+    expect(about(stderr, "no room")).toEqual([
+      `warn: the temporary directory ${join(String(dir), "tmp")} has no room for what the test files import, compiled. It is compiled again and kept in memory`,
+    ]);
+    expect(about(stderr, "could not")).toEqual([]);
+    expect(stdout).toContain("a: code in memfd, temporary files: \n");
+    expect(stderr).toMatch(/^ *2 pass$/m);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("where memory has none either, that is what is said", async () => {
+    using dir = tempDir("aot-program-handover", files);
+    const { stderr, exitCode } = await runTests(String(dir), "deleted");
+    expect(about(stderr, "could not")).toEqual([
+      "error: what the test files import could not be compiled: neither memory nor the temporary directory has room for the program, in the build of the packages. None of the 2 test files ran",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+});

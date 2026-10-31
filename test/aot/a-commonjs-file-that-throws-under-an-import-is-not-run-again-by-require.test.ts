@@ -47,6 +47,11 @@ const files: Record<string, string> = {
   "upward/module.mjs": importer("upward"),
   "back/file.cjs": thrower("back", `require("./module.mjs");`),
   "back/module.mjs": importer("back"),
+  "itself/file.cjs": thrower(
+    "itself",
+    `import("./file.cjs").then(() => say("itself: file.cjs loaded"), error => say("itself: file.cjs rejected", error.message));`,
+  ),
+  "itself/module.mjs": importer("itself"),
   "a.test.mjs": `import { test } from "bun:test";
 globalThis.runs = {};
 globalThis.say = (...words) => console.log(...words);
@@ -57,6 +62,41 @@ ${asked("awaited", `await import("./awaited/file.cjs")`)}
 ${asked("below", `await import("./below/module.mjs")`)}
 ${asked("upward", `require("./upward/module.mjs")`)}
 ${asked("back", `require("./back/file.cjs")`)}
+${asked("itself", `require("./itself/module.mjs")`)}
+test("end", () => {});
+`,
+};
+
+// `delete require.cache[path]` takes the file from the loader too, so the next require() runs it again, whoever ran it first.
+const takenOut = (name: string, first: string) => `
+try {
+  ${first};
+  say("${name}: loaded");
+} catch (error) {
+  say("${name}: threw", error.message);
+}
+for (const round of [1, 2]) {
+  delete require.cache[require.resolve("./${name}/file.cjs")];
+  try {
+    say("${name}: required", round, show(require("./${name}/file.cjs")));
+  } catch (error) {
+    say("${name}: require threw", round, error.message);
+  }
+}
+say("${name}: imported", Object.keys(await import("./${name}/file.cjs")).join());
+`;
+const throwsTwice = (name: string) => thrower(name).replace("throw new", `if (runs.${name} < 3) throw new`);
+const filesTakenOut: Record<string, string> = {
+  "package.json": `{}`,
+  "imported/file.cjs": throwsTwice("imported"),
+  "imported/module.mjs": importer("imported"),
+  "awaited/file.cjs": throwsTwice("awaited"),
+  "a.test.mjs": `import { test } from "bun:test";
+globalThis.runs = {};
+globalThis.say = (...words) => console.log(...words);
+const show = value => JSON.stringify(value) + " " + Object.prototype.toString.call(value);
+${takenOut("imported", `require("./imported/module.mjs")`)}
+${takenOut("awaited", `await import("./awaited/file.cjs")`)}
 test("end", () => {});
 `,
 };
@@ -111,8 +151,33 @@ for (const [way, words] of [
         `back: required 1 {"default":{"value":1},"value":1} [object Module]`,
         `back: required 2 {"default":{"value":1},"value":1} [object Module]`,
         "back: in require.cache true",
+        "itself: the file runs 1",
+        "itself: the module runs []",
+        "itself: loaded",
+        "itself: required 1 {} [object Module]",
+        "itself: required 2 {} [object Module]",
+        "itself: in require.cache true",
         "upward: module.mjs loaded",
+        "itself: file.cjs loaded",
       ],
+      exitCode: 0,
+    });
+    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
+  }, 180_000);
+
+  test(`a CommonJS file that threw under an import runs again once it is taken out of require.cache, ${way}`, async () => {
+    using dir = tempDir("aot-a-file-that-threw-under-an-import-is-taken-out", filesTakenOut);
+    const plain = await runTests(String(dir), undefined);
+    expect(plain).toEqual({
+      stdout: ["imported", "awaited"].flatMap(name => [
+        `${name}: the file runs 1`,
+        `${name}: threw ${name} throws 1`,
+        `${name}: the file runs 2`,
+        `${name}: require threw 1 ${name} throws 2`,
+        `${name}: the file runs 3`,
+        `${name}: required 2 {"value":3} [object Object]`,
+        `${name}: imported default,value`,
+      ]),
       exitCode: 0,
     });
     expect(await runTests(String(dir), words, "--aot")).toEqual(plain);

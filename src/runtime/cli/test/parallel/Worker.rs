@@ -80,6 +80,8 @@ pub(crate) struct Worker {
     pub(crate) part: u32,
     /// Only files that take over a gigabyte are left, and one of them runs.
     pub(crate) waits_for_heavy_file_to_end: bool,
+    /// `runner::first_loads` as of the last file that ran in this slot. The next process of the slot starts from there, as one process that ran all of them would.
+    pub(crate) first_loads: Vec<u8>,
 }
 
 /// What `Worker::start` borrows from the `Coordinator`.
@@ -400,6 +402,7 @@ impl Worker {
         f.u32(file_idx);
         f.str(file);
         f.u32(exit_code_left_by_tests.map_or(0, |code| u32::from(code) + 1));
+        f.str(&self.first_loads);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();

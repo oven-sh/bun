@@ -766,6 +766,7 @@ fn is_like_new(task: &mut Task) -> bool {
         cycle_ends_below,
         logged_at_cycles,
         logged_when_idle,
+        most_logged_between_idle_moments,
         immediate_tables,
         immediate_tables_after_commit,
         diagnostics_logged_before_stop,
@@ -794,6 +795,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && cycle_ends_below.get() == 0
         && logged_at_cycles.borrow().is_empty()
         && logged_when_idle.get() == [0; 2]
+        && most_logged_between_idle_moments.get() == 0
         && immediate_tables.get() == 0
         && *immediate_tables_after_commit == 0
         && diagnostics_logged_before_stop.get() == usize::MAX
@@ -861,6 +863,7 @@ fn ended_task_is_like_new() {
     check(&|task| task.cycle_since_idle.set(Some([0; 2])));
     check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
     check(&|task| task.logged_when_idle.set([0, 1]));
+    check(&|task| task.most_logged_between_idle_moments.set(1));
     check(&|task| task.immediate_tables.set(1));
     check(&|task| task.immediate_tables_after_commit = 1);
     check(&|task| task.diagnostics_logged_before_stop.set(0));

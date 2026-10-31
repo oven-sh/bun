@@ -18,6 +18,7 @@ const expected = {
   "a-counter-with-its-kind-that-is-not-met.js":
     "count: counter:RegExpsCreatedWithoutRecord = 0, but the executable counted 1",
   "a-limit-and-an-operation-that-are-met.js": "pass",
+  "arrivals-and-branches-added-up.js": "pass",
   "a-limit-that-is-not-met.js": "count: LookupTableBases >= 1, but the executable counted 0",
   "an-operation-that-is-not-met.js": "count: operationAOTJSONSourceOpen >= 1, but the executable counted 0",
   "a-name-that-nothing-counts.js": "count: NothingCountsThis = 0, but the executable counted nothing of that name",
@@ -40,6 +41,7 @@ test.skipIf(isWindows || !isCanary)(
       "a-counter-that-is-not-met.js": `// COUNTER: RegExpsCreatedWithoutRecord = 0\n${makesOnePattern}`,
       "a-counter-with-its-kind-that-is-not-met.js": `// COUNT: counter:RegExpsCreatedWithoutRecord = 0\n${makesOnePattern}`,
       "a-limit-and-an-operation-that-are-met.js": `// COUNTER: LookupTableBases = 0\n// COUNTER: operationAOTJSONSourceOpen = 0\n${makesOnePattern}`,
+      "arrivals-and-branches-added-up.js": `// COUNT: arrivalsAndBranches >= 100\nlet odd = 0;\nfor (let i = 0; i < 100 + (process.pid & 1); i++) if (i & 1) odd++;\nconsole.log(odd);\n`,
       "a-limit-that-is-not-met.js": `// COUNTER: LookupTableBases >= 1\n${makesOnePattern}`,
       "an-operation-that-is-not-met.js": `// COUNTER: operationAOTJSONSourceOpen >= 1\n${makesOnePattern}`,
       "a-name-that-nothing-counts.js": `// COUNTER: NothingCountsThis = 0\n${makesOnePattern}`,

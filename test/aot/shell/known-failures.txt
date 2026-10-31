@@ -56,14 +56,6 @@ calls-fast-paths/intl-constant-formatters	// IR= 1 formatRow CallBuiltin v[0-9]+
 calls-fast-paths/intl-constant-formatters	// IR= 1 formatRow CallBuiltin v[0-9]+, v[0-9]+ overload=IntlNumberFormatPrototypeFormat/
 calls-fast-paths/intl-constant-formatters	// IRT= 1 formatLocalTime CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
 calls-fast-paths/intl-constant-formatters	// IRT= 1 formatMinute CallBuiltin v[0-9]+, v[0-9]+ overload=IntlDateTimeFormatPrototypeFormat/
-# `list.filter(f).map(g)` runs as one loop only where the list is proven to be a plain array and the function is among the hottest. These functions are also handed frozen lists, lists with holes and a subclass: behind the test of
-# the list each method stays a call of its own (CallBuiltin .. [needsPristineReceiver]) and makes a list of its own.
-arrays/method-chains-run-as-one-loop	// IR= 1 filterThenMap NewArray(Like|WithCapacity)
-arrays/method-chains-run-as-one-loop	// IR= 1 fourStages NewArray(Like|WithCapacity)
-arrays/method-chains-run-as-one-loop	// IR= 1 mapThenFilter NewArray(Like|WithCapacity)
-arrays/method-chains-run-as-one-loop	// IR= 1 mapThenMap NewArray(Like|WithCapacity)
-arrays/method-chains-run-as-one-loop	// IR= 1 partOfTheList NewArray(Like|WithCapacity)
-arrays/method-chains-run-as-one-loop	// IR= 4 partOfTheList LoopHint
 # `function f(x, ...rest) { return rest[x] }`: the rest list is a parameter of the body, and the generic entrypoint makes it (CreateRest: in the frame where nothing else takes it, on the heap in byBoolean, typedNumber and typedString).
 # A read goes to the arguments themselves (GetMyArgumentByVal) only where the body is copied into its entrypoint.
 # `function step(steps: MapIterator<number>) { return steps.next().value }`, and so for SetIterator and ArrayIterator: the parameter is not tested for the class of the engine, `next` is read by name and called as any function is.

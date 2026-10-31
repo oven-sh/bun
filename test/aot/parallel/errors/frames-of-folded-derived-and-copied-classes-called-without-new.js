@@ -1,10 +1,12 @@
 function describe(error) {
   const frames = [];
   for (const text of String(error.stack).split("\n")) {
-    const frame = /^\s*at (?:(.*?) \()?[^()]*?:(\d+):(\d+)\)?$/.exec(text);
+    const frame = /^\s*at (?:(.*?) \()?([^()]*?):(\d+):(\d+)\)?$/.exec(text);
     if (!frame) continue;
     const name = frame[1] === "module code" || frame[1] === "<anonymous>" ? "" : (frame[1] ?? "");
-    frames.push(frames.length ? name + ":" + frame[2] + ":" + frame[3] : name);
+    // A built-in function written in JavaScript keeps its `native:`. A Bun built with assertions counts other lines and columns in one, and run-parallel.ts knows them by that word.
+    const place = (frame[2] === "native" ? "native:" : "") + frame[3] + ":" + frame[4];
+    frames.push(frames.length ? name + ":" + place : name);
   }
   return error.name + ": " + error.message + ", stack " + frames.slice(0, 3).join(" | ");
 }

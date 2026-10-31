@@ -188,6 +188,7 @@ test("a field of a host object lists everything that may be put there", () => {
       internalFields: [],
       keepsStringsOfStoredValues: false,
       nativeAccessors: [],
+      platforms: ["Darwin", "Linux", "Windows", "FreeBSD", "Android"],
     },
   ]);
 });
@@ -213,6 +214,7 @@ test("a host object says what lies under the names that it does not list, that i
       internalFields: [],
       keepsStringsOfStoredValues: true,
       nativeAccessors: ["zone"],
+      platforms: ["Darwin", "Linux", "Windows", "FreeBSD", "Android"],
     },
   ]);
 });

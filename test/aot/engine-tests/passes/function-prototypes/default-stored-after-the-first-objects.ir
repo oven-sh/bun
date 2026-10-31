@@ -385,13 +385,13 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Branch v26 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v27: "id" = String string="id"
-# CHECK-NEXT: v28: Array<string, Contiguous> = NewArray v27 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v28: Array<"id"|"url", Contiguous> = NewArray v27 contents="id"|"url" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b9(v28)
 # CHECK-NEXT: b8() frequency=Rare:
 # CHECK-NEXT: v29: Array<string> = CallBuiltin -, v25 overload=ObjectKeys/0 accessSite=21
 # CHECK-NEXT: Jump -> next b9(v29)
-# CHECK-NEXT: b9(v30: Array<string> ~ Array<string, Contiguous>):
-# CHECK-NEXT: v31: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b9(v30: Array<string> ~ Array<"id"|"url", Contiguous>):
+# CHECK-NEXT: v31: Array<"id"|"url", proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<"id"|"url", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v32: string = CallBuiltin v31 overload=ArrayPrototypeJoin/0 accessSite=23
 # CHECK-NEXT: v33: 1 = Integer integer=1
 # CHECK-NEXT: v34: undefined = Undefined
@@ -401,13 +401,13 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Branch v37 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v38: "id" = String string="id"
-# CHECK-NEXT: v39: Array<string, Contiguous> = NewArray v38 contents=string arrayStorage=Contiguous
+# CHECK-NEXT: v39: Array<"id"|"url", Contiguous> = NewArray v38 contents="id"|"url" arrayStorage=Contiguous
 # CHECK-NEXT: Jump -> next b12(v39)
 # CHECK-NEXT: b11() frequency=Rare:
 # CHECK-NEXT: v40: Array<string> = CallBuiltin -, v36 overload=ObjectKeys/0 accessSite=25
 # CHECK-NEXT: Jump -> next b12(v40)
-# CHECK-NEXT: b12(v41: Array<string> ~ Array<string, Contiguous>):
-# CHECK-NEXT: v42: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b12(v41: Array<string> ~ Array<"id"|"url", Contiguous>):
+# CHECK-NEXT: v42: Array<"id"|"url", proven, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<"id"|"url", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v43: string = CallBuiltin v42 overload=ArrayPrototypeJoin/0 accessSite=27
 # CHECK-NEXT: v44: int[0, 4294967295] = CallBuiltin v1, v11, v21, v32, v43 overload=ArrayPrototypePush/0 accessSite=28
 # CHECK-NEXT: v45: f1 = GetModuleVariable variable=g0

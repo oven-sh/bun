@@ -587,6 +587,7 @@ impl ResolutionGraph<'_> {
 fn find_link_failure(
     scans: &Scans,
     importer: FileId,
+    drops_absent_exports: bool,
     entry: ExportEntry,
     resolution: Resolution,
 ) -> Option<PendingFailure> {
@@ -602,6 +603,8 @@ fn find_link_failure(
         return None;
     };
     let kind = match resolution {
+        // A link that misses `default` says that `export *` does not hand it on, whatever the module is written in.
+        Resolution::NotFound if drops_absent_exports && name != known::default => return None,
         Resolution::NotFound => ModuleFailureKind::ExportNotFound { exporter, name },
         Resolution::Ambiguous => ModuleFailureKind::ExportAmbiguous { exporter, name },
         _ => return None,
@@ -696,6 +699,7 @@ pub(super) fn resolve_exports(
             failures.extend(find_link_failure(
                 scans,
                 module.file,
+                module.drops_absent_exports,
                 entry,
                 resolved.resolution,
             ));
@@ -730,6 +734,10 @@ pub(super) fn resolve_exports(
     let mut absent_names = Vec::new();
     for written in &commonjs_imports {
         if let Some((pending, imported)) = find_absent_name(&tables, modules, written) {
+            if written.is_dropped_if_absent {
+                tables.dropped_commonjs_names.push(imported);
+                continue;
+            }
             tables.failures.push(pending);
             let order = (written.asked_by.is_none(), written.written.order);
             absent_names.push((imported, order));
@@ -775,6 +783,8 @@ pub(super) struct ExportTables {
     pub(super) commonjs_imports: Vec<CommonJsImport>,
     /// Those that the body of the CommonJS module may end without, by importer, and of each importer in the order in which a link looks for them.
     pub(super) absent_commonjs_names: Vec<(CommonJsImport, FailureOrder)>,
+    /// Those that the body may end without and that the link of the importer does not ask for: the importer exports them, and goes on without the export.
+    pub(super) dropped_commonjs_names: Vec<CommonJsImport>,
     /// The CommonJS files that `import()`, `export *` or an exported namespace name.
     pub(super) commonjs_namespace_loads: Vec<FileId>,
 }
@@ -915,6 +925,12 @@ impl ExportTables {
             let (_, site, name) = self.indirect_sites[index];
             (site, name)
         })
+    }
+
+    /// The module exports what it imports under `name` at the site.
+    pub(super) fn exports_imported_name(&self, module: FileId, site: u32, name: Atom) -> bool {
+        let mut positions = 0..self.own_names(module).len();
+        positions.any(|position| self.find_indirect_name(module, position) == Some((site, name)))
     }
 
     /// The files that a link looks into for `name` of `module`: the module first, and wherever the name is not written, those that `export *` names there and that have it.

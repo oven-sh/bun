@@ -38,6 +38,7 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ownTemporaryFolder } from "../test/aot/harness/temporary-folders.ts";
+import { startsToolsOfTheEngine } from "../test/aot/harness/tests-that-start-tools-of-the-engine.ts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -508,21 +509,7 @@ const aotTestsThatFeedNothingNew = [
   "aot/counts-pinned-by-programs",
 ];
 // The engine's shell, its test program and its tests are packed beside Bun and are as large as Bun. They stay packed in a shard
-// that has none of the tests that start them. A test that starts them and is not listed fails in CI and names this list.
-const aotTestsThatStartToolsOfTheEngine = [
-  "aot/a-program-that-asks-the-shell-what-it-counted-is-held-to-the-answer",
-  "aot/engine",
-  "aot/cli/library-types",
-  "aot/code-addresses-have-names",
-  "aot/counts-pinned-by-programs",
-  "aot/generated-code-is-what-the-programs-say",
-  "aot/generated-code-of-module-bodies",
-  "aot/library-ticks",
-  "aot/programs-that-died-in-the-shell-on-one-platform",
-  "aot/shell-reports-missing-host-functions",
-  "aot/what-flow-says-of-an-entered-function-holds",
-  "aot/where-names-lie-in-executables",
-];
+// that has none of the tests that start them: startsToolsOfTheEngine().
 const toolsOfTheEngine = [`*/jsc${isWindows ? ".exe" : ""}`, `*/testaot${isWindows ? ".exe" : ""}`, "*/aot-tests/*"];
 let unpackToolsOfTheEngine: ((isNeeded: boolean) => Promise<unknown>) | undefined;
 // A fifth of the unpacked archive. Other CI steps read them, no test does.
@@ -1142,8 +1129,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   const { tests, driver } = early
     ? await early.listed
     : { tests: getRelevantTests(testsPath, modifiers, expectations, execPath), driver: undefined };
-  const startsToolsOfTheEngine = (testPath: string) =>
-    aotTestsThatStartToolsOfTheEngine.some(beginning => testPath.replaceAll("\\", "/").startsWith(beginning));
   const beforeFirstTest: (Promise<unknown> | undefined)[] = [
     unpackToolsOfTheEngine?.(tests.some(startsToolsOfTheEngine)),
   ];

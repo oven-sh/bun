@@ -1145,7 +1145,7 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v208: boolean = ResultAt v207
 # CHECK-NEXT: v209: 1 = Integer integer=1
 # CHECK-NEXT: v210: int[0, 1] = ToNumber v208
-# CHECK-NEXT: v211: i32 = LShift v209, v210
+# CHECK-NEXT: v211: int[1, 2] = LShift v209, v210
 # CHECK-NEXT: v212: anything = ResultAt v207 index=3
 # CHECK-NEXT: v213: 1 = Integer integer=1
 # CHECK-NEXT: v214: int[0, 1] = BitAnd v211, v213
@@ -1163,7 +1163,7 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v222: boolean = ResultAt v221
 # CHECK-NEXT: v223: 1 = Integer integer=1
 # CHECK-NEXT: v224: int[0, 1] = ToNumber v222
-# CHECK-NEXT: v225: i32 = LShift v223, v224
+# CHECK-NEXT: v225: int[1, 2] = LShift v223, v224
 # CHECK-NEXT: v226: boolean = ResultAt v221 index=6
 # CHECK-NEXT: v227: 1 = Integer integer=1
 # CHECK-NEXT: v228: int[0, 1] = BitAnd v225, v227

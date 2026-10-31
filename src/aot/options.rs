@@ -1,4 +1,5 @@
 use core::num::NonZeroUsize;
+use std::sync::Arc;
 
 use crate::engine::{ExecutableIdentity, TargetImageForm};
 use bun_ast::Loader;
@@ -42,6 +43,25 @@ pub struct LibraryCode {
     pub functions: Vec<u32>,
 }
 
+/// A file that is left to the loader, or that such a file loads, as the compile that gave the file up has read it.
+#[derive(Debug)]
+pub struct FileBelowFileLeftToLoader {
+    pub path: Vec<u8>,
+    /// The files that its import sites load, by their places in `LoadsBelowFilesLeftToLoader::files`.
+    pub loads: Vec<u32>,
+    /// It may load a file under a name that it does not spell.
+    pub loads_unknown_files: bool,
+}
+
+/// `export { absent } from "./lib.js"` fails where the loader links it, so the loader has asked for lib.js by then. What the program holds of
+/// these files the loader asks the program for. The others it reads from disk, and goes on to what they load.
+#[derive(Debug)]
+pub struct LoadsBelowFilesLeftToLoader {
+    pub files: Vec<FileBelowFileLeftToLoader>,
+    /// So many of `files`, the first ones, are left to the loader.
+    pub left_count: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct LoadOptions {
     pub project_root: Vec<u8>,
@@ -64,7 +84,7 @@ pub struct LoadOptions {
     pub library_code_lacked: LibraryCode,
     /// The program holds all of Bun's own code that can be got at without a name that the build sees.
     pub keeps_library_code_without_names: bool,
-    /// An earlier compile of the same program read `process.mainModule` where no file names a way to a module object, by the word of the engine.
+    /// An earlier compile of the same program read `process.mainModule`, or the `main` of a `require`, where no file names a way to a module object, by the word of the engine.
     pub reads_main_module_without_its_name: bool,
     /// An earlier compile of the same program stored into `Bun.main`, by the word of the engine: any file may be the main module.
     pub stores_path_of_main_module: bool,
@@ -108,6 +128,8 @@ pub struct LoadOptions {
     pub opened_names: Vec<OpenedName>,
     /// Ascending. Of a test run: the files that an earlier compile of the same tests could not take, and that are no test files. The loader of the run time loads them where a test asks for them, and throws there what `bun test` throws.
     pub left_to_loader: Vec<Vec<u8>>,
+    /// One of each compile that added to `left_to_loader`.
+    pub loads_below_files_left_to_loader: Vec<Arc<LoadsBelowFilesLeftToLoader>>,
     /// `AotOptions::host_runs_files_from_disk`: the entry point that says what those files do with the program. Nothing loads it.
     /// Each import statement in it stands for a load by one of those files, so a module that cannot load fails none of the others.
     pub stand_in_for_files_from_disk: Option<Vec<u8>>,
@@ -247,6 +269,7 @@ impl LoadOptions {
             replaced_builtins: Vec::new(),
             opened_names: Vec::new(),
             left_to_loader: Vec::new(),
+            loads_below_files_left_to_loader: Vec::new(),
             stand_in_for_files_from_disk: None,
         }
     }

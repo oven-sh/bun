@@ -1024,10 +1024,17 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
         test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
         test_run_is_one_program: part_words.contains(&&b"TestRunLayers:0"[..]),
+        source_that_fits_in_memory: (cmd == Tag::TestCommand && compiles)
+            .then(|| run_compiled::source_that_fits_in_memory(ctx)),
         is_part_of_test_files,
         entry_points_run_again: cmd == Tag::TestCommand
             && ctx.test_options.repeat_count > 1
             && !run_compiled::builds_what_test_parts_share(),
+        // `VirtualMachine::use_isolation_source_provider_cache()`: there the transpiler hands the loader the record of a module, which says that it is TypeScript.
+        typescript_drops_absent_exports: cmd == Tag::TestCommand
+            && ctx.test_options.isolate
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                .unwrap_or(false),
         imports_are_in_other_images: !run_compiled::images_below_test_part().is_empty(),
         shares_realms: run_compiled::builds_what_test_parts_share()
             || !run_compiled::images_below_test_part().is_empty(),

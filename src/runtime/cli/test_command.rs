@@ -829,6 +829,15 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
     preloads: &[Box<[u8]>],
 ) -> ReplacedByTests {
     let preloads = find_files_of_preloads(vm, preloads);
+    // Every name that a test file or a helper imports is asked for, and whoever loads the file says what is wrong with one.
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut vm.transpiler.resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
     let files = test_files.iter().map(|path| path.to_vec());
     let files: Vec<Vec<u8>> = files
         .chain(preloads.iter().map(|path| path.to_vec()))

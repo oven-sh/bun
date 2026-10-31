@@ -66,6 +66,16 @@ unsafe extern "C" {
         context: *mut core::ffi::c_void,
         each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, *const u64, usize),
     );
+    fn Bun__AOT__forEachFirstLoad(
+        vm: *mut crate::VM,
+        context: *mut core::ffi::c_void,
+        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, bool),
+    );
+    fn Bun__AOT__noteFirstLoadInEarlierProcess(
+        vm: *mut crate::VM,
+        path: Bytes,
+        was_synchronous: bool,
+    );
     fn Bun__AOT__imagesHoldFile(images: *const Bytes, count: usize, path: Bytes) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
         global: &JSGlobalObject,
@@ -328,6 +338,42 @@ pub fn for_each_counted_file(global: &JSGlobalObject, mut each: &mut dyn FnMut(&
     let context = (&raw mut each).cast::<core::ffi::c_void>();
     // SAFETY: the VM is that of this thread, and `context` outlives the call, which does not keep it.
     unsafe { Bun__AOT__forEachCountedFile(global.vm_ptr(), context, call) };
+}
+
+/// `Bun__AOT__isLoadedSynchronously`: the first load of a CommonJS file decides for every realm of the process, as the text that
+/// `bun test --isolate` keeps does. The files that have been asked about, in this process or in one that handed them on.
+pub fn for_each_first_load(global: &JSGlobalObject, mut each: &mut dyn FnMut(&[u8], bool)) {
+    unsafe extern "C" fn call(context: *mut core::ffi::c_void, path: Bytes, was_synchronous: bool) {
+        // SAFETY: `context` is the `each` below, which outlives the walk. `path` is readable during the call.
+        unsafe {
+            let each = &mut *context.cast::<&mut dyn FnMut(&[u8], bool)>();
+            each(
+                core::slice::from_raw_parts(path.ptr, path.len),
+                was_synchronous,
+            )
+        }
+    }
+    if compiled_program().is_none() {
+        return;
+    }
+    let context = (&raw mut each).cast::<core::ffi::c_void>();
+    // SAFETY: the VM is that of this thread, and `context` outlives the call, which does not keep it.
+    unsafe { Bun__AOT__forEachFirstLoad(global.vm_ptr(), context, call) };
+}
+
+/// What `for_each_first_load` named in the process that ran the test files before those of this one.
+pub fn note_first_load_in_earlier_process(
+    global: &JSGlobalObject,
+    path: &[u8],
+    was_synchronous: bool,
+) {
+    if compiled_program().is_none() {
+        return;
+    }
+    // SAFETY: the VM is that of this thread, and `path` outlives the call, which copies it.
+    unsafe {
+        Bun__AOT__noteFirstLoadInEarlierProcess(global.vm_ptr(), bytes_of(path), was_synchronous)
+    };
 }
 
 /// For a build above `images`, the first of them first, which does not run them: whether the file with code at `path` is a module of one of them, entry point or not.

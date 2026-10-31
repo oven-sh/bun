@@ -132,6 +132,7 @@
   "everyday-code-out-of-run-time-text/names-stored-on-an-object-of-a-constructor-of-the-program": 26.43,
   "everyday-code-out-of-run-time-text/the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it": 6.38,
   "everyday-collections/map-entries-to-an-object": 12,
+  "everyday-collections/map-get-by-names-split-out-of-one-line-twice": 1.12,
   "everyday-collections/map-get-by-number": 1.48,
   "everyday-collections/map-get-by-object": 1.6,
   "everyday-collections/map-get-by-string-among-a-hundred-keys-one-call-at-a-time": 1.21,

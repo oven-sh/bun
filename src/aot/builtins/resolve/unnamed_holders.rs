@@ -1,5 +1,6 @@
 //! Built-in objects that a file reaches without their names: `Object.getPrototypeOf([])`, `[].__proto__`, `(1).constructor.prototype`,
-//! `new Date().constructor`, `Reflect.get(globalThis, "Math")`, `(0, eval)("this").Math`, `held.m` of `{ m: Math }`, `new Proxy(Math, handler)`.
+//! `new Date().constructor`, `Reflect.get(globalThis, "Math")`, `(0, eval)("this").Math`, `held.m` of `{ m: Math }`, `new Proxy(Math, handler)`,
+//! `wrap(Math)` of `const wrap = object => new Proxy(object, {})`.
 //! A guess at what a test means, like `spelled_values`: nothing is proved by it, and an object too many costs a test where its member is used.
 //!
 //! EVERY object that an expression may stand for is answered, not the first: `Reflect.get({}, name)` under
@@ -11,8 +12,12 @@
 use super::resolver::Resolver;
 use crate::builtins::table::{self, BuiltinId, MemberLookup, Prototype};
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, SymbolId};
-use bun_sema::hir::{BinOp, CallId, ExprId, ExprKind, Flags, MemberKey, PropKey, PropKind};
+use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
+use bun_sema::fold::{TreeNode, push_children};
+use bun_sema::hir::{
+    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, MemberKind,
+    PropKey, PropKind, StmtKind,
+};
 use bun_sema::util::FxHashMap;
 use std::rc::Rc;
 
@@ -25,6 +30,12 @@ pub(super) struct UnnamedHolders {
     prototypes: FxHashMap<ExprId, Builtins>,
     /// What a variable or a parameter stands for is the same wherever it is named.
     values: FxHashMap<SymbolId, Rc<[ExprId]>>,
+    /// What each `return` of a function hands back.
+    returned: FxHashMap<FnId, Rc<[ExprId]>>,
+    /// What a constructor hands out, and whether what it is handed goes into that.
+    constructed: FxHashMap<FnId, (Rc<[ExprId]>, bool)>,
+    /// What is stored into a variable behind its declaration. Made when it is first asked for.
+    stored: Option<Rc<FxHashMap<SymbolId, Vec<ExprId>>>>,
 }
 
 fn add(found: &mut Vec<BuiltinId>, more: impl IntoIterator<Item = BuiltinId>) {
@@ -58,13 +69,46 @@ impl Resolver<'_, '_> {
         if let Some(values) = self.unnamed_holders.borrow().values.get(&symbol) {
             return Rc::clone(values);
         }
-        let values: Rc<[ExprId]> = self.find_values_spelled_for(expr).into();
+        let mut values = self.find_values_spelled_for(expr);
+        // `let proxy; beforeEach(() => { proxy = wrap(Math); });`
+        for &stored in self
+            .stores_by_name()
+            .get(&symbol)
+            .map_or(&[][..], Vec::as_slice)
+        {
+            values.extend(self.find_values_spelled_for(stored));
+        }
+        let values: Rc<[ExprId]> = values.into();
         let kept = Rc::clone(&values);
         self.unnamed_holders
             .borrow_mut()
             .values
             .insert(symbol, kept);
         values
+    }
+
+    fn stores_by_name(&self) -> Rc<FxHashMap<SymbolId, Vec<ExprId>>> {
+        if let Some(stores) = &self.unnamed_holders.borrow().stored {
+            return Rc::clone(stores);
+        }
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut stores: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
+        for expr in (0..hir.exprs.len() as u32).map(ExprId) {
+            if let ExprKind::Assign {
+                op: None | Some(BinOp::Nullish | BinOp::Or | BinOp::And),
+                target,
+                value,
+            } = hir[expr].kind
+                && let target = hir.skip_type_assertions(target)
+                && matches!(hir[target].kind, ExprKind::Ident(_))
+                && let Binding::Symbol(name) = bound.binding(target)
+            {
+                stores.entry(name).or_default().push(value);
+            }
+        }
+        let stores = Rc::new(stores);
+        self.unnamed_holders.borrow_mut().stored = Some(Rc::clone(&stores));
+        stores
     }
 
     fn find_builtins_behind(&self, expr: ExprId) -> Builtins {
@@ -95,20 +139,32 @@ impl Resolver<'_, '_> {
         match hir[expr].kind {
             ExprKind::Ident(_) => {
                 // A name of which nothing is known stands for its first mention.
-                let is_name = |value: ExprId| matches!(hir[value].kind, ExprKind::Ident(_));
                 for &value in self.spelled_values_of(expr).iter() {
-                    if !is_name(value) {
+                    if value != expr {
                         add(&mut found, self.find_builtins_behind(value).iter().copied());
                     }
                 }
+                // `const { proxy } = make(Math)`, `const [proxy] = make(Math)`, `for (const proxy of make(Math))`
+                if let Some(whole) = self.find_whole_that_name_is_part_of(expr) {
+                    add(&mut found, self.find_builtins_that_helpers_answer(whole));
+                }
+                // `withProxy(Math, proxy => { .. })`, `wrap(Math).then(proxy => { .. })`
+                if let Some(call) = self.find_call_that_calls_back_with(expr) {
+                    add(&mut found, self.find_builtins_that_helpers_answer(call));
+                }
             }
             ExprKind::Call(call) => found = self.find_builtins_that_call_answers(call),
+            // `await wrap(Math)` of `const wrap = async object => new Proxy(object, {})`
+            ExprKind::Await(promised) => found = self.find_builtins_behind(promised).to_vec(),
             ExprKind::New(call)
                 if self.find_builtin(hir[call].callee) == Some(BuiltinId::Proxy) =>
             {
                 if let Some(target) = hir.ids(hir[call].args).next() {
                     found = self.find_builtins_behind(target).to_vec();
                 }
+            }
+            ExprKind::New(call) if self.value_of(hir[call].callee).is_none() => {
+                found = self.find_builtins_that_construction_answers(call);
             }
             _ => {
                 let names = match hir.member_key(expr) {
@@ -122,6 +178,362 @@ impl Resolver<'_, '_> {
                         &mut found,
                         object.map_or(Vec::new(), |it| self.find_members_behind(it, name)),
                     );
+                }
+                // `make(Math).proxy`, `make(Math)[0]`, `Proxy.revocable(Math, {}).proxy`
+                if let Some((object, _)) = hir.member_key(expr) {
+                    add(&mut found, self.find_builtins_that_helpers_answer(object));
+                }
+            }
+        }
+        found
+    }
+
+    /// The initializer of the pattern that declares the name.
+    fn find_whole_that_name_is_part_of(&self, name: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let Binding::Symbol(symbol) = bound.binding(name) else {
+            return None;
+        };
+        let &[Decl::Var(mut pattern)] = bound.symbol(symbol).decls else {
+            return None;
+        };
+        let mut is_part = false;
+        loop {
+            match bound.pat_parent[pattern.idx()] {
+                PatParent::Elem(whole, _) | PatParent::Prop(whole, _) => {
+                    (pattern, is_part) = (whole, true);
+                }
+                PatParent::Var(declaration) if hir[declaration].init.is_some() => {
+                    return is_part.then_some(hir[declaration].init);
+                }
+                PatParent::Var(declaration) => {
+                    let statement = bound.var_stmt[declaration.idx()];
+                    let Parent::Stmt(above) = bound.parent_of_stmt(statement) else {
+                        return None;
+                    };
+                    return match hir[above].kind {
+                        StmtKind::ForOf { left, expr, .. } if left == statement => Some(expr),
+                        _ => None,
+                    };
+                }
+                PatParent::Param(_) | PatParent::None => return None,
+            }
+        }
+    }
+
+    /// The call that is handed the function whose parameter the name is.
+    fn find_call_that_calls_back_with(&self, name: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let Binding::Symbol(symbol) = bound.binding(name) else {
+            return None;
+        };
+        let &[Decl::Param(mut pattern)] = bound.symbol(symbol).decls else {
+            return None;
+        };
+        let parameter = loop {
+            match bound.pat_parent[pattern.idx()] {
+                PatParent::Elem(whole, _) | PatParent::Prop(whole, _) => pattern = whole,
+                PatParent::Param(parameter) => break parameter,
+                PatParent::Var(_) | PatParent::None => return None,
+            }
+        };
+        let FnOwner::Expr(function) = bound.fns[bound.param_fn[parameter.idx()].idx()].owner else {
+            return None;
+        };
+        let Parent::Expr(above) = bound.parent_of_expr(function) else {
+            return None;
+        };
+        let ExprKind::Call(call) = hir[above].kind else {
+            return None;
+        };
+        (hir.skip_type_assertions(hir[call].callee) != function).then_some(above)
+    }
+
+    fn is_call_of_helper(&self, value: ExprId) -> bool {
+        let hir = self.input.hir;
+        match hir[value].kind {
+            ExprKind::Call(call) => matches!(
+                self.value_of(hir[call].callee).map(|it| it.path.id),
+                None | Some(BuiltinId::ProxyRevocable | BuiltinId::PromiseResolve)
+            ),
+            ExprKind::New(call) => self.value_of(hir[call].callee).is_none(),
+            ExprKind::Await(promised) => self.is_call_of_helper(hir.skip_type_assertions(promised)),
+            _ => false,
+        }
+    }
+
+    /// What a helper answers may hold what stands for a built-in object, under a name or at an index that only the helper knows.
+    fn find_builtins_that_helpers_answer(&self, holder: ExprId) -> Vec<BuiltinId> {
+        let mut found = Vec::new();
+        for &value in self.spelled_values_of(holder).iter() {
+            if self.is_call_of_helper(value) {
+                add(&mut found, self.find_builtins_behind(value).iter().copied());
+            }
+        }
+        found
+    }
+
+    /// The functions of the file that the callee may be: `function wrap(..) { .. }`, `const wrap = .. => ..`, `tools.wrap` of `{ wrap(..) { .. } }`.
+    fn find_functions_behind(&self, callee: ExprId) -> Vec<FnId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let callee = hir.skip_type_assertions(callee);
+        let mut methods = Vec::new();
+        let values: Vec<ExprId> = match hir.member_key(callee) {
+            Some((object, MemberKey::Name(name))) => {
+                let wholes = self.spelled_values_of(object);
+                // `Tools.wrap(..)`, `new Tools().wrap(..)`
+                for &whole in wholes.iter() {
+                    let (class, is_static) = match hir[whole].kind {
+                        ExprKind::New(call) => (hir[call].callee, false),
+                        _ => (whole, true),
+                    };
+                    for class in self.find_classes_behind(class) {
+                        let members = hir[class].members.iter().map(|it| hir[it]);
+                        methods.extend(
+                            members
+                                .filter(|it| {
+                                    it.kind == MemberKind::Method
+                                        && it.flags.contains(Flags::STATIC) == is_static
+                                        && matches!(it.key, PropKey::Name(key) if key == name)
+                                })
+                                .map(|it| it.func),
+                        );
+                    }
+                }
+                let parts = wholes.iter();
+                let parts = parts.filter_map(|&whole| self.find_property_of_literal(whole, name));
+                parts
+                    .flat_map(|part| self.spelled_values_of(part).to_vec())
+                    .collect()
+            }
+            _ => self.spelled_values_of(callee).to_vec(),
+        };
+        let functions =
+            values
+                .into_iter()
+                .filter_map(|value| match (hir[value].kind, bound.binding(value)) {
+                    (ExprKind::Fn(function), _) => Some(function),
+                    (ExprKind::Ident(_), Binding::Symbol(symbol)) => {
+                        match *bound.symbol(symbol).decls {
+                            [Decl::Fn(function)] => Some(function),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                });
+        methods.extend(functions);
+        methods
+    }
+
+    /// The classes of the file that the expression may be: `class Tools { .. }`, `const Tools = class { .. }`.
+    fn find_classes_behind(&self, class: ExprId) -> Vec<ClassId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let values = self.spelled_values_of(class);
+        let classes =
+            values
+                .iter()
+                .filter_map(|&value| match (hir[value].kind, bound.binding(value)) {
+                    (ExprKind::Class(class), _) => Some(class),
+                    (ExprKind::Ident(_), Binding::Symbol(symbol)) => {
+                        match *bound.symbol(symbol).decls {
+                            [Decl::Class(class)] => Some(class),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                });
+        classes.collect()
+    }
+
+    /// What the constructor returns, and what it stores into the object that it makes: `this.proxy = new Proxy(target, {})`.
+    fn values_handed_out_by_constructor(&self, constructor: FnId) -> (Rc<[ExprId]>, bool) {
+        if let Some(answer) = self.unnamed_holders.borrow().constructed.get(&constructor) {
+            return answer.clone();
+        }
+        let hir = self.input.hir;
+        let mut values = self.values_returned_by(constructor).to_vec();
+        let statements = match hir[constructor].body {
+            FnBody::Block(statements) => hir.ids(statements).map(TreeNode::Stmt).collect(),
+            FnBody::Expr(_) | FnBody::None => Vec::new(),
+        };
+        let mut stack: Vec<TreeNode> = statements;
+        while let Some(node) = stack.pop() {
+            match node {
+                // `this` is another object there.
+                TreeNode::Function(function) if hir[function].kind != FnKind::Arrow => continue,
+                TreeNode::Class(_) => continue,
+                TreeNode::Expr(expr) => {
+                    if let ExprKind::Assign { target, value, .. } = hir[expr].kind
+                        && let Some((object, _)) = hir.member_key(hir.skip_type_assertions(target))
+                        && matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::This)
+                    {
+                        values.push(value);
+                    }
+                }
+                _ => {}
+            }
+            push_children(hir, node, &mut stack);
+        }
+        let takes_what_it_is_handed =
+            (values.iter()).any(|&value| self.names_parameter_of(constructor, value));
+        let answer: (Rc<[ExprId]>, bool) = (values.into(), takes_what_it_is_handed);
+        self.unnamed_holders
+            .borrow_mut()
+            .constructed
+            .insert(constructor, answer.clone());
+        answer
+    }
+
+    fn names_parameter_of(&self, function: FnId, value: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut stack = vec![TreeNode::Expr(value)];
+        while let Some(node) = stack.pop() {
+            if let TreeNode::Expr(expr) = node
+                && matches!(hir[expr].kind, ExprKind::Ident(_))
+                && let Binding::Symbol(symbol) = bound.binding(expr)
+                && let [Decl::Param(mut pattern)] = *bound.symbol(symbol).decls
+            {
+                while let PatParent::Elem(whole, _) | PatParent::Prop(whole, _) =
+                    bound.pat_parent[pattern.idx()]
+                {
+                    pattern = whole;
+                }
+                if matches!(bound.pat_parent[pattern.idx()], PatParent::Param(it) if bound.param_fn[it.idx()] == function)
+                {
+                    return true;
+                }
+            }
+            push_children(hir, node, &mut stack);
+        }
+        false
+    }
+
+    /// `new Observed(Math)` of `class Observed { constructor(target) { return new Proxy(target, {}); } }`. Of a class of the file: what its constructor, its fields
+    /// and those of the classes above hand out, and what the construction is handed where that goes into it. Of a callee that nobody sees, as of a helper.
+    fn find_builtins_that_construction_answers(&self, call: CallId) -> Vec<BuiltinId> {
+        let hir = self.input.hir;
+        let mut classes = self.find_classes_behind(hir[call].callee);
+        let mut takes_what_it_is_handed = classes.is_empty();
+        let mut found = Vec::new();
+        let mut next = 0;
+        while let Some(&class) = classes.get(next) {
+            next += 1;
+            for member in hir[class].members.iter().map(|it| hir[it]) {
+                let handed_out: Rc<[ExprId]> = match member.kind {
+                    MemberKind::Constructor => {
+                        let (values, takes) = self.values_handed_out_by_constructor(member.func);
+                        takes_what_it_is_handed |= takes;
+                        values
+                    }
+                    MemberKind::Property
+                        if member.init.is_some() && !member.flags.contains(Flags::STATIC) =>
+                    {
+                        Rc::new([member.init])
+                    }
+                    _ => continue,
+                };
+                for &value in handed_out.iter() {
+                    for &value in self.spelled_values_of(value).iter() {
+                        self.add_builtins_handed_back(value, &mut found);
+                    }
+                }
+            }
+            // What a class of the table does is known.
+            let Some(above) = (hir[class].extends.some()).filter(|&it| self.value_of(it).is_none())
+            else {
+                continue;
+            };
+            let above = self.find_classes_behind(above);
+            takes_what_it_is_handed |= above.is_empty();
+            for class in above {
+                if !classes.contains(&class) {
+                    classes.push(class);
+                }
+            }
+        }
+        if takes_what_it_is_handed {
+            add(&mut found, self.find_builtins_that_helper_answers(call));
+        }
+        found
+    }
+
+    fn values_returned_by(&self, function: FnId) -> Rc<[ExprId]> {
+        if let Some(values) = self.unnamed_holders.borrow().returned.get(&function) {
+            return Rc::clone(values);
+        }
+        let hir = self.input.hir;
+        let mut values = Vec::new();
+        match hir[function].body {
+            FnBody::Expr(value) => values.push(value),
+            FnBody::Block(statements) => {
+                let mut stack: Vec<TreeNode> = hir.ids(statements).map(TreeNode::Stmt).collect();
+                while let Some(node) = stack.pop() {
+                    // A `return` inside an expression, a function or a class belongs to another function.
+                    let TreeNode::Stmt(statement) = node else {
+                        continue;
+                    };
+                    match hir[statement].kind {
+                        StmtKind::Return(value) if value.is_some() => values.push(value),
+                        _ => push_children(hir, node, &mut stack),
+                    }
+                }
+            }
+            FnBody::None => {}
+        }
+        let values: Rc<[ExprId]> = values.into();
+        let kept = Rc::clone(&values);
+        self.unnamed_holders
+            .borrow_mut()
+            .returned
+            .insert(function, kept);
+        values
+    }
+
+    // `{ proxy: new Proxy(object, {}) }`, `[new Proxy(object, {}), revoke]`: the helper's caller takes it apart.
+    fn add_builtins_handed_back(&self, value: ExprId, found: &mut Vec<BuiltinId>) {
+        let hir = self.input.hir;
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Array(elements) => {
+                for element in hir.ids(elements) {
+                    self.add_builtins_handed_back(element, found);
+                }
+            }
+            ExprKind::Object(properties) => {
+                for property in properties.iter() {
+                    self.add_builtins_handed_back(hir[property].value, found);
+                }
+            }
+            _ => add(found, self.find_builtins_behind(value).iter().copied()),
+        }
+    }
+
+    /// A function that is none of the table's. Handed an object, it mostly answers that object or what stands for it, `wrap(Math)`, and it may lie in another file:
+    /// so whatever it is handed. And what it returns, where this file holds it: `const ofMath = () => new Proxy(Math, {})`.
+    fn find_builtins_that_helper_answers(&self, call: CallId) -> Vec<BuiltinId> {
+        let hir = self.input.hir;
+        let mut found = Vec::new();
+        for operand in hir.ids(hir[call].args) {
+            add(
+                &mut found,
+                self.find_builtins_behind(operand).iter().copied(),
+            );
+        }
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        match hir.member_key(callee) {
+            // `[Math, JSON].map(wrap)`, `held.take()` of `{ m: Math, take() { return this.m; } }`, `make(Math).take()`
+            Some((receiver, _)) => {
+                for &value in self.spelled_values_of(receiver).iter() {
+                    self.add_builtins_handed_back(value, &mut found);
+                }
+            }
+            // `makeWrap(Math)()`, `wrap.bind(null, Math)()`
+            None => add(&mut found, self.find_builtins_that_helpers_answer(callee)),
+        }
+        for function in self.find_functions_behind(hir[call].callee) {
+            for &returned in self.values_returned_by(function).iter() {
+                for &value in self.spelled_values_of(returned).iter() {
+                    self.add_builtins_handed_back(value, &mut found);
                 }
             }
         }
@@ -146,8 +558,15 @@ impl Resolver<'_, '_> {
                 }
                 found
             }
+            // `{ proxy, revoke }`, and a promise of it
+            Some(BuiltinId::ProxyRevocable | BuiltinId::PromiseResolve) => first
+                .map_or(Vec::new(), |target| {
+                    self.find_builtins_behind(target).to_vec()
+                }),
             _ if self.answers_global_object(call) => vec![BuiltinId::GlobalThis],
-            _ => Vec::new(),
+            // What a function of the table answers is known.
+            Some(_) => Vec::new(),
+            None => self.find_builtins_that_helper_answers(call),
         }
     }
 
@@ -197,12 +616,24 @@ impl Resolver<'_, '_> {
                 continue;
             };
             for property in properties.iter().map(|id| hir[id]) {
-                let is_value = matches!(property.kind, PropKind::Init | PropKind::Shorthand);
-                if is_value && matches!(property.key, PropKey::Name(key) if key == name) {
-                    add(
+                if !matches!(property.key, PropKey::Name(key) if key == name) {
+                    continue;
+                }
+                match (property.kind, hir[property.value].kind) {
+                    (PropKind::Init | PropKind::Shorthand, _) => add(
                         &mut found,
                         self.find_builtins_behind(property.value).iter().copied(),
-                    );
+                    ),
+                    // `held.m` of `{ get m() { return new Proxy(Math, {}); } }`
+                    (PropKind::Getter, ExprKind::Fn(getter)) => {
+                        for &returned in self.values_returned_by(getter).iter() {
+                            add(
+                                &mut found,
+                                self.find_builtins_behind(returned).iter().copied(),
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

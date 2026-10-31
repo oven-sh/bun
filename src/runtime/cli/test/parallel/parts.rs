@@ -38,6 +38,8 @@ pub(crate) struct Part {
     pub(crate) heavy_growth: u32,
     /// A layer whose build has the build of the layer above beside it: that one reads here how this one has ended.
     pub(crate) tells_build_above: Option<bun_sys::Fd>,
+    /// A layer whose program waits in memory, because `Parts::temporary_directory_is_full`.
+    pub(crate) is_in_memory: bool,
 }
 
 /// `PartBuilder::part` of the build of the lowest of `Parts::layers`. Those of the others follow. The numbers below are positions in `Parts::list`.
@@ -58,6 +60,8 @@ pub(crate) struct Parts {
     pub(crate) stands_on_library_of_this_bun: bool,
     /// The second of those that the run builds holds what imports with computed names reach.
     has_layer_of_computed_imports: bool,
+    /// It has had no room for the program of a layer. That layer and those that are built after it wait in memory.
+    pub(crate) temporary_directory_is_full: bool,
     /// Boxed: a spawned process holds a pointer to its builder, which must not move when the `Vec` grows.
     #[expect(clippy::vec_box)]
     pub(crate) builders: Vec<Box<PartBuilder>>,
@@ -110,6 +114,7 @@ impl Parts {
             list,
             stands_on_library_of_this_bun: held_by_this_bun.is_some(),
             has_layer_of_computed_imports,
+            temporary_directory_is_full: false,
             layers: held_by_this_bun.into_iter().chain(built_by_run).collect(),
             builders: Vec::new(),
             finished: Vec::new(),
@@ -405,6 +410,7 @@ impl Part {
             workers: 0,
             heavy_growth: 0,
             tells_build_above: None,
+            is_in_memory: false,
         }
     }
 }
@@ -425,13 +431,15 @@ impl PartBuilder {
         envp: &bun_dotenv::NullDelimitedEnvMap,
         parts: *mut Parts,
         kind: TestPartKind,
+        in_memory: bool,
         below: &[bun_sys::Fd],
         is_above_library: bool,
         threads: Option<u32>,
         told_of_last_below: Option<bun_sys::Fd>,
         #[cfg(windows)] windows_job: Option<*mut core::ffi::c_void>,
     ) -> crate::Result<(Box<PartBuilder>, TestPartFile)> {
-        let file = TestPartFile::create(paths, kind).map_err(|_| crate::Error::SpawnFailed)?;
+        let file =
+            TestPartFile::create(paths, kind, in_memory).map_err(|_| crate::Error::SpawnFailed)?;
         // After stdio: the file, the programs below, what tells of the last of them.
         let below_in_child = 4..4 + below.len();
         let arguments = run_compiled::test_part_arguments(

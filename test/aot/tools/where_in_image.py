@@ -357,7 +357,7 @@ class Image:
                 self.name([n], row, ofIdentifier)
                 counts[row.split(":")[0]] += 1
         self.notes += ["%s %d" % (row, n) for row, n in sorted(counts.items())]
-        # The texts of the functions that show theirs: entries of 12 bytes (function, start, end) and the characters. Then where the pieces of the text stood in their files:
+        # The texts of the functions that show theirs: entries of 11 bytes (function in 3, start, end) and the characters. Then where the pieces of the text stood in their files:
         # 8 bytes (module, start) for each module that has some and 8 more that end the last, and the pieces.
         for i in range(self.tables["functionTexts"][1]):
             numberOfEntries, entriesOffset, textOffset, modulesWithPieces, modulesOffset, piecesOffset = struct.unpack_from("<IIIIII", data, start + self.tables["functionTexts"][0] + 24 * i)
@@ -367,12 +367,12 @@ class Image:
             if piecesOffset + sizeOfPieces > ps:
                 raise Refusal("ProgramTables: the pieces of the texts of functions run out of the section")
             self.regions += [(modulesOffset, modulesOffset + 8 * (modulesWithPieces + 1), "where the texts of functions stood"), (piecesOffset, piecesOffset + sizeOfPieces, "where the texts of functions stood")]
-            if entriesOffset + 12 * numberOfEntries > ps:
+            if entriesOffset + 11 * numberOfEntries > ps:
                 raise Refusal("ProgramTables: the entries of the texts of functions run out of the section")
-            size = max((struct.unpack_from("<I", data, start + entriesOffset + 12 * e + 8)[0] for e in range(numberOfEntries)), default=0)
+            size = max((struct.unpack_from("<I", data, start + entriesOffset + 11 * e + 7)[0] for e in range(numberOfEntries)), default=0)
             if textOffset + size > ps:
                 raise Refusal("ProgramTables: the texts of functions run out of the section")
-            self.regions += [(entriesOffset, entriesOffset + 12 * numberOfEntries, "the entries of the texts of functions"), (textOffset, textOffset + size, "the texts of functions")]
+            self.regions += [(entriesOffset, entriesOffset + 11 * numberOfEntries, "the entries of the texts of functions"), (textOffset, textOffset + size, "the texts of functions")]
             self.notes.append("functions that show their text %d" % numberOfEntries)
         self.regions.sort()
         self.regionStarts = [r[0] for r in self.regions]

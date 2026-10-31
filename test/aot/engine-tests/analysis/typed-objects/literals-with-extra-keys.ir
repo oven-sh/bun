@@ -1303,45 +1303,30 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f36 visibilit
 # CHECK: m0 position=3648 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|number|string}, {type=undefined|L0}] results=[{type=number|string}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|number|string, v1: undefined|L0):
 # CHECK-NEXT: v2: L0 = RequireObjectCoercible v1 name="extra"
-# CHECK-NEXT: v3: boolean = IsSlotFilled v2 key="extra" receivers=[L0] level=Expected
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v4: guard):
-# CHECK-NEXT: v5: anything ~ int[0, 399]|"e" = GetSlot v2, v4 key="extra" receivers=[L0] level=Expected accessSite=137
-# CHECK-NEXT: Jump -> next b4(v5)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: boolean = HasLayoutPrototype v2
-# CHECK-NEXT: Branch v6 -> taken b3(), notTaken b8()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Jump -> next b4(v7)
-# CHECK-NEXT: b4(v8: anything ~ int[0, 399]|"e"):
-# CHECK-NEXT: v9: undefined|null|int|L4 ~ int[0, 399] = AssumeType v8 provenType=undefined|null|int|L4
-# CHECK-NEXT: v10: boolean = TypeTest v0 testedType=number
-# CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b9(v9)
-# CHECK-NEXT: b5(v11: number):
-# CHECK-NEXT: v12: boolean ~ true = TypeTest v9 testedType=i32
-# CHECK-NEXT: Branch v12 -> taken b6(| 0), notTaken b9(v9)
-# CHECK-NEXT: b6(v13: i32 ~ int[0, 399]):
-# CHECK-NEXT: v14: number = Add v11, v13
-# CHECK-NEXT: v15: boolean = IsSlotFilled v2 key="y" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v15 -> taken b7(| 0), notTaken b10(v14)
-# CHECK-NEXT: b7(v16: guard):
-# CHECK-NEXT: v17: int[-2147483643, 2147483647] = GetSlot v2, v16 key="y" receivers=[L0] level=Expected accessSite=138 [holdsDeclaredType]
-# CHECK-NEXT: v18: number = Add v14, v17
-# CHECK-NEXT: Jump -> next b11(v18)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v19: anything ~ undefined|int[0, 399]|"e" = PropGet v2 key="extra" accessSite=137 receivers=[L0]
-# CHECK-NEXT: v20: undefined|null|int|L4 ~ undefined|int[0, 399] = AssumeType v19 provenType=undefined|null|int|L4
-# CHECK-NEXT: Jump -> next b9(v20)
-# CHECK-NEXT: b9(v21: undefined|null|int|L4 ~ int[0, 399]) frequency=Rare:
-# CHECK-NEXT: v22: number|string|bigint = Add v0, v21
-# CHECK-NEXT: Jump -> next b10(v22)
-# CHECK-NEXT: b10(v23: number|string|bigint ~ number) frequency=Rare:
-# CHECK-NEXT: v24: anything ~ int[-2147483643, 2147483647] = PropGet v2 key="y" accessSite=138 receivers=[L0]
-# CHECK-NEXT: v25: undefined|null|int|L4 ~ int[-2147483643, 2147483647] = AssumeType v24 provenType=undefined|null|int|L4
-# CHECK-NEXT: v26: number|string|bigint ~ number = Add v23, v25
-# CHECK-NEXT: v27: number|string ~ number = AssumeType v26 provenType=number|string
-# CHECK-NEXT: Jump -> next b11(v27)
-# CHECK-NEXT: b11(v28: number|string ~ number):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v3: anything ~ undefined|int[0, 399]|"e" = GetSlotOrUndefined v2 key="extra" receivers=[L0] level=Proven accessSite=137
+# CHECK-NEXT: v4: undefined|null|int|L4 ~ undefined|int[0, 399] = AssumeType v3 provenType=undefined|null|int|L4
+# CHECK-NEXT: v5: boolean = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v6: number):
+# CHECK-NEXT: v7: boolean = TypeTest v4 testedType=i32
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: b2(v8: i32 ~ int[0, 399]):
+# CHECK-NEXT: v9: number = Add v6, v8
+# CHECK-NEXT: v10: boolean = IsSlotFilled v2 key="y" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b5(v9)
+# CHECK-NEXT: b3(v11: guard):
+# CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v2, v11 key="y" receivers=[L0] level=Expected accessSite=138 [holdsDeclaredType]
+# CHECK-NEXT: v13: number = Add v9, v12
+# CHECK-NEXT: Jump -> next b6(v13)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v14: number|string|bigint = Add v0, v4
+# CHECK-NEXT: Jump -> next b5(v14)
+# CHECK-NEXT: b5(v15: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v16: anything ~ int[-2147483643, 2147483647] = PropGet v2 key="y" accessSite=138 receivers=[L0]
+# CHECK-NEXT: v17: undefined|null|int|L4 ~ int[-2147483643, 2147483647] = AssumeType v16 provenType=undefined|null|int|L4
+# CHECK-NEXT: v18: number|string|bigint ~ number = Add v15, v17
+# CHECK-NEXT: v19: number|string ~ number = AssumeType v18 provenType=number|string
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: number|string ~ number):
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }

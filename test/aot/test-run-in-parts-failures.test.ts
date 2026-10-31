@@ -137,7 +137,7 @@ test.skipIf(!(!unsupported && registry().sabotages?.includes("ProgramPassFailsAs
     );
     expect(stderr.split("\n").filter(line => line.includes("could not be compiled"))).toEqual([
       expect.stringMatching(
-        /^error: what the test files import could not be compiled: .*\. None of the 7 test files ran$/,
+        /^error: what the test files import could not be compiled: .*, in the build of the packages\. None of the 7 test files ran$/,
       ),
     ]);
     expect(stderr).not.toContain("(pass)");

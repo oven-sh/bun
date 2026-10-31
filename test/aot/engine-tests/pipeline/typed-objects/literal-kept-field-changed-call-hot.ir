@@ -5604,90 +5604,92 @@ runtimefunction id=ArrayTraversalTraverseArray function=f59 visibility=Private
 # CHECK-NEXT: Switch v9 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v10: L3 = NewObject -, v0, v3 layout=L3 fields=[0, 1] allocationSite=14 allocationClass=3
-# CHECK-NEXT: Jump -> next b4(v10)
+# CHECK-NEXT: v11: guard = AllGuards v10
+# CHECK-NEXT: Jump -> next b4(v10, v11)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v11: L0 = NewObject -, v5, v7 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b4(v11)
+# CHECK-NEXT: v12: L0 = NewObject -, v5, v7 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v13: guard = AllGuards v12
+# CHECK-NEXT: Jump -> next b4(v12, v13)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v12: L2 = NewObject -, v0, v0, v0 layout=L2 fields=[1, 2, 0] allocationClass=2 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b4(v12)
-# CHECK-NEXT: b4(v13: L0|L2|L3):
-# CHECK-NEXT: v14: boolean = IsSlotFilled v13 key="y" receivers=[L0, L2, L3] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v15: guard):
-# CHECK-NEXT: v16: int|whole = GetSlot v13, v15 key="y" receivers=[L0, L2, L3] level=Expected accessSite=52 [holdsDeclaredType]
-# CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: v18: int|whole = Add v16, v17
-# CHECK-NEXT: v19: boolean = IsNotFrozen v13
-# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b8(v18)
-# CHECK-NEXT: b6(v20: guard):
-# CHECK-NEXT: v21: guard = AllGuards v20, v15
-# CHECK-NEXT: PutSlot v13, v21, v18 key="y" receivers=[L0, L2, L3] level=Expected accessSite=53
+# CHECK-NEXT: v14: L2 = NewObject -, v0, v0, v0 layout=L2 fields=[1, 2, 0] allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: v15: guard = AllGuards v14
+# CHECK-NEXT: Jump -> next b4(v14, v15)
+# CHECK-NEXT: b4(v16: L0|L2|L3, v17: guard):
+# CHECK-NEXT: v18: boolean = IsSlotFilled v16 key="y" receivers=[L0, L2, L3] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v19: guard):
+# CHECK-NEXT: v20: int|whole = GetSlot v16, v19 key="y" receivers=[L0, L2, L3] level=Expected accessSite=52 [holdsDeclaredType]
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: int|whole = Add v20, v21
+# CHECK-NEXT: Jump -> next b6(v17)
+# CHECK-NEXT: b6(v23: guard):
+# CHECK-NEXT: v24: guard = AllGuards v23, v19
+# CHECK-NEXT: PutSlot v16, v24, v22 key="y" receivers=[L0, L2, L3] level=Expected accessSite=53
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v23: anything ~ int|whole = PropGet v13 key="y" accessSite=52 receivers=[L0, L2, L3]
-# CHECK-NEXT: v24: int|whole = AssumeType v23 provenType=int|whole
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int|whole = Add v24, v25
-# CHECK-NEXT: Jump -> next b8(v26)
-# CHECK-NEXT: b8(v27: int|whole) frequency=Rare:
-# CHECK-NEXT: PropSet v13, v27 key="y" accessSite=53 receivers=[L0, L2, L3]
+# CHECK-NEXT: v26: anything ~ int|whole = PropGet v16 key="y" accessSite=52 receivers=[L0, L2, L3]
+# CHECK-NEXT: v27: int|whole = AssumeType v26 provenType=int|whole
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: int|whole = Add v27, v28
+# CHECK-NEXT: Jump -> next b8(v29)
+# CHECK-NEXT: b8(v30: int|whole) frequency=Rare:
+# CHECK-NEXT: PropSet v16, v30 key="y" accessSite=53 receivers=[L0, L2, L3]
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v29: 2 = Integer integer=2
-# CHECK-NEXT: v30: int[0, 22] = Mul v0, v29
-# CHECK-NEXT: v31: L3 = NewObject -, v30, v30 layout=L3 fields=[0, 1] allocationSite=18 allocationClass=3
-# CHECK-NEXT: v32: L3 = FinishObject v31
-# CHECK-NEXT: v33: undefined = CallDirect v32, v1 function=f2 accessSite=65
-# CHECK-NEXT: v34: 1 = Integer integer=1
-# CHECK-NEXT: v35: int[1, 23] = Add v30, v34
-# CHECK-NEXT: v36: boolean = IsNotFrozen v32
-# CHECK-NEXT: Branch v36 -> taken b10(| 0), notTaken b12()
-# CHECK-NEXT: b10(v37: guard):
-# CHECK-NEXT: v38: boolean = IsSlotFilled v32, v37 key="y" receivers=[L3] level=Expected
-# CHECK-NEXT: Branch v38 -> taken b11(| 0), notTaken b12()
-# CHECK-NEXT: b11(v39: guard):
-# CHECK-NEXT: v40: guard = AllGuards v37, v39
-# CHECK-NEXT: PutSlot v32, v40, v35 key="y" receivers=[L3] level=Expected accessSite=67
+# CHECK-NEXT: v32: 2 = Integer integer=2
+# CHECK-NEXT: v33: int[0, 22] = Mul v0, v32
+# CHECK-NEXT: v34: L3 = NewObject -, v33, v33 layout=L3 fields=[0, 1] allocationSite=18 allocationClass=3
+# CHECK-NEXT: v35: L3 = FinishObject v34
+# CHECK-NEXT: v36: undefined = CallDirect v35, v1 function=f2 accessSite=65
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: int[1, 23] = Add v33, v37
+# CHECK-NEXT: v39: boolean = IsNotFrozen v35
+# CHECK-NEXT: Branch v39 -> taken b10(| 0), notTaken b12()
+# CHECK-NEXT: b10(v40: guard):
+# CHECK-NEXT: v41: boolean = IsSlotFilled v35, v40 key="y" receivers=[L3] level=Expected
+# CHECK-NEXT: Branch v41 -> taken b11(| 0), notTaken b12()
+# CHECK-NEXT: b11(v42: guard):
+# CHECK-NEXT: v43: guard = AllGuards v40, v42
+# CHECK-NEXT: PutSlot v35, v43, v38 key="y" receivers=[L3] level=Expected accessSite=67
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: PropSet v32, v35 key="y" accessSite=67 receivers=[L3]
+# CHECK-NEXT: PropSet v35, v38 key="y" accessSite=67 receivers=[L3]
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v43: string = CallDirect v13 function=f1 accessSite=55
-# CHECK-NEXT: v44: "t" = String string="t"
-# CHECK-NEXT: v45: L1 = NewObject -, v32, v44 layout=L1 fields=[0, 1] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v46: string = CallDirect v45 function=f1 accessSite=56
-# CHECK-NEXT: v47: string = Add v43, v46
-# CHECK-NEXT: v48: undefined|L3 = GetSlot v45 key="inner" receivers=[L1] level=Proven accessSite=68
-# CHECK-NEXT: v49: L3 = AssumeType v48 provenType=L3
-# CHECK-NEXT: v50: boolean = IsSlotFilled v49 key="x" receivers=[L3] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v50 -> taken b14(| 0), notTaken b15()
-# CHECK-NEXT: b14(v51: guard):
-# CHECK-NEXT: v52: int|whole = GetSlot v49, v51 key="x" receivers=[L3] level=Expected accessSite=69 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b16(v52)
+# CHECK-NEXT: v46: string = CallDirect v16 function=f1 accessSite=55
+# CHECK-NEXT: v47: "t" = String string="t"
+# CHECK-NEXT: v48: L1 = NewObject -, v35, v47 layout=L1 fields=[0, 1] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: v49: string = CallDirect v48 function=f1 accessSite=56
+# CHECK-NEXT: v50: string = Add v46, v49
+# CHECK-NEXT: v51: undefined|L3 = GetSlot v48 key="inner" receivers=[L1] level=Proven accessSite=68
+# CHECK-NEXT: v52: L3 = AssumeType v51 provenType=L3
+# CHECK-NEXT: v53: boolean = IsSlotFilled v52 key="x" receivers=[L3] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v53 -> taken b14(| 0), notTaken b15()
+# CHECK-NEXT: b14(v54: guard):
+# CHECK-NEXT: v55: int|whole = GetSlot v52, v54 key="x" receivers=[L3] level=Expected accessSite=69 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b16(v55)
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v53: anything ~ undefined|int|whole = PropGet v49 key="x" accessSite=69 receivers=[L3]
-# CHECK-NEXT: v54: undefined|int|whole = AssumeType v53 provenType=undefined|int|whole
-# CHECK-NEXT: Jump -> next b16(v54)
-# CHECK-NEXT: b16(v55: undefined|int|whole ~ int|whole):
-# CHECK-NEXT: v56: undefined|L3 = GetSlot v45 key="inner" receivers=[L1] level=Proven accessSite=70
-# CHECK-NEXT: v57: L3 = AssumeType v56 provenType=L3
-# CHECK-NEXT: v58: boolean = IsSlotFilled v57 key="y" receivers=[L3] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v58 -> taken b17(| 0), notTaken b18()
-# CHECK-NEXT: b17(v59: guard):
-# CHECK-NEXT: v60: int|whole = GetSlot v57, v59 key="y" receivers=[L3] level=Expected accessSite=71 [holdsDeclaredType]
-# CHECK-NEXT: v61: number ~ int|whole = Add v55, v60
-# CHECK-NEXT: Jump -> next b19(v61)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v62: anything ~ int|whole = PropGet v57 key="y" accessSite=71 receivers=[L3]
-# CHECK-NEXT: v63: undefined|int|whole ~ int|whole = AssumeType v62 provenType=undefined|int|whole
-# CHECK-NEXT: v64: number ~ int|whole = Add v55, v63
+# CHECK-NEXT: v56: anything ~ undefined|int|whole = PropGet v52 key="x" accessSite=69 receivers=[L3]
+# CHECK-NEXT: v57: undefined|int|whole = AssumeType v56 provenType=undefined|int|whole
+# CHECK-NEXT: Jump -> next b16(v57)
+# CHECK-NEXT: b16(v58: undefined|int|whole ~ int|whole):
+# CHECK-NEXT: v59: undefined|L3 = GetSlot v48 key="inner" receivers=[L1] level=Proven accessSite=70
+# CHECK-NEXT: v60: L3 = AssumeType v59 provenType=L3
+# CHECK-NEXT: v61: boolean = IsSlotFilled v60 key="y" receivers=[L3] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v61 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v62: guard):
+# CHECK-NEXT: v63: int|whole = GetSlot v60, v62 key="y" receivers=[L3] level=Expected accessSite=71 [holdsDeclaredType]
+# CHECK-NEXT: v64: number ~ int|whole = Add v58, v63
 # CHECK-NEXT: Jump -> next b19(v64)
-# CHECK-NEXT: b19(v65: number ~ int|whole):
-# CHECK-NEXT: v66: int|whole = AssumeType v65 provenType=int|whole
-# CHECK-NEXT: v67: string = Add v47, v66
-# CHECK-NEXT: Return v67
+# CHECK-NEXT: b18() frequency=Rare:
+# CHECK-NEXT: v65: anything ~ int|whole = PropGet v60 key="y" accessSite=71 receivers=[L3]
+# CHECK-NEXT: v66: undefined|int|whole ~ int|whole = AssumeType v65 provenType=undefined|int|whole
+# CHECK-NEXT: v67: number ~ int|whole = Add v58, v66
+# CHECK-NEXT: Jump -> next b19(v67)
+# CHECK-NEXT: b19(v68: number ~ int|whole):
+# CHECK-NEXT: v69: int|whole = AssumeType v68 provenType=int|whole
+# CHECK-NEXT: v70: string = Add v50, v69
+# CHECK-NEXT: Return v70
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="y"
 # CHECK: module=m0 position=1110 kind=Setter role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w36 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f61 fallback=f63} {

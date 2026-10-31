@@ -898,7 +898,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: v18: 1 = Integer integer=1
 # CHECK-NEXT: v19: int[1, 4294967295] = Add v9, v18
 # CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: int[0, 4294967295] = URShift v19, v20
+# CHECK-NEXT: v21: int[1, 4294967295] = URShift v19, v20
 # CHECK-NEXT: Jump -> next b1(v21)
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b10()
@@ -963,7 +963,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: v19: 1 = Integer integer=1
 # CHECK-NEXT: v20: int[1, 4294967295] = Add v10, v19
 # CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: int[0, 4294967295] = URShift v20, v21
+# CHECK-NEXT: v22: int[1, 4294967295] = URShift v20, v21
 # CHECK-NEXT: Jump -> next b1(v22)
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b10()

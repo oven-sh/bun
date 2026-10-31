@@ -30,7 +30,8 @@ impl Checker<'_, '_> {
 
     // In TypeScript two imports may share a name, because one of the two may be a type. Only the files that are imported from say
     // whether it is. Where both are there when the program runs, the name is declared twice.
-    // An import that shares its name with a declaration of the file itself is dropped, whatever it names: the transpiler lets the file's own win.
+    // An import and a declaration of the file itself: the transpiler reads one file and cannot tell what the import names, so it goes by the order.
+    // It drops an import whose name is declared further down, and the file's own wins. It refuses an import of a name that is declared further up.
     pub(super) fn check_import_redeclaration_early_errors(&mut self, file: FileId) {
         if self.hir(file).is_js {
             return;
@@ -41,6 +42,12 @@ impl Checker<'_, '_> {
                 decl,
                 Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_)
             ) && !files.is_type_only_import_or_export_declaration(file, *decl)
+        };
+        let is_import = |decl: &Decl| {
+            matches!(
+                decl,
+                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_)
+            )
         };
         let is_value = |flags: SymFlags| flags.intersects(SymFlags::VALUE);
         for redeclaration in bound.redeclarations.iter() {
@@ -57,6 +64,23 @@ impl Checker<'_, '_> {
                     let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
                     self.early_error_at((file, start, end), 2300, &[Arg::Sym(sym)]);
                 }
+            }
+        }
+        for (&decl, &sym) in self.symbols_of_alias_declarations(file).iter() {
+            if !is_kept_import(&decl) {
+                continue;
+            }
+            let values = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+            let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
+            let mut others = files.symbol(sym).decls.iter();
+            let is_declared_further_up = files.flags(sym).intersects(values)
+                && others.any(|other| {
+                    !is_import(other)
+                        && !self.is_erased_syntax(file, hir.node(*other))
+                        && self.get_error_range_for_node(file, hir.node(*other)).0 < start
+                });
+            if is_declared_further_up {
+                self.early_error_at((file, start, end), 2440, &[Arg::Sym(sym)]);
             }
         }
     }

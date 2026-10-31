@@ -1796,7 +1796,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f17 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v25: int[0, 4294967295] = CallBuiltin v19 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v26: boolean = Less v23, v25
-# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b37()
+# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b38()
 # CHECK-NEXT: b11(v27: int[0, 4294967294]):
 # CHECK-NEXT: v28: boolean = HasArrayStorage v19 arrayStorage=Contiguous
 # CHECK-NEXT: Branch v28 -> taken b12(| 0), notTaken b14()
@@ -1845,7 +1845,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f17 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v58: int[0, 2147483647] = GetStringLength v54
 # CHECK-NEXT: v59: boolean = Less v56, v58
-# CHECK-NEXT: Branch v59 -> taken b24(| 0), notTaken b37()
+# CHECK-NEXT: Branch v59 -> taken b24(| 0), notTaken b38()
 # CHECK-NEXT: b24(v60: int[0, 2147483646]):
 # CHECK-NEXT: v61: int[0, 65535] = GetStringCodeUnit v54, v60
 # CHECK-NEXT: v62: 55296 = Integer integer=55296
@@ -1898,39 +1898,41 @@ runtimefunction id=ArrayTraversalTraverseArray function=f17 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v90: undefined = CallDirect v87, v88 function=f26 [isNeverInlined]
 # CHECK-NEXT: v91: boolean = ResultAt v90
-# CHECK-NEXT: v92: anything = ResultAt v90 index=1
-# CHECK-NEXT: Branch v91 -> taken b37(), notTaken b38()
-# CHECK-NEXT: b37():
-# CHECK-NEXT: v93: "," = String string=","
-# CHECK-NEXT: v94: string = CallBuiltin v17, v93 overload=ArrayPrototypeJoin/0 accessSite=5
-# CHECK-NEXT: v95: undefined = CallBuiltin -, v94 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v96: anything = PropGet v15 key="map" accessSite=9
-# CHECK-NEXT: v97: anything ~ undefined|null|function = Upcast v96 castType=anything
-# CHECK-NEXT: v98: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v99: anything = Call v97, v15, v98 calleeKey="map" calleeName="rows.map" accessSite=10 callees=[builtin(ArrayPrototypeMap), ..]
-# CHECK-NEXT: v100: object = AssumeType v99 provenType=object
-# CHECK-NEXT: v101: anything = PropGet v100 key="join" accessSite=11
-# CHECK-NEXT: v102: "," = String string=","
-# CHECK-NEXT: v103: string = CallBuiltin v100, v102 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver accessSite=12
-# CHECK-NEXT: v104: undefined = CallBuiltin -, v103 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v105: Array<number|string, Contiguous> = NewArray contents=number|string allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v106: Array<number|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v105 provenType=Array<number|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: PutModuleVariable v106 variable=g1
-# CHECK-NEXT: v108: anything = PropGet v15 key="forEach" accessSite=14
-# CHECK-NEXT: v109: anything ~ undefined|null|function = Upcast v108 castType=anything
-# CHECK-NEXT: v110: f2 = NewClosure function=f2 allocationSite=2
-# CHECK-NEXT: v111: anything = Call v109, v15, v110 calleeKey="forEach" calleeName="rows.forEach" accessSite=15 callees=[builtin(ArrayPrototypeForEach), ..]
-# CHECK-NEXT: v112: "," = String string=","
-# CHECK-NEXT: v113: string = CallBuiltin v106, v112 overload=ArrayPrototypeJoin/0 accessSite=19
-# CHECK-NEXT: v114: undefined = CallBuiltin -, v113 overload=ConsoleLog/0 accessSite=20
-# CHECK-NEXT: v115: undefined = Undefined
-# CHECK-NEXT: Return v115
-# CHECK-NEXT: b38() frequency=Unlikely handler=b39():
-# CHECK-NEXT: v116: anything ~ undefined|null|number|string|symbol|bigint|L0 = Upcast v92 castType=anything
+# CHECK-NEXT: Branch v91 -> taken b37(), notTaken b39()
+# CHECK-NEXT: b37() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b38()
+# CHECK-NEXT: b38():
+# CHECK-NEXT: v92: "," = String string=","
+# CHECK-NEXT: v93: string = CallBuiltin v17, v92 overload=ArrayPrototypeJoin/0 accessSite=5
+# CHECK-NEXT: v94: undefined = CallBuiltin -, v93 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v95: anything = PropGet v15 key="map" accessSite=9
+# CHECK-NEXT: v96: anything ~ undefined|null|function = Upcast v95 castType=anything
+# CHECK-NEXT: v97: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v98: anything = Call v96, v15, v97 calleeKey="map" calleeName="rows.map" accessSite=10 callees=[builtin(ArrayPrototypeMap), ..]
+# CHECK-NEXT: v99: object = AssumeType v98 provenType=object
+# CHECK-NEXT: v100: anything = PropGet v99 key="join" accessSite=11
+# CHECK-NEXT: v101: "," = String string=","
+# CHECK-NEXT: v102: string = CallBuiltin v99, v101 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver accessSite=12
+# CHECK-NEXT: v103: undefined = CallBuiltin -, v102 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v104: Array<number|string, Contiguous> = NewArray contents=number|string allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v105: Array<number|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v104 provenType=Array<number|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v105 variable=g1
+# CHECK-NEXT: v107: anything = PropGet v15 key="forEach" accessSite=14
+# CHECK-NEXT: v108: anything ~ undefined|null|function = Upcast v107 castType=anything
+# CHECK-NEXT: v109: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: v110: anything = Call v108, v15, v109 calleeKey="forEach" calleeName="rows.forEach" accessSite=15 callees=[builtin(ArrayPrototypeForEach), ..]
+# CHECK-NEXT: v111: "," = String string=","
+# CHECK-NEXT: v112: string = CallBuiltin v105, v111 overload=ArrayPrototypeJoin/0 accessSite=19
+# CHECK-NEXT: v113: undefined = CallBuiltin -, v112 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v114: undefined = Undefined
+# CHECK-NEXT: Return v114
+# CHECK-NEXT: b39() frequency=Unlikely handler=b40():
+# CHECK-NEXT: v115: anything = ResultAt v90 index=1
+# CHECK-NEXT: v116: anything ~ undefined|null|number|string|symbol|bigint|L0 = Upcast v115 castType=anything
 # CHECK-NEXT: v117: anything ~ undefined|null|string = CallDirect v116 function=f1 accessSite=22
 # CHECK-NEXT: v118: int[0, 4294967295] = CallBuiltin v17, v117 overload=ArrayPrototypePush/0 accessSite=23
 # CHECK-NEXT: Jump -> next b36()
-# CHECK-NEXT: b39() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: b40() role=CleanupHandler frequency=Unlikely:
 # CHECK-NEXT: v119: exception = CatchException
 # CHECK-NEXT: v120: undefined = CallDirect v87 function=f25 [isNeverInlined]
 # CHECK-NEXT: Rethrow v119

@@ -267,7 +267,7 @@ runtimefunction id=FunctionPrototypeCall function=f5
 # CHECK-NEXT: v9: boolean = ResultAt v8
 # CHECK-NEXT: v10: 1 = Integer integer=1
 # CHECK-NEXT: v11: int[0, 1] = ToNumber v9
-# CHECK-NEXT: v12: i32 = LShift v10, v11
+# CHECK-NEXT: v12: int[1, 2] = LShift v10, v11
 # CHECK-NEXT: v13: anything = ResultAt v8 index=3
 # CHECK-NEXT: v14: 1 = Integer integer=1
 # CHECK-NEXT: v15: int[0, 1] = BitAnd v12, v14

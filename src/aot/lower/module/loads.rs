@@ -19,7 +19,7 @@ use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId};
+use crate::ir::{BlockId, Edge, LocalVariable, ModuleId, StringId, TypeTable, ValueId};
 use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::named_loads::modules_named_in;
 use crate::load::sources::parsed_source;
@@ -59,6 +59,13 @@ enum CalleeKnowledge {
     Unresolved,
     Bound,
     Expected(BuiltinId),
+}
+
+// One way to the answer is emitted, and the block of the other way is open.
+struct OtherWay {
+    answer: LocalVariable,
+    done: BlockId,
+    was_call_in_tail_position: bool,
 }
 
 // The module is evaluated where the call stands, without the loader.
@@ -923,6 +930,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let name = self.emit_text(&name);
             return self.builder.require_dynamic(name, referrer);
         }
+        let other_way = self.emit_require_as_written_if_loaded_synchronously(&name, referrer);
+        let found = emit_past_cache(self);
+        self.finish_other_way(other_way, found)
+    }
+
+    // A file that was loaded synchronously reads the name as it is written. Ends in the block of a file that was not.
+    fn emit_require_as_written_if_loaded_synchronously(
+        &mut self,
+        name: &[u8],
+        referrer: ModuleId,
+    ) -> OtherWay {
         let file = self.file.module_id();
         let reads_as_written = self.builder.was_loaded_synchronously(file);
         let answer = self.builder.create_variable(None);
@@ -934,22 +952,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Edge::to(as_written),
             Edge::to(with_prefix),
         );
-        let outer = std::mem::replace(&mut self.is_call_in_tail_position, false);
+        let was_call_in_tail_position =
+            std::mem::replace(&mut self.is_call_in_tail_position, false);
 
         self.continue_in(as_written);
-        let name = self.emit_text(&name);
+        let name = self.emit_text(name);
         let found = self.builder.require_dynamic(name, referrer);
         self.builder.write_variable(answer, found);
         self.jump(done);
 
         self.continue_in(with_prefix);
-        let found = emit_past_cache(self);
-        self.builder.write_variable(answer, found);
-        self.jump(done);
-        self.is_call_in_tail_position = outer;
+        OtherWay {
+            answer,
+            done,
+            was_call_in_tail_position,
+        }
+    }
 
-        self.continue_in(done);
-        self.builder.read_variable(answer)
+    fn finish_other_way(&mut self, other_way: OtherWay, found: ValueId) -> ValueId {
+        self.is_call_in_tail_position = other_way.was_call_in_tail_position;
+        self.builder.write_variable(other_way.answer, found);
+        self.jump(other_way.done);
+
+        self.continue_in(other_way.done);
+        self.builder.read_variable(other_way.answer)
     }
 
     pub(in crate::lower) fn note_first_load(&mut self) {
@@ -970,6 +996,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         else {
             return emit_require(self);
         };
+        let other_way = self.emit_what_an_import_has_loaded(imported, specifier);
+        let required = emit_require(self);
+        self.finish_other_way(other_way, required)
+    }
+
+    // Ends in the block of a module that no import has loaded.
+    fn emit_what_an_import_has_loaded(
+        &mut self,
+        imported: FileId,
+        specifier: StringId,
+    ) -> OtherWay {
         let id = (self.file.fragment).declare_module(ModuleRef::File(imported));
         let referrer = self.file.module_id();
         // The namespace object, or undefined.
@@ -983,14 +1020,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .branch(is_held, Edge::to(done), Edge::to(read_as_code));
 
         self.continue_in(read_as_code);
-        let outer = std::mem::replace(&mut self.is_call_in_tail_position, false);
-        let required = emit_require(self);
-        self.is_call_in_tail_position = outer;
-        self.builder.write_variable(answer, required);
-        self.jump(done);
-
-        self.continue_in(done);
-        self.builder.read_variable(answer)
+        OtherWay {
+            answer,
+            done,
+            was_call_in_tail_position: std::mem::replace(&mut self.is_call_in_tail_position, false),
+        }
     }
 
     // One of the modules that a computed specifier can name.

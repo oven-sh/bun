@@ -63,6 +63,10 @@ pub(super) struct Faces {
     absent_names: Vec<AbsentName>,
     /// By root: the ES modules that are linked with it and import a name that may be absent, in the order of the link.
     linked_importers: Vec<(FileId, Vec<FileId>)>,
+    /// `ExportTables::dropped_commonjs_names`
+    dropped_names: Vec<CommonJsImport>,
+    /// Their copies, sorted: one that is empty behind the link stands for an export that nobody sees.
+    copies_that_stay_empty: Vec<SyntheticExportId>,
     faces: FxHashMap<FileId, Face>,
     checks: FxHashMap<FileId, CheckedCopies>,
     is_decided: bool,
@@ -217,6 +221,7 @@ impl Faces {
             imported_variables: collect_members_of_namespaces(input, tables, imports),
             seen_namespaces: collect_seen_namespaces(modules, tables, imports),
             imported_files: collect_imported_files(scans, modules),
+            dropped_names: tables.dropped_commonjs_names.clone(),
             ..Faces::default()
         };
         if let Some(application) = input.bind.application {
@@ -387,6 +392,13 @@ impl Faces {
                 self.checks.insert(*root, copies);
             }
         }
+        let dropped = self.dropped_names.iter().filter_map(|imported| {
+            let owner = exports.owner_of(ModuleRef::File(imported.exporter), imported.name)?;
+            exports.ids.get(&owner).copied()
+        });
+        self.copies_that_stay_empty = dropped.collect();
+        self.copies_that_stay_empty.sort_unstable();
+        self.copies_that_stay_empty.dedup();
     }
 
     /// Which files have a face, what it copies, and which graphs of imports have a check.
@@ -505,5 +517,11 @@ impl CommonJsExports {
     pub fn checked_copies(&self, check: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
         let copies = self.faces.checks.get(&check);
         copies.map_or(&[], |copies| &copies[..])
+    }
+
+    /// No link throws for the name alone: a TypeScript module exports it, and is linked without the export where the file lacks the name.
+    pub fn may_stay_empty(&self, copy: SyntheticExportId) -> bool {
+        let copies = &self.faces.copies_that_stay_empty;
+        copies.binary_search(&copy).is_ok()
     }
 }

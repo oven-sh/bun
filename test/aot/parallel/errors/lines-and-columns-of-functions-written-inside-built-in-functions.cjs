@@ -17,9 +17,8 @@ function sitesOf(error) {
       .map(site =>
         [
           site.getFunctionName(),
-          String(site.getFileName()).replace(/^.*[\\/]/, ""),
-          site.getLineNumber(),
-          site.getColumnNumber(),
+          // `unknown:40:20`. A Bun built with assertions counts other lines and columns in a built-in function, and run-parallel.ts knows them in that form.
+          [String(site.getFileName()).replace(/^.*[\\/]|^\[|\]$/g, ""), site.getLineNumber(), site.getColumnNumber()].join(":"),
           site.isNative(),
           String(site).replace(/\([^ ()]*[\\/]/, "("),
         ].join(" "),

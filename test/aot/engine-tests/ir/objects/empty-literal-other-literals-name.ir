@@ -277,20 +277,27 @@ function f2 name="emptiedLike" module=m0 position=723 flags=[IsChecked, HasExpli
 # CHECK-NEXT: b41() frequency=Unlikely:
 # CHECK-NEXT: v123: true = Boolean boolean=true
 # CHECK-NEXT: v124: undefined = Undefined
-# CHECK-NEXT: Jump -> next b43(v123, v124)
+# CHECK-NEXT: Jump -> next b45(v123, v124)
 # CHECK-NEXT: b42() frequency=Unlikely:
 # CHECK-NEXT: v125: undefined = CallDirect v119, v120 function=f7 [isNeverInlined]
 # CHECK-NEXT: v126: boolean = ResultAt v125
-# CHECK-NEXT: v127: anything = ResultAt v125 index=1
-# CHECK-NEXT: Jump -> next b43(v126, v127)
-# CHECK-NEXT: b43(v128: boolean, v129: anything) frequency=Unlikely:
-# CHECK-NEXT: v130: 3 = Integer integer=3
-# CHECK-NEXT: v131: anything ~ undefined = ElemGet v5, v130 accessSite=4 [keyIsIntegral]
-# CHECK-NEXT: v132: fact = Specified
-# CHECK-NEXT: v133: undefined|null|boolean|number|string|object = AssumeType v129, v132 provenType=undefined|null|boolean|number|string|object
-# CHECK-NEXT: v134: undefined|null|string ~ undefined = AssumeType v131 provenType=undefined|null|string
-# CHECK-NEXT: v135: string = CallDirect v133, v134 function=f2 accessSite=5
-# CHECK-NEXT: Jump -> next b40(v128)
+# CHECK-NEXT: Branch v126 -> taken b43(), notTaken b44()
+# CHECK-NEXT: b43() frequency=Unlikely:
+# CHECK-NEXT: v127: true = Boolean boolean=true
+# CHECK-NEXT: v128: undefined = Undefined
+# CHECK-NEXT: Jump -> next b45(v127, v128)
+# CHECK-NEXT: b44() frequency=Unlikely:
+# CHECK-NEXT: v129: anything = ResultAt v125 index=1
+# CHECK-NEXT: v130: false = Boolean
+# CHECK-NEXT: Jump -> next b45(v130, v129)
+# CHECK-NEXT: b45(v131: boolean, v132: anything) frequency=Unlikely:
+# CHECK-NEXT: v133: 3 = Integer integer=3
+# CHECK-NEXT: v134: anything ~ undefined = ElemGet v5, v133 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v135: fact = Specified
+# CHECK-NEXT: v136: undefined|null|boolean|number|string|object = AssumeType v132, v135 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: v137: undefined|null|string ~ undefined = AssumeType v134 provenType=undefined|null|string
+# CHECK-NEXT: v138: string = CallDirect v136, v137 function=f2 accessSite=5
+# CHECK-NEXT: Jump -> next b40(v131)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fill"
 # CHECK: module=m0 position=257 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array|Object}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array|Object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -20,7 +20,6 @@
 # }
 # report(sum);
 # FORM: AsRead
-# DIAGNOSTIC: LockedBuiltinWriteMayRun
 # RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", ""]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); let strings = 0; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const words = lines[i].split(" "); if (words[0] === "refill" && words[3].startsWith("JSString:")) strings += Number(words[4]); } print(strings < 13200 ? "the strings of the keys are shared" : strings); };
 # Twelve kinds of objects hold a symbol beside the names that their constructors give them, and 24,000 objects are asked for their own keys once each: 132,000 keys.
 # The strings of a list of keys are made for the first objects of a kind and shared by the others.

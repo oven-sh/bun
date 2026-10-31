@@ -134,6 +134,7 @@ fn create_module(names: &Names) -> Module {
             may_be_absent: false,
             export_name: Some(names.name),
             specifier: Some(names.text),
+            drops_export_if_absent: false,
         }],
         positions: source_positions(source, vec![0, 2]),
         function_text: source.to_vec(),

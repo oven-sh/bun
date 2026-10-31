@@ -60,6 +60,11 @@ pub(super) struct NamesLookedUp {
     mocked_variables: FxHashSet<(u32, SymbolId)>,
     /// A test mocks a file under a path that the build does not know.
     mocks_any_file: bool,
+    /// For a path, the forms that statements ask for under a `type` other than "json": `CodeTarget::has_shared_type`.
+    forms_of_shared_types: FxHashMap<Vec<u8>, Vec<u32>>,
+    /// The forms of a path that has two. All the statements get the one that the loader comes to first, and which that is shows when every file is
+    /// there: `share_modules_among_types`. Until then nobody knows what a statement that names one of them reads.
+    forms_that_share_a_module: FxHashSet<u32>,
 }
 
 /// The `export *` statements of a file that pass names on, and behind which of them a name can be found.
@@ -83,6 +88,7 @@ struct Exports<'w, 's, 'r> {
     mocked: &'w FxHashSet<u32>,
     mocked_variables: &'w FxHashSet<(u32, SymbolId)>,
     mocks_any_file: bool,
+    forms_that_share_a_module: &'w FxHashSet<u32>,
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
     /// By file. Every thread computes the same value for a file.
     stars: &'w [OnceLock<Arc<Stars>>],
@@ -104,6 +110,7 @@ impl<'w, 's, 'r> Exports<'w, 's, 'r> {
             mocked: &looked_up.mocked,
             mocked_variables: &looked_up.mocked_variables,
             mocks_any_file: looked_up.mocks_any_file,
+            forms_that_share_a_module: &looked_up.forms_that_share_a_module,
             resolved: FxHashMap::default(),
             stars,
             files_with_stars_in_progress: Vec::new(),
@@ -408,6 +415,9 @@ impl<'s> Exports<'_, 's, '_> {
         }
         let value = match read {
             Export::Variable { file, symbol, .. } if self.is_mocked(file, symbol) => return None,
+            Export::Variable { file, .. } if self.forms_that_share_a_module.contains(&file) => {
+                return None;
+            }
             Export::Variable {
                 value: Some(value), ..
             } => value,
@@ -512,6 +522,44 @@ fn find_forms_of_mocked_files(
     forms
 }
 
+/// `import a from "./a.json" with { type: "yaml" }` beside `import b from "./a.json" with { type: "text" }`, in one file or in two. Returns the forms
+/// that are found to share a module with another.
+fn find_forms_that_share_a_module(
+    files: &[WalkedFile<'_, '_>],
+    looked_up: &mut NamesLookedUp,
+    parsed: &[u32],
+) -> Vec<u32> {
+    let NamesLookedUp {
+        forms_of_shared_types,
+        forms_that_share_a_module,
+        ..
+    } = looked_up;
+    let mut found = Vec::new();
+    for &importer in parsed {
+        let importer = &files[importer as usize];
+        for (target, &form) in importer.code_targets().iter().zip(&importer.targets) {
+            if !target.has_shared_type || form == NOT_LOADED {
+                continue;
+            }
+            let forms = match forms_of_shared_types.get_mut(target.key.path) {
+                Some(forms) => forms,
+                None => forms_of_shared_types
+                    .entry(target.key.path.to_vec())
+                    .or_default(),
+            };
+            if forms.contains(&form) {
+                continue;
+            }
+            forms.push(form);
+            if forms.len() > 1 {
+                let forms = forms.iter().copied();
+                found.extend(forms.filter(|&it| forms_that_share_a_module.insert(it)));
+            }
+        }
+    }
+    found
+}
+
 /// Each folding knows more than the one before, so there are few. Behind this many a file is folded as if it stood alone.
 const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
@@ -524,6 +572,9 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     let mut looked_up = std::mem::take(&mut state.names_looked_up);
     looked_up.mocks_any_file |= context.inputs.code.mocks_any_file;
     let mut parsed = std::mem::take(&mut looked_up.parsed_since);
+    // The files that read a constant of a form are asked again when a second form of its path turns up.
+    let forms = find_forms_that_share_a_module(&state.files, &mut looked_up, &parsed);
+    parsed.extend(forms);
     // Which file runs in place of which hangs on the files that are there.
     let mut asks_every_file = false;
     if looked_up.file_count_of_replacements != state.files.len() {

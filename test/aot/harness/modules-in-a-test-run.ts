@@ -670,21 +670,6 @@ const projects: Record<string, Record<string, string>> = {
         console.log("delete:", inside.take(counted), "| the realm keeps its file:", counted in require.cache, require("./helpers/counted.cjs"));
       });`,
   },
-  "an import that shares its name with a declaration of the test file": {
-    "shared/value.ts": `console.log("value.ts runs"); export const name = "imported";`,
-    "shared/space.ts": `console.log("space.ts runs"); export const inner = "imported";`,
-    "shared/kind.ts": `console.log("kind.ts runs"); export interface Kind { level: number }`,
-    "shared/partly.ts": `console.log("partly.ts runs"); export const name = "imported"; export const other = "other of partly.ts";`,
-    "shared/standard.ts": `console.log("standard.ts runs"); export default "imported";`,
-    "value.test.ts": `import { name } from "./shared/value"; ${head} const name = "own const"; test("a value", () => { console.log("a value:", name); });`,
-    "space.test.ts": `import * as name from "./shared/space"; ${head} let name = "own let"; test("a namespace", () => { console.log("a namespace:", name); });`,
-    "kind.test.ts": `import { Kind } from "./shared/kind"; ${head} const Kind = { level: 1 }; const typed: Kind = Kind; test("a type", () => { console.log("a type:", typed.level); });`,
-    "partly.test.ts": `import { name, other } from "./shared/partly"; ${head} function name() { return "own function"; } test("one of two", () => { console.log("one of two:", name(), other); });`,
-    "standard.test.ts": `import name from "./shared/standard"; ${head} enum name { A = "own enum" } test("a default", () => { console.log("a default:", name.A); });`,
-    // So that the files are shared: a layer holds them, and a test file knows nothing of what they export.
-    "uses-them.test.ts": `import { name } from "./shared/value"; import { inner } from "./shared/space"; import type { Kind } from "./shared/kind"; import { other } from "./shared/partly"; import standard from "./shared/standard"; ${head}
-      test("they are there", () => { const kind: Kind = { level: 2 }; console.log("they are there:", name, inner, kind.level, other, standard); });`,
-  },
   "every load that comes to an import statement that fails gets one error": {
     "shared/wants-package.mjs": `import x from "not-installed"; console.log("never runs", x);`,
     "shared/wants-file.mjs": `import x from "./no-such-file.mjs"; console.log("never runs", x);`,
@@ -723,6 +708,44 @@ const projects: Record<string, Record<string, string>> = {
         await import("./shared/above.mjs").catch(error => (two = error));
         console.log("in another test file:", one === two, await calls());
       });`,
+  },
+  "an import that shares its name with a declaration of the test file": {
+    "shared/value.ts": `console.log("value.ts runs"); export const name = "imported";`,
+    "shared/space.ts": `console.log("space.ts runs"); export const inner = "imported";`,
+    "shared/kind.ts": `console.log("kind.ts runs"); export interface Kind { level: number }`,
+    "shared/partly.ts": `console.log("partly.ts runs"); export const name = "imported"; export const other = "other of partly.ts";`,
+    "shared/standard.ts": `console.log("standard.ts runs"); export default "imported";`,
+    // The import stands in front: it is dropped.
+    "value.test.ts": `import { name } from "./shared/value"; ${head} const name = "own const"; test("a value", () => { console.log("a value:", name); });`,
+    "space.test.ts": `import * as name from "./shared/space"; ${head} let name = "own let"; test("a namespace", () => { console.log("a namespace:", name); });`,
+    "kind.test.ts": `import { Kind } from "./shared/kind"; ${head} const Kind = { level: 1 }; const typed: Kind = Kind; test("a type", () => { console.log("a type:", typed.level); });`,
+    "partly.test.ts": `import { name, other } from "./shared/partly"; ${head} function name() { return "own function"; } test("one of two", () => { console.log("one of two:", name(), other); });`,
+    "standard.test.ts": `import name from "./shared/standard"; ${head} enum name { A = "own enum" } test("a default", () => { console.log("a default:", name.A); });`,
+    // The import stands behind: the file is no program, whatever the import names.
+    "value-behind.test.ts": `${head} const name = "own const"; import { name } from "./shared/value"; test("never runs", () => { console.log("never runs:", name); });`,
+    "kind-behind.test.ts": `${head} const Kind = { level: 1 }; import { Kind } from "./shared/kind"; test("never runs", () => { console.log("never runs:", Kind.level); });`,
+    "type-behind.test.ts": `${head} const Kind = { level: 1 }; import type { Kind } from "./shared/kind"; const typed: Kind = Kind; test("a type by its syntax", () => { console.log("a type by its syntax:", typed.level); });`,
+    // So that the files are shared: a layer holds them, and a test file knows nothing of what they export.
+    "uses-them.test.ts": `import { name } from "./shared/value"; import { inner } from "./shared/space"; import type { Kind } from "./shared/kind"; import { other } from "./shared/partly"; import standard from "./shared/standard"; ${head}
+      test("they are there", () => { const kind: Kind = { level: 2 }; console.log("they are there:", name, inner, kind.level, other, standard); });`,
+  },
+  "names imported from a CommonJS file that hands on the exports of another": {
+    "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "./index.js" }`,
+    "node_modules/dep/index.js": `exports.x = function x() { return "x of dep"; }; exports.y = 2;`,
+    "node_modules/forwarded/package.json": `{ "name": "forwarded", "version": "1.0.0", "type": "commonjs", "main": "./index.js" }`,
+    "node_modules/forwarded/index.js": `module.exports = require("dep");`,
+    "local/own.cjs": `exports.x = () => "x of own.cjs"; exports.y = 3;`,
+    "local/hands-on-a-package.cjs": `module.exports = require("dep");`,
+    "local/hands-on-a-file.cjs": `module.exports = require("./own.cjs");`,
+    "local/twice.cjs": `module.exports = require("./hands-on-a-package.cjs");`,
+    "package.test.mjs": `${head} import { x, y } from "forwarded"; test("a package hands on a package", () => { console.log("package:", x(), y); });`,
+    "file.test.mjs": `${head} import { x, y } from "./local/hands-on-a-package.cjs"; test("a file hands on a package", () => { console.log("file:", x(), y); });`,
+    "own.test.mjs": `${head} import { x, y } from "./local/hands-on-a-file.cjs"; test("a file hands on a file", () => { console.log("own:", x(), y); });`,
+    "twice.test.mjs": `${head} import { x, y } from "./local/twice.cjs"; import * as all from "./local/twice.cjs"; test("handed on twice", () => { console.log("twice:", x(), y, Object.keys(all).sort().join()); });`,
+    "absent.test.mjs": `${head} test("a name that is not there", async () => {
+        console.log("absent:", await import("./wants-absent.mjs").then(() => "loaded", error => error.name + ": " + error.message.replace(/'[^']*[\\/]/, "'")));
+      });`,
+    "wants-absent.mjs": `import { z } from "./local/hands-on-a-package.cjs"; console.log(z);`,
   },
   "a loader that a test stores into require.extensions": {
     "files/own.custom": `module.exports = "own.custom as JavaScript";`,

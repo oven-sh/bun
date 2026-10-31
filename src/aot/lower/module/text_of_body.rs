@@ -1,4 +1,6 @@
-use bun_core::strings::{index_of, index_of_char_usize};
+use std::cmp::Reverse;
+
+use bun_core::strings::{index_of, index_of_char_usize, last_index_of_char};
 use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{ExprId, ExprKind, FnId, PatKind, StmtId, StmtKind};
 
@@ -9,12 +11,14 @@ impl FileLowering<'_, '_, '_, '_> {
     // It is each statement of the file without the functions that are written in it: a function has its own text, which is kept only where the program can enter it.
     // A function in a list that takes values stays: `const [f = () => 1] = null` quotes the whole list.
     // For each piece, how far it starts behind the piece before it, and its length, in the text without types: seven bits a byte, the lowest first.
+    // A piece of no length says that a statement begins there. Pieces that touch are kept as one, and what failed is looked for in the line of the piece.
+    // In a file that a minifier has written that is every statement of the file, so far into a line the pieces are told apart now and then.
     pub(super) fn find_text_of_body(&self) -> Vec<u8> {
         let hir = self.hir;
-        let lists = self.find_lists_that_hold_functions();
+        let in_lists = self.find_functions_in_lists();
         let is_in_list = |&(start, end): &(u32, u32)| {
-            let behind = lists.partition_point(|list| list.0 <= start);
-            behind > 0 && end <= lists[behind - 1].1
+            let behind = in_lists.partition_point(|in_list| in_list.0 <= start);
+            behind > 0 && end <= in_lists[behind - 1].1
         };
         let mut functions: Vec<(u32, u32)> = (0..hir.fns.len() as u32)
             .map(FnId)
@@ -31,18 +35,34 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut packed = Vec::new();
         let mut end_of_last = 0;
         let mut add = |start: u32, end: u32| {
-            if is_only_space_and_comments(&hir.text[start as usize..end as usize]) {
+            let begins_statement = start == end;
+            if !begins_statement
+                && is_only_space_and_comments(&hir.text[start as usize..end as usize])
+            {
                 return;
             }
             let start = self.type_ranges.map_offset(start);
             let end = self.type_ranges.map_offset(end);
-            if start < end && start >= end_of_last {
+            if (start < end || begins_statement) && start >= end_of_last {
                 push_number(&mut packed, start - end_of_last);
                 push_number(&mut packed, end - start);
                 end_of_last = end;
             }
         };
+        // Where the line begins, or the last statement in it that was told apart.
+        let mut start_of_stretch = 0;
+        let mut end_of_searched = 0;
         for statement in hir.ids(hir.body) {
+            let start = hir[statement].start.max(end_of_searched);
+            let in_front = &hir.text[end_of_searched as usize..start as usize];
+            if let Some(line_feed) = last_index_of_char(in_front, b'\n') {
+                start_of_stretch = end_of_searched + line_feed as u32 + 1;
+            }
+            end_of_searched = start;
+            if start - start_of_stretch >= FAR_INTO_A_LINE {
+                add(start, start);
+                start_of_stretch = start;
+            }
             if !self.may_fail_in_body(statement) {
                 continue;
             }
@@ -62,30 +82,24 @@ impl FileLowering<'_, '_, '_, '_> {
         packed
     }
 
-    // From `[` to behind `]`, in order and apart.
-    fn find_lists_that_hold_functions(&self) -> Vec<(u32, u32)> {
+    // Where each starts and ends, in order and apart.
+    fn find_functions_in_lists(&self) -> Vec<(u32, u32)> {
         let transpiled = self.transpiled.as_ref();
-        let starts =
-            transpiled.map_or(&[][..], |transpiled| transpiled.lists_that_hold_functions());
-        if starts.is_empty() {
+        let functions = transpiled.map_or(&[][..], |transpiled| transpiled.printed_functions());
+        if !functions.iter().any(|function| function.is_in_list) {
             return Vec::new();
         }
-        let hir = self.hir;
-        let starts_list = |position: u32| starts.binary_search(&position).is_ok();
-        let patterns = hir.pats.iter().filter_map(|pattern| {
-            let is_list = matches!(pattern.kind, PatKind::Array(_)) && starts_list(pattern.pos);
-            is_list.then_some((pattern.pos, pattern.end))
-        });
-        let assigned = hir.exprs.iter().filter_map(|expression| {
-            let is_list =
-                matches!(expression.kind, ExprKind::Array(_)) && starts_list(expression.pos);
-            is_list.then_some((expression.pos, expression.end))
-        });
-        let mut lists: Vec<(u32, u32)> = patterns.chain(assigned).collect();
-        lists.sort_unstable();
-        // One in a body that lies in another.
-        lists.dedup_by(|list, around| list.1 <= around.1);
-        lists
+        let places = self.find_places_of_text_from_printer();
+        let mut in_lists: Vec<(u32, u32)> = functions
+            .iter()
+            .zip(places)
+            .filter(|(function, _)| function.is_in_list)
+            .filter_map(|(_, place)| place.map(|(start, end, _)| (start, end)))
+            .collect();
+        in_lists.sort_unstable_by_key(|&(start, end)| (start, Reverse(end)));
+        // One that lies in another.
+        in_lists.dedup_by(|in_list, around| in_list.1 <= around.1);
+        in_lists
     }
 
     // Nothing quotes a statement that only gives names to functions and to data. A table or a long string at the top level of a file is not held twice.
@@ -127,6 +141,8 @@ impl FileLowering<'_, '_, '_, '_> {
             )
     }
 }
+
+const FAR_INTO_A_LINE: u32 = 4096;
 
 // What stands between two methods of a class. It begins where a token has ended, so `/` begins a comment here.
 fn is_only_space_and_comments(mut text: &[u8]) -> bool {

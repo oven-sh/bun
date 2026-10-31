@@ -34,13 +34,15 @@ pub(crate) fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Op
     }
 }
 
+/// The module that an import names, and the export it takes, or none for the whole module.
+/// `import { x }` without `from` is a syntax error that the parser recovers from: it names no module.
 pub(crate) fn find_imported_export(
     hir: &File<'_>,
     bound: &Bound<'_>,
     symbol: SymbolId,
 ) -> Option<(Atom, Option<Atom>)> {
     let mut declarations = bound.symbol(symbol).decls.iter();
-    declarations.find_map(|&declaration| match declaration {
+    let imported = declarations.find_map(|&declaration| match declaration {
         Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
             (!hir[import].type_only).then_some((hir[import].spec, None))
         }
@@ -55,7 +57,8 @@ pub(crate) fn find_imported_export(
             (!import.flags.contains(Flags::TYPE_ONLY)).then_some((import.target.spec(), None))
         }
         _ => None,
-    })
+    });
+    imported.filter(|(specifier, _)| !specifier.is_none())
 }
 
 fn is_import_meta_require(hir: &File<'_>, e: ExprId) -> bool {

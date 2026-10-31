@@ -158,7 +158,7 @@ function works(): string {
   if (random.chance(0.3)) text.push(`let before = 0;\nprocess.on("beforeExit", (code: number) => {\n  console.log("before exit", code, works());\n  if (before++ === 0) ${written(90)}\n});`);
   if (random.chance(0.6)) text.push(`void waitsForever(1);\nconst generator = paused(1);\ngenerator.next();`);
   const threeTurns = "await turn();\nawait turn();\nawait turn();";
-  const isTimed = (statement: string) => statement.includes("setTimeout(");
+  const isTimed = (statement: string) => statement.includes("setTimeout(") || statement.includes("turn()");
   for (let id = 1; id <= episodes; id++) {
     const first = written(id);
     const second = random.chance(0.2) ? written(id + 50) : "";

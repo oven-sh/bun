@@ -210,13 +210,14 @@ delete globalThis.keptOwnName;
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|"the const" flags=[IsExpected]}
 // CHECK-NEXT: v3 = NewClosure function=[[f_6]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=[[f_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = TypeOf v2
-// CHECK-NEXT: v6 = String string="string"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="taken" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v10 = TypeOf v9
-// CHECK-NEXT: v11 = NewArray v7, v10 contents=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: v5 = String string="the const"
+// CHECK-NEXT: v6 = TypeOf v5
+// CHECK-NEXT: v7 = String string="string"
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
+// CHECK-NEXT: v9 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v10 = PropGet v9 key="taken" [isFreeName, isForTypeOf]
+// CHECK-NEXT: v11 = TypeOf v10
+// CHECK-NEXT: v12 = NewArray v8, v11 contents=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: }

@@ -354,7 +354,7 @@ runtimefunction id=ObjectsFromEntries function=f5
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v11: boolean = Less v8, v10
-# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b20()
+# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b22()
 # CHECK-NEXT: b5(v12: int[0, 4294967294]):
 # CHECK-NEXT: v13: boolean = HasArrayStorage v4 arrayStorage=Contiguous
 # CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b11()
@@ -421,39 +421,44 @@ runtimefunction id=ObjectsFromEntries function=f5
 # CHECK-NEXT: v61: boolean = ResultAt v60
 # CHECK-NEXT: v62: anything = ResultAt v60 index=1
 # CHECK-NEXT: v63: int[0, 2147483648] = ResultAt v60 index=2
-# CHECK-NEXT: Jump -> next b19(v61, v62, v63)
+# CHECK-NEXT: Jump -> next b21(v61, v62, v63)
 # CHECK-NEXT: b18(v64: object) frequency=Unlikely:
 # CHECK-NEXT: v65: undefined = CallDirect v64, v55 function=f13 [isNeverInlined]
 # CHECK-NEXT: v66: boolean = ResultAt v65
+# CHECK-NEXT: Branch v66 -> taken b19(), notTaken b20()
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b20() frequency=Unlikely:
 # CHECK-NEXT: v67: anything = ResultAt v65 index=1
-# CHECK-NEXT: Jump -> next b19(v66, v67, v56)
-# CHECK-NEXT: b19(v68: boolean, v69: anything, v70: int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: Branch v68 -> taken b20(), notTaken b21()
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v71: fact = Specified
-# CHECK-NEXT: v72: Object = AssumeType v1, v71 provenType=Object
-# CHECK-NEXT: Return v72
-# CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: v73: anything ~ undefined|null|object = Upcast v69 castType=anything
-# CHECK-NEXT: v74: boolean = TypeTest v73 testedType=object
-# CHECK-NEXT: Branch v74 -> taken b22(| 0), notTaken b23()
-# CHECK-NEXT: b22(v75: object) frequency=Unlikely handler=b24():
-# CHECK-NEXT: v76: 0 = Integer
-# CHECK-NEXT: v77: anything = ElemGet v75, v76 accessSite=12 [keyIsIntegral]
-# CHECK-NEXT: v78: anything ~ undefined|null|number|string|symbol = Upcast v77 castType=anything
-# CHECK-NEXT: v79: 1 = Integer integer=1
-# CHECK-NEXT: v80: anything = ElemGet v75, v79 accessSite=13 [keyIsIntegral]
-# CHECK-NEXT: v81: fact = Specified
-# CHECK-NEXT: v82: Object = AssumeType v1, v81 provenType=Object
-# CHECK-NEXT: ElemDefine v82, v78, v80 accessSite=14
-# CHECK-NEXT: Jump -> next b16(v70)
-# CHECK-NEXT: b23() frequency=Unlikely handler=b24():
-# CHECK-NEXT: v84: never = ThrowNewError errorKind=TypeError message="Object.fromEntries requires the first iterable parameter yields objects"
+# CHECK-NEXT: v68: false = Boolean
+# CHECK-NEXT: Jump -> next b21(v68, v67, v56)
+# CHECK-NEXT: b21(v69: boolean, v70: anything, v71: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: Branch v69 -> taken b22(), notTaken b23()
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v72: fact = Specified
+# CHECK-NEXT: v73: Object = AssumeType v1, v72 provenType=Object
+# CHECK-NEXT: Return v73
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v74: anything ~ undefined|null|object = Upcast v70 castType=anything
+# CHECK-NEXT: v75: boolean = TypeTest v74 testedType=object
+# CHECK-NEXT: Branch v75 -> taken b24(| 0), notTaken b25()
+# CHECK-NEXT: b24(v76: object) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v77: 0 = Integer
+# CHECK-NEXT: v78: anything = ElemGet v76, v77 accessSite=12 [keyIsIntegral]
+# CHECK-NEXT: v79: anything ~ undefined|null|number|string|symbol = Upcast v78 castType=anything
+# CHECK-NEXT: v80: 1 = Integer integer=1
+# CHECK-NEXT: v81: anything = ElemGet v76, v80 accessSite=13 [keyIsIntegral]
+# CHECK-NEXT: v82: fact = Specified
+# CHECK-NEXT: v83: Object = AssumeType v1, v82 provenType=Object
+# CHECK-NEXT: ElemDefine v83, v79, v81 accessSite=14
+# CHECK-NEXT: Jump -> next b16(v71)
+# CHECK-NEXT: b25() frequency=Unlikely handler=b26():
+# CHECK-NEXT: v85: never = ThrowNewError errorKind=TypeError message="Object.fromEntries requires the first iterable parameter yields objects"
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b24() role=CleanupHandler frequency=Unlikely:
-# CHECK-NEXT: v85: exception = CatchException
-# CHECK-NEXT: v86: undefined = CallDirect v54 function=f12 [isNeverInlined]
-# CHECK-NEXT: Rethrow v85
+# CHECK-NEXT: b26() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v86: exception = CatchException
+# CHECK-NEXT: v87: undefined = CallDirect v54 function=f12 [isNeverInlined]
+# CHECK-NEXT: Rethrow v86
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromEntries"
 # CHECK: module=m2 position=248 kind=Method role=Model flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ObjectsFromEntries thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]

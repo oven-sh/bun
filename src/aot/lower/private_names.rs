@@ -1,6 +1,7 @@
 mod access;
 mod resolve;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::{PrivateMembers, SymbolId};
 use bun_sema::hir::{ClassId, ExprId, MemberId};
 use smallvec::{SmallVec, smallvec};
@@ -31,6 +32,8 @@ pub(in crate::lower) struct StoredValue {
     class: ClassId,
     member: MemberId,
     holder: PrivateHolder,
+    /// The name, where the program writes an access to it: `o.#x`.
+    written: Option<Atom>,
 }
 
 #[derive(Copy, Clone)]

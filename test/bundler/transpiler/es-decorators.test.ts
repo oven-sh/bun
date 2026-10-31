@@ -1895,6 +1895,61 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("[[1,2],[1],1]\n");
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
+      // Its name is not one the class or a class around it declares, and its
+      // initializer runs as the field it is: no new.target, any constructor,
+      // a storage of its own for each evaluation of the class.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
+          read() { return [this.#p_accessor_storage, this.#p, this.#p_accessor_storage2, this.#p_accessor_storage3] } }
+        class Outer { #q_accessor_storage = "outer"; static Inner = class { accessor #q = "q"; read(outer) { return [outer.#q_accessor_storage, this.#q] } } }
+        class Base {}
+        class Last { accessor #p = new.target; static read(o) { return o.#p } }
+        class Cond extends Base { accessor #p = 1; constructor(c) { if (c) super(); else super(); } static read(o) { return o.#p } }
+        const twice = [];
+        for (let i = 0; i < 2; i++) { const C = class { accessor #p = i; static read(o) { return o.#p } }; twice.push([C, new C()]); }
+        console.log(JSON.stringify([new Own().read(), new Outer.Inner().read(new Outer()), Last.read(new Last()), Cond.read(new Cond()), twice.map(([C, o]) => C.read(o))]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],null,1,[0,1]]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a direct eval in the file pins the private field of an undecorated accessor", async () => {
+      // The eval keeps every `#private` name of the class. A field the minifier
+      // renames next to them gets a one letter name, and all of those are taken.
+      const letters = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+      using dir = tempDir("es-dec-accessor-eval", {
+        "entry.js": `
+          function f() {
+            class A { ${letters.map(letter => `#${letter} = 1;`).join(" ")} accessor #acc = 2; m() { return eval("this.#a") + this.#acc } }
+            return new A().m();
+          }
+          console.log(f());
+        `,
+        // The eval is in a class around the accessor's, and after it.
+        "around.js": `
+          function f() {
+            class Outer { #a = 1; n() { return class { accessor #acc = 2; m() { return this.#acc } } } m() { return eval("this.#a") } }
+            return new (new Outer().n())().m();
+          }
+          console.log(f());
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "--minify-identifiers", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+
+      const around = await runIn(String(dir), ["build", "--minify-identifiers", "around.js"]);
+      expect(filterStderr(around.stderr)).toBe("");
+      expect(around.stdout).toContain("#acc_accessor_storage = 2");
+      expect(around.exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {
@@ -2180,6 +2235,24 @@ const installExpected = {
   values: [1, 2, null, 3, 4],
 };
 
+// An undecorated `accessor #p`, alone and next to a decorated member, after
+// the getter / setter pair it stands for, written by hand. Every class probes
+// `#p` from the initializers that run before the accessor's own, and from that one.
+function privateAccessorClasses(s: "" | "static ") {
+  const pair = `${s}#v = (this.b = #p in this, 1); ${s}get #p() { return this.#v; } ${s}set #p(v) { this.#v = v; }`;
+  const accessor = `${s}accessor #p = (this.b = #p in this, 1);`;
+  const classes = [pair, accessor, `${accessor} @id ${s}m() {}`].map(
+    members => `class {
+    ${s}a = #p in this;
+    ${s}r = attempt(() => this.#p);
+    ${s}w = attempt(() => (this.#p = 2));
+    ${members}
+    static probe(o) { return [o.a, o.r, o.w, o.b, #p in o, #p in Object.create(o), o.#p, (o.#p = 3, o.#p)]; }
+  }`,
+  );
+  return classes.join(", ");
+}
+
 const extraSections = `
 // \`this\` in a static initializer, decorated or not, is the class.
 {
@@ -2288,6 +2361,23 @@ const extraSections = `
   const before = pa.acc;
   pa.acc = 7;
   out.privateAccessor = [before, pa.acc, PA.bump()];
+}
+
+// An undecorated \`accessor #p\` is a private getter and setter: on the object
+// before its first initializer runs, over storage that is defined where the
+// accessor is written.
+{
+  const id = (v) => v;
+  const attempt = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };
+  out.privateAccessorBrand = [${privateAccessorClasses("")}].map((C) => C.probe(new C()));
+  out.privateStaticAccessorBrand = [${privateAccessorClasses("static ")}].map((C) => C.probe(C));
+
+  // A constructor that returns an object puts the pair on that object, once.
+  class Ret { constructor(o) { return o; } }
+  class Twice extends Ret { accessor #p = 1; static has(o) { return #p in o; } }
+  const o = {};
+  new Twice(o);
+  out.privateAccessorTwice = [Twice.has(o), attempt(() => new Twice(o))];
 }
 
 // Undecorated \`#private\` members of a decorated class stay native, so every
@@ -2633,6 +2723,10 @@ const extraExpected = {
   namedExpr: { defLog: ["dec:m", "eblk"], self: true, y: true },
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
+  // The pair by hand, the accessor alone, the accessor next to a decorated method.
+  privateAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateStaticAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateAccessorTwice: [true, "TypeError"],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],

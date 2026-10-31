@@ -11,7 +11,7 @@ pub struct PreferNumberProperties {
     check_nan: bool,
 }
 
-const PREFER_NUMBER_PROPERTIES: Message = Message::new(
+const PREFER_NUMBER_PROPERTIES: &Message = &Message::new(
     "",
     "Use `Number.{{method_name}}` instead of the global `{{method_name}}`",
 );

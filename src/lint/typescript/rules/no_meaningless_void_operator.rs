@@ -7,15 +7,15 @@ pub struct NoMeaninglessVoidOperator {
     check_never: bool,
 }
 
-const MEANINGLESS_VOID_ON_NON_CALL: Message = Message::new(
+const MEANINGLESS_VOID_ON_NON_CALL: &Message = &Message::new(
     "meaninglessVoidOnNonCall",
     "void operator is useless here; it should only discard a call's return value",
 );
-const MEANINGLESS_VOID_OPERATOR: Message = Message::new(
+const MEANINGLESS_VOID_OPERATOR: &Message = &Message::new(
     "meaninglessVoidOperator",
     "void operator shouldn't be used on {{type}}; it should convey that a return value is being ignored",
 );
-const REMOVE_VOID: Message = Message::new("removeVoid", "Remove 'void'");
+const REMOVE_VOID: &Message = &Message::new("removeVoid", "Remove 'void'");
 
 fn unwrap_void_argument(node: Expr<'_>) -> Expr<'_> {
     let mut current = node;

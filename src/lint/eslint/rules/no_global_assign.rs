@@ -8,12 +8,12 @@ pub struct NoAssign<const IS_NATIVE_REASSIGN: bool> {
 pub type NoGlobalAssign = NoAssign<false>;
 
 impl<const IS_NATIVE_REASSIGN: bool> NoAssign<IS_NATIVE_REASSIGN> {
-    const MESSAGE: Message = match IS_NATIVE_REASSIGN {
-        true => Message::new(
+    const MESSAGE: &Message = match IS_NATIVE_REASSIGN {
+        true => &Message::new(
             "nativeReassign",
             "Read-only global '{{name}}' should not be modified.",
         ),
-        false => Message::new(
+        false => &Message::new(
             "globalShouldNotBeModified",
             "Read-only global '{{name}}' should not be modified.",
         ),

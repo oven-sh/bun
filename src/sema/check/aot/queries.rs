@@ -234,6 +234,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.work_trap = WORK_TRAP_DISARMED;
     }
 
+    #[inline(never)]
     fn take_cut_state(&mut self) -> CutState {
         self.forget_what_a_question_leaves();
         CutState {
@@ -243,6 +244,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     /// Why the question that ends here has no answer. `enclosing`: the state of the question around it, which goes on.
+    #[inline(never)]
     fn end_question(&mut self, enclosing: CutState) -> Option<GaveUp> {
         self.forget_what_a_question_leaves();
         let ran_out_of_stack = (self.c.ran_out_of_stack).replace(enclosing.ran_out_of_stack);
@@ -284,6 +286,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
+    #[cold]
+    #[inline(never)]
     fn note_gave_up(&mut self, reason: GaveUp, is_outermost: bool) {
         if !reason.is_function_of_key() {
             self.unstable_answers += 1;

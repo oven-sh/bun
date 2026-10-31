@@ -297,9 +297,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "type"_s, typeValue, "must be a supported key type"_s);
     }
 
-    result->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicKeyValue);
+    Bun::putDirectNamed(vm, result, "publicKey"_s, publicKeyValue);
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "privateKey"_s), privateKeyValue);
+    Bun::putDirectNamed(vm, result, "privateKey"_s, privateKeyValue);
     return JSValue::encode(result);
 }
 

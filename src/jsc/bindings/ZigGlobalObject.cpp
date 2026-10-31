@@ -3697,6 +3697,13 @@ uint8_t GlobalObject::drainMicrotasks()
     return 0;
 }
 
+// Whether a checkpoint has something to run now: a scheduled tick, a queued microtask, or a rejection that handleRejectedPromises() has still to report.
+extern "C" bool Bun__hasJobsForCheckpoint(Zig::GlobalObject* globalObject)
+{
+    auto* nextTickQueue = globalObject->m_nextTickQueue.get();
+    return (nextTickQueue && !nextTickQueue->isEmpty()) || !globalObject->vm().defaultMicrotaskQueue().isEmpty() || globalObject->hasRejectedPromisesToReport();
+}
+
 // The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the
 // drains between queued items): 0 drained, 1 the VM is terminating.
 //

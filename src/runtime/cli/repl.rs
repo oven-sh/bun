@@ -1818,9 +1818,14 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
+            if let Err(unsettled @ jsc::Unsettled::Idle) = vm
                 .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
+                .wait_for_promise(jsc::AnyPromise::Normal(promise), jsc::WhenIdle::GiveUp)
+            {
+                let error = global.create_error_instance(format_args!("{unsettled}"));
+                self.print_js_error_to(error, Output::error_writer(), stderr_colors);
+                return true;
+            }
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {

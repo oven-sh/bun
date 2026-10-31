@@ -26,7 +26,7 @@ pub(super) fn load_module(
     let vm_ref = VirtualMachine::get();
     vm_ref
         .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise))
+        .wait_for_promise(AnyPromise::Internal(promise), jsc::WhenIdle::KeepWaiting)
         .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it

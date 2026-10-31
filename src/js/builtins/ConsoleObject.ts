@@ -15,6 +15,8 @@ export function asyncIterator(this: Console) {
 
   async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
+    // The reader of an earlier loop released its lock, which unref'd stdin.
+    stream.$bunNativePtr?.updateRef?.(true);
     var deferredError: Error | undefined;
     try {
       if (i !== -1) {

@@ -865,8 +865,8 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
 
   it.concurrent("a pending read keeps the process alive until the child writes", async () => {
     const child = `const fs = require("fs"); fs.readSync(0, Buffer.alloc(4)); fs.writeSync(1, "pong");`;
-    // Not top-level await: an unsettled entry-module promise keeps the process
-    // running on its own and would hide a read that does not.
+    // Not top-level await: the entry module has finished, so the read is all
+    // that is pending, and the process ends with code 0 either way.
     const stdout = await run(`
       const child = Bun.spawn({
         cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
@@ -936,11 +936,9 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
   });
 });
 
-describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
-  // body and never dequeue the IOCP exit packet, so these children busy-spun
-  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
-  for (const [name, body] of [
+describe("unref() + .exited with nothing else ref'd", () => {
+  const opts = `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };`;
+  const waits = [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
     [
@@ -948,29 +946,81 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
       `const { promise, resolve } = Promise.withResolvers();
        const p = Bun.spawn({ ...opts, onExit: resolve }); p.unref(); await promise;`,
     ],
-  ] as const) {
-    it(name, async () => {
+  ] as const;
+
+  // A loop that keeps turning with nothing ref'd, like the one that runs a test, still sees the exit.
+  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
+  // body and never dequeue the IOCP exit packet, so these waits busy-spun
+  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  for (const [name, body] of waits) {
+    it(`${name}, in a test`, async () => {
+      using dir = tempDir("spawn-unref-exited", {
+        "unref.test.ts": `import { test } from "bun:test";
+           ${opts}
+           test("waits for the exit", async () => {
+             ${body}
+             console.log("resolved");
+           });`,
+      });
       await using child = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
-           ${body}
-           console.log("resolved");`,
-        ],
+        cmd: [bunExe(), "test", "./unref.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({
+        // Without the line that names the test runner.
+        stdout: stdout.replace(/^bun test v.*\n/, ""),
+        stderr: exitCode === 0 ? "" : stderr,
+        exitCode,
+        signalCode: child.signalCode,
+      }).toEqual({ stdout: "resolved\n", stderr: "", exitCode: 0, signalCode: null });
+    });
+  }
+
+  // At the top level of the entry nothing else keeps the process alive, and an unref'd child does
+  // not either. As in Node, that is an unsettled top-level await: a warning and exit code 13.
+  // The child reads its stdin to the end, so it is still running when the wait gives up.
+  const running = `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", "process.stdin.resume()"], stdio: ["pipe", "ignore", "ignore"] };`;
+  for (const [name, body] of waits) {
+    it(`${name}, as the top-level await of the entry`, async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "-e", `${running}\n${body}\nconsole.log("resolved");`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
-        stdout: "resolved\n",
-        stderr: "",
-        exitCode: 0,
+      expect(stderr).toStartWith("Warning: Detected unsettled top-level await at ");
+      expect({ stdout, exitCode, signalCode: child.signalCode }).toEqual({
+        stdout: "",
+        exitCode: 13,
         signalCode: null,
       });
     });
   }
+
+  // The disposal of `await using` sends the signal and waits for the exit that it brings. That wait
+  // holds the process, also for a child that was unref'd.
+  it("the disposal of an unref'd child is waited for", async () => {
+    const script = `
+      {
+        await using helper = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], stdio: ["ignore", "ignore", "ignore"] });
+        helper.unref();
+        console.log("body");
+      }
+      console.log("disposed");`;
+    await using child = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
+      stdout: "body\ndisposed\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 it("#3480", async () => {

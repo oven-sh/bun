@@ -5143,12 +5143,22 @@ impl TestCommand {
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
-                None | Some(jsc::js_promise::Status::Rejected) => {
+                None
+                | Some(jsc::js_promise::Status::Rejected | jsc::js_promise::Status::Pending) => {
                     if let Some(promise) = promise {
                         // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so `unhandled_rejection(&mut self, ...)` can reborrow.
                         let global = vm.global();
                         let p = jsc::JSInternalPromise::opaque_mut(promise);
-                        let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                        let (mut result, promise_js) = (p.result(global.vm()), p.to_js());
+                        if p.status() == jsc::js_promise::Status::Pending {
+                            // Nothing is left that could settle a top-level await of this file: it fails like a file that threw, and the run goes on.
+                            let root = vm.main().unwrap_or(file_path).to_vec();
+                            let report = vm.describe_unsettled_module_graph(&root, b"");
+                            result = global.create_error_instance(format_args!(
+                                "{}",
+                                bstr::BStr::new(&report)
+                            ));
+                        }
                         vm.unhandled_rejection(global, result, promise_js);
                     } else {
                         reporter.jest.current_file.print_if_needed();
@@ -5168,7 +5178,7 @@ impl TestCommand {
 
                     return Ok(());
                 }
-                _ => {}
+                Some(jsc::js_promise::Status::Fulfilled) => {}
             }
 
             vm.event_loop_ref().tick();

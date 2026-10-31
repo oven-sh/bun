@@ -537,6 +537,8 @@ const compared = ({ exitCode, signal, stdout, stderr }: Output) => ({
       ? stderr
           .replace(/^\(node:[0-9]+\) /gm, "(node) ")
           .replace(/^\(Use `[^`\n]* --trace-warnings /gm, "(Use `bun --trace-warnings ")
+          // Where a module is suspended on a top-level await is known with its line only where the module has bytecode.
+          .replace(/^(Warning: Detected unsettled top-level await) (?:at|in) .*(?:\n(?!\r?\n|$).*)*/gm, "$1")
       : (stderr.split("\n").find(line => /^(error|[A-Za-z]*Error)\b/.test(line)) ?? ""),
 });
 // A Bun built with assertions keeps the line breaks of the built-ins written in JavaScript, so plain Bun prints `map (native:17:41)` there.

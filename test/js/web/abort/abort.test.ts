@@ -321,14 +321,15 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
       for (let i = 0; i < N; i++) {
         requests.push(new Request("http://localhost/", { signal: AbortSignal.timeout(deadline) }));
       }
-      const fence = AbortSignal.timeout(deadline + 100);
+      // A timer that is ref'd, unlike a signal's: the process stays alive until the deadline has passed.
+      const fence = new Promise(resolve => setTimeout(resolve, deadline + 100));
       const withWrappers = wrappers();
       // Fresh stack first, so nothing conservatively scanned still points at a wrapper.
       await new Promise(resolve => setImmediate(resolve));
       Bun.gc(true);
       const collected = withWrappers - wrappers();
       const collectedBeforeDeadline = performance.now() - started < deadline;
-      await new Promise(resolve => fence.addEventListener("abort", resolve, { once: true }));
+      await fence;
       // request.signal wraps the native signal again.
       const timedOut = requests.filter(r => r.signal.aborted && r.signal.reason.name === "TimeoutError").length;
       console.log(JSON.stringify({ N, collected, collectedBeforeDeadline, timedOut }));
@@ -343,4 +344,18 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
     expect({ collectedBeforeDeadline, timedOut }).toEqual({ collectedBeforeDeadline: true, timedOut: N });
     expect(exitCode).toBe(0);
   });
+});
+
+// The timer of a timeout signal is unref'd, as in Node. A program that only waits for the signal has
+// nothing left to wait for: at the top level of the entry that is an unsettled top-level await.
+test("AbortSignal.timeout() does not keep the process alive for a top-level await", async () => {
+  const src = `
+    const signal = AbortSignal.timeout(20);
+    await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+    console.log("aborted");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toStartWith("Warning: Detected unsettled top-level await at ");
+  expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 13, signalCode: null });
 });

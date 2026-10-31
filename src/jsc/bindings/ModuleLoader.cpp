@@ -27,7 +27,12 @@
 #include "EventEmitter.h"
 #include "JSEventEmitter.h"
 
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/ModuleProgramCodeBlock.h>
+#include <JavaScriptCore/ModuleProgramExecutable.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -44,7 +49,9 @@
 
 #include "JSCommonJSExtensions.h"
 
+#include "AsyncStackTrace.h"
 #include "BunProcess.h"
+#include "FormatStackTraceForJS.h"
 
 namespace Bun {
 using namespace JSC;
@@ -978,6 +985,147 @@ extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
         promise->rejectAsHandled(vm, exception);
     }
     return promise;
+}
+
+// A module suspended on its own top-level await: its body has started, is not waiting for a dependency, and has not finished.
+static bool isStalledOnOwnAwait(JSC::AbstractModuleRecord* record)
+{
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    if (!cyclic || !cyclic->hasTLA() || cyclic->status() != JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+        return false;
+    auto pending = cyclic->pendingAsyncDependencies();
+    return !pending || !*pending;
+}
+
+static bool isAwaitKeywordAt(WTF::StringView source, unsigned offset)
+{
+    static constexpr auto keyword = "await"_s;
+    auto isIdentifierPart = [](char16_t character) {
+        return isASCIIAlphanumeric(character) || character == '_' || character == '$' || !isASCII(character);
+    };
+    if (offset + keyword.length() > source.length() || source.substring(offset, keyword.length()) != WTF::StringView(keyword))
+        return false;
+    if (offset && isIdentifierPart(source[offset - 1]))
+        return false;
+    return offset + keyword.length() == source.length() || !isIdentifierPart(source[offset + keyword.length()]);
+}
+
+// The resume point in front of `resume` in the body: where the await before this one went on.
+static unsigned resumePointBefore(JSC::CodeBlock* codeBlock, unsigned resume)
+{
+    unsigned previous = 0;
+    const auto& table = codeBlock->unlinkedSwitchJumpTable(codeBlock->numberOfUnlinkedSwitchJumpTables() - 1);
+    if (table.isList())
+        return previous;
+    for (int32_t offset : table.m_branchOffsets) {
+        if (offset > 0 && static_cast<unsigned>(offset) < resume)
+            previous = std::max(previous, static_cast<unsigned>(offset));
+    }
+    return previous;
+}
+
+// Where the `await` that `record` is suspended on stands in its source, after source maps. False when that cannot be told (a record without bytecode or without source text, an await that no rule below finds), which leaves `url` as it was.
+static bool positionOfStalledAwait(JSC::JSGlobalObject* globalObject, JSC::AbstractModuleRecord* record, JSC::LineColumn& lineColumn, WTF::String& url)
+{
+    auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(record);
+    if (!moduleRecord)
+        return false;
+    // A suspended body still has the executable that it resumes in, so nothing is made here.
+    auto* executable = moduleRecord->getOrMakeExecutable(globalObject);
+    JSC::CodeBlock* codeBlock = executable ? executable->codeBlock() : nullptr;
+    if (!codeBlock)
+        return false;
+    auto resume = Bun::bytecodeIndexOfSuspension(codeBlock, moduleRecord->internalField(JSC::AbstractModuleRecord::Field::State).get());
+    if (!resume.offset() || resume.offset() >= codeBlock->instructions().size())
+        return false;
+
+    // No position is recorded for an `await`. The last expression that recorded one before the body suspended tells where the keyword is in the text that was compiled.
+    auto* provider = codeBlock->source().provider();
+    WTF::StringView source = provider->source();
+    auto expression = codeBlock->expressionInfoForBytecodeIndex(resume);
+    unsigned start = expression.divot - expression.startOffset;
+    unsigned end = expression.divot + expression.endOffset;
+    if (expression.startOffset > expression.divot || end > source.length())
+        return false;
+
+    std::optional<unsigned> keyword;
+    // The operand of this await, or a part of it: the keyword stands in front of it on its line (`await f()`, `for await (const x of f())`).
+    if (expression.instPC >= resumePointBefore(codeBlock, resume.offset())) {
+        for (unsigned i = start; i-- && source[i] != '\n';) {
+            if (isAwaitKeywordAt(source, i)) {
+                keyword = i;
+                break;
+            }
+        }
+    }
+    // An operand that records nothing (`await promise`): the keyword is what follows the expression that ran before it.
+    if (!keyword) {
+        unsigned next = end;
+        while (next < source.length() && (isASCIIWhitespace(source[next]) || source[next] == ';' || source[next] == ')' || source[next] == ','))
+            next++;
+        if (!isAwaitKeywordAt(source, next))
+            return false;
+        keyword = next;
+    }
+
+    lineColumn = { 1, 1 };
+    for (unsigned i = 0; i < *keyword; i++) {
+        if (source[i] == '\n') {
+            lineColumn.line++;
+            lineColumn.column = 1;
+        } else
+            lineColumn.column++;
+    }
+    Bun::computeLineColumnWithSourcemap(globalObject->vm(), provider, lineColumn, url);
+    return true;
+}
+
+// Calls `callback` for each module that keeps the evaluation of `rootKey`'s graph from finishing because it is suspended on its own top-level await: a walk of the static imports in source order that stops at such a module, like V8's GetStalledTopLevelAwaitMessage. 0: no module of the graph is suspended on an await (it did not load that far, or its modules are compiled ahead of time).
+extern "C" size_t Bun__forEachStalledTopLevelAwait(Zig::GlobalObject* globalObject, const BunString* rootKey, void* context, void (*callback)(void* context, const BunString* url, int32_t line, int32_t column))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* loader = globalObject->moduleLoader();
+    size_t found = 0;
+
+    auto report = [&](JSC::AbstractModuleRecord* record) {
+        WTF::String url = record->moduleKey().string();
+        JSC::LineColumn lineColumn;
+        if (!positionOfStalledAwait(globalObject, record, lineColumn, url))
+            lineColumn = {};
+        BunString bunURL = Bun::toString(url);
+        callback(context, &bunURL, static_cast<int32_t>(lineColumn.line), static_cast<int32_t>(lineColumn.column));
+        found++;
+    };
+
+    if (auto* root = loader->registryEntry(JSC::Identifier::fromString(vm, rootKey->toWTFString(BunString::ZeroCopy)))) {
+        WTF::HashSet<JSC::AbstractModuleRecord*> visited;
+        WTF::Vector<JSC::AbstractModuleRecord*, 16> worklist;
+        if (auto* record = root->record())
+            worklist.append(record);
+        while (!worklist.isEmpty()) {
+            JSC::AbstractModuleRecord* record = worklist.takeLast();
+            if (!visited.add(record).isNewEntry)
+                continue;
+            if (isStalledOnOwnAwait(record)) {
+                report(record);
+                continue;
+            }
+            // Last request first, so that the first one is the next to be taken.
+            const auto& loaded = record->loadedModules();
+            const auto& requests = record->requestedModules();
+            for (size_t i = requests.size(); i--;) {
+                JSC::AbstractModuleRecord* dependency = record->prelinkedRequestedModule(requests[i]);
+                if (!dependency) {
+                    auto iter = loaded.find(JSC::ModuleMapKey { requests[i].m_specifier.impl(), requests[i].type() });
+                    if (iter != loaded.end())
+                        dependency = iter->value.m_module.get();
+                }
+                if (dependency)
+                    worklist.append(dependency);
+            }
+        }
+    }
+    return found;
 }
 
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin

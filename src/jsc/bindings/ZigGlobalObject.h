@@ -326,6 +326,7 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    bool hasRejectedPromisesToReport() const { return !m_aboutToBeNotifiedRejectedPromises.isEmpty(); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const

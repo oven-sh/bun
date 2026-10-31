@@ -559,6 +559,10 @@ impl Subprocess<'_> {
             }
         }
 
+        // What awaits the disposal waits for the exit that the signal brings, also of a process that was unref'd.
+        self.process_mut().enable_keeping_event_loop_alive();
+        self.update_has_pending_activity();
+
         Ok(self.get_exited(this_value, cx))
     }
 

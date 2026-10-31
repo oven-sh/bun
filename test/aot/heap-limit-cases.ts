@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "ha
 import { linkSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "./harness/compiler";
+import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 import { run as runCommand } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
 
@@ -178,83 +179,6 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };
 }
 
-/**
- * `bun build --compile --aot <flags and entry points> --outfile <outfile>` in `cwd`. Answers what to start.
- * A command has one turn, and there are as many turns as cores. So a build is told how many threads it has.
- */
-async function build(cwd: string, outfile: string, threads: number, ...flagsAndEntryPoints: string[]) {
-  const cmd = [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, ...flagsAndEntryPoints];
-  const { stderr, exitCode } = await run([...cmd, "--outfile", outfile], cwd);
-  expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
-  return join(cwd, outfile);
-}
-
-const folders: Disposable[] = [];
-
-// A build of its own costs a small program about three times what it costs as one of many, and writes an executable the size of
-// Bun. So most programs that start no Worker are the entry points of one executable. --aot-separate-programs compiles each as it
-// is when it is built alone, and BUN_AOT_START_AT names the one that a process starts with. The others take none of its room
-// for objects or for their shapes. They take address space: the process maps the whole executable.
-const programs: Record<string, string> = {};
-const programsByThemselves = new Set<string>();
-/** Adds a program to that executable and answers its name, which `start` takes. `isStarted`: whether a test starts it with the Bun under test. */
-function oneOfMany(name: string, text: string, isStarted = true) {
-  if (name in programs && programs[name] !== text) throw new Error(`two programs are named ${name}`);
-  if (isStarted) programs[name] = text;
-  return name;
-}
-/** The same, for a program that has an executable of its own. Each place that asks for one says why. */
-function byItself(name: string, text: string, isStarted = true) {
-  if (isStarted) programsByThemselves.add(name);
-  return oneOfMany(name, text, isStarted);
-}
-
-type Built = { executable: string; cwd: string };
-const builtByThemselves = new Map<string, Promise<Built>>();
-function buildByItself(name: string) {
-  return builtByThemselves.getOrInsertComputed(name, async () => {
-    const folder = tempDir("aot-heap-limit", { [name]: programs[name] });
-    folders.push(folder);
-    return { executable: await build(String(folder), "program", 1, name), cwd: String(folder) };
-  });
-}
-
-let builtOfMany: Promise<Built | undefined> | undefined;
-/**
- * Only a canary build of Bun reads BUN_AOT_START_AT. A Bun that does not read it starts an executable at its first entry point,
- * which says so here. The answer is nothing then, and `start` builds each program by itself.
- */
-function buildOfMany() {
-  return (builtOfMany ??= (async () => {
-    const names = Object.keys(programs).filter(name => !programsByThemselves.has(name));
-    const first = "first.ts";
-    const folder = tempDir("aot-heap-limit", {
-      [first]: `console.log("started at the first entry point");\n`,
-      ...Object.fromEntries(names.map(name => [name, programs[name]])),
-    });
-    folders.push(folder);
-    const cwd = String(folder);
-    const entryPoints = [first, ...names].map(name => "./" + name);
-    const executable = await build(cwd, "programs", 1, "--aot-separate-programs", "--root=.", ...entryPoints);
-    const { stdout, stderr, exitCode } = await run([executable], cwd, { BUN_AOT_START_AT: "no-such-program.ts" });
-    if (stdout === "started at the first entry point\n" && exitCode === 0) return undefined;
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining("BUN_AOT_START_AT names no entry point of the executable"),
-      exitCode: 1,
-    });
-    return { executable, cwd };
-  })());
-}
-
-/** Runs a program in a process of its own. `command` is what starts the executable. */
-async function start(name: string, env: Record<string, string> = {}, command = (executable: string) => [executable]) {
-  if (!(name in programs)) throw new Error(`no test starts ${name} with this Bun, so it was not built`);
-  const ofMany = programsByThemselves.has(name) ? undefined : await buildOfMany();
-  const { executable, cwd } = ofMany ?? (await buildByItself(name));
-  return run(command(executable), cwd, ofMany ? { ...env, BUN_AOT_START_AT: name } : env);
-}
-
 // A process that ends with an error that nobody caught says the error, the frames of its stack and the version of Bun. The
 // frames go by how far the program had come, and the version by the build.
 const withoutFramesAndVersion = (stderr: string) =>
@@ -266,52 +190,152 @@ const withAddressSpaceOf =
   (kilobytes: number, before = "") =>
   (executable: string) => ["sh", "-c", `${before}ulimit -v ${kilobytes} && exec "$0"`, executable];
 
-// node:worker_threads brings the streams of Node.js along, which makes a build thirty times dearer. The programs that import it are files of one program: its entry points import the files of
-// the case that the working directory names.
-const programsTogether: Record<string, Record<string, string>> = {};
-function together(name: string, files: Record<string, string>) {
-  programsTogether[name] = files;
-  return { "case.txt": name };
-}
-const importsTheCase = (file: string) =>
-  `const files: Record<string, () => Promise<unknown>> = {\n` +
-  Object.entries(programsTogether)
-    .filter(([, files]) => file in files)
-    .map(([name]) => `  "${name}": () => import("./${name}/${file}"),\n`)
-    .join("") +
-  `};\nawait files[await Bun.file("case.txt").text()]!();\n`;
-let builtTogether: Promise<string> | undefined;
-function buildTogether() {
-  return (builtTogether ??= (async () => {
-    const files: Record<string, string> = {};
-    const alone: string[] = [];
-    for (const [name, ofCase] of Object.entries(programsTogether))
-      for (const [file, text] of Object.entries(ofCase)) {
-        const isShared = file === "program.ts" || file === "worker.ts";
-        files[isShared ? `${name}/${file}` : file] = text;
-        if (!isShared) alone.push(file);
-      }
-    files["program.ts"] = importsTheCase("program.ts");
-    files["worker.ts"] = importsTheCase("worker.ts");
-    const folder = tempDir("aot-heap-limit-together", files);
-    folders.push(folder);
-    // On a machine with cores to spare this build is what the file waits for longest, so it has a second thread.
-    return build(String(folder), "program", 2, "program.ts", "worker.ts", ...alone);
-  })());
-}
-/** Puts the executable of all those programs into `cwd` as ./program. */
-async function linkTogether(cwd: string) {
-  const executable = await buildTogether();
-  const extension = isWindows ? ".exe" : "";
-  linkSync(executable + extension, join(cwd, "program" + extension));
-  return join(cwd, "program");
-}
+/**
+ * The executables of one run of the file. `bun test --rerun-each` runs the file again in the same process: it evaluates the test
+ * file again and this module once, so a run keeps nothing in a variable of the module.
+ */
+function executables() {
+  const folders: Disposable[] = [];
+  const buildsUnderWay = new Set<{ kill(signal: "SIGKILL"): void }>();
 
-afterAll(async () => {
-  // A build that no test waited for, because a filter left its tests out, is through before its folder goes.
-  await Promise.allSettled([builtOfMany, builtTogether, ...builtByThemselves.values()]);
-  folders.forEach(folder => folder[Symbol.dispose]());
-});
+  /**
+   * `bun build --compile --aot <flags and entry points> --outfile <outfile>` in `cwd`. Answers what to start.
+   * A command has one turn, and there are as many turns as cores. So a build is told how many threads it has.
+   */
+  async function build(cwd: string, outfile: string, threads: number, ...flagsAndEntryPoints: string[]) {
+    const cmd = [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, ...flagsAndEntryPoints];
+    const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
+    const { stderr, exitCode } = await inTurn(async () => {
+      await using proc = Bun.spawn({ cmd: [...cmd, "--outfile", outfile], cwd, env, stdout: "ignore", stderr: "pipe" });
+      using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram);
+      buildsUnderWay.add(proc);
+      try {
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        if (held.exceeded) throw new Error(`KILLED at its memory limit: ${cmd.join(" ")}\n${held.held}`);
+        return { stderr, exitCode };
+      } finally {
+        buildsUnderWay.delete(proc);
+      }
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+    return join(cwd, outfile);
+  }
+
+  // A build of its own costs a small program about three times what it costs as one of many, and writes an executable the size
+  // of Bun. So most programs that start no Worker are the entry points of one executable. --aot-separate-programs compiles each
+  // as it is when it is built alone, and BUN_AOT_START_AT names the one that a process starts with. The others take none of its
+  // room for objects or for their shapes. They take address space: the process maps the whole executable.
+  const programs: Record<string, string> = {};
+  const programsByThemselves = new Set<string>();
+  /** Adds a program to that executable and answers its name, which `start` takes. `isStarted`: whether a test starts it with the Bun under test. */
+  function oneOfMany(name: string, text: string, isStarted = true) {
+    if (name in programs && programs[name] !== text) throw new Error(`two programs are named ${name}`);
+    if (isStarted) programs[name] = text;
+    return name;
+  }
+  /** The same, for a program that has an executable of its own. Each place that asks for one says why. */
+  function byItself(name: string, text: string, isStarted = true) {
+    if (isStarted) programsByThemselves.add(name);
+    return oneOfMany(name, text, isStarted);
+  }
+
+  type Built = { executable: string; cwd: string };
+  const builtByThemselves = new Map<string, Promise<Built>>();
+  function buildByItself(name: string) {
+    return builtByThemselves.getOrInsertComputed(name, async () => {
+      const folder = tempDir("aot-heap-limit", { [name]: programs[name] });
+      folders.push(folder);
+      return { executable: await build(String(folder), "program", 1, name), cwd: String(folder) };
+    });
+  }
+
+  let builtOfMany: Promise<Built | undefined> | undefined;
+  /**
+   * Only a canary build of Bun reads BUN_AOT_START_AT. A Bun that does not read it starts an executable at its first entry
+   * point, which says so here. The answer is nothing then, and `start` builds each program by itself.
+   */
+  function buildOfMany() {
+    return (builtOfMany ??= (async () => {
+      const names = Object.keys(programs).filter(name => !programsByThemselves.has(name));
+      const first = "first.ts";
+      const folder = tempDir("aot-heap-limit", {
+        [first]: `console.log("started at the first entry point");\n`,
+        ...Object.fromEntries(names.map(name => [name, programs[name]])),
+      });
+      folders.push(folder);
+      const cwd = String(folder);
+      const entryPoints = [first, ...names].map(name => "./" + name);
+      const executable = await build(cwd, "programs", 1, "--aot-separate-programs", "--root=.", ...entryPoints);
+      const { stdout, stderr, exitCode } = await run([executable], cwd, { BUN_AOT_START_AT: "no-such-program.ts" });
+      if (stdout === "started at the first entry point\n" && exitCode === 0) return undefined;
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("BUN_AOT_START_AT names no entry point of the executable"),
+        exitCode: 1,
+      });
+      return { executable, cwd };
+    })());
+  }
+
+  /** Runs a program in a process of its own. `command` is what starts the executable. */
+  async function start(name: string, env: Record<string, string> = {}, command = (executable: string) => [executable]) {
+    if (!(name in programs)) throw new Error(`no test starts ${name} with this Bun, so it was not built`);
+    const ofMany = programsByThemselves.has(name) ? undefined : await buildOfMany();
+    const { executable, cwd } = ofMany ?? (await buildByItself(name));
+    return run(command(executable), cwd, ofMany ? { ...env, BUN_AOT_START_AT: name } : env);
+  }
+
+  // node:worker_threads brings the streams of Node.js along, which makes a build thirty times dearer. The programs that import it are files of one program: its entry points import the files of
+  // the case that the working directory names.
+  const programsTogether: Record<string, Record<string, string>> = {};
+  function together(name: string, files: Record<string, string>) {
+    programsTogether[name] = files;
+    return { "case.txt": name };
+  }
+  const importsTheCase = (file: string) =>
+    `const files: Record<string, () => Promise<unknown>> = {\n` +
+    Object.entries(programsTogether)
+      .filter(([, files]) => file in files)
+      .map(([name]) => `  "${name}": () => import("./${name}/${file}"),\n`)
+      .join("") +
+    `};\nawait files[await Bun.file("case.txt").text()]!();\n`;
+  let builtTogether: Promise<string> | undefined;
+  function buildTogether() {
+    return (builtTogether ??= (async () => {
+      const files: Record<string, string> = {};
+      const alone: string[] = [];
+      for (const [name, ofCase] of Object.entries(programsTogether))
+        for (const [file, text] of Object.entries(ofCase)) {
+          const isShared = file === "program.ts" || file === "worker.ts";
+          files[isShared ? `${name}/${file}` : file] = text;
+          if (!isShared) alone.push(file);
+        }
+      files["program.ts"] = importsTheCase("program.ts");
+      files["worker.ts"] = importsTheCase("worker.ts");
+      const folder = tempDir("aot-heap-limit-together", files);
+      folders.push(folder);
+      // On a machine with cores to spare this build is what the file waits for longest, so it has a second thread.
+      return build(String(folder), "program", 2, "program.ts", "worker.ts", ...alone);
+    })());
+  }
+  /** Puts the executable of all those programs into `cwd` as ./program. */
+  async function linkTogether(cwd: string) {
+    const executable = await buildTogether();
+    const extension = isWindows ? ".exe" : "";
+    linkSync(executable + extension, join(cwd, "program" + extension));
+    return join(cwd, "program");
+  }
+
+  // A build may still be under way at the end: a filter left out the tests that wait for it, or it hangs. It is ended, and
+  // then its folder goes.
+  afterAll(async () => {
+    for (const build of buildsUnderWay) build.kill("SIGKILL");
+    await Promise.allSettled([builtOfMany, builtTogether, ...builtByThemselves.values()]);
+    folders.forEach(folder => folder[Symbol.dispose]());
+  });
+
+  return { oneOfMany, byItself, start, together, buildTogether, linkTogether };
+}
 
 // TODO: with AddressSanitizer these run out of room where a release build does not.
 const runsOutOfRoomEarly = isASAN;
@@ -325,6 +349,7 @@ export function addressSpaceForObjects(part: number, parts: number) {
   let cases = 0;
   const isInPart = () => cases++ % parts === part - 1;
   const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
+  const { oneOfMany, byItself, start, together, buildTogether, linkTogether } = executables();
   // Tests start in the order in which they are defined, and few run at a time: five with AddressSanitizer. So the order decides
   // when the file ends. The tests that run longest are defined first: the short ones run beside them. The tests of Workers are
   // defined last: their executable takes many times as long to build as the others, and a test that waits for its build keeps
@@ -342,7 +367,8 @@ export function addressSpaceForObjects(part: number, parts: number) {
       name,
       () => {
         const ended = body();
-        // A test of a Worker says how this build failed.
+        // Whether a filter (-t) leaves out the tests of Workers is not known here. Then nothing waits for this build, and it is
+        // ended with the file. Otherwise a test of a Worker says how it failed.
         if (testsOfWorkers.length) buildTogether().catch(() => {});
         return ended;
       },
@@ -1250,11 +1276,8 @@ parentPort!.postMessage(sum);
       "where address space is limited a Worker shares the range of the main thread",
       async () => {
         using folder = tempDir("aot-heap-limit", case7);
-        await linkTogether(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 67108864 && exec ./program"],
-          String(folder),
-        );
+        const program = await linkTogether(String(folder));
+        const { stdout, stderr, exitCode } = await run(withAddressSpaceOf(67108864)(program), String(folder));
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "shares 4999950000 4999950000\n",
           stderr: "",
@@ -1295,11 +1318,8 @@ parentPort!.postMessage(sum);
       "where address space is limited much of it is left for Workers and their threads",
       async () => {
         using folder = tempDir("aot-heap-limit", case8);
-        await linkTogether(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 8388608 && exec ./program"],
-          String(folder),
-        );
+        const program = await linkTogether(String(folder));
+        const { stdout, stderr, exitCode } = await run(withAddressSpaceOf(8388608)(program), String(folder));
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "roomy 4999950000,4999950000,4999950000,4999950000\n",
           stderr: "",

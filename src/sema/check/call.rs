@@ -548,6 +548,29 @@ impl<'p, 's> Checker<'p, 's> {
         resolved
     }
 
+    /// `links.resolvedSignature == resolvingSignature`: `call` is being resolved.
+    fn is_call_in_progress(&self, file: FileId, call: ExprId) -> bool {
+        let q = Query::Call(file, call);
+        self.may_be_in_flight(q) && self.stack.contains(&q)
+    }
+
+    /// `getResolvedSignature`: hides the resolutions below `call` from `check`, a check of its
+    /// callee or arguments, unless the call is being resolved.
+    pub(super) fn behind_resolved_signature<T>(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        check: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        if self.resolution_start >= self.stack.len() || self.is_call_in_progress(file, call) {
+            return check(self);
+        }
+        let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
+        let result = check(self);
+        self.resolution_start = resolution_start;
+        result
+    }
+
     /// `resolved_signature` for one of `calls_to_resolve_afresh`, run once for each. What's stored and what was
     /// reported for the call stay unchanged. Returns `None` if `call` isn't one of them, or if it's requested while
     /// it's being resolved this way. Then the stored result is used.

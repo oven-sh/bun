@@ -1144,6 +1144,11 @@ module.exports = debugMode => {
       console.log("indices first, ascending:", indicesAscend);
       console.log("then strings, in insertion order:", stringsInOrder);
 
+      // Enough new strings for Bun's --smol heap to start a collection while the native call holds the keys it chose.
+      const indexStrings = getNames(new Uint8Array(100000), ALL_PROPERTIES, kConvertToString);
+      const indexStringsInOrder = indexStrings.every((key, i) => key === String(i));
+      console.log("100000 index keys as strings:", indexStrings.length, indexStringsInOrder);
+
       console.log("====== Proxy");
       const traps = [];
       const trapKey = key => (typeof key === "symbol" ? `symbol(${key.description})` : key);
@@ -1212,18 +1217,6 @@ module.exports = debugMode => {
       for (const filter of [...attributeFilters, ONLY_ENUMERABLE | SKIP_STRINGS]) {
         show("proxy that invents read-only properties", inventsProperties, filter);
       }
-
-      // Bun only: a collection in the middle of the native call, after some of the keys were chosen
-      const collecting = new Proxy(
-        { a: 1, b: 2, 3: 3, [symbols.enumerable]: 4 },
-        {
-          getOwnPropertyDescriptor(target, key) {
-            if (process.isBun) Bun.gc(true);
-            return Reflect.getOwnPropertyDescriptor(target, key);
-          },
-        },
-      );
-      show("proxy whose trap collects garbage", collecting, ONLY_ENUMERABLE);
 
       console.log("====== exceptions");
       const throwsFromOwnKeys = new Proxy(

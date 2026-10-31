@@ -32,7 +32,9 @@ use crate::postgres::error_jsc::{
 };
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{self, Cancel, RequestCounter, Status as QueryStatus};
+use crate::postgres::postgres_sql_query::{
+    self, Cancel, CopyStream, RequestCounter, Status as QueryStatus,
+};
 use crate::postgres::postgres_sql_statement::{
     Error as StatementError, StatementCache, Status as StatementStatus,
 };
@@ -139,6 +141,9 @@ pub struct PostgresSQLConnection {
 
     /// The CopyData payloads of the read that is being parsed; see `flush_copy_out`.
     copy_out: JsCell<Vec<u8>>,
+
+    /// A per-message CopyBoth chunk told the readable to pause; `flush_copy_out` acts on it.
+    copy_out_full: Cell<bool>,
 }
 
 struct InternedChannel {
@@ -422,6 +427,8 @@ impl PostgresSQLConnection {
         let flags = self.flags.get();
         // What a paused COPY TO STDOUT waits for is its consumer, which is in this process.
         let idle = !flags.contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
+            // A write that waits for room in the socket keeps us busy: only `on_copy_drain` settles it.
+            && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_query_running() && self.write_buffer.get().remaining().is_empty()));
         if idle {
@@ -451,17 +458,17 @@ impl PostgresSQLConnection {
         }
 
         let wrote = self.socket.get().write(chunk);
-        self.update_flags(|f| {
-            f.set(
-                ConnectionFlags::HAS_BACKPRESSURE,
-                wrote < 0 || (wrote as usize) < chunk.len(),
-            )
-        });
+        let backpressure = wrote < 0 || (wrote as usize) < chunk.len();
+        self.update_flags(|f| f.set(ConnectionFlags::HAS_BACKPRESSURE, backpressure));
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
             let wrote = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[..wrote]);
             self.write_buffer.with_mut(|b| b.consume(wrote));
+        }
+        if backpressure {
+            // A write that waits for the socket keeps the process alive.
+            self.update_poll_ref();
         }
     }
 
@@ -714,6 +721,7 @@ impl PostgresSQLConnection {
         debug!("onDrain");
         let _guard = self.ref_guard();
         self.update_flags(|f| f.remove(ConnectionFlags::HAS_BACKPRESSURE));
+        self.update_poll_ref();
         // Don't send any other messages while we're waiting for TLS.
         if let TLSStatus::MessageSent(sent) = self.tls_status.get() {
             if sent < 8 {
@@ -1115,6 +1123,7 @@ fn open(
             auto_flush_registered: Cell::new(false),
             channel_names: JsCell::new(Vec::new()),
             copy_out: JsCell::new(Vec::new()),
+            copy_out_full: Cell::new(false),
         }));
 
     let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
@@ -1275,12 +1284,13 @@ impl PostgresSQLConnection {
         self.transaction_status.get() != b'I'
     }
 
-    /// Also while a request that user code has seen rejected can still change it.
+    /// Also while a rejected request can still change it. A replication session ending in band cannot.
     pub fn get_in_transaction(&self) -> bool {
         self.is_in_transaction()
-            || self
-                .current()
-                .is_some_and(|head| head.flags.get().discard_response)
+            || self.current().is_some_and(|head| {
+                let flags = head.flags.get();
+                flags.discard_response && flags.copy != CopyStream::BothClosing
+            })
     }
 
     /// Of the login that is under way or was refused.
@@ -1419,7 +1429,10 @@ impl PostgresSQLConnection {
         if request.is_rejected() {
             return;
         }
-        request.cancel_copy();
+        if request.cancel_copy() {
+            // The in-band CopyDone ends the session; a CancelRequest would drop its temporary slots.
+            return;
+        }
         let status = request.status.get();
         match status {
             QueryStatus::Success | QueryStatus::Fail => {}
@@ -2787,10 +2800,8 @@ impl PostgresSQLConnection {
             }
             MessageType::CopyBothResponse => {
                 reader.skip_message()?;
-                self.fail(
-                    b"Streaming replication is not supported",
-                    AnyPostgresError::CopyNotSupported,
-                );
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                self.on_copy_both_response(&request)?;
             }
         }
         Ok(())

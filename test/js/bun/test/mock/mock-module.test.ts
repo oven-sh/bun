@@ -2244,13 +2244,26 @@ test.concurrent(
           expect((await run(() => vi.importActual("./where"))).default).toBe("beside the test file");
         });
 
+        test("at the end of a conditional", async () => {
+          const load = flag => (flag ? vi.importActual("./where") : null);
+          expect((await run(() => load(true))).default).toBe("beside the test file");
+        });
+
+        test("in a variable that is only returned", async () => {
+          const load = () => {
+            const loaded = vi.importActual("./where");
+            return loaded;
+          };
+          expect((await run(load)).default).toBe("beside the test file");
+        });
+
         test("vi.doMock()", async () => {
           await run(() => vi.doMock("./where", () => ({ default: "mock" })));
           expect([(await import("./where")).default, (await import("../helpers/where")).default]).toEqual(["mock", "beside the helper"]);
         });
       `,
       },
-      2,
+      4,
     );
   },
 );

@@ -353,11 +353,11 @@ extern "C" bool Bun__isOptionThatCompiledCodeDoesNotTake(const char* entry)
 }
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool isTestRunner, bool runsCompiledCode, bool locksBuiltins, bool isCompiler)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins, bool isCompiler)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, isTestRunner, runsCompiledCode, locksBuiltins, isCompiler, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, runsCompiledCode, locksBuiltins, isCompiler, envp, envc, onCrash]() {
         locksBuiltinsWithoutImage = locksBuiltins;
         if (locksBuiltins)
             JSC::AOT::lockBuiltinsWithoutImage();
@@ -454,11 +454,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // `bun test --isolate`: FTL code dies with each file's global, so only tier up code hot enough to pay that back within one file.
             if (shortLivedGlobals) {
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
-            }
-
-            // A tail call drops its caller's frame. The stack tells which file called vi.mock(), where an inline snapshot is, and where a test failed.
-            if (isTestRunner) {
-                JSC::Options::useTailCalls() = false;
             }
 
             // The front end and the passes are Bun's own, so a build does not verify the program between them. Bun's tests do.

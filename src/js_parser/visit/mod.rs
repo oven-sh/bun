@@ -2004,6 +2004,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // fail if something with side effects is in between the declaration
                     // and the usage.
                     if symbol.use_count_estimate == 1
+                        && !p.keeps_frame_for_call(&replacement)
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just

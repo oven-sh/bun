@@ -1693,6 +1693,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if let Some(returned) = data.value.as_mut()
+            && let Some(call) = p.keep_frame_for_returned_call(returned)
+        {
+            stmts.push(call);
+        }
+
         stmts.push(*stmt);
         Ok(())
     }

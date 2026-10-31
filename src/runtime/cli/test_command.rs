@@ -4005,7 +4005,6 @@ impl TestCommand {
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate && !ctx.test_options.isolate_modules,
-            is_test_runner: true,
             runs_compiled_code: run_compiled::runs_compiled_code(),
             locks_builtins: run_compiled::is_checked(),
             ..Default::default()

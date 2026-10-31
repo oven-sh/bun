@@ -398,6 +398,84 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         )
     }
 
+    /// These find the file or the position of the call in the frame of their caller, which a tail call drops.
+    fn reads_frame_of_caller(&self, call: &E::Call) -> bool {
+        let ExprData::EDot(dot) = call.target.data else {
+            return false;
+        };
+        let api = match dot.name.slice() {
+            b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => return true,
+            b"mock" | b"doMock" | b"unmock" => None,
+            b"doUnmock" | b"importActual" | b"importMock" => Some(MockApi::Vi),
+            b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => {
+                Some(MockApi::Jest)
+            }
+            _ => return false,
+        };
+        let found = match dot.target.data {
+            ExprData::EIdentifier(id) => self.mock_api(id.ref_),
+            ExprData::EImportIdentifier(id) => self.mock_api(id.ref_),
+            _ => None,
+        };
+        match (api, found) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(MockApi::Vi), Some(found)) => matches!(found, MockApi::Vi),
+            (Some(MockApi::Jest), Some(found)) => matches!(found, MockApi::Jest),
+        }
+    }
+
+    fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {
+        match &value.data {
+            ExprData::ECall(call) => self.reads_frame_of_caller(call),
+            ExprData::EIf(either) => {
+                self.ends_in_call_that_reads_frame_of_caller(&either.yes)
+                    || self.ends_in_call_that_reads_frame_of_caller(&either.no)
+            }
+            ExprData::EBinary(binary) => {
+                matches!(
+                    binary.op,
+                    js_ast::OpCode::BinComma
+                        | js_ast::OpCode::BinLogicalAnd
+                        | js_ast::OpCode::BinLogicalOr
+                        | js_ast::OpCode::BinNullishCoalescing
+                ) && self.ends_in_call_that_reads_frame_of_caller(&binary.right)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `value` has to stay out of a `return`, where its last call would be a tail call.
+    pub(crate) fn keeps_frame_for_call(&mut self, value: &Expr) -> bool {
+        let keeps = self.options.features.inject_jest_globals
+            && self.ends_in_call_that_reads_frame_of_caller(value);
+        self.did_apply_test_feature |= keeps;
+        keeps
+    }
+
+    /// Splits `return vi.importActual("./a")` into `const value = vi.importActual("./a"); return value`. Returns the first statement.
+    pub(crate) fn keep_frame_for_returned_call(&mut self, returned: &mut Expr) -> Option<Stmt> {
+        if self.is_control_flow_dead || !self.keeps_frame_for_call(returned) {
+            return None;
+        }
+        let loc = returned.loc;
+        let r#ref = self.generate_temp_ref(None);
+        let binding = self.b(B::Identifier { r#ref }, loc);
+        let value = core::mem::replace(returned, self.new_expr(E::Identifier::init(r#ref), loc));
+        self.record_usage(r#ref);
+        Some(self.s(
+            S::Local {
+                kind: S::Kind::KConst,
+                decls: G::DeclList::init_one(G::Decl {
+                    binding,
+                    value: Some(value),
+                }),
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
     /// Rewrites `vi.mock(import("./a"))` to `vi.mock("./a")`. Returns true if it visited the first argument.
     pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call) -> bool {
         if self.is_control_flow_dead {

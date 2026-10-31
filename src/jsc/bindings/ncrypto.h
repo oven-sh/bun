@@ -1268,6 +1268,15 @@ bool extractP1363(const Buffer<const unsigned char>& buf,
     unsigned char* dest,
     size_t n);
 
+// Verifies an Ed25519 signature and rejects a small-order public key or R,
+// in canonical or non-canonical encoding, like Node (nodejs/node#64026).
+// crypto.subtle.verify and one-shot crypto.verify route through this.
+// X509Certificate.verify goes through X509_verify and does not filter, as in
+// Node.
+bool ed25519Verify(const Buffer<const unsigned char>& publicKey,
+    const Buffer<const unsigned char>& signature,
+    const Buffer<const unsigned char>& message);
+
 DataPointer hkdf(const Digest& md,
     const Buffer<const unsigned char>& key,
     const Buffer<const unsigned char>& info,

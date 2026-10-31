@@ -816,7 +816,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
 
     // Port of Node.js FileHandle.prototype.readableWebStream
-    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L324).
+    // (https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L334).
     // The handle is locked for the lifetime of the stream, is kept referenced
     // until the stream ends or is cancelled, and closing the handle closes the
     // stream even while a reader holds it.
@@ -886,7 +886,9 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
           let bytesRead;
           try {
-            ({ bytesRead } = await handle.read(view, view.byteOffset, view.byteLength));
+            ({ bytesRead } = await handle.read(view, 0, view.byteLength));
+            // close() throws when a read left part of an element filled. Release the handle then too, which node does not.
+            if (bytesRead === 0 && !done) controller.close();
           } catch (err) {
             if (done) return;
             await ondone();
@@ -894,10 +896,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
           }
           if (done) return;
 
-          if (bytesRead === 0) {
-            controller.close();
-            await ondone();
-          }
+          if (bytesRead === 0) await ondone();
 
           controller.byobRequest!.respond(bytesRead);
         },

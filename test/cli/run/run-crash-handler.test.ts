@@ -55,6 +55,14 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   60_000, // symbolizing the debug binary takes several seconds
 );
 
+// Code compiled with -mbranch-protection=pac-ret saves its return addresses
+// signed. Read as it is, such a word is the address of nothing, and the caller
+// is missing from the crash report. Only Linux arm64 machines with pointer
+// authentication sign anything, which CI's are: elsewhere this passes as is.
+test("a stack walk takes the signature off a return address", () => {
+  expect(crash_handler.stackWalkFindsSignedReturnAddress()).toBe(true);
+});
+
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by
 // npm's widely-used signal-exit package) cannot swallow the termination. A

@@ -1,0 +1,12 @@
+import { mock } from "bun:test";
+import { spyOnOwn, spyOnAny, mockAny } from "../src/spies/helper-that-spies";
+import * as own from "../src/spies/own";
+import * as pkg from "pkg-esm";
+import * as cjs from "pkg-cjs";
+import { callsOwn } from "../src/spies/own";
+import { callsAdd } from "pkg-esm";
+import { seenBySrc, seenOfCjs } from "../src/spies/uses";
+import { say } from "../src/spies/say";
+const all = () => [own.own(), callsOwn(), pkg.add(1, 2), callsAdd(1, 2), cjs.add(1, 2), seenBySrc(), seenOfCjs()];
+say("60", "a helper of the application spies", () => { const before = all(); spyOnOwn("by the helper"); const a = all(); spyOnAny(pkg, "add", 100); spyOnAny(cjs, "add", 200); spyOnAny(own, "arrow", "arrow by the helper"); const b = all(); mock.restore(); return [before, a, b, all()]; });
+say("60", "a helper of the application mocks", async () => { mockAny("pkg-esm", () => ({ add: () => 900, twice: () => 901, inner: () => "i", callsAdd: () => 902 })); return [all(), (await import("pkg-esm")).add(1, 2)]; });

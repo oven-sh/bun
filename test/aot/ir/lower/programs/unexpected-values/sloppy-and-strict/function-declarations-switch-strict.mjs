@@ -192,7 +192,7 @@ export {};
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -201,7 +201,7 @@ export {};
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="handler"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=env [[L_6]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: env [[L_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

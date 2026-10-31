@@ -236,27 +236,23 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f7 = AssumeType v0 provenType=f7
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: L2 = NewObject layout=L2 allocationSite=11 allocationClass=2
-# CHECK-NEXT: v4: "both" = String string="both"
-# CHECK-NEXT: v5: f16 = NewClosure v3 function=f16 allocationSite=12
-# CHECK-NEXT: v6: f17 = NewClosure v3 function=f17 allocationSite=14
-# CHECK-NEXT: v7: L4 = NewObject -, v5, v6 layout=L4 fields=[2, 3] allocationSite=13 allocationClass=4
-# CHECK-NEXT: v8: L4 = FinishObject v7
-# CHECK-NEXT: v9: L2 = CallBuiltin -, v3, v4, v8 overload=ObjectDefineProperty/0 accessSite=23
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v10: object = GetConstructPrototype v1 layout=L2
-# CHECK-NEXT: v11: object ~ L2 = NewObject v10 layout=L2 allocationSite=11 allocationClass=2
-# CHECK-NEXT: v12: L2 = AssumeType v11 provenType=L2
-# CHECK-NEXT: v13: "both" = String string="both"
-# CHECK-NEXT: v14: f16 = NewClosure v12 function=f16 allocationSite=12
-# CHECK-NEXT: v15: f17 = NewClosure v12 function=f17 allocationSite=14
-# CHECK-NEXT: v16: L4 = NewObject -, v14, v15 layout=L4 fields=[2, 3] allocationSite=13 allocationClass=4
-# CHECK-NEXT: v17: L4 = FinishObject v16
-# CHECK-NEXT: v18: L2 = CallBuiltin -, v12, v13, v17 overload=ObjectDefineProperty/0 accessSite=23
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: Jump -> next b2(v3)
+# CHECK-NEXT: b2(v4: L2):
+# CHECK-NEXT: v5: "both" = String string="both"
+# CHECK-NEXT: v6: f16 = NewClosure v4 function=f16 allocationSite=12
+# CHECK-NEXT: v7: f17 = NewClosure v4 function=f17 allocationSite=14
+# CHECK-NEXT: v8: L4 = NewObject -, v6, v7 layout=L4 fields=[2, 3] allocationSite=13 allocationClass=4
+# CHECK-NEXT: v9: L4 = FinishObject v8
+# CHECK-NEXT: v10: L2 = CallBuiltin -, v4, v5, v9 overload=ObjectDefineProperty/0 accessSite=23
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v11: object = GetConstructPrototype v1 layout=L2
+# CHECK-NEXT: v12: object ~ L2 = NewObject v11 layout=L2 allocationSite=11 allocationClass=2
+# CHECK-NEXT: v13: L2 = AssumeType v12 provenType=L2
+# CHECK-NEXT: Jump -> next b2(v13)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Fine"
 # CHECK: module=m0 position=834 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=5}] results=[{type=object flags=[IsFromCompiler, IsExpected]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {

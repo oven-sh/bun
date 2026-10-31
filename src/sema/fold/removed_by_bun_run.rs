@@ -1,7 +1,9 @@
+use super::Constant;
 use super::children::TreeNode;
 use super::dead_code::DeadRoots;
 use super::evaluate::Value;
 use super::folder::Folder;
+use super::inputs::DefineValue;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::hir::{
@@ -48,6 +50,17 @@ impl Folder<'_, '_> {
                 roots.all.push(TreeNode::Stmt(statement));
             }
         }
+    }
+
+    /// `expr_can_be_removed_if_unused`
+    pub(super) fn is_removed_if_unused_by_bun_run(&self, e: ExprId) -> bool {
+        // `void 0`
+        if matches!(self.hir[e].kind, ExprKind::Number(_)) {
+            return true;
+        }
+        let mut removal = Removal::default();
+        (removal.parts).push((TreeNode::Expr(e), Rule::UndecidedTest));
+        self.removes_all(&mut removal)
     }
 
     fn removes_all(&self, removal: &mut Removal) -> bool {
@@ -110,6 +123,11 @@ impl Folder<'_, '_> {
             let present = operands.iter().filter_map(|operand| operand.some());
             parts.extend(present.map(|operand| (TreeNode::Expr(operand), rule)));
         };
+        if let Some(DefineValue::Constant(_) | DefineValue::Data(_)) =
+            self.find_user_defined_value(e)
+        {
+            return true;
+        }
         match hir[e].kind {
             ExprKind::Missing
             | ExprKind::This
@@ -146,9 +164,7 @@ impl Folder<'_, '_> {
                 let is_decided_by_left = match op {
                     BinOp::And => self.is_truthy_in_bun_run(left) == Some(false),
                     BinOp::Or => self.is_truthy_in_bun_run(left) == Some(true),
-                    BinOp::Nullish => {
-                        self.is_nullish(left) == Some(false) && self.is_folded_by_bun_run(left)
-                    }
+                    BinOp::Nullish => self.is_nullish_in_bun_run(left) == Some(false),
                     _ => false,
                 };
                 push(&[left]);
@@ -225,6 +241,7 @@ impl Folder<'_, '_> {
     }
 
     fn is_always_string(&self, e: ExprId) -> bool {
+        let defined = self.find_user_defined_value(e);
         matches!(
             self.hir[e].kind,
             ExprKind::String(_)
@@ -232,7 +249,7 @@ impl Folder<'_, '_> {
                     op: UnOp::Typeof,
                     ..
                 }
-        )
+        ) || matches!(defined, Some(DefineValue::Constant(Constant::String(_))))
     }
 
     /// `is_primitive_with_side_effects`
@@ -240,7 +257,11 @@ impl Folder<'_, '_> {
         let hir = self.hir;
         let mut pending = vec![e];
         while let Some(e) = pending.pop() {
-            match hir[hir.skip_type_assertions(e)].kind {
+            let e = hir.skip_type_assertions(e);
+            if let Some(DefineValue::Constant(_)) = self.find_user_defined_value(e) {
+                continue;
+            }
+            match hir[e].kind {
                 ExprKind::Null
                 | ExprKind::True
                 | ExprKind::False

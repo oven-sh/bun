@@ -24,51 +24,51 @@ layout L3 module=m0 position=207 fields=[{key="b" declared={type=anything} flags
 data d0 root=Object{layout=L2 members=[{key="dropped" value=Number{}}, {key="b" value=Object{layout=L1 members=[{key="k" value=String{value="deep"}}]}}]} module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = Data data=d0
-    v1 = TypeTest v0 testedType=undefined|null
-    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+    v0 = Data data=d0 @142
+    v1 = TypeTest v0 testedType=undefined|null @113
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @0
   b2(v2):
-    Jump -> next b3()
+    Jump -> next b3() @0
   b3() frequency=Unlikely:
-    v3 = NewRuntimeError runtimeError=NotDestructurable name="dropped"
-    Throw v3
+    v3 = NewRuntimeError runtimeError=NotDestructurable name="dropped" @113
+    Throw v3 @0
   b4(v4):
-    v5 = PropGet v4 key="dropped"
-    v6 = Convert v5 declared={type=number flags=[IsExpected]}
-    v7 = NewObject layout=L0
-    CopyDataProperties v7, v4 excludedKeys=["dropped"]
-    v9 = FinishObject v7
-    v10 = Convert v9 declared={type=undefined|null|L0|L2|L3 flags=[IsExpected]}
-    v11 = Builtin builtin=Object
-    v12 = Builtin builtin=ObjectAssign
-    v13 = Builtin builtin=Object
-    v14 = Builtin builtin=ObjectCreate
-    v15 = NewObject layout=L3
-    v16 = NewClosure function=f1
-    DefineSetter v15, v16 key="b"
-    v18 = FinishObject v15
-    v19 = Call v14, v13, v18 calleeName="Object.create"
-    v20 = Call v12, v11, v19, v10 calleeName="Object.assign"
-    v21 = Undefined
-    Return v21
+    v5 = PropGet v4 key="dropped" @113 @121
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @121
+    v7 = NewObject layout=L0 @113
+    CopyDataProperties v7, v4 excludedKeys=["dropped"] @113
+    v9 = FinishObject v7 @113
+    v10 = Convert v9 declared={type=undefined|null|L0|L2|L3 flags=[IsExpected]} @133
+    v11 = Builtin builtin=Object @176
+    v12 = Builtin builtin=ObjectAssign @176
+    v13 = Builtin builtin=Object @193
+    v14 = Builtin builtin=ObjectCreate @193
+    v15 = NewObject layout=L3 @217
+    v16 = NewClosure function=f1 @217
+    DefineSetter v15, v16 key="b" @217
+    v18 = FinishObject v15 @207
+    v19 = Call v14, v13, v18 calleeName="Object.create" @200
+    v20 = Call v12, v11, v19, v10 calleeName="Object.assign" @183
+    v21 = Undefined @176
+    Return v21 @176
 }
 function f1 name="b" module=m0 position=213 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|number|string|symbol|bigint|L1):
-    Jump -> next b1()
+    Jump -> next b1() @213
   b1():
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="console" [isFreeName]
-    v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
-    v4 = PropGet v3 key="log"
-    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v6 = String string="b"
-    v7 = TypeOf v0
-    v8 = PropGet v0 key="k"
-    v9 = Call v5, v3, v6, v7, v8 calleeKey="log" calleeName="console.log"
-    v10 = Undefined
-    Return v10
+    v1 = Builtin builtin=GlobalThis @230
+    v2 = PropGet v1 key="console" [isFreeName] @230
+    v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]} @230
+    v4 = PropGet v3 key="log" @230
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @230
+    v6 = String string="b" @242
+    v7 = TypeOf v0 @247
+    v8 = PropGet v0 key="k" @257
+    v9 = Call v5, v3, v6, v7, v8 calleeKey="log" calleeName="console.log" @238
+    v10 = Undefined @230
+    Return v10 @230
 }
 # -- generated: f0 b
 # CHECK-LABEL: function f0 module=
@@ -91,28 +91,22 @@ function f1 name="b" module=m0 position=213 kind=Setter flags=[HasExplicitName] 
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=213 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|L1}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|int|L1):
-# CHECK-NEXT: v1: "b" = String string="b"
-# CHECK-NEXT: v2: string = TypeOf v0
-# CHECK-NEXT: v3: int|L1 = RequireObjectCoercible v0 name="k"
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=L1
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: int|L1 = RequireObjectCoercible v0 name="k"
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L1
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: "deep" = String string="deep"
-# CHECK-NEXT: Jump -> next b3(v5)
-# CHECK-NEXT: b2(v6: int) frequency=Unlikely:
-# CHECK-NEXT: v7: anything = PropGet v6 key="k" accessSite=4 receivers=[L1]
-# CHECK-NEXT: v8: anything ~ "deep" = Upcast v7 castType=anything
-# CHECK-NEXT: v9: boolean ~ true = TypeTest v8 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b3(v10: undefined|null|boolean|number|string|symbol ~ "deep"):
-# CHECK-NEXT: v11: undefined = CallBuiltin -, v1, v2, v10 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b5(v13: bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v14: undefined = CallBuiltin -, v1, v2, v13 overload=ConsoleLog/1 accessSite=5
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: v4: "deep" = String string="deep"
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: b2(v5: int) frequency=Unlikely:
+# CHECK-NEXT: v6: anything = PropGet v5 key="k" accessSite=4 receivers=[L1]
+# CHECK-NEXT: v7: undefined|"deep" = AssumeType v6 provenType=undefined|"deep"
+# CHECK-NEXT: Jump -> next b3(v7)
+# CHECK-NEXT: b3(v8: undefined|"deep" ~ "deep"):
+# CHECK-NEXT: v9: "b" = String string="b"
+# CHECK-NEXT: v10: undefined = CallBuiltin -, v9, v1, v8 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=213 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {

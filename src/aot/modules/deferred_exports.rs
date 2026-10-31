@@ -22,6 +22,11 @@ const MODULES_THAT_MIRROR_AN_OBJECT: [RuntimeModule; 3] = [
     RuntimeModule::Bun,
 ];
 
+/// The host reads an export of such a module off the object when something first asks for the name.
+pub(super) fn mirrors_an_object(module: RuntimeModule) -> bool {
+    MODULES_THAT_MIRROR_AN_OBJECT.contains(&module)
+}
+
 struct LibraryModule<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
@@ -49,7 +54,7 @@ impl DeferredExports {
     }
 
     pub fn contains(&self, module: RuntimeModule, name: &[u8]) -> bool {
-        if MODULES_THAT_MIRROR_AN_OBJECT.contains(&module) {
+        if mirrors_an_object(module) {
             return true;
         }
         let key = (module.registry_id(), name);

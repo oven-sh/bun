@@ -1,0 +1,196 @@
+# -- source: a-list-made-and-filled-in-every-turn-of-a-loop.js
+# // Every turn of a loop makes a list, keeps it in an object and fills it by storing at the counter of an inner loop.
+# // Every copy of the list, also where the loop has a copy for unlikely paths, is made with room for all its elements, and the store of the likely path is expected to put its element behind the last one.
+# const state = { words: [] };
+# function refill(seed) {
+#   const words = (state.words = []);
+#   for (let k = 0; k < 16; k++) words[k] = (seed + k * 40503) | 0;
+# }
+# function mix() {
+#   const w = state.words;
+#   let sum = 0;
+#   for (let k = 0; k < 16; k++) sum = (sum + (w[k] >>> 3) + w[(k + 9) & 15]) | 0;
+#   return sum;
+# }
+# function sums(n) {
+#   let sum = 0;
+#   for (let i = 0; i < n; i++) {
+#     refill(i);
+#     sum = (sum + mix()) | 0;
+#   }
+#   return sum;
+# }
+# console.log(String(sums(1000)), String(sums(2000)));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline Select
+# CHECK-LABEL: function {{*}}name="sums"
+# CHECK-NOT: literalStorage=Profiled
+# CHECK: = NewArray {{*}}capacity=
+# CHECK-NOT: literalStorage=Profiled
+# CHECK: PutArrayElement {{*}}isExpectedToAppend
+# CHECK-NOT: literalStorage=Profiled
+# CHECK: Return
+
+module m0 path="a-list-made-and-filled-in-every-turn-of-a-loop.js" displayPath="a-list-made-and-filled-in-every-turn-of-a-loop.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=334 fields=[{key="words" declared={type=undefined|null|Array<never> flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="words" value=Array{contents=anything}}]} module=m0
+data d1 root=Array{contents=never} module=m0
+variable g0 name="refill" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="mix" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="state" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @334
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]} @334
+    PutModuleVariable v3 variable=g2 @326
+    v5 = Builtin builtin=GlobalThis @761
+    v6 = PropGet v5 key="console" [isFreeName] @761
+    v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]} @761
+    v8 = PropGet v7 key="log" @761
+    v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @761
+    v10 = Builtin builtin=String @773
+    v11 = Integer integer=1000 @785
+    v12 = Call v1, -, v11 calleeName="sums" @780
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @780
+    v14 = Call v10, -, v13 calleeName="String" @773
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @773
+    v16 = Builtin builtin=String @793
+    v17 = Integer integer=2000 @805
+    v18 = Call v1, -, v17 calleeName="sums" @800
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @800
+    v20 = Call v16, -, v19 calleeName="String" @793
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @793
+    v22 = Call v9, v7, v15, v21 calleeKey="log" calleeName="console.log" @769
+    v23 = Undefined @761
+    Return v23 @761
+}
+function f1 name="refill" module=m0 position=349 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @349
+  b1():
+    v1 = GetModuleVariable variable=g2 @390
+    v2 = CheckInitialized v1 name="state" @390
+    v3 = Data data=d1 @404
+    v4 = Convert v3 declared={type=undefined|null|Array<never> flags=[IsExpected]} @404
+    PropSet v2, v4 key="words" @390
+    v6 = Convert v4 declared={type=undefined|null|Array flags=[IsExpected]} @390
+    v7 = Integer @424
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]} @424
+    Jump -> next b2(v8) @420
+  b2(v9):
+    LoopHint @420
+    v11 = Integer integer=16 @431
+    v12 = Less v9, v11 @427
+    Branch v12 -> taken b3(| 0), notTaken b6(| 0) @427
+  b3(v13):
+    Jump -> next b4() @427
+  b4():
+    v14 = Convert v0 declared={type=number flags=[IsExpected]} @452
+    v15 = Integer integer=40503 @463
+    v16 = Mul v13, v15 @452
+    v17 = Add v14, v16 @452
+    v18 = Integer @472
+    v19 = BitOr v17, v18 @452
+    ElemSet v6, v13, v19 @440
+    Jump -> next b5() @440
+  b5():
+    v21 = Increment v13 @440
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]} @435
+    Jump -> next b2(v22) @435
+  b6(v23):
+    Jump -> next b7() @427
+  b7():
+    v24 = Undefined @435
+    Return v24 @435
+}
+function f2 name="mix" module=m0 position=477 flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @477
+  b1():
+    v0 = GetModuleVariable variable=g2 @506
+    v1 = CheckInitialized v0 name="state" @506
+    v2 = PropGet v1 key="words" @506
+    v3 = Convert v2 declared={type=undefined|null|Array<never> flags=[IsExpected]} @506
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]} @506
+    v5 = Integer @531
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]} @531
+    v7 = Integer @549
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]} @549
+    Jump -> next b2(v6, v8) @545
+  b2(v9, v10):
+    LoopHint @545
+    v12 = Integer integer=16 @556
+    v13 = Less v10, v12 @552
+    Branch v13 -> taken b3(| 0), notTaken b6(| 0) @552
+  b3(v14):
+    Jump -> next b4() @552
+  b4():
+    v15 = ElemGet v4, v14 @579
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @579
+    v17 = Integer integer=3 @588
+    v18 = URShift v16, v17 @579
+    v19 = Add v9, v18 @572
+    v20 = Integer integer=9 @600
+    v21 = Add v14, v20 @596
+    v22 = Integer integer=15 @605
+    v23 = BitAnd v21, v22 @596
+    v24 = ElemGet v4, v23 @593
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @593
+    v26 = Add v19, v25 @572
+    v27 = Integer @612
+    v28 = BitOr v26, v27 @572
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]} @565
+    Jump -> next b5() @565
+  b5():
+    v30 = Increment v14 @572
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]} @560
+    Jump -> next b2(v29, v31) @560
+  b6(v32):
+    Jump -> next b7() @552
+  b7():
+    v33 = Convert v9 declared={type=number flags=[IsExpected]} @624
+    Return v33 @624
+}
+function f3 name="sums" module=m0 position=631 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @631
+  b1():
+    v1 = Integer @662
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @662
+    v3 = Integer @680
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @680
+    Jump -> next b2(v2, v4) @676
+  b2(v5, v6):
+    LoopHint @676
+    v8 = Convert v0 declared={type=number flags=[IsExpected]} @687
+    v9 = Less v6, v8 @683
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @683
+  b3(v10, v11):
+    Jump -> next b4() @683
+  b4():
+    v12 = GetModuleVariable variable=g0 @701
+    v13 = Call v12, -, v10 calleeName="refill" @701
+    v14 = GetModuleVariable variable=g1 @729
+    v15 = Call v14 calleeName="mix" @729
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @729
+    v17 = Add v5, v16 @723
+    v18 = Integer @738
+    v19 = BitOr v17, v18 @723
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]} @716
+    Jump -> next b5() @716
+  b5():
+    v21 = Increment v10 @723
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @690
+    Jump -> next b2(v20, v22) @690
+  b6(v23, v24):
+    Jump -> next b7() @683
+  b7():
+    v25 = Convert v5 declared={type=number flags=[IsExpected]} @754
+    Return v25 @754
+}

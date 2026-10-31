@@ -18,7 +18,8 @@ fn classify(kind: ImportSiteKind) -> Load {
         ImportSiteKind::ImportCall(_)
         | ImportSiteKind::RequireResolve(_)
         | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => Load::NotInTime,
+        | ImportSiteKind::GetBuiltinModule(_)
+        | ImportSiteKind::MockModule(_) => Load::NotInTime,
         _ => Load::AheadOfTheBody,
     }
 }

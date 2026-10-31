@@ -249,7 +249,11 @@ bun build <entry points>
 
 <ParamField path="--obfuscate" type="boolean">
   With <code>--aot</code>: strip function names and source locations from the executable and write them to{" "}
-  <code>&lt;outfile&gt;.map</code>. Same as <code>--sourcemap=external</code>
+  <code>&lt;outfile&gt;.map</code>. The source text of functions goes too, as with{" "}
+  <code>--no-compile-function-source</code>: a library that reads <code>fn.toString()</code> gets{" "}
+  <code>[native code]</code>. The path of a module stays only where your code can read it, such as through{" "}
+  <code>import.meta.path</code>, and the other modules don't show up when your code lists the folders inside the
+  executable. Same as <code>--sourcemap=external</code>
 </ParamField>
 
 <ParamField path="--trim" type="boolean">

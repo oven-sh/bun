@@ -1,10 +1,8 @@
-// Reads through a proxy: what the target holds fast (a property that is neither configurable nor writable, an accessor without a getter), what the
-// trap answers, how the handler has its trap, and how the program reads. The language holds the trap's answer to the target: TypeError where it
-// lies. Targets whose fast properties are in no ordinary table are the point: the length of a frozen array or of a String object, the prototype of
-// a class, Math.PI, globalThis.NaN, lastIndex of a frozen RegExp, another proxy. Each cell is a function of its own and runs twice.
-// What --aot makes fast that plain Bun does not (the built-in prototypes, the globals) is not among the targets.
+// Reads through a proxy: the target's invariants (a non-configurable, non-writable property, an accessor without a
+// getter), what the trap returns, how the handler gets its trap, and how the program reads. The language throws a
+// TypeError if the trap violates an invariant.
 
-/** Name, target, the key that is read. LATER: the target is frozen behind the first read. */
+/** Name, target, the key that is read. LATER: the target is frozen after the first read. */
 // prettier-ignore
 const targets: [string, string, string][] = [
   ["frozen literal", "Object.freeze({ k: 1 })", "k"],
@@ -91,7 +89,7 @@ export const answers: [string, string][] = [
   ["x", "\"x\""],
   ["two", "2"],
 ];
-/** TRAP stands for the function. */
+/** TRAP is a placeholder for the function. */
 // prettier-ignore
 const handlers: [string, string][] = [
   ["an arrow", "{ get: TRAP }"],
@@ -111,7 +109,7 @@ const handlers: [string, string][] = [
   ["a function for a handler", "Object.assign(function () {}, { get: TRAP })"],
   ["many properties", "(() => { const h = {}; for (let i = 0; i < 200; i++) h[\"p\" + i] = i; delete h.p3; h.get = TRAP; return h; })()"],
 ];
-/** P stands for the proxy, K for the key. */
+/** P is a placeholder for the proxy, K for the key. */
 // prettier-ignore
 const reads: [string, string][] = [
   ["p.K", "P.K"],
@@ -141,7 +139,7 @@ export function program(answer: string): { file: string; text: string } {
   targets.forEach(([name, target, key], t) => {
     handlers.forEach(([has, handler], h) => {
       reads.forEach(([how, read], r) => {
-        // The whole square for the first four handlers and the first six reads, and a diagonal beyond them.
+        // The full cross product for the first four handlers and the first six reads, and a diagonal beyond them.
         if (!(h < 4 && r < 6) && (h + r + t) % 7 !== 0) return;
         n++;
         const isFrozenLater = target === "LATER";

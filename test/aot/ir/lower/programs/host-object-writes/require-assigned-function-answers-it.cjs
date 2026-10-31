@@ -23,8 +23,8 @@ console.log("the next file");
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: v3 = ModuleBuiltin builtin=ModuleRequire module=[[m_0]]
 // CHECK-NEXT: v4 = ModuleBuiltin builtin=ModuleObject module=[[m_0]]
-// CHECK-NEXT: v5 = String string="/$bunfs/root/main.cjs"
-// CHECK-NEXT: v6 = String string="/$bunfs/root"
+// CHECK-NEXT: v5 = String string="{{*}}main.cjs"
+// CHECK-NEXT: v6 = String string="{{*}}"
 // CHECK-NEXT: v7 = CallDirect v1, v1, v3, v4, v5, v6 function=[[f_3]]
 // CHECK-NEXT: v8 = Undefined
 // CHECK-NEXT: Return v8

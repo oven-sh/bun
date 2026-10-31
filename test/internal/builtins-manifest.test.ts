@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import {
   type EngineFunctions,
+  functionFiles,
   functionIds,
   helperModules,
   locate,
@@ -17,9 +18,12 @@ import { listBundledNamesOfModule } from "../../src/codegen/bundled-names";
 import {
   Aligner,
   encodeWordsInEvaluatedText,
+  findModuleHeldInPart,
   findWordsInEvaluatedText,
   findWordsOfFirstText,
+  listPlacesInOtherFiles,
   moveBundledNamesToSecondText,
+  readFileOfFunctions,
   Words,
 } from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
@@ -84,6 +88,10 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
       `name\t${moduleOfTwoTexts}\t${offsetOfWordOfBothTexts()}\tset2\tvariable`,
       `positions\t${moduleOfTwoTexts}\t${Buffer.from([4]).toString("base64")}`,
       `positions\tnode/os.ts\t${Buffer.from([5, 6]).toString("base64")}`,
+      `part\tnode/os.ts\tnode/fs.ts`,
+      `evaluated-functions\tbuiltins/Fifo.ts\t30 40 0 10`,
+      `positions\tbuiltins/Fifo.ts\t${Buffer.from([7]).toString("base64")}`,
+      `place\tnode/os.ts\t5\t39\t11\t19`,
       ``,
     ].join("\n"),
     "runtime.out.js": "var a=()=>1;export{a as __name};",
@@ -137,7 +145,7 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 6 and its seven record kinds", () => {
+  test("the manifest has format 6 and its ten record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
@@ -147,6 +155,14 @@ describe("builtins-manifest.ts", () => {
       "declarations",
       "declares-for-every-file",
       "name",
+      "part",
+      "evaluated-functions",
+      "place",
+    ]);
+    expect(records.filter(([kind]) => ["part", "evaluated-functions", "place"].includes(kind))).toEqual([
+      ["part", "node/os.ts", "node/fs.ts"],
+      ["evaluated-functions", "builtins/Fifo.ts", "30 40 0 10"],
+      ["place", "node/os.ts", "5", "39", "11", "19"],
     ]);
   });
 
@@ -158,7 +174,7 @@ describe("builtins-manifest.ts", () => {
     expect(offsetOfWordOfBothTexts("ahead-of-time")).not.toBe(offsetOfWordOfBothTexts());
   });
 
-  test("the positions of all modules are one file of the archive, each part behind the id of its module and its length", () => {
+  test("the positions of all files are one file of the archive, each part behind the id of its file and its length", () => {
     // 7 bits a byte, the lowest first.
     const idOf = (file: string) => {
       const id = moduleList.indexOf(file);
@@ -169,6 +185,8 @@ describe("builtins-manifest.ts", () => {
       ...[...idOf("node/fs.ts"), 3, 1, 2, 3],
       ...[...idOf(moduleOfTwoTexts), 1, 4],
       ...[...idOf("node/os.ts"), 2, 5, 6],
+      // The files of functions follow on the modules, from 1 << 20.
+      ...[functionFiles.indexOf("builtins/Fifo.ts") | 128, 128, 64, 1, 7],
     ]);
   });
 
@@ -485,6 +503,109 @@ describe("bundled-positions.ts, a second text", () => {
     expect(find("/* as: copy */ copy();")).toThrow('The other text does not have "copy" once');
     expect(find("/* as: three: copy */ copy();")).toThrow('The other text does not have "three: copy" once');
     expect(find("/* as: one: copy( */ copy();")).toThrow("does not end with a word");
+  });
+});
+
+describe("bundled-positions.ts, a file of functions", () => {
+  const bodyOfFirst = [
+    ``,
+    `  // Nothing of this line is evaluated.`,
+    ``,
+    `  function inner(b: number) {`,
+    `    return a + b;`,
+    `  }`,
+    `  return inner;`,
+    ``,
+  ].join("\n");
+  const bodyOfSecond = [
+    ``,
+    `  // Nor of this one.`,
+    `  const callback = (d: number) => c + d;`,
+    `  function last(e: number) {`,
+    `    return callback(e);`,
+    `  }`,
+    `  return last;`,
+    ``,
+  ].join("\n");
+  const written = [
+    `// In front of the first one.`,
+    `export function first(a: number) {${bodyOfFirst}}`,
+    ``,
+    `type Unused = number;`,
+    `// Between the two, a line and`,
+    `// another one.`,
+    `export async function second(c: Unused) {${bodyOfSecond}}`,
+    ``,
+  ].join("\n");
+
+  // As bundle-functions.ts does it.
+  async function bundleFunction(name: string, head: string, body: string) {
+    using dir = tempDir("bundled-function", {
+      "function.ts": `// A line in front.\n$$capture_start$$(${head} {${body}}).$$capture_end$$;\n`,
+    });
+    const built = await Bun.build({
+      entrypoints: [join(String(dir), "function.ts")],
+      target: "bun",
+      minify: { syntax: true, whitespace: false, keepNames: true },
+      sourcemap: "external",
+    });
+    const [output, map] = await Promise.all(
+      ["entry-point", "sourcemap"].map(kind => built.outputs.find(it => it.kind === kind)!.text()),
+    );
+    const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
+    const evaluated =
+      captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";').replace(/^\((async )?function\(/, "($1function (") +
+      "\n";
+    return { name, output, map: JSON.parse(map), evaluated };
+  }
+
+  test("each function is found in what is evaluated for it, and a quote of the file says a line of that text", async () => {
+    const functions = await Promise.all([
+      bundleFunction("first", "function(a)", bodyOfFirst),
+      bundleFunction("second", "async function(c)", bodyOfSecond),
+    ]);
+    const reading = readFileOfFunctions(written, functions);
+    expect(reading.evaluated.text).toBe(functions[0].evaluated + functions[1].evaluated);
+    expect(reading.startsOfTexts).toEqual([0, functions[0].evaluated.length]);
+    const textAt = (inWritten: string) => {
+      const partner = reading.partners[reading.written.starts.indexOf(written.indexOf(inWritten))];
+      return partner < 0 ? undefined : reading.evaluated.text.slice(reading.evaluated.starts[partner]);
+    };
+    expect(textAt("export function first")).toBe(reading.evaluated.text.slice(1));
+    expect(textAt("function first")).toBe(reading.evaluated.text.slice(1));
+    expect(textAt("export async function second")).toBe(functions[1].evaluated.slice(1));
+    expect(textAt("async function second")).toBe(functions[1].evaluated.slice(1));
+    expect(textAt("function second")).toBe(functions[1].evaluated.slice("(async ".length));
+    expect(textAt("first(a")).toBeUndefined();
+    expect(textAt("inner(b")).toStartWith("inner(b) {");
+    expect(textAt("d: number")).toStartWith("d) => c + d");
+    expect(textAt("last(e")).toStartWith("last(e) {");
+    expect(textAt("Between the two")).toBeUndefined();
+
+    const text = "function /* as in builtins/Two.ts: function last */ other(x) {}\n";
+    const lines = functions[1].evaluated.split("\n");
+    const line = lines.findIndex(it => it.includes("function last("));
+    const column = lines[line].indexOf("last(");
+    expect(line).toBeGreaterThan(0);
+    expect(listPlacesInOtherFiles("internal/a.ts", text, () => reading)).toEqual([
+      ["place", "internal/a.ts", text.indexOf("other"), line, column, column + "last".length].join("\t"),
+    ]);
+  });
+
+  test("a quote that the other file does not have once, or that nothing is evaluated for, is refused", async () => {
+    const reading = readFileOfFunctions(written, [await bundleFunction("first", "function(a)", bodyOfFirst)]);
+    const list = (text: string) => () => listPlacesInOtherFiles("internal/a.ts", text, () => reading);
+    expect(list("/* as in builtins/Two.ts: function */ a();")).toThrow('builtins/Two.ts does not have "function" once');
+    expect(list("/* as in builtins/Two.ts: function none */ a();")).toThrow("does not have");
+    expect(list("/* as in builtins/Two.ts: In front of the first one */ a();")).toThrow("has no word for the end of");
+    expect(list("/* as in builtins/Two.ts: function inner */ ();")).toThrow("no word follows the comment");
+  });
+
+  test("a module says on a line of its own which module it holds a part of", () => {
+    expect(findModuleHeldInPart("/* part of: internal/a.ts */\nexport default {};\n")).toBe("internal/a.ts");
+    expect(findModuleHeldInPart("// About it.\n/* part of: internal/a.ts */\n")).toBe("internal/a.ts");
+    expect(findModuleHeldInPart("call(); /* part of: internal/a.ts */\n")).toBeUndefined();
+    expect(findModuleHeldInPart("export default {};\n")).toBeUndefined();
   });
 });
 

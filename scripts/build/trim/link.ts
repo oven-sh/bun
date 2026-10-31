@@ -41,6 +41,9 @@ import {
 import {
   Demangler,
   describeFailures,
+  describeFiller,
+  describeSections,
+  holeSizesWithoutFeatures,
   megabytes,
   writeRetainedFile,
   writeReviewFiles,
@@ -82,6 +85,7 @@ const responseFileArgument = /^((?:\/clang:)?-Wl,)?@(.*)$/;
 const rangeCountMargin = 1.25;
 const maxListedOutputs = 8;
 const maxListedRemarks = 20;
+const smallestListedBytes = 64 * 1024;
 const linkerFormats = { elf, macho: machO, coff } satisfies Record<ObjectFormat, (linker: Linker) => LinkerFormat>;
 
 export class Stopwatch {
@@ -407,7 +411,10 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   const { linker, format, stopwatch } = session;
   const bitcodeInputs = new Set(linker.inputs.filter(isBitcode));
   const preparedInput = (path: string) => (format.firstInputs.includes(path) ? undefined : format.prepareInput(path));
-  const preparedNativeInput = (path: string) => (bitcodeInputs.has(path) ? undefined : preparedInput(path));
+  const preparedNativeInput = (path: string) => {
+    const prepared = bitcodeInputs.has(path) ? undefined : preparedInput(path);
+    return prepared === undefined ? undefined : format.withoutBitcode(prepared);
+  };
   const firstRequest: LinkRequest = {
     name: "first",
     rewrite: preparedInput,
@@ -417,8 +424,9 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   let first = linker.link(firstRequest);
   stopwatch.lap("first link");
   const native = format.compiledObjects("first");
-  if (format.prepareCompiledObjects(native)) {
-    first = linker.link({ ...firstRequest, rewrite: preparedNativeInput, first: [...firstRequest.first, ...native] });
+  const prepared = format.prepareCompiledObjects(native, first);
+  if (prepared !== undefined) {
+    first = linker.link({ ...firstRequest, rewrite: preparedNativeInput, first: [...firstRequest.first, ...prepared] });
     stopwatch.lap("first link of the compiled objects");
   }
   const analysis = analyze(first, session);
@@ -427,7 +435,7 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
   const room = estimateRoom(first, analysis, order, session);
   stopwatch.lap("section order and table room");
 
-  const reused = format.relinksSameInputs ? undefined : native;
+  const reused = format.relinksSameInputs() ? undefined : (prepared ?? native);
   const namedNativeInput = (path: string) => {
     const prepared = preparedNativeInput(path);
     return prepared === undefined ? undefined : (copies.get(prepared) ?? prepared);
@@ -541,6 +549,18 @@ function uncuttableGroupBytes({ analysis, ranges }: Layout, policy: OutputPolicy
   return bytes;
 }
 
+/** They stay where the linker puts them, among code that is kept. */
+function findUnplacedSections({ analysis }: Layout, format: LinkerFormat): number[] {
+  const { graph } = analysis.reading;
+  const placed = new Set(format.orderOf(graph, analysis.partition).nodes);
+  const isMovable = (output: string) => format.isMovable(output);
+  const unplaced: number[] = [];
+  for (let node = 0; node < graph.placedCount; node++) {
+    if (groupOfNode(graph, analysis.partition, isMovable, node) >= 0 && !placed.has(node)) unplaced.push(node);
+  }
+  return unplaced;
+}
+
 function unmovableOutputBytes({ analysis }: Layout, policy: OutputPolicy): [output: string, bytes: number][] {
   const { graph } = analysis.reading;
   const bytesOf = new Map<string, number>();
@@ -640,6 +660,16 @@ export function printSummary(layout: Layout, { model, uses, format, stopwatch }:
     );
   }
   console.log(`${megabytes(partition.unexplainedBytes)} are in the image without a known reference and are retained`);
+  if (partition.unexplainedBytes >= smallestListedBytes) {
+    for (const line of describeSections(reading.graph, partition.unexplained)) console.log(`  ${line}`);
+  }
+  const unplaced = findUnplacedSections(layout, format);
+  const unplacedBytes = unplaced.reduce((sum, node) => sum + reading.graph.size[node]!, 0);
+  console.log(`${megabytes(unplacedBytes)} of the groups have no name that the order of sections can list`);
+  if (unplacedBytes >= smallestListedBytes) {
+    for (const line of describeSections(reading.graph, unplaced)) console.log(`  ${line}`);
+  }
+  console.log(`without any feature: ${describeFiller(holeSizesWithoutFeatures(layout.ranges))}`);
   const statistics = Object.entries(reading.statistics).map(([name, count]) => `${name} ${count}`);
   if (statistics.length > 0) console.log(`graph: ${statistics.join(", ")}`);
   for (const remark of (reading.remarks ?? []).slice(0, maxListedRemarks)) console.log(`graph: ${remark}`);

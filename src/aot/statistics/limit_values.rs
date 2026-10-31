@@ -26,14 +26,14 @@ impl LimitValues {
         self.values[limit as usize]
     }
 
-    /// `LimitId::All` lowers every limit that can be lowered, each to no less than its smallest value.
+    /// `LimitId::All` lowers every limit that leaves the build whole, each to no less than its smallest value.
     pub fn lower(&mut self, lowered: LimitId, value: u64) {
         assert!(can_be_lowered(lowered), "{lowered:?}");
         assert!(value <= self.get(lowered), "{lowered:?}");
         for limit in LimitId::ALL {
             if limit == lowered {
                 self.values[limit as usize] = value;
-            } else if lowered == LimitId::All && can_be_lowered(limit) {
+            } else if lowered == LimitId::All && is_lowered_by_all(limit) {
                 self.values[limit as usize] = self.get(limit).min(value.max(limit.smallest()));
             }
         }
@@ -44,6 +44,12 @@ pub fn fails_build(limit: LimitId) -> bool {
     limit.degrades_to() == DegradesTo::BuildError
 }
 
+/// By its own name.
 pub fn can_be_lowered(limit: LimitId) -> bool {
-    limit != LimitId::None && !fails_build(limit)
+    limit != LimitId::None
+}
+
+/// A build with every limit lowered prints what any other build prints, so it leaves alone what would stop it.
+pub fn is_lowered_by_all(limit: LimitId) -> bool {
+    can_be_lowered(limit) && !fails_build(limit)
 }

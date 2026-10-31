@@ -98,35 +98,34 @@ for (const work of [bits, elements, characters, down, last, nearTheEndOfInt32, c
 // CHECK-NEXT: b3(v10, v11):
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v13 = CheckInitialized v12 name="letters"
-// CHECK-NEXT: v14 = Integer integer=26
-// CHECK-NEXT: v15 = Mod v10, v14
-// CHECK-NEXT: v16 = ElemGet v13, v15
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v18 = Add v5, v17
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v20 = PropGet v19 key="length"
-// CHECK-NEXT: v21 = Convert v20 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v22 = Integer integer=30
-// CHECK-NEXT: v23 = Greater v21, v22
-// CHECK-NEXT: Branch v23 -> taken b5(), notTaken b6()
+// CHECK-NEXT: v12 = String string="abcdefghijklmnopqrstuvwxyz"
+// CHECK-NEXT: v13 = Integer integer=26
+// CHECK-NEXT: v14 = Mod v10, v13
+// CHECK-NEXT: v15 = ElemGet v12, v14
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v17 = Add v5, v16
+// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v19 = PropGet v18 key="length"
+// CHECK-NEXT: v20 = Convert v19 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v21 = Integer integer=30
+// CHECK-NEXT: v22 = Greater v20, v21
+// CHECK-NEXT: Branch v22 -> taken b5(), notTaken b6()
 // CHECK-NEXT: b5():
-// CHECK-NEXT: Jump -> next b9(v19)
+// CHECK-NEXT: Jump -> next b9(v18)
 // CHECK-NEXT: b6():
 // CHECK-NEXT: Jump -> next b7()
 // CHECK-NEXT: b7():
-// CHECK-NEXT: v24 = Increment v10
-// CHECK-NEXT: v25 = Convert v24 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v19, v25)
-// CHECK-NEXT: b8(v26, v27):
+// CHECK-NEXT: v23 = Increment v10
+// CHECK-NEXT: v24 = Convert v23 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b2(v18, v24)
+// CHECK-NEXT: b8(v25, v26):
 // CHECK-NEXT: Jump -> next b9(v5)
-// CHECK-NEXT: b9(v28):
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v29
+// CHECK-NEXT: b9(v27):
+// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: Return v28
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="down"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

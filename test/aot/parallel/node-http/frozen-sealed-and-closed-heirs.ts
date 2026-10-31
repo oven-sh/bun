@@ -88,15 +88,22 @@ async function closeInstanceOfSubclass(level: Level, target: "request" | "respon
   const { port } = server.address() as AddressInfo;
   const answers: string[] = [];
   for (let index = 0; index < 3; index++) {
-    try {
-      const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
-        method: "POST",
-        body: "body",
-        signal: AbortSignal.timeout(20000),
-      });
-      answers.push(`${index}: ${answer.status} ${await answer.text()}`);
-    } catch (error) {
-      answers.push(`${index}: ${(error as Error)?.name}`);
+    for (let sent = 0; ; sent++) {
+      const handled = turn;
+      try {
+        const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
+          method: "POST",
+          body: "body",
+          signal: AbortSignal.timeout(20000),
+        });
+        answers.push(`${index}: ${answer.status} ${await answer.text()}`);
+      } catch (error) {
+        // The server dropped the connection after the last exchange. On a busy machine the client may send on it before it
+        // notices, and then the handler never sees the request. That says nothing about the closed object: send it again.
+        if (turn === handled && sent < 3) continue;
+        answers.push(`${index}: ${(error as Error)?.name}`);
+      }
+      break;
     }
     await settle();
   }

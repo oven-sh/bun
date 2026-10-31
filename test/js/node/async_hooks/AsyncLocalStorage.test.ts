@@ -1707,7 +1707,8 @@ describe("an uncaughtException handler reads the store of a callback that native
   const inNode: Record<string, Stores> = {
     // Where more than one call schedules the callback: the call whose store it is.
     "zlib stream 'data'": { "every step in its own store": "createGzip()" },
-    "dgram 'message'": { "every step in its own store": "createSocket()" },
+    "child_process 'message'": { "every step in its own store": "spawn()" },
+    "dgram 'message'": { "every step in its own store": "createSocket() and bind()" },
     "http server 'request'": { "every step in its own store": "listen()" },
     "http server request 'data'": { "every step in its own store": "once('data')" },
     "http server 'connection'": { "every step in its own store": "listen()" },
@@ -1724,8 +1725,8 @@ describe("an uncaughtException handler reads the store of a callback that native
   // Where Bun does not read what node reads.
   const onlyInBun: Record<string, Stores> = {
     // node:dgram gives the listener's throw to the socket's 'error' event first. Nothing listens for it here, so the
-    // emit throws it again, in the store of the bind() that made the native socket.
-    "dgram 'message'": { "throws after its own enterWith()": "outer", "every step in its own store": "bind()" },
+    // emit throws it again, after the listener and the store it entered are left.
+    "dgram 'message'": { "throws after its own enterWith()": "outer" },
     // The body arrives in the store the request was dispatched in. node's stream starts to flow in the store of the
     // once('data') call.
     "http server request 'data'": { "every step in its own store": "listen()" },
@@ -1744,11 +1745,12 @@ describe("an uncaughtException handler reads the store of a callback that native
       "crypto.generatePrime",
       "crypto.checkPrime",
     ],
-    "node:zlib, node:fs, node:dgram, and the timer and the tick they are compared with": [
+    "node:zlib, node:fs, node:child_process, node:dgram, and the timer and the tick they are compared with": [
       "zlib stream 'data'",
       "fs.watch listener",
       "fs.watchFile listener, file that does not exist",
       "fs.watchFile listener, file that changes",
+      "child_process 'message'",
       "dgram 'message'",
       "setTimeout",
       "process.nextTick",

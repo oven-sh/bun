@@ -123,16 +123,28 @@ const sources = {
       boom();
     });
   },
+  // The child has a channel to its parent, sends one message over it, and exits.
+  "child_process 'message'": (boom, step) => {
+    const child = step("spawn()", () =>
+      require("node:child_process").spawn(process.execPath, ["-e", "process.send('x')"], {
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      }),
+    );
+    step("once('message')", () => child.once("message", boom));
+  },
+  // One step makes the socket and binds it. A socket that another store binds is a matter of node:dgram, not of the
+  // report: there Bun runs 'message' in the store of the call that binds, and node in the store of createSocket().
   "dgram 'message'": (boom, step) => {
-    const socket = step("createSocket()", () => require("node:dgram").createSocket("udp4"));
+    const socket = step("createSocket() and bind()", () => {
+      const socket = require("node:dgram").createSocket("udp4");
+      socket.bind(0, "127.0.0.1", () => step("send()", () => socket.send("x", socket.address().port, "127.0.0.1")));
+      return socket;
+    });
     step("on('message')", () =>
       socket.on("message", () => {
         socket.close();
         boom();
       }),
-    );
-    step("bind()", () =>
-      socket.bind(0, "127.0.0.1", () => step("send()", () => socket.send("x", socket.address().port, "127.0.0.1"))),
     );
   },
   "http server 'request'": (boom, step) => {

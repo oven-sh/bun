@@ -73,6 +73,8 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
         Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
         scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), pending);
     } else {
+        if (scheduler.m_ticketCapture)
+            scheduler.m_ticketCapture->m_ticket = ticket.get();
         scheduler.m_pendingTicketsOther.add(WTF::move(ticket), pending);
     }
 }
@@ -102,6 +104,47 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
     // the teardown to release unrun or refuses it and runs the job's release path.
     auto* job = new JSCDeferredWorkTask(clientData, WTF::move(ticket), WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job, loopKind);
+}
+
+JSCTaskScheduler::TicketCapture::TicketCapture(WebCore::JSVMClientData* clientData)
+    : m_scheduler(clientData->deferredWorkTimer)
+{
+    Locker<Lock> holder { m_scheduler.m_lock };
+    ASSERT(!m_scheduler.m_ticketCapture);
+    m_scheduler.m_ticketCapture = this;
+}
+
+JSCTaskScheduler::TicketCapture::~TicketCapture()
+{
+    if (m_isCapturing)
+        take();
+}
+
+JSC::DeferredWorkTimer::WeakTicket JSCTaskScheduler::TicketCapture::take()
+{
+    Locker<Lock> holder { m_scheduler.m_lock };
+    ASSERT(m_isCapturing && m_scheduler.m_ticketCapture == this);
+    m_scheduler.m_ticketCapture = nullptr;
+    m_isCapturing = false;
+    return std::exchange(m_ticket, {});
+}
+
+void JSCTaskScheduler::refEventLoopForPendingWork(WebCore::JSVMClientData* clientData, const JSC::DeferredWorkTimer::WeakTicket& weakTicket)
+{
+    RefPtr ticket = weakTicket.get();
+    if (!ticket)
+        return;
+    auto& scheduler = clientData->deferredWorkTimer;
+    Locker<Lock> holder { scheduler.m_lock };
+    if (scheduler.m_isShuttingDown || ticket->isCancelled()) [[unlikely]]
+        return;
+    auto it = scheduler.m_pendingTicketsOther.find(ticket.get());
+    if (it == scheduler.m_pendingTicketsOther.end())
+        return;
+    PendingWork pending = it->value;
+    scheduler.m_pendingTicketsOther.remove(it);
+    Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
+    scheduler.m_pendingTicketsKeepingEventLoopAlive.add(ticket.releaseNonNull(), pending);
 }
 
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)

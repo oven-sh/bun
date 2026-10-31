@@ -4787,7 +4787,10 @@ static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexical
     JSC::JSLockHolder locker(vm);
 
     auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    auto* clientData = WebCore::clientData(vm);
+    Bun::JSCTaskScheduler::TicketCapture ticketCapture(clientData);
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
+    auto ticket = ticketCapture.take();
 
     // The streaming hook used to return a freshly created promise; the caller
     // (webAssemblyCompileStreamingFunc) was a host function that propagated
@@ -4808,6 +4811,8 @@ static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexical
 
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {
+        // The compiler has every byte, so its ticket (WorkType::AtSomePoint: no event loop ref) is now certain to be scheduled.
+        Bun::JSCTaskScheduler::refEventLoopForPendingWork(clientData, ticket);
         compiler->finalize(globalObject);
         if (scope.exception()) [[unlikely]]
             promise->rejectWithCaughtException(vm, scope);
@@ -4815,6 +4820,7 @@ static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexical
     }
 
     auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(compiler));
+    uncheckedDowncast<WebCore::JSWasmStreamingCompiler>(wrapper)->setTicket(WTF::move(ticket));
     auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
     auto callData = JSC::getCallData(builtin);
     MarkedArgumentBuffer arguments;

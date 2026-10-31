@@ -173,6 +173,7 @@ public:
         return structure;
     }
     void didCreateDOMStructure(JSC::Structure*);
+    void didCreateDOMConstructor(JSC::JSObject*);
     const WebCore::DOMConstructors& constructors() const
     {
         ASSERT(!Thread::mayBeGCThread());

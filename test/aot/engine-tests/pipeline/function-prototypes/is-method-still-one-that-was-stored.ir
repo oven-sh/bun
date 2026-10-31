@@ -270,8 +270,8 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: anything = PropGet v0 key="prototype" accessSite=2
 # CHECK-NEXT: v12: anything = PropGet v1 key="prototype" accessSite=3
 # CHECK-NEXT: v13: anything = PropGet v1 key="prototype" accessSite=4
-# CHECK-NEXT: v14: anything ~ undefined|null|function = Call v2 calleeName="make" accessSite=5 callees=[f5]
-# CHECK-NEXT: v15: anything ~ undefined|null|function = Call v2 calleeName="make" accessSite=6 callees=[f5]
+# CHECK-NEXT: v14: anything ~ undefined|null|function|f19 = Call v2 calleeName="make" accessSite=5 callees=[f5]
+# CHECK-NEXT: v15: anything ~ undefined|null|function|f19 = Call v2 calleeName="make" accessSite=6 callees=[f5]
 # CHECK-NEXT: v16: "made by two calls: " = String string="made by two calls: "
 # CHECK-NEXT: v17: boolean = StrictEq v14, v15
 # CHECK-NEXT: v18: " " = String string=" "
@@ -286,54 +286,46 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b3(v23)
 # CHECK-NEXT: b3(v24: boolean ~ true):
 # CHECK-NEXT: v25: " " = String string=" "
-# CHECK-NEXT: v26: boolean = StrictEq v14, v15
-# CHECK-NEXT: v27: boolean = LogicalNot v26
-# CHECK-NEXT: v28: string = Strcat v19, v24, v25, v27
-# CHECK-NEXT: v29: 2 = Integer integer=2
-# CHECK-NEXT: v30: Array<f13, Contiguous> = NewArray contents=f13 capacity=v29 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v31: Array<f13, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<f13, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v32: f13 = NewClosure function=f13 allocationSite=12
-# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v31, v32 overload=ArrayPrototypePush/0 accessSite=8
-# CHECK-NEXT: v34: f13 = NewClosure function=f13 allocationSite=12
-# CHECK-NEXT: v35: int[0, 4294967295] = CallBuiltin v31, v34 overload=ArrayPrototypePush/0 accessSite=8
-# CHECK-NEXT: v36: Array<f20, Contiguous> = NewArray contents=f20 allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v37: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v36 provenType=Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v38: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v37 function=f48 accessSite=13
-# CHECK-NEXT: v39: "made by recursion: " = String string="made by recursion: "
-# CHECK-NEXT: v40: 0 = Integer
-# CHECK-NEXT: v41: undefined|f20 = GetArrayElement v38, v40 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: v42: 1 = Integer integer=1
-# CHECK-NEXT: v43: undefined|f20 = GetArrayElement v38, v42 arrayStorage=Contiguous level=Proven accessSite=16 [keyIsIntegral]
-# CHECK-NEXT: v44: boolean = StrictEq v41, v43
-# CHECK-NEXT: v45: string = Add v39, v44
-# CHECK-NEXT: v46: int[0, 4294967295] = CallBuiltin v8, v45 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: v47: "one of two texts: true" = String string="one of two texts: true"
-# CHECK-NEXT: v48: int[0, 4294967295] = CallBuiltin v8, v47 overload=ArrayPrototypePush/0 accessSite=21
-# CHECK-NEXT: v49: anything = PropGet v5 key="prototype" accessSite=22
-# CHECK-NEXT: v50: object = AssumeType v49 provenType=object
-# CHECK-NEXT: v51: object ~ L3 = Upcast v50 castType=anything
-# CHECK-NEXT: v52: anything = PropGet v51 key="read" accessSite=23
-# CHECK-NEXT: v53: anything = PropGet v5 key="prototype" accessSite=26
-# CHECK-NEXT: v54: object = AssumeType v53 provenType=object
-# CHECK-NEXT: v55: object ~ L3 = Upcast v54 castType=anything
-# CHECK-NEXT: v56: anything = PropGet v55 key="read" accessSite=27
-# CHECK-NEXT: v57: f22 = CallDirect function=f8 accessSite=28
-# CHECK-NEXT: v58: anything = PropGet v57 key="prototype" accessSite=29
-# CHECK-NEXT: v59: object = AssumeType v58 provenType=object
-# CHECK-NEXT: v60: object ~ L4 = Upcast v59 castType=anything
-# CHECK-NEXT: v61: anything = PropGet v60 key="run" accessSite=30
-# CHECK-NEXT: v62: f22 = CallDirect function=f8 accessSite=31
-# CHECK-NEXT: v63: anything = PropGet v62 key="prototype" accessSite=32
-# CHECK-NEXT: v64: object = AssumeType v63 provenType=object
-# CHECK-NEXT: v65: object ~ L4 = Upcast v64 castType=anything
-# CHECK-NEXT: v66: anything = PropGet v65 key="run" accessSite=33
-# CHECK-NEXT: v67: null = Null
-# CHECK-NEXT: v68: f11 = NewClosure function=f11 allocationSite=9
-# CHECK-NEXT: v69: function = CallBuiltin v68, v67 overload=FunctionPrototypeBind/0 accessSite=35
-# CHECK-NEXT: v70: null = Null
-# CHECK-NEXT: v71: function = CallBuiltin v68, v70 overload=FunctionPrototypeBind/0 accessSite=37
-# CHECK-NEXT: v72: undefined = Undefined
-# CHECK-NEXT: Return v72
+# CHECK-NEXT: v26: boolean = LogicalNot v17
+# CHECK-NEXT: v27: string = Strcat v19, v24, v25, v26
+# CHECK-NEXT: v28: Array<f20, Contiguous> = NewArray contents=f20 allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v29: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v29 function=f48 accessSite=13
+# CHECK-NEXT: v31: "made by recursion: " = String string="made by recursion: "
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: v33: undefined|f20 = GetArrayElement v30, v32 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v34: 1 = Integer integer=1
+# CHECK-NEXT: v35: undefined|f20 = GetArrayElement v30, v34 arrayStorage=Contiguous level=Proven accessSite=16 [keyIsIntegral]
+# CHECK-NEXT: v36: boolean = StrictEq v33, v35
+# CHECK-NEXT: v37: string = Add v31, v36
+# CHECK-NEXT: v38: int[0, 4294967295] = CallBuiltin v8, v37 overload=ArrayPrototypePush/0 accessSite=17
+# CHECK-NEXT: v39: "one of two texts: true" = String string="one of two texts: true"
+# CHECK-NEXT: v40: int[0, 4294967295] = CallBuiltin v8, v39 overload=ArrayPrototypePush/0 accessSite=21
+# CHECK-NEXT: v41: anything = PropGet v5 key="prototype" accessSite=22
+# CHECK-NEXT: v42: object = AssumeType v41 provenType=object
+# CHECK-NEXT: v43: object ~ L3 = Upcast v42 castType=anything
+# CHECK-NEXT: v44: anything = PropGet v43 key="read" accessSite=23
+# CHECK-NEXT: v45: anything = PropGet v5 key="prototype" accessSite=26
+# CHECK-NEXT: v46: object = AssumeType v45 provenType=object
+# CHECK-NEXT: v47: object ~ L3 = Upcast v46 castType=anything
+# CHECK-NEXT: v48: anything = PropGet v47 key="read" accessSite=27
+# CHECK-NEXT: v49: f22 = CallDirect function=f8 accessSite=28
+# CHECK-NEXT: v50: anything = PropGet v49 key="prototype" accessSite=29
+# CHECK-NEXT: v51: object = AssumeType v50 provenType=object
+# CHECK-NEXT: v52: object ~ L4 = Upcast v51 castType=anything
+# CHECK-NEXT: v53: anything = PropGet v52 key="run" accessSite=30
+# CHECK-NEXT: v54: f22 = CallDirect function=f8 accessSite=31
+# CHECK-NEXT: v55: anything = PropGet v54 key="prototype" accessSite=32
+# CHECK-NEXT: v56: object = AssumeType v55 provenType=object
+# CHECK-NEXT: v57: object ~ L4 = Upcast v56 castType=anything
+# CHECK-NEXT: v58: anything = PropGet v57 key="run" accessSite=33
+# CHECK-NEXT: v59: null = Null
+# CHECK-NEXT: v60: f11 = NewClosure function=f11 allocationSite=9
+# CHECK-NEXT: v61: function = CallBuiltin v60, v59 overload=FunctionPrototypeBind/0 accessSite=35
+# CHECK-NEXT: v62: null = Null
+# CHECK-NEXT: v63: function = CallBuiltin v60, v62 overload=FunctionPrototypeBind/0 accessSite=37
+# CHECK-NEXT: v64: undefined = Undefined
+# CHECK-NEXT: Return v64
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nest"
 # CHECK: module=m0 position=1898 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1}, {type=Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

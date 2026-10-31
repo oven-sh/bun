@@ -42,6 +42,41 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     600_000,
   );
 
+  // What the compiler memoizes depends on the shape of its input, so on what the parser folded, merged and removed first. At the same flags an --aot
+  // executable prints what a bundled executable prints, and its components ask for caches of the same sizes.
+  // The two share the parser and the compiler, so they share their bugs: a program whose components are pure also prints what it prints with the compiler off.
+  describe.each([
+    ["impure-call-after-statement-in-catch", "impure"],
+    ["parser-rewrites-before-the-compiler", "impure"],
+    ["commonjs-component", "impure"],
+    ["pure-components", "pure"],
+  ])("same-as-bundle/%s", (name, purity) => {
+    test.concurrent.each(["none", "syntax", "all"])(
+      "minify: %s",
+      minified =>
+        slot(async () => {
+          const directory = join(programs, "same-as-bundle");
+          const main = join(directory, name, "main.tsx");
+          const run = async (kind: "aot" | "bundle" | "uncompiled") => {
+            const executable = join(folder, [name, kind, minified].join("-"));
+            built(
+              await spawned(
+                [bunExe(), "run", join(directory, "build.ts"), main, executable, kind, minified],
+                directory,
+                bunEnv,
+              ),
+            );
+            return told(await spawned([executable], directory, bunEnv));
+          };
+          const bundled = await run("bundle");
+          expect(bundled.stderr).toContain("[react-compiler] a cache of ");
+          expect(await run("aot")).toEqual(bundled);
+          if (purity === "pure") expect((await run("uncompiled")).stdout).toBe(bundled.stdout);
+        }),
+      600_000,
+    );
+  });
+
   test(
     "component-files-with-slow-plugin",
     () =>

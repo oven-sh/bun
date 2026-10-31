@@ -23,6 +23,7 @@ use super::*;
 use crate::compile::LoadedProject;
 use crate::compile::testing::{default_settings, with_loaded_build_and_react_compiler};
 use crate::load::ProjectId;
+use crate::load::source_provider::WithoutServices;
 use crate::load::sources::parsed_source;
 
 const MAIN_PATH: &[u8] = b"/project/main.tsx";
@@ -386,8 +387,9 @@ impl<'s> Workbench<'s> {
             bound,
             analysis,
             settings: &self.settings,
+            import_meta_main: None,
         };
-        let compiler = ReactCompiler::new(mode, &messages);
+        let compiler = ReactCompiler::new(mode, &WithoutServices, &messages);
         let change = compiler.transform(self.arena, &self.atoms, &mut request, &mut source);
         (change, source)
     }

@@ -393,7 +393,7 @@ bool BignumPointer::generate(const PrimeConfig& params,
     if (innerCb) {
         cb = BignumGenCallbackPointer(BN_GENCB_new());
         if (!cb) [[unlikely]]
-            return -1;
+            return false;
         BN_GENCB_set(
             cb.get(),
             [](int a, int b, BN_GENCB* ctx) mutable -> int {
@@ -402,6 +402,14 @@ bool BignumPointer::generate(const PrimeConfig& params,
             },
             &innerCb);
     }
+
+    // BoringSSL searches forever where OpenSSL refuses: candidates have the top two bits set, the safe primes 11 and 23 do not.
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/bn/bn_prime.c#L137-L145
+    if (params.safe && !params.add && params.bits < 6 && params.bits != 3) {
+        OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
+        return false;
+    }
+
     if (BN_generate_prime_ex(get(),
             params.bits,
             params.safe ? 1 : 0,
@@ -2977,7 +2985,7 @@ bool ECKeyPointer::setPublicKeyRaw(const BignumPointer& x,
 
 bool ECKeyPointer::setPrivateKey(const BignumPointer& priv)
 {
-    if (!key_) return false;
+    if (!key_ || !priv) return false;
     return EC_KEY_set_private_key(key_.get(), priv.get()) == 1;
 }
 
@@ -3385,6 +3393,9 @@ bool Rsa::setPrivateKey(BignumPointer&& d,
     BignumPointer&& dq,
     BignumPointer&& qi)
 {
+    // RSA_set0_key accepts a null d once n and e are set, which would leave a "private" key without one.
+    if (!d || !q || !p || !dp || !dq || !qi) return false;
+
     if (!RSA_set0_key(const_cast<RSA*>(rsa_), nullptr, nullptr, d.get())) {
         return false;
     }

@@ -1,6 +1,7 @@
 use super::program_keys::{ProgramFunctionKey, ProgramLayoutKey};
 use crate::ir::{ClassPart, FunctionId, Id, LayoutId, StringId, StringTable, Type, TypeTable};
 use bun_sema::check::aot::type_identity::Lanes;
+use bun_sema::util::SharedSort;
 use core::hash::{Hash, Hasher};
 use smallvec::SmallVec;
 
@@ -13,7 +14,7 @@ impl From<ContentHash> for u64 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct TypeHashes {
     pub types: Vec<ContentHash>,
     pub nesting_depths: Vec<u32>,
@@ -42,7 +43,7 @@ impl ContentHasher {
 
     fn add_hash_set(&mut self, hashes: impl Iterator<Item = ContentHash>) {
         let mut hashes: SmallVec<[ContentHash; 4]> = hashes.collect();
-        hashes.sort_unstable();
+        hashes.shared_sort_unstable();
         self.add_list(hashes.iter().map(|hash| hash.0));
     }
 }

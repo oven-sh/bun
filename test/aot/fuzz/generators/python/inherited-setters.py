@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""inherited-setters.py <seed> [worlds = 40]: untyped text. A world: a chain of one to four prototypes, a setter somewhere on it, receivers of one or several shapes,
-ONE site `o.value = v` (strict, and a sloppy twin made by new Function is left out: all text here is a module) warmed on them; then the world is altered behind the site's back, again and again, and the site is used after each alteration. Everything that runs writes into a log."""
+"""inherited-setters.py <seed> [worlds = 40]: Untyped code. A chain of one to four prototypes with a setter somewhere on
+it, receivers of one or several shapes, and one site `o.value = v` (strict, plus a sloppy twin created with new
+Function).
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed); worlds = int(sys.argv[2]) if len(sys.argv) > 2 else 40
 out = ['const log = []; const say = (...a) => log.push(a.map(v => typeof v === "function" ? "fn" : typeof v === "object" && v !== null ? "{" + Reflect.ownKeys(v).map(String).join() + "}" : String(v)).join(" "));',

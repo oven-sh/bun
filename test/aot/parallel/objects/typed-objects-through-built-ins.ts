@@ -1,5 +1,5 @@
 // Objects with layouts seen through the built-ins that walk, test and copy their properties, with and without added properties.
-// COUNTER: RedefinedProperty >= 1
+// COUNTER: FieldsLeftSlotByRedefinition >= 1
 const tag = Symbol("tag")
 const addedSymbol = Symbol("added")
 const missingSymbol = Symbol("missing")

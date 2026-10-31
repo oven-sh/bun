@@ -634,15 +634,15 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f29]
 function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f29]
 function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f30 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f31 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f30 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f31 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f32 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w198}, {type=number site=w199}] results=[{type=number site=w200}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f33 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w201 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w202}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f34 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w203 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w204}, {type=anything}] results=[{type=number site=w205}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f35 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w206 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f36 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w207 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w208 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w209}, {type=number site=w210}] results=[{type=undefined|null|string site=w211 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f37 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w212}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f38 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w213 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w214}, {type=undefined|number site=w215}, {type=number site=w216}, {type=undefined|null|Array site=w217 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f38 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w213 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w214}, {type=undefined|number site=w215}, {type=number site=w216}, {type=undefined|null|Array site=w217 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1()
   b1():
@@ -833,71 +833,55 @@ function f38 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v173 = Convert v172 declared={type=number site=w261}
     Jump -> next b30(v165, v166, v167, v168, v169, v170, v171, v173)
 }
-runtimefunction id=64 function=f31
-runtimefunction id=68 function=f30
-runtimefunction id=131091 function=f38 visibility=Private
+runtimefunction id=ArrayPrototypeMap function=f31
+runtimefunction id=ArrayIteratorPrototypeNext function=f30
+runtimefunction id=ArrayTraversalTraverseArray function=f38 visibility=Private
 # -- generated: f19 onAnyShelf
 # CHECK-LABEL: function {{*}}name="onAnyShelf"
-# CHECK: module=m0 position=4771 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}, {type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w33 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=4771 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}, {type=Array<"Ab"|"CD"|"aB"|"cd"|"e", proven, Contiguous, pristine[Storage, Names, Dense]> site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w33 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f19 module=
 # CHECK: m0 position=5213 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|L3 site=w166 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w167 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|L3 @JSValue):
 # CHECK-NEXT: v1: L3 @JSValue = RequireObjectCoercible v0 name="counts"
-# CHECK-NEXT: v2: boolean @Boolean = HasBirthFieldsFilled v1
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b4()
-# CHECK-NEXT: b1(v3: guard @Void):
-# CHECK-NEXT: v4: undefined|null|Map<undefined|null|string, number> @JSValue = GetSlot v1, v3 key="counts" receivers=[L3] level=Expected accessSite=34 fieldAccess=1
-# CHECK-NEXT: v5: Map<undefined|null|string, number> @JSValue = AssumeType v4 provenType=object
-# CHECK-NEXT: v6: boolean @Boolean = IsPristine v5 builtinClass=Map aspects=[Names]
-# CHECK-NEXT: TestAndBranch v6 -> taken b2(), notTaken b5(v5)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v7: int[0, 2147483647] @Int32 = CallInline v5 inlineBuiltin=MapSize overload=MapPrototypeSize/0 accessSite=35
-# CHECK-NEXT: v8: "," @Cell = String string=","
-# CHECK-NEXT: v9: Set<never, proven, pristine[Storage, Names]> @Cell = GetSlot v1 key="present" receivers=[L3] level=Proven accessSite=36 fieldAccess=2
-# CHECK-NEXT: v10: int[0, 2147483647] @Int32 = CallInline v9 inlineBuiltin=SetSize overload=SetPrototypeSize/0 accessSite=37
-# CHECK-NEXT: v11: "," @Cell = String string=","
-# CHECK-NEXT: v12: string @Cell = Strcat v7, v8, v10, v11
-# CHECK-NEXT: v13: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 literalStorage=Profiled arrayStorage=Contiguous staticsOffset=16 [contentsAreProven]
-# CHECK-NEXT: v14: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v13 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v15: Map<undefined|null|string, number> @JSValue = AssumeType v4 provenType=object
-# CHECK-NEXT: v16: undefined @JSValue = CallDirect v14, v15 function=f41 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b3(v12, v14)
-# CHECK-NEXT: b3(v17: string @Cell, v18: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v19: 0 @OptionalDouble = Integer
-# CHECK-NEXT: v20: 2 @OptionalDouble = Integer integer=2
-# CHECK-NEXT: TryCallInline v18, v19, v20 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 accessSite=40 -> done b8(), miss b9()
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v26: anything @JSValue = PropGet v1 key="counts" accessSite=34 receivers=[L3]
-# CHECK-NEXT: v27: object @JSValue = AssumeType v26 provenType=object
-# CHECK-NEXT: Jump -> next b5(v27)
-# CHECK-NEXT: b5(v28: object @JSValue) frequency=Rare:
-# CHECK-NEXT: v29: anything @JSValue = PropGet v28 key="size" accessSite=35 siteCache=0
-# CHECK-NEXT: v30: undefined|number @JSValue = AssumeType v29 provenType=undefined|number
-# CHECK-NEXT: v31: undefined|number @JSValue = Expect v30 expectedType=number
-# CHECK-NEXT: v32: "," @Cell = String string=","
-# CHECK-NEXT: v33: Set<never, proven, pristine[Storage, Names]> @Cell = GetSlot v1 key="present" receivers=[L3] level=Proven accessSite=36 fieldAccess=2
-# CHECK-NEXT: v34: int[0, 2147483647] @Int32 = CallInline v33 inlineBuiltin=SetSize overload=SetPrototypeSize/0 accessSite=37
-# CHECK-NEXT: v35: "," @Cell = String string=","
-# CHECK-NEXT: v36: string @Cell = Strcat v31, v32, v34, v35
-# CHECK-NEXT: v37: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v38: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v37 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v39: anything @JSValue = PropGet v1 key="counts" accessSite=38 receivers=[L3]
-# CHECK-NEXT: v40: object @JSValue = AssumeType v39 provenType=object
-# CHECK-NEXT: v41: undefined @JSValue = CallDirect v38, v40 function=f41 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b3(v36, v38)
-# CHECK-NEXT: b6(v24: string @Cell):
-# CHECK-NEXT: v25: string @Cell = Add v17, v24 form=Strings
-# CHECK-NEXT: Return v25
+# CHECK-NEXT: v2: Map<undefined|null|string, number> @Cell = GetSlot v1 key="counts" receivers=[L3] level=Proven accessSite=34 fieldAccess=1
+# CHECK-NEXT: v3: boolean @Boolean = IsPristine v2 builtinClass=Map aspects=[Names]
+# CHECK-NEXT: TestAndBranch v3 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: int[0, 2147483647] @Int32 = CallInline v2 inlineBuiltin=MapSize overload=MapPrototypeSize/0 accessSite=35
+# CHECK-NEXT: v5: "," @Cell = String string=","
+# CHECK-NEXT: v6: string @Cell = Add v4, v5 form=StringAndPrimitive
+# CHECK-NEXT: Jump -> next b2(v6)
+# CHECK-NEXT: b2(v7: string @Cell):
+# CHECK-NEXT: v8: Set<never, proven, pristine[Storage, Names]> @Cell = GetSlot v1 key="present" receivers=[L3] level=Proven accessSite=36 fieldAccess=2
+# CHECK-NEXT: v9: int[0, 2147483647] @Int32 = CallInline v8 inlineBuiltin=SetSize overload=SetPrototypeSize/0 accessSite=37
+# CHECK-NEXT: v10: "," @Cell = String string=","
+# CHECK-NEXT: v11: string @Cell = Strcat v7, v9, v10
+# CHECK-NEXT: v12: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 literalStorage=Profiled arrayStorage=Contiguous staticsOffset=16 [contentsAreProven]
+# CHECK-NEXT: v13: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v12 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: undefined @JSValue = CallDirect v13, v2 function=f42 [isNeverInlined]
+# CHECK-NEXT: v15: 0 @OptionalDouble = Integer
+# CHECK-NEXT: v16: 2 @OptionalDouble = Integer integer=2
+# CHECK-NEXT: TryCallInline v13, v15, v16 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 accessSite=40 -> done b6(), miss b7()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v22: anything @JSValue = PropGet v2 key="size" accessSite=35 siteCache=0
+# CHECK-NEXT: v23: undefined|number @JSValue = AssumeType v22 provenType=undefined|number
+# CHECK-NEXT: v24: undefined|number @JSValue = Expect v23 expectedType=number
+# CHECK-NEXT: v25: "," @Cell = String string=","
+# CHECK-NEXT: v26: string @Cell = Add v24, v25 form=StringAndPrimitive
+# CHECK-NEXT: Jump -> next b2(v26)
+# CHECK-NEXT: b4(v20: string @Cell):
+# CHECK-NEXT: v21: string @Cell = Add v11, v20 form=Strings
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v27: string @JSValue = CallBuiltin v18, v19 overload=ArrayPrototypeJoin/0 accessSite=42
+# CHECK-NEXT: Jump -> next b4(v27)
+# CHECK-NEXT: b6(v17: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @Cell):
+# CHECK-NEXT: v18: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v17 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: "+" @JSValue = String string="+"
+# CHECK-NEXT: TryCallInline v18, v19 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 accessSite=42 -> done b4(), miss b5()
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v42: string @JSValue = CallBuiltin v22, v23 overload=ArrayPrototypeJoin/0 accessSite=42
-# CHECK-NEXT: Jump -> next b6(v42)
-# CHECK-NEXT: b8(v21: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @Cell):
-# CHECK-NEXT: v22: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v21 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v23: "+" @JSValue = String string="+"
-# CHECK-NEXT: TryCallInline v22, v23 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 accessSite=42 -> done b6(), miss b7()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v43: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @JSValue = CallBuiltin v18, v19, v20 overload=ArrayPrototypeSlice/0 accessSite=40
-# CHECK-NEXT: Jump -> next b8(v43)
+# CHECK-NEXT: v28: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @JSValue = CallBuiltin v13, v15, v16 overload=ArrayPrototypeSlice/0 accessSite=40
+# CHECK-NEXT: Jump -> next b6(v28)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="onAnyShelf"
 # CHECK: module=m0 position=4771 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w33 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f8 parameterMap=[{original=0}]} {

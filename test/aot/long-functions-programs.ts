@@ -279,6 +279,7 @@ function writeTryThatStoresToLocals(
   isReadBehindTry: (index: number) => boolean,
   initial = "0",
   numberOf = (local: string) => local,
+  isCalledInLoop = false,
 ): Program {
   const indexes = indexesUpTo(localCount);
   const readBehindTry = indexes.filter(isReadBehindTry);
@@ -308,6 +309,7 @@ function writeTryThatStoresToLocals(
       "}",
       "const numbers = [];",
       `for (let index = 0; index < ${localCount}; index++) numbers.push(${element("index * 7 + 1")});`,
+      ...(isCalledInLoop ? ["for (let turn = 0; turn < 100; turn++) run(numbers, false);"] : []),
       "console.log(run(numbers, false), run(numbers, true));",
     ].join("\n"),
     output: `${resultOfRun(false)} ${resultOfRun(true)}\n`,
@@ -329,6 +331,18 @@ export const writeFieldsStoredInTry = (localCount: number) =>
     number => `{ value: ${number} }`,
     ".value",
     index => index % 7 === 0,
+  );
+
+// The same in a function that a loop calls, so it is compiled as hot code: the locals that are read behind the `try` statement stay in registers or on the stack.
+export const writeFieldsStoredInTryOfHotFunction = (localCount: number) =>
+  writeTryThatStoresToLocals(
+    localCount,
+    number => `{ value: ${number} }`,
+    ".value",
+    index => index % 7 === 0,
+    undefined,
+    undefined,
+    true,
   );
 
 // What is stored is a string, and what is read of it are its length and its last character.

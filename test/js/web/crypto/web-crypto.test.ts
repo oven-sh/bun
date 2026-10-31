@@ -1632,6 +1632,41 @@ describe("JWK import validation", () => {
     });
   });
 
+  it("RSA private keys need the n that is p times q, and no oth", async () => {
+    const algorithm = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const { privateKey } = await crypto.subtle.generateKey(algorithm, true, ["sign", "verify"]);
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const { kty, n, e } = jwk;
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { ...jwk, ...members }, algorithm, true, ["sign"]);
+    const changed = (encoded?: string) => {
+      const bytes = Buffer.from(encoded!, "base64url");
+      bytes[0] ^= 1;
+      return bytes.toString("base64url");
+    };
+
+    expect({
+      unchanged: await rejection(importJwk({})),
+      n: await rejection(importJwk({ n: changed(n) })),
+      p: await rejection(importJwk({ p: changed(jwk.p) })),
+      q: await rejection(importJwk({ q: changed(jwk.q) })),
+      oth: await rejection(importJwk({ oth: [] })),
+      publicOth: await rejection(crypto.subtle.importKey("jwk", { kty, n, e, oth: [] }, algorithm, true, ["verify"])),
+    }).toEqual({
+      unchanged: "resolved",
+      n: "DataError",
+      p: "DataError",
+      q: "DataError",
+      oth: "DataError",
+      publicOth: "DataError",
+    });
+  });
+
   it("rejects a repeated key_ops entry for every key type", async () => {
     const pair = async (algorithm: any, usages: KeyUsage[]) =>
       crypto.subtle.exportKey(

@@ -3503,6 +3503,20 @@ const Rsa::PrivateKey Rsa::getPrivateKey() const
     return key;
 }
 
+// Upstream also multiplies by the primes of getOtherPrimeInfos(). BoringSSL has no multi-prime RSA.
+bool Rsa::checkPrimeProduct() const
+{
+    const auto pub = getPublicKey();
+    const auto priv = getPrivateKey();
+    if (pub.n == nullptr || priv.p == nullptr || priv.q == nullptr) return false;
+    auto product = BignumPointer::New();
+    BignumCtxPointer ctx(BN_CTX_new());
+    if (!product || !ctx || BN_mul(product.get(), priv.p, priv.q, ctx.get()) != 1) {
+        return false;
+    }
+    return BN_cmp(product.get(), pub.n) == 0;
+}
+
 const std::optional<Rsa::PssParams> Rsa::getPssParams() const
 {
     if (rsa_ == nullptr) return std::nullopt;

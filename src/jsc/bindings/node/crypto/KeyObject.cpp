@@ -1392,6 +1392,17 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         RETURN_IF_EXCEPTION(scope, {});
         auto eView = getJwkStringView(globalObject, scope, jwk, "e"_s, "key.e"_s);
         RETURN_IF_EXCEPTION(scope, {});
+        VM& vm = globalObject->vm();
+        JSValue dValue = jwk->get(globalObject, Identifier::fromString(vm, "d"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue othValue = jwk->get(globalObject, Identifier::fromString(vm, "oth"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // BoringSSL has no multi-prime RSA.
+        if (!othValue.isUndefined()) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
+            return {};
+        }
 
         auto* nBuf = decodeJwkString(globalObject, scope, nView, "key.n"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1408,8 +1419,13 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
             return {};
         }
 
-        if (keyType == CryptoKeyType::Private) {
-            auto* dBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "d"_s, "key.d"_s);
+        // The JWK itself decides whether private key material is present, as in Node's ImportJWKRsaKey.
+        if (keyType == CryptoKeyType::Private || !dValue.isUndefined()) {
+            V::validateString(scope, globalObject, dValue, "key.d"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto dView = asString(dValue)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto* dBuf = decodeJwkString(globalObject, scope, dView, "key.d"_s);
             RETURN_IF_EXCEPTION(scope, {});
             auto* pBuf = getDecodedJwkStringBuf(globalObject, scope, jwk, "p"_s, "key.p"_s);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1428,7 +1444,8 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
                     jwkBufToBn(pBuf),
                     jwkBufToBn(dpBuf),
                     jwkBufToBn(dqBuf),
-                    jwkBufToBn(qiBuf))) {
+                    jwkBufToBn(qiBuf))
+                || !rsaView.checkPrimeProduct()) {
                 ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
                 return {};
             }

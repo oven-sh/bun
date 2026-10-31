@@ -647,6 +647,26 @@ describe("crypto.KeyObjects", () => {
     );
   });
 
+  test("keys from a private RSA jwk need the n that is p times q, and no oth", () => {
+    const jwk = createPrivateKey(privatePem).export({ format: "jwk" });
+    const { kty, n, e } = jwk;
+    expect(createPrivateKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual(jwk);
+    expect(createPublicKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual({ kty, n, e });
+
+    const changed = (encoded?: string) => {
+      const bytes = Buffer.from(encoded!, "base64url");
+      bytes[0] ^= 1;
+      return bytes.toString("base64url");
+    };
+    const invalid = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK RSA key" });
+    for (const wrong of [{ n: changed(n) }, { p: changed(jwk.p) }, { q: changed(jwk.q) }, { p: "" }, { oth: [] }]) {
+      for (const create of [createPrivateKey, createPublicKey]) {
+        expect(() => create({ key: { ...jwk, ...wrong }, format: "jwk" })).toThrow(invalid);
+      }
+    }
+    expect(() => createPublicKey({ key: { kty, n, e, oth: [] }, format: "jwk" })).toThrow(invalid);
+  });
+
   test("private encrypted should work", async () => {
     // Reading an encrypted key without a passphrase should fail.
     expect(() => createPrivateKey(privateEncryptedPem)).toThrow();

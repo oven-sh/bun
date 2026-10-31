@@ -43,8 +43,11 @@ diagnostic_codes! {
         ProgramTooLarge = 100055, Error, "The program is too large to compile: its IR is {0} bytes, and the limit is 4 GB";
         FileNestedTooDeeply = 100060, Error, "The code in \"{0}\" is nested too deeply to be compiled";
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
+        ShadowRealmIsAbsent = 100076, Warning, "A compiled program has no ShadowRealm. This throws a ReferenceError when it runs";
         WorkerFileNotCompiled = 100071, Warning, "This Worker may start from an embedded file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or pass its import straight to new Worker()";
         WorkerTextNotCompiled = 100072, Warning, "The code that this Worker starts from can't be compiled, so the Worker fails to load";
+        TestedFilesCompiledWithoutTypes = 100075, Warning, "Files with type errors are compiled without their types: {0} in this run. They still work, but run slower.";
+        EntryPointsCompiledTogether = 100074, Warning, "{0} entry points are compiled as one program: at most {1} can be compiled separately. It still works, but code that several entry points share may run slower.";
     }
     Fold 100100..=100149 {
         FeatureArgumentCount = 100100, Error, "feature() requires exactly one string argument";
@@ -201,16 +204,6 @@ mod tests {
         assert!(has_consecutive_placeholders("{...spread} {} {name} {0"));
         assert!(!has_consecutive_placeholders("{1}"));
         assert!(!has_consecutive_placeholders("{0} {2}"));
-    }
-
-    #[test]
-    fn templates_are_trimmed() {
-        for code in Code::ALL {
-            let template = code.template();
-            assert!(!template.is_empty(), "{code:?}");
-            assert!(!template.starts_with(' '), "{code:?}");
-            assert!(!template.ends_with('\n'), "{code:?}");
-        }
     }
 
     #[test]

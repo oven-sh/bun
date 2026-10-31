@@ -79,7 +79,7 @@ row("on what is no object", () => [said(() => InstanceFromStatic.m.call(1)), sai
 // CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_12]] flags=[IsExpected]}
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_14]]
 // CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b9()
+// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b11()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v5 = GetModuleVariable variable=[[g_15]]
 // CHECK-NEXT: v6 = TypeTest v5 testedType=absent
@@ -104,11 +104,23 @@ row("on what is no object", () => [said(() => InstanceFromStatic.m.call(1)), sai
 // CHECK-NEXT: b7(v19):
 // CHECK-NEXT: Return v19
 // CHECK-NEXT: b8() frequency=Unlikely:
-// CHECK-NEXT: v20 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v20
-// CHECK-NEXT: b9() frequency=Unlikely:
-// CHECK-NEXT: v21 = NewRuntimeError runtimeError=InvalidPrivateWrite
-// CHECK-NEXT: Throw v21
+// CHECK-NEXT: v20 = TypeTest v12 testedType=undefined|null
+// CHECK-NEXT: Branch v20 -> taken b9(| 0), notTaken b10(| 0)
+// CHECK-NEXT: b9(v21):
+// CHECK-NEXT: v22 = PropGet v21 key="#v"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b10(v23):
+// CHECK-NEXT: v24 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v24
+// CHECK-NEXT: b11() frequency=Unlikely:
+// CHECK-NEXT: v25 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v25 -> taken b12(| 0), notTaken b13(| 0)
+// CHECK-NEXT: b12(v26):
+// CHECK-NEXT: v27 = PropGet v26 key="#v"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b13(v28):
+// CHECK-NEXT: v29 = NewRuntimeError runtimeError=InvalidPrivateWrite
+// CHECK-NEXT: Throw v29
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {

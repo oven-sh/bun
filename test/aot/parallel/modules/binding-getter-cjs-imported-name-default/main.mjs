@@ -1,3 +1,4 @@
+// Flags: --aot-check=ValidateReferenceGuards
 // A CommonJS file defines getters that return bindings of its top level, as TypeScript writes them. A module imports the names and, beside them,
 // the default, which it looks at as a whole.
 import file, { number, greet, Kind } from "./file.cjs";

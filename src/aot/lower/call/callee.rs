@@ -1,3 +1,5 @@
+mod text_printed_in_place;
+
 use std::cell::RefCell;
 
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
@@ -8,7 +10,7 @@ use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{Constant, Decision, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
-    PropKind, UnOp, end_of_expr, start_of,
+    NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
@@ -197,6 +199,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let this = self.lower_export_receiver(access);
             return Callee::without_key(function, Some(this), name);
         }
+        let modules = self.file.inputs.modules;
+        if modules.answer_member(self.file.file, access).is_some() {
+            let this = self.lower_member_base(access, object, exit);
+            let function = self.lower_callee_of_answer(access, Some(this), expected);
+            return Callee::without_key(function, Some(this), name);
+        }
         let (base, property) = member::lower_member_operands(self, access, exit);
         let function = member::emit_member_read(self, access, base, property);
         let function = self.finish_callee(access, function, expected);
@@ -209,6 +217,40 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // By the way that is written the callee may be anything, so the call keeps apart what was read on the answer.
+    fn lower_callee_of_answer(
+        &mut self,
+        access: ExprId,
+        base: Option<ValueId>,
+        expected: Option<BuiltinId>,
+    ) -> ValueId {
+        let (function, on_answer) = self.lower_member_of_answer_below(access, base);
+        let function = self.finish_callee(access, function, expected);
+        self.callees_read_on_answers.insert(function, on_answer);
+        function
+    }
+
+    // `(0, a.n)`: `a.n`
+    fn find_member_of_answer_behind_number(&self, callee: ExprId) -> Option<ExprId> {
+        let hir = self.file.hir;
+        let ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            right,
+        } = hir[callee].kind
+        else {
+            return None;
+        };
+        let (left, access) = (
+            self.file.skip_type_syntax(left),
+            self.file.skip_type_syntax(right),
+        );
+        let modules = self.file.inputs.modules;
+        let is_found = matches!(hir[left].kind, ExprKind::Number(_))
+            && modules.answer_member(self.file.file, access).is_some();
+        is_found.then_some(access)
+    }
+
     fn lower_plain_callee(
         &mut self,
         callee: ExprId,
@@ -217,8 +259,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         expected: Option<BuiltinId>,
     ) -> Callee {
         let hir = self.file.hir;
+        if let Some(access) = self.find_member_of_answer_behind_number(inner) {
+            let function = self.lower_callee_of_answer(access, None, expected);
+            return Callee::without_key(function, None, None);
+        }
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
-            return Callee::without_key(self.lower_chain_base(callee, exit), None, None);
+            // `(await a.b)()`
+            let name = match hir[inner].kind {
+                ExprKind::Await(_) => self.file.find_callee_name(inner),
+                _ => None,
+            };
+            return Callee::without_key(self.lower_chain_base(callee, exit), None, name);
         }
         let name = self.file.find_callee_name(inner);
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
@@ -393,14 +444,32 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
     pub(in crate::lower) fn name_position(&self, identifier: ExprId) -> u32 {
-        if let Some(position) = self.find_shorthand_name_position(identifier) {
-            return position;
-        }
         if self.is_shown_without_source_map() {
             return self.hir[identifier].end;
         }
-        self.find_closing_token_behind(identifier)
+        self.find_key_printed_alone(identifier)
+            .or_else(|| self.find_closing_token_behind(identifier))
             .unwrap_or(self.hir[identifier].pos)
+    }
+
+    // `{ a: a }` is printed `{ a }`, and the source map takes that name back to the key.
+    fn find_key_printed_alone(&self, identifier: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        let Parent::Prop(property) = self.bound.parent_of_expr(identifier) else {
+            return None;
+        };
+        let property = hir[property];
+        let is_written_out = property.kind == PropKind::Init
+            && matches!(
+                property.name_kind,
+                NameKind::Identifier | NameKind::StringLiteral
+            );
+        match (property.key, hir[identifier].kind) {
+            (PropKey::Name(key), ExprKind::Ident(name)) if is_written_out && key == name => {
+                Some(property.pos)
+            }
+            _ => None,
+        }
     }
 
     // JSC records a name where it ends, which the source map takes back to where the name starts.
@@ -408,7 +477,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let name = self.hir[identifier];
         match self.runs_as_written() {
             true => name.end,
-            false => name.pos,
+            false => self.find_key_printed_alone(identifier).unwrap_or(name.pos),
         }
     }
 
@@ -441,6 +510,17 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                     _ => break,
                 },
+                // What is printed in place of a name stands in front of what stands behind the name.
+                Parent::VarInit(_) => {
+                    let transpiled = self.transpiled.as_ref();
+                    match transpiled.and_then(|it| it.find_name_replaced_by(last)) {
+                        Some(name) => {
+                            last = name;
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
                 _ => break,
             };
             last = match hir[parent].kind {
@@ -513,44 +593,6 @@ impl FileLowering<'_, '_, '_, '_> {
             gap = end_of_expr(hir, element);
         }
         !has_line_break(gap, self.last_token_position(list))
-    }
-
-    // JSC's parser starts the name of a shorthand member at the token behind it, and JSC records a name where it ends: as many characters behind
-    // the start of that token as the name has. The source map takes that back to the last token it knows. The source text stands for the printed
-    // text here, which has the same spaces if the source is formatted as Bun's transpiler prints it.
-    pub(in crate::lower) fn find_shorthand_name_position(&self, identifier: ExprId) -> Option<u32> {
-        let hir = self.hir;
-        let Parent::Prop(property) = self.bound.parent_of_expr(identifier) else {
-            return None;
-        };
-        if hir[property].kind != PropKind::Shorthand {
-            return None;
-        }
-        let is_in_word =
-            |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
-        let name = hir[identifier];
-        let start = self.next_token_position(name.end) as usize;
-        let end = start + (name.end - name.pos) as usize;
-        if self.is_shown_without_source_map() {
-            return Some(end as u32);
-        }
-        let mut mapped = name.pos as usize;
-        let mut position = start;
-        while let Some(&byte) = hir.text.get(position).filter(|_| position <= end) {
-            match byte {
-                b'{' | b'}' | b')' | b']' => mapped = position,
-                b'"' | b'\'' | b'`' => {
-                    mapped = position;
-                    let rest = &hir.text[position + 1..];
-                    let length = rest.iter().position(|&next| next == byte);
-                    position += length.unwrap_or(rest.len()) + 1;
-                }
-                _ if is_in_word(byte) && !is_in_word(hir.text[position - 1]) => mapped = position,
-                _ => {}
-            }
-            position += 1;
-        }
-        Some(mapped as u32)
     }
 
     // JSC reports `instanceof` and `in` where the right operand starts. The source map knows no `(` that is printed around it, and takes that to the token in front.
@@ -1022,6 +1064,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     _ => return self.append_written_path(printed, text),
                 }
             }
+            ExprKind::Await(awaited) if !self.is_literal_operand(awaited) => {
+                text.extend_from_slice(b"await ");
+                return self.append_written_path(awaited, text);
+            }
             _ => return self.append_written_path(printed, text),
         };
         text.extend_from_slice(literal);
@@ -1050,6 +1096,18 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::This => path.extend_from_slice(b"this"),
             ExprKind::Super => path.extend_from_slice(b"super"),
             ExprKind::ImportMeta => path.extend_from_slice(b"import.meta"),
+            // What is called or read from stands in brackets.
+            ExprKind::Await(mut awaited) => {
+                path.extend_from_slice(b"(await ");
+                while let ExprKind::Await(next) = hir.written_kind(self.skip_type_syntax(awaited)) {
+                    path.extend_from_slice(b"await ");
+                    awaited = next;
+                }
+                if self.is_literal_operand(awaited) || !self.append_written_path(awaited, path) {
+                    return false;
+                }
+                path.push(b')');
+            }
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
@@ -1090,7 +1148,9 @@ impl FileLowering<'_, '_, '_, '_> {
                         }
                         path.extend_from_slice(b"[\"");
                         path.extend_from_slice(self.queries.atom_bytes(key));
-                        path.extend_from_slice(b"\"]");
+                        path.push(b'"');
+                        self.append_name_of_enum_member(index, path);
+                        path.push(b']');
                     }
                     (Some(Constant::Number(key)), _) => {
                         if key.fract() != 0.0 || !(0.0..=f64::from(u32::MAX)).contains(&key) {
@@ -1099,7 +1159,15 @@ impl FileLowering<'_, '_, '_, '_> {
                         if chain == Chain::Start {
                             path.extend_from_slice(b"?.");
                         }
-                        path.extend_from_slice(format!("[{}]", key as u32).as_bytes());
+                        path.push(b'[');
+                        match pow10_exp_1e4_to_1e9(key as u64) {
+                            Some(exponent) => {
+                                path.extend_from_slice(&[b'1', b'e', b'0' + exponent])
+                            }
+                            None => path.extend_from_slice(format!("{}", key as u32).as_bytes()),
+                        }
+                        self.append_name_of_enum_member(index, path);
+                        path.push(b']');
                     }
                     _ => return false,
                 }
@@ -1136,7 +1204,22 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(Constant::Null) => path.extend_from_slice(b"null"),
             _ => return false,
         }
+        self.append_name_of_enum_member(literal, path);
         true
+    }
+
+    // `Color.Green` is printed `1 /* Green */`.
+    fn append_name_of_enum_member(&self, literal: ExprId, text: &mut Vec<u8>) {
+        let printed = self.follow_replaced_names(literal);
+        if let Some(Rewrite::Literal {
+            enum_member: Some(name),
+            ..
+        }) = self.find_rewrite(printed)
+        {
+            text.extend_from_slice(b" /* ");
+            text.extend_from_slice(self.queries.atom_bytes(name));
+            text.extend_from_slice(b" */");
+        }
     }
 
     fn append_identifier(&self, identifier: ExprId, name: Atom, path: &mut Vec<u8>) {

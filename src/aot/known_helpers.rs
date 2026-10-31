@@ -64,6 +64,14 @@ fn reads_private_state(helper: Helper) -> bool {
 }
 
 impl KnownHelpers {
+    /// `replaced`: `LoadOptions::replaced_builtins`. A replacement sees every entry, so none moves into a field.
+    pub fn keep_private_states_in_collections(&mut self, replaced: &[u32]) {
+        let mut methods = private_state::METHODS_OF_COLLECTIONS.iter();
+        if methods.any(|&method| replaced.binary_search(&(method as u32)).is_ok()) {
+            self.private_states = Vec::new();
+        }
+    }
+
     pub fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
         let mut found: Vec<(FileId, FileHelpers)> = files
             .compiled_files()

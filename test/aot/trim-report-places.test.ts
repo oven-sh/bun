@@ -178,8 +178,8 @@ describe.concurrent("a way for unseen code to run has its place in the program",
     ).toContain(`${loadsByName} (%ModuleRequire%) at main.ts:3:10`);
   });
 
-  // A Worker has a global of its own and starts with an entry point of the build: nothing comes to run in this program.
-  test("a call in a dependency has its place there, and a Worker from a computed path lets no code in", async () => {
+  // A Worker has a global of its own: nothing comes to run in this program. What it starts from may be text, which runs beside it.
+  test("a call in a dependency has its place there, and so has a Worker from a computed path", async () => {
     const files = {
       "node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
       "node_modules/dep/index.js": `exports.make = function (text) {\n  return new Function(text);\n};\n`,
@@ -188,6 +188,7 @@ describe.concurrent("a way for unseen code to run has its place in the program",
     expect((await report(text, files)).whyOpen).toEqual([
       `${evaluates} (Function) at node_modules/dep/index.js:2:14`,
       `${loadsByName} (Function) at node_modules/dep/index.js:2:14`,
+      "dynamic-import: the program starts a Worker from code that isn't in the executable (Worker) at main.ts:4:20",
     ]);
   });
 

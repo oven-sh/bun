@@ -37,21 +37,20 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Functions on which the host puts members that have no entry yet: fetch.preconnect, Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
+// Functions on which the host puts members that have no entry yet: Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
+  "%ModuleRequirePrototype%.resolve",
   "Bun.$",
   "Bun.cron",
-  "Bun.fetch",
   "Bun.inspect",
   "Bun.peek",
   "Bun.sql",
-  "fetch",
   "process.hrtime",
   "process.memoryUsage",
 ];
 
-const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "Bun.$", "Bun.sql"];
+const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "%ModuleRequirePrototype%.resolve", "Bun.$", "Bun.sql"];
 
 // src/jsc/modules/NodeUtilTypesModule.cpp. Each looks at the type or the C++ class of a cell, isAsyncFunction also at what lies above a function.
 const typeTestsOfNode = [
@@ -274,9 +273,14 @@ export default b.declarations(
   }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
+  // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and
+  // `new Bun.ModuleGraph()` in another. So the answer is an object whoever reads Bun.ModuleGraph.
   b.static(
     cpp("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame"),
-    looksForModuleGraph(b.union(b.object, b.undefined), [b.returnedFrom(moduleGraphsCell)]),
+    looksForModuleGraph(b.union(b.object, b.undefined), [
+      b.createdIn(b.object, b.nativeCell(moduleGraphsCell)),
+      b.returnedFrom(moduleGraphsCell),
+    ]),
   ),
   // The frame it answers is the operand or one below it: one that native code has made, or the copy of one that node:async_hooks has made.
   b.static(
@@ -291,7 +295,7 @@ export default b.declarations(
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {
     args: { filename: b.any.optional },
-    returns: b.object,
+    returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
     uses: { filename: b.inspected },

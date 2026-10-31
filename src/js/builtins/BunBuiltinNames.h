@@ -45,6 +45,7 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(bareStandardStreamPrototypes) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
@@ -116,6 +117,7 @@ using namespace JSC;
     macro(json) \
     macro(kResistStopPropagation) \
     macro(lazy) \
+    macro(lightStandardStreams) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \
@@ -168,6 +170,8 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheCompiledEntry) \
+    macro(requireCacheDidDelete) \
     macro(requireCacheWillSet) \
     macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \

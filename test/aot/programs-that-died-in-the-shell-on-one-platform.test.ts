@@ -20,6 +20,9 @@ const programs = [
   // under a name that the program computes, and the shell took the path of the first for a URL.
   "modules/two-loads-module-cannot-linked-give",
   "structural-types/module-imported-by-computed-name-untyped",
+  // Every platform: "console.log is not a function". After a store under a computed key of globalThis, `console` is the built-in or the
+  // stored object, and compiled code tells them apart by identity. The shell had replaced `console` with an object of its own.
+  "objects/accessors-getters-nobody-can-list",
 ];
 
 /** What shell/quick.py passes over for now is printed, so that every run on that platform says where the shell died. The other lines. */

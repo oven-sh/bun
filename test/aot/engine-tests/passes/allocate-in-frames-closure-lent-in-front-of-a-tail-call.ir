@@ -1,0 +1,58 @@
+# function answer(handler, then) { const result = handler(() => 1); return then(result); }
+# A closure that is lent to a call lies in the frame. What the call answers may be anything that the callee got hold of, so it counts as a way to the closure; but whoever borrows gives nothing of the closure back, and whoever does not is handed a closure of the heap. So a tail call that takes the answer takes no cell of the frame with it, and the closure stays lent. A tail call that takes the closure itself beside another use of it is another matter.
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries,AllocateInFrames heat=EverythingIsHot
+# STATISTIC: ClosuresLent = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 1..3
+    v%(i+3) = CallDirect v1, v1 function=f%(i)
+# END REPEAT
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="tailCallOnTheAnswer" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f4
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v3
+    ReturnCall v4
+}
+# CHECK-LABEL: function f1 name="tailCallOnTheAnswer"
+# CHECK: = NewClosure function=f4 {{*}}storage=Frame [isLent]
+# CHECK: ReturnCall v4
+
+function f2 name="tailCallOnTheAnswerAsReceiver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f4
+    v3 = Call v0, -, v1, v2
+    v4 = PropGet v3 key="then"
+    v5 = Call v4, v3, v1
+    ReturnCall v5
+}
+# CHECK-LABEL: function f2 name="tailCallOnTheAnswerAsReceiver"
+# CHECK: = NewClosure function=f4 {{*}}storage=Frame [isLent]
+# CHECK: ReturnCall v5
+
+function f3 name="closureGoesIntoTwoCalls" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f4
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v3, v0, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f3 name="closureGoesIntoTwoCalls"
+# CHECK-NOT: storage=
+
+function f4 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

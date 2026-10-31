@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""async-context.py <seed>: THE ASYNC CONTEXT: AsyncLocalStorage around producers, consumers and chains of async generators: what getStore() says at every step, and the ORDER of every step against other jobs (promise jobs, queueMicrotask, process.nextTick, timers). A random program of producers (plain yields, awaits of settled | pending | thenable | timer promises, yield*, try | finally, early return, throws), consumers (for await, by hand with next | return | throw, two consumers of one producer, next() called twice without awaiting) under nested run() | enterWith() | exit(), with bystanders that write down when they run. Needs the whole Bun (node:async_hooks)."""
+"""async-context.py <seed>: AsyncLocalStorage around producers, consumers and chains of async generators: what
+getStore() returns at every step, and the order of every step relative to other jobs (promise jobs, queueMicrotask,
+process.nextTick, timers).
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 out = ['import { AsyncLocalStorage } from "node:async_hooks";', 'declare const process: any; declare const console: { log(...v: unknown[]): void }; declare function setTimeout(f: () => void, ms: number): unknown; declare function queueMicrotask(f: () => void): void;',

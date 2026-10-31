@@ -499,16 +499,17 @@ impl CCtx {
 
 /// `ZSTD_compress`: returns the size of the frame.
 pub fn compress(dst: &mut [u8], src: &[u8], compression_level: i32) -> Result<usize> {
-    compress_to(&mut Output::Slice(dst), src, compression_level)
+    let dst = &mut Output::Slice(dst);
+    compress_to(&mut FrameCompressor::new(), dst, src, compression_level)
 }
 
-/// [`compress`] to either kind of output.
+/// `ZSTD_compressCCtx`, to either kind of output.
 pub(crate) fn compress_to(
+    frame: &mut FrameCompressor,
     dst: &mut Output<'_>,
     src: &[u8],
     compression_level: i32,
 ) -> Result<usize> {
-    let mut frame = FrameCompressor::new();
     let params = get_params_internal(
         compression_level,
         src.len() as u64,

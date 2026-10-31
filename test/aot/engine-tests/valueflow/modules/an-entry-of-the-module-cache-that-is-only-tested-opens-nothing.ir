@@ -1,0 +1,31 @@
+# if (require.cache[path]) ..; if (require.cache[path].exports === made) ..
+# Nothing is taken out of the table: the entry is tested, and so is the member read off it. What require() answers for the files that the table lists stays where it is.
+# an-entry-of-the-module-cache-whose-member-goes-somewhere-opens-the-listed-files.ir hands the member on
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="listed.js" displayPath="listed.js" flags=[IsListedInCache] body=f1 exports=[{name="exported" variable=g0}]
+entry module=m0
+variable g0 name="exported" module=m1 declared={type=anything} initialization=Function function=f2
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ModuleCache
+    v1 = Builtin builtin=DateNow
+    v2 = Call v1
+    v3 = ToString v2
+    v4 = ElemGet v0, v3
+    v5 = Undefined
+    v6 = StrictEq v4, v5
+    v7 = ElemGet v0, v3
+    v8 = PropGet v7 key="exports"
+    v9 = StrictEq v8, v5
+    v10 = ToBoolean v4
+    Return
+}
+function f1 name="listed" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+    Return
+}

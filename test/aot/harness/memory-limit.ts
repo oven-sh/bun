@@ -180,12 +180,12 @@ export function endAtMemoryLimitTogether(limit = memoryLimitOfCommandsAtOnce, en
     /** Whether one more may start: nothing runs, or twice as much is left as has to be. */
     hasRoom: () =>
       !watches || (heldAtLastLook[0] + 2 * keptBack < limit && (!isLinux || availableMemory() > 2 * keptBack)),
-    /** `hasChildren`: what the child starts counts as its own. */
-    watch(child: Child, hasChildren = false) {
+    /** `hasChildren`: what the child starts counts as its own. `asksFirst`: the child has a second to say what it is doing. */
+    watch(child: Child, hasChildren = false, asksFirst = false) {
       if (!isTold && process.platform !== "win32") tell({ together, shared, limit, ends });
       isTold = true;
       watches++;
-      return watched(child, { limit, asksFirst: false, hasChildren, of: together }, () => void watches--);
+      return watched(child, { limit, asksFirst, hasChildren, of: together }, () => void watches--);
     },
   };
 }

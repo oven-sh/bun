@@ -21,6 +21,12 @@ export const onWarningCell = "Process.onWarning";
 export const setModuleWrapperCell = "NodeModule.setWrapperItem";
 export const writeWarningCell = "Process.writeWarning";
 export const standardErrorCell = "Process.stderr";
+export const standardInputCell = "Process.stdin";
+export const standardOutputCell = "Process.stdout";
+export const needsWholeInputStreamCell = "Process.needsWholeInputStream";
+export const needsWholeOutputStreamCell = "Process.needsWholeOutputStream";
+export const readsWindowSizeCell = "Process.readsWindowSize";
+export const writesToStandardSinkCell = "Process.writesToStandardSink";
 export const argumentsCell = "Process.argv";
 export const runtimeArgumentsCell = "Process.execArgv";
 export const closedPromiseOfStreamCell = "WebStream.closedPromise";
@@ -28,6 +34,10 @@ export const moduleGraphsCell = "ModuleGraph.graphs";
 export const framesOfModuleGraphsCell = "ModuleGraph.frames";
 export const asyncContextCell = "GlobalObject.asyncContext";
 export const cryptoObjectCell = "GlobalObject.crypto";
+export const performanceTimingCell = "Performance.timing";
+export const timelineHandlerCell = "Performance.onresourcetimingbufferfull";
+// What dispatchEvent() was called on: an event answers it as its target.
+export const targetsOfEventsCell = "Event.target";
 export const builtinModulesCell = "NodeModule.builtinModules";
 // The warnings that native code emits: the errors that it makes for them, and the errors that process.emitWarning was handed.
 export const madeWarningsCell = "Process.madeWarnings";

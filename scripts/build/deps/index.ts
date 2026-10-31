@@ -74,9 +74,9 @@ export const allDeps: readonly Dependency[] = [
 ];
 
 /**
- * What only programs beside bun take (`JSCProgram.deps`). Fetched, compiled and
- * redirected (`--local-deps`) like the others, but no part of bun: not linked
- * into it, no include dir of its sources, no entry of its versions.
+ * What only programs beside bun take (`JSCProgram.sourcesFrom`). Fetched like
+ * the others, but no part of bun: not linked into it, no include dir of its
+ * sources, no entry of its versions.
  */
 export const programDeps: readonly Dependency[] = [zstd];
 

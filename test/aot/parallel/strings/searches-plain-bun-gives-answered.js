@@ -39,13 +39,13 @@ references to two groups: 20 21 22 23 24 25 26 27 - - - - -
 a reference that ignores case: 20 21 22 23 24 25 26 27 - - - - -
 a text between quotes: 21 22 23 24 25 26 27 - - - - - -
 a character beyond the BMP: 40 42 44 46 48 50 52 - - - - - -
-a class with a character beyond the BMP: 40 42 44 46 48 50 52 - - - - - -
+a class with a character beyond the BMP: 40 42 44 46 48 50 52 54 56 58 60 62 64
 a dot behind a pair: 22 23 24 25 26 27 28 - - - - - -
 a dot on pairs: 40 42 44 46 48 50 52 - - - - - -
 a negated class in front of a pair: 22 23 24 25 26 27 - - - - - - -
 properties on pairs: 40 42 44 46 48 50 52 - - - - - -
 half a pair: 20 21 22 23 24 25 26 - - - - - -
-a difference of classes in front of a pair: 22 23 24 25 26 27 - - - - - - -
+a difference of classes in front of a pair: 22 23 24 25 26 27 28 29 30 31 32 33 34
 a lookbehind with a group: 20 21 22 23 24 25 - - - - - - -
 a lookbehind with a run behind turns: 20 21 22 23 24 25 26 - - - - - -
 a lookbehind that must fail, with a group: 20 21 22 - - - - - - - - - -
@@ -64,7 +64,6 @@ Counts turns on a second flat program
 Runs on a flat program
 Counts turns on a second flat program
 Runs on a flat program
-Counts turns on a second flat program
 Runs on a flat program
 Counts turns on a second flat program
 Runs on a flat program
@@ -76,7 +75,6 @@ Counts turns on a second flat program
 Runs on a flat program
 Counts turns on a second flat program
 Runs on a flat program
-Counts turns on a second flat program
 Runs on a flat program
 Counts turns on a second flat program
 Runs on a flat program

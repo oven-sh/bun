@@ -5,7 +5,7 @@ use bun_sema::hir::{ExprId, StmtId};
 
 use super::runtime_value::{emit_module_value, find_module_value};
 use super::{ModuleRoots, file_scope};
-use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
+use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionRole};
 use crate::ir::{FunctionId, FunctionKey, VariableKey};
 use crate::load::SourceKind;
 use crate::load::evaluated_texts::find_start_of_written_text;
@@ -133,10 +133,7 @@ impl FileLowering<'_, '_, '_, '_> {
             true => &[],
             false => &self.hir.text,
         };
-        let function_text = match self.inputs.options.embeds_function_text && !is_placeholder {
-            true => self.type_ranges.remove_from(text),
-            false => Vec::new(),
-        };
+        let embeds_function_text = self.inputs.options.embeds_function_text && !is_placeholder;
         let find_line_starts = || {
             let mut line_starts = compute_ecma_line_starts(text);
             if self.inputs.sources.kind(self.file) == SourceKind::EvaluatedText {
@@ -146,18 +143,35 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             line_starts
         };
+        let sources = self.inputs.sources;
+        let bundled = sources.bundled_positions(self.file);
+        let bundled = bundled.or_else(|| sources.bundled_positions_of_functions(self.file));
+        let mut positions = match bundled {
+            None => crate::emit::source_positions(text, find_line_starts()),
+            Some(bundled) => crate::emit::source_positions_in_bundle(
+                text,
+                &bundled.evaluated,
+                bundled.corrections,
+                bundled.places_in_other_files,
+            ),
+        };
+        if !is_placeholder {
+            positions.text_printed_in_place = self.find_text_printed_in_place();
+        }
+        if embeds_function_text && self.source.function_role() == FunctionRole::Source {
+            positions.text_of_body = self.find_text_of_body();
+        }
+        let mut where_this_is_made = core::mem::take(&mut self.where_this_is_made);
+        where_this_is_made.sort_unstable();
+        let words = where_this_is_made.into_iter();
+        positions.where_this_is_made = words
+            .flat_map(|(function, made)| [function, made])
+            .collect();
         ModuleFragment {
             body: roots.body,
             data: roots.data,
-            positions: match self.inputs.sources.bundled_positions(self.file) {
-                None => crate::emit::source_positions(text, find_line_starts()),
-                Some(bundled) => crate::emit::source_positions_in_bundle(
-                    text,
-                    bundled.evaluated,
-                    bundled.corrections,
-                ),
-            },
-            function_text,
+            positions,
+            types_in_function_text: embeds_function_text.then(|| self.type_ranges.pack()),
         }
     }
 }

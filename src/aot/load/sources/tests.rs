@@ -549,11 +549,11 @@ fn second_loader_of_path_has_suffix() {
 }
 
 #[test]
-fn only_loader_of_path_has_no_suffix_where_no_attribute_chooses_the_same() {
+fn form_that_attribute_asks_for_has_suffix_where_no_attribute_chooses_the_same() {
     let main = "import note from './note.txt' with { type: 'text' };\nconsole.log(note);";
     let files = [("main.ts", main), ("note.txt", "export default 1;")];
     with_bind_input(&files, &default_settings(), |input| {
-        let expected = vec![(Loader::Text, b"/$bunfs/root/note.txt".to_vec())];
+        let expected = vec![(Loader::Text, b"/$bunfs/root/note.txt?text".to_vec())];
         assert_eq!(
             public_paths_at(input.files, input.sources, "note.txt"),
             expected
@@ -878,7 +878,10 @@ fn evaluated_function_is_found_by_file_and_call() {
             FnKind::Expr
         );
         let paths = sources.module_paths(function.file);
-        assert!(paths.public_path.starts_with(b"/$bun/text/"));
+        assert_eq!(
+            paths.public_path,
+            b"/$bun/text/%2f%24bunfs%2froot%2fmain.js/0.cjs"
+        );
         assert_eq!(paths.display_path, paths.public_path);
         assert_eq!(sources.diagnostic_path(function.file), paths.public_path);
 

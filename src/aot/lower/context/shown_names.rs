@@ -3,7 +3,7 @@ use std::iter::successors;
 use bun_builtin_sources::BundledName;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, ScopeId, ScopeKind, SymbolId};
-use bun_sema::hir::File;
+use bun_sema::hir::{File, FnId};
 use rustc_hash::FxHashMap;
 
 use super::{FileLowering, LoweringOptions, SourceKind};
@@ -139,6 +139,14 @@ impl FileLowering<'_, '_, '_, '_> {
         name.is_some_and(|name| !name.is_own_name)
     }
 
+    /// The same of a function that a file of the program declares in a block.
+    pub(crate) fn is_printed_without_name(&self, function: FnId) -> bool {
+        self.transpiled.as_ref().is_some_and(|transpiled| {
+            let declarations = transpiled.declarations_printed_without_name();
+            declarations.binary_search(&function).is_ok()
+        })
+    }
+
     pub(crate) fn intern_function_name(
         &mut self,
         binding: Binding,
@@ -148,6 +156,13 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.shown_function_name(binding, position) {
             Some(name) => name,
             None => self.intern_atom(written),
+        }
+    }
+
+    pub(crate) fn intern_variable_name(&mut self, symbol: SymbolId) -> StringId {
+        match self.short_function_name(Binding::Symbol(symbol)) {
+            Some(name) => name,
+            None => self.intern_atom(self.bound.symbol(symbol).name),
         }
     }
 

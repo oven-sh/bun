@@ -142,6 +142,16 @@ const text = "a1b22c333d";
 function turn(i: number): number {
   return text.split(/\d+/).length + (i & 1);
 }
+//// split-one-of-four-literals-by-a-pattern
+const texts: string[] = ["one two  three four", "a b c d e f g h", "no-space-at-all", "x  y\tz\nw"];
+function turn(i: number): number {
+  return texts[i & 3]!.split(/\s+/).length;
+}
+//// split-one-of-four-literals-by-a-text
+const texts: string[] = ["one two three four", "a b c d e f g h", "no-space-at-all", "x y z w"];
+function turn(i: number): number {
+  return texts[i & 3]!.split(" ").length;
+}
 //// split-a-pair
 const headers = ["host: example.com", "accept: */*", "x-id: 7", "te: trailers"];
 function turn(i: number): number {
@@ -251,6 +261,33 @@ const inputs = ["10:42", "7:05", "23:59", "nope"];
 function turn(i: number): number {
   const match = /^(\d+):(\d+)$/.exec(inputs[i & 3]!);
   return match ? Number(match[1]) * 60 + Number(match[2]) : -1;
+}
+//// a-lazy-run-from-every-bracket-of-a-long-line
+const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return /\[.+?\]\(#/.test(lines[i & 1]!) ? 1 : 2;
+}
+// Every engine that goes back takes the cube of the length for this one: 300 brackets are 20 ms an exec under the JIT, so the subject is short.
+//// a-lazy-run-behind-a-lazy-run-on-a-line
+const pattern = /\[.*?\].*?#/;
+const subjects: string[] = ["[a](".repeat(20) + "x", "[b](".repeat(20) + "y"];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-greedy-run-from-every-bracket-of-a-long-line
+const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return /\[.*\]\(#/.test(lines[i & 1]!) ? 1 : 2;
+}
+//// four-emulated-atomic-groups-on-a-long-line
+const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return /\[(?=(.+?\]\(#))\1|\[(?=(.+?\]\(!))\2|\[(?=(.+?\]\(%))\3|\[(?=(.+?\]\(&))\4/.test(lines[i & 1]!) ? 1 : 2;
+}
+//// an-emulated-atomic-group-on-ten-lines-of-thirty-links
+const texts: string[] = [("[a](".repeat(30) + "\n").repeat(10), ("[b](".repeat(30) + "\n").repeat(10)];
+function turn(i: number): number {
+  return /\[(?=(.+?\]\(#))\1/.test(texts[i & 1]!) ? 1 : 2;
 }
 //// pattern-named-groups
 const inputs = ["2026-10-23", "1999-01-02"];
@@ -446,4 +483,27 @@ function turn(i: number): number {
   let hits = i & 1;
   for (const state of states) if (state === wanted) hits++;
   return hits;
+}
+//// keys-asked-for-a-prefix-joined-in-the-loop
+const locks = new Map<string, number>();
+for (let k = 0; k < 24; k++) locks.set(`section${k}.group${k % 7}.leaf${k % 3}`, k);
+const paths = ["other", "section500", "sandbox.network", "permissions"];
+function turn(i: number): number {
+  const path = paths[i & 3]!;
+  for (const key of locks.keys()) {
+    if (key.startsWith(`${path}.`)) return 1;
+  }
+  return 0;
+}
+//// lines-compared-with-a-text-joined-in-the-loop
+const lines = ["alpha=1", "beta=2", "gamma=3", "delta=4", "epsilon=5", "zeta=6", "eta=7", "theta=8"];
+const names = ["eta", "iota", "theta", "kappa"];
+function turn(i: number): number {
+  const name = names[i & 3]!;
+  const value = i & 7;
+  let found = 0;
+  for (let k = 0; k < lines.length; k++) {
+    if (lines[k] === name + "=" + value) found = k + 1;
+  }
+  return found;
 }

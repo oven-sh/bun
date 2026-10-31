@@ -25,7 +25,7 @@ mod util;
 
 pub use common::ZSTD_CONTENTSIZE_ERROR;
 use common::ZSTD_CONTENTSIZE_UNKNOWN;
-use compress::cctx::Output;
+use compress::cctx::{FrameCompressor, Output};
 pub use compress::internal::Strategy;
 pub use compress::params::{ZSTD_CLEVEL_DEFAULT, c_param, compress_bound};
 use compress::stream::compress_to;
@@ -120,9 +120,19 @@ impl Drop for VecOutput<'_> {
 /// [`compress`] to the end of `out`, within its capacity: [`compress_bound`] more than its length is always enough.
 /// Returns how many bytes are added.
 pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result {
+    compress_append_with(&mut FrameCompressor::new(), out, src, level)
+}
+
+fn compress_append_with(
+    frame: &mut FrameCompressor,
+    out: &mut Vec<u8>,
+    src: &[u8],
+    level: i32,
+) -> Result {
     let start = out.len();
     let room = (out.capacity() - start).min(compress_bound(src.len()));
     let result = compress_to(
+        frame,
         &mut Output::Spare {
             vec: out,
             start,
@@ -133,6 +143,43 @@ pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result {
     );
     out.truncate(start + result.unwrap_or(0));
     result
+}
+
+/// The contexts that [`compress_append`] and [`decompress_alloc`] make in every call, kept from one call to the next.
+/// Making one costs more than a few kilobytes of data do.
+pub struct Contexts {
+    compression: FrameCompressor,
+    decompression: DCtx,
+}
+
+impl Default for Contexts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Contexts {
+    pub fn new() -> Self {
+        Self {
+            compression: FrameCompressor::new(),
+            decompression: DCtx::new(),
+        }
+    }
+
+    /// [`compress_append`].
+    pub fn compress_append(&mut self, out: &mut Vec<u8>, src: &[u8], level: i32) -> Result {
+        compress_append_with(&mut self.compression, out, src, level)
+    }
+
+    /// Decompresses one frame, which fills `dest`.
+    pub fn decompress_into(&mut self, dest: &mut [u8], src: &[u8]) -> Result<(), ZstdError> {
+        let size = (self.decompression.decompress(dest, src))
+            .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
+        match size == dest.len() {
+            true => Ok(()),
+            false => Err(ZstdError::ShortRead),
+        }
+    }
 }
 
 /// [`compress`] to a new buffer.
@@ -455,6 +502,46 @@ mod tests {
 
     fn feed(stream: &mut DCtx, output: &mut OutBuffer<'_>, src: &[u8]) -> Result<usize> {
         stream.decompress_stream(output, &mut InBuffer { src, pos: 0 })
+    }
+
+    #[test]
+    fn contexts_that_are_kept_do_what_new_ones_do() -> Result<(), ZstdError> {
+        let mut x = 1u32;
+        let text: Vec<u8> = core::iter::repeat_with(|| {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            b'a' + (x >> 24 & x >> 27 & 7) as u8
+        })
+        .take(400)
+        .collect();
+        let mut contexts = Contexts::new();
+        let cases = [(400, 1), (90, 1), (0, 1), (400, 6), (200, 13)];
+        for (size, level) in cases {
+            let (_, src) = text.split_at(text.len() - size);
+            let (mut kept, mut new) = (b"before".to_vec(), b"before".to_vec());
+            kept.reserve(compress_bound(size));
+            new.reserve(compress_bound(size));
+            let written = contexts.compress_append(&mut kept, src, level);
+            assert_eq!(written, compress_append(&mut new, src, level));
+            assert_eq!(kept, new);
+
+            let frame = kept.strip_prefix(b"before").unwrap_or_default();
+            let mut dest = vec![0; size + 1];
+            assert_eq!(
+                contexts.decompress_into(&mut dest, frame),
+                Err(ZstdError::ShortRead)
+            );
+            dest.pop();
+            contexts.decompress_into(&mut dest, frame)?;
+            assert_eq!(dest, src);
+            if dest.pop().is_some() {
+                let result = contexts.decompress_into(&mut dest, frame);
+                assert_eq!(result, Err(ZstdError::DecompressionFailed));
+                // Without room. The context is as good as before.
+                let result = contexts.compress_append(&mut Vec::new(), src, level);
+                assert_eq!(result, Err(Error::DstSizeTooSmall));
+            }
+        }
+        Ok(())
     }
 
     #[test]

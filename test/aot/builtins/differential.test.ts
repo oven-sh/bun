@@ -132,8 +132,8 @@ const wrongEntries: WrongEntry[] = [
     applyTo: overload => ({ ...overload, reads: [] }),
   },
   {
-    title: "%TypedArray%.prototype.forEach that reads no memory",
-    path: "%TypedArray%.prototype.forEach",
+    title: "%TypedArray%.prototype.indexOf that reads no memory",
+    path: "%TypedArray%.prototype.indexOf",
     mode: "Call",
     column: "reads",
     applyTo: overload => ({ ...overload, reads: [] }),

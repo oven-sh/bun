@@ -1,13 +1,13 @@
 # import Module from "node:module"; loaded = Module.createRequire(globalThis.parent)("left-pad/lib"); loaded.helper()   built with two entry points, main.js and other.js
 # The name of a package finds a file of that package or nothing, whatever file asks. No file of the image lies in the package, so the load answers no entry point of the program:
-# it is a load of a library module (h15) and not one of a file of the program (h8).
+# it is a load under a name that the build knows (h77) and not one of a file of the program (h8).
 # The build excludes code outside the image: the run time refuses a file with code that is not in the image.
 # OPTIONS: exclude=CodeOutsideImage
-# RUN: valueflow-why flag=h8 flag=h15
+# RUN: valueflow-why flag=h8 flag=h77
 # CHECK: flag=h8
 # CHECK-NEXT: not held
-# CHECK: flag=h15
-# CHECK-NEXT: by Call f0 v6
+# CHECK: flag=h77
+# CHECK: by Call f0 v6
 
 module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
 module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule

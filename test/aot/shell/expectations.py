@@ -3,6 +3,7 @@
 
 These are the positive and negative tests of the optimizations. A program under ../parallel states its expectations in comment
 lines; this script reads them and checks them with `testaot` and the `jsc` shell, without building Bun.
+../generated-code-is-what-the-programs-say.test.ts runs it over all of them.
 
     JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> test/aot/shell/expectations.py [-j <jobs>] [--write-known] <program>... | all
 
@@ -10,13 +11,15 @@ See toolchain.py for how to build the three tools and quick.py for how a program
 A program is compiled as most of a large program is: no function is among the hottest (`heat=nothing-is-hottest`), unless WORDS or an
 `--aot-heat=` flag in its `// Flags:` line says otherwise.
 
-Checked against the IR that `testaot print --until=<PassID>` prints, on every platform:
+Checked against the IR that `testaot print --until=<PassID>` prints, without the text of the modules, which it quotes and which holds these very lines, on every platform:
     // IR+ <regex>                     some line matches
     // IR- <regex>                     no line matches
     // IR= <n> <function> <regex>      exactly n lines match in the function of that name (not in copies inlined elsewhere)
-    // IRT= <n> <function> <regex>     the same, only in its typed bodies: those entered with proven arguments (role Source, AllocatedThisVersion or
+    // IR@= <n> <function> <regex>     the lines that match in it come from exactly n places of the source: what a pass has copied (the first turn of a loop, a loop in two
+                                       versions, a path that has left a loop) counts once
+    // IRT= <n> <function> <regex>     the same as IR=, only in its typed bodies: those entered with proven arguments (role Source, AllocatedThisVersion or
                                        ResultWorker), not its GenericVersion; n lines match in each
-    // IRM= <n> <regex>                the same, in the top-level code of the program's own module
+    // IRM= <n> <regex>                the same, in the top-level code of the program's own module, also where it awaits
     // IR-UNTIL <PassID>               at most one in a program: its IR lines are read after the first run of that pass. Default: NumberLiteralStrings, the end
                                        of form Prepared. A line about a slot access or a grouped operation needs a pass of form Selected or later.
                                        RemoveRedundantBarriers runs after placement and is the last that changes a body
@@ -26,7 +29,8 @@ Checked against the allocation remarks (the test command `allocation-remarks` of
 Checked against the machine code, found through the map file (--aotMapFilePath), on ARM64 and x86-64:
     // CALLS+ <function> <regex>       the summary line of the function's machine code matches (see calls() below)
     // CALLS- <function> <regex>       it does not match
-On ARM64 only, counted as skipped elsewhere: a CALLS line that asks for more than what the function calls, and
+    // JSCALLS+ | JSCALLS- <function> <regex>    the same, of the program compiled without its type annotations (--aot-erase-types)
+On ARM64 only, counted as skipped elsewhere: a CALLS or JSCALLS line that asks for more than what the function calls, and
     // SIZE< <function> <bytes>        the typed function's code is smaller than that
 On ARM64 and x86-64, each with a limit of its own:
     // ENTRY-SIZE< <function> <bytes on ARM64> <bytes on x86-64>    the function's generic entrypoint is smaller than that; a function that needs none has 0 bytes
@@ -40,11 +44,21 @@ Checked against the size of the data that describes the program to the run time 
     // DATA< <bytes>                   it is smaller than that
     // MESSAGE-DATA< <n>               fewer than n layouts carry what only the text of a type error reads
     // TYPES< <n>                      fewer than n types are described to the run time
-Checked against the run-time counters (`aotRuntimeCounters()`) when the program has run in the shell, on every platform:
-    // COUNTER: <RuntimeCounter | LimitID | operationAOT..> (= | >= | <=) <n>    the counter's value, how often the limit was met at run time, or how often compiled code called the operation of the run time (<program>.json sets JSC_aotCountsPath). A counter that the shell does not print fails the line
+Checked against the counts that the shell writes when it exits (JSC_aotCountsPath), as an executable does, on every platform:
+    // COUNTER: <RuntimeCounter | LimitID | operationAOT..> (= | >= | <=) <n>    the counter's value, how often the limit was met at run time, or how often compiled code called the operation of the run time. A counter that the shell does not write fails the line
+                                       ../run-parallel.ts asks the same line of the executable that Bun builds. ` Todo: <why>` at its end is for that driver: here known-failures.txt says what is not met
+Checked by quick.py, which runs the program in the shell and compares what it prints with what plain Bun prints (`$PLAIN`, or else the front end), on every platform:
+    aotOperationCount | aotRuntimeCounters | aotBuiltinEntries    anywhere in its text: the program asks the shell itself what compiled code did, and says what it makes of the answer. It is one
+                                       expectation, `asks <the functions>`. `all` takes a program for its comment lines alone: ../counts-pinned-by-programs.test.ts runs all that ask
 Checked by compiling the program once more with the word `validate`, which tests every value against the type the engine trusts, on every platform:
     // VALIDATED compiles              the compiler finishes and writes an image
-Not read here: // CODE (a disassembly) and // JSCALLS (CALLS for the same program without type annotations).
+A line that can tell nothing fails its program, as one that is not met does:
+    a line that begins like one of these and is none: capitals, then `+`, `-`, `=`, `@=`, `<` or `:`. Nothing reads it. `// STATISTIC:` and `// COUNT:` are read by ../run-parallel.ts, `// TODO:` by people
+    a line of these kinds in a file of the program's folder that is not the file compiled here: only that file is read
+    `// IR- <a declaration>[\\s\\S]*<a use of it>` where nothing in the dump matches the declaration
+    with `all`, a line that says what must not be there and names what no program has: an operation or a stub that the compiler no longer has is absent from whatever it makes. Somewhere a program has
+                                       to show that it would be seen. Of IR- and a count of 0: each word that the pattern spells stands in some dump. Of CALLS- and JSCALLS-: each of the
+                                       pattern's alternatives matches the summary of some function
 
 Prints `ok <program>: <n> expectations` for a program that meets them all, one line `FAIL <program> TAB <expectation line> TAB <what is not met>`
 for every expectation that is not met, then a summary line. Exits with 1 if anything failed. known-failures.txt lists the expectations that are known to fail today: they are reported but
@@ -53,15 +67,21 @@ do not fail the run, while a listed one that passes again does, so that the list
 import concurrent.futures, json, os, platform, re, struct, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE); import toolchain
+sys.path.insert(0, HERE); import quick, toolchain
 PROGRAMS = os.path.realpath(os.environ.get('PROGRAMS', HERE + '/../parallel'))
 WORK = os.environ.get('WORK') or tempfile.mkdtemp(prefix='aot-expectations-')
 os.makedirs(WORK, exist_ok=True)
-LINE = re.compile(r'^// (IR\+|IR-|IR=|IRT=|IRM=|IR-UNTIL|CALLS\+|CALLS-|SIZE<|ENTRY-SIZE<|KNOWN|PARTLY|UNKNOWN|THUNKS<|DATA<|MESSAGE-DATA<|TYPES<|COUNTER:|VALIDATED) (.*)$', re.M)
+LINE = re.compile(r'^// (IR\+|IR-|IR=|IR@=|IRT=|IRM=|IR-UNTIL|CALLS\+|CALLS-|JSCALLS\+|JSCALLS-|SIZE<|ENTRY-SIZE<|KNOWN|PARTLY|UNKNOWN|THUNKS<|DATA<|MESSAGE-DATA<|TYPES<|COUNTER:|VALIDATED) (.*)$', re.M)
 ALLOCATION = re.compile(r'//! (.+)$', re.M)
-ORIGIN = re.compile(r' @(\d+)(:\d+)?$')
-IR_KINDS = {'IR+', 'IR-', 'IR=', 'IRT=', 'IRM='}
-SUFFIXES = ('.bin', '.img', '.validated.img', '.map', '.remarks.ir')
+BEGINS_LIKE_A_LINE = re.compile(r'^[ \t]*//[ \t]*((?:[A-Z]+-)*[A-Z]{2,}(?:@=|[+=<:-]))(?=[ \t]|$).*$', re.M)
+READ_ELSEWHERE = {'STATISTIC:', 'COUNT:', 'TODO:'}
+WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]{2,}')
+NO_WORD_OF_A_PATTERN = re.compile(r'\\(.)|\[\^?\]?(?:\\.|[^\]\\])*\]|\{\d*,?\d*\}|\(\?P?<\w+>')
+TEXT_OF_A_MODULE = re.compile(r' (?:functionText|typesCutFromFunctionText)="(?:[^"\\\n]|\\.)*"')
+ANYTHING_BETWEEN = r'[\s\S]*'
+IR_KINDS = {'IR+', 'IR-', 'IR=', 'IR@=', 'IRT=', 'IRM='}
+PLACE_IN_SOURCE = re.compile(r' @\d+(:\d+)?$|$')
+SUFFIXES = ('.bin', '.img', '.validated.img', '.map', '.remarks.ir', '.counts', '.erased.bin', '.erased.img', '.erased.map')
 ARM64 = platform.machine() in ('arm64', 'aarch64')
 X86_64 = platform.machine() in ('x86_64', 'AMD64')
 MORE_THAN_CALLS = re.compile(r'instructions|uses|tables|equality|ucvtf|scvtf|fcvtzs|fcmp')
@@ -92,13 +112,66 @@ def source(name):
     return None
 
 
+def expectation_lines(text):
+    # Two were written for BSD's grep, whose end of a word is spelled so.
+    return [(kind, rest.replace('[[:>:]]', r'\b').replace('[[:<:]]', r'\b')) for kind, rest in LINE.findall(text)]
+
+
+def lines_that_nothing_reads(text):
+    return [found.group(0) for found in BEGINS_LIKE_A_LINE.finditer(text) if found.group(1) not in READ_ELSEWHERE and not LINE.fullmatch(found.group(0))]
+
+
+def other_files(name, path):
+    """The files of the program's folder that are not compiled here as its entry point."""
+    top = '%s/%s' % (PROGRAMS, name)
+    return sorted(os.path.join(folder, file) for folder, _, files in os.walk(top) for file in files if re.search(r'\.([cm]?[jt]s|tsx)$', file) and os.path.join(folder, file) != path)
+
+
+def spelled_words(pattern):
+    """The words that a pattern spells out: what stands outside its classes, its escapes and its counts."""
+    return set(WORD.findall(NO_WORD_OF_A_PATTERN.sub(lambda found: found.group(1) if found.group(1) and not found.group(1).isalnum() else ' ', pattern)))
+
+
+def alternatives(pattern):
+    """The parts of a pattern between the `|` that stand in no group and in no class."""
+    parts, depth, in_class, start, at = [], 0, False, 0, 0
+    while at < len(pattern):
+        sign = pattern[at]
+        if sign == '\\': at += 1
+        elif in_class: in_class = sign != ']'
+        elif sign == '[':
+            in_class = True
+            at += pattern[at + 1:at + 2] == '^'
+            at += pattern[at + 1:at + 2] == ']'
+        elif sign in '()': depth += 1 if sign == '(' else -1
+        elif sign == '|' and not depth: parts.append(pattern[start:at]); start = at + 1
+        at += 1
+    return parts + [pattern[start:]]
+
+
+def is_met_by_nothing(kind, rest):
+    return kind in ('IR-', 'CALLS-', 'JSCALLS-') or kind in ('IR=', 'IR@=', 'IRT=', 'IRM=') and rest.startswith('0 ')
+
+
+def names_what_nothing_has(kind, rest, words_of_dumps, summaries):
+    """What a line that is met where nothing matches names in vain, or None. `words_of_dumps`: one word a line. `summaries`: one function a line."""
+    if not is_met_by_nothing(kind, rest): return None
+    if kind in ('CALLS-', 'JSCALLS-'):
+        if not is_checked_on_host(kind, rest): return None
+        unseen = [part for part in alternatives(rest.split(' ', 1)[-1]) if not re.search(part, summaries, re.M)]
+        return 'no function of any program calls /%s/' % '/, /'.join(unseen) if unseen else None
+    # A word of a pattern may be a part of a word that is held.
+    unseen = sorted(word for word in spelled_words(rest if kind == 'IR-' else rest.split(' ', 1 if kind == 'IRM=' else 2)[-1]) if word not in words_of_dumps)
+    return 'the dump of no program holds %s' % ', '.join(unseen) if unseen else None
+
+
 def programs_with_expectations():
     names = set()
     for folder, _, files in os.walk(PROGRAMS):
         for file in files:
             if not re.search(r'\.([cm]?[jt]s|tsx)$', file): continue
             text = open(os.path.join(folder, file), errors='replace').read()
-            if LINE.search(text) or ALLOCATION.search(text):
+            if LINE.search(text) or ALLOCATION.search(text) or lines_that_nothing_reads(text):
                 rel = os.path.relpath(os.path.join(folder, file), PROGRAMS).split('/')
                 names.add('/'.join(rel[:2]) if len(rel) > 2 else re.sub(r'\.\w+$', '', '/'.join(rel)))
     return sorted(names)
@@ -234,21 +307,26 @@ def entry_module(ir):
     return found.group(1) if found else None
 
 
-def runtime_counters(name, path, image, entry, operations):
-    """(the program's exit code in the shell, counter -> its value once the program has run). The second is None if the program did not reach its end.
-    The shell lists the operations that were called. It is asked for each of `operations` by name, so that one that was not called counts 0; a name that it does not know ends the script, and what is behind it has no counter."""
-    asked = ['print(aotOperationCount("%s") + "\\toperation:%s")' % (operation, operation) for operation in operations]
-    exit_code, output = toolchain.run_image(image, entry, toolchain.run_environment(program_options(name)), after=['print("@counters\\n" + aotRuntimeCounters())', *asked], cwd=os.path.dirname(path))
+def runtime_counters(name, path, image, counts, entry, operations):
+    """(the program's exit code in the shell, counter -> its value when the shell exits). The second is None if the module threw.
+    A program whose module has been evaluated goes on in its promise jobs and timers, so the counts are read from the file `counts`, which the shell writes at exit.
+    The file lists the operations that were called. The shell is asked for each of `operations` by name, so that one that was not called counts 0; a name that it does not know ends the script, and what is behind it has no counter."""
+    asked = ['aotOperationCount("%s"); print("@operation:%s")' % (operation, operation) for operation in operations]
+    exit_code, output = toolchain.run_image(image, entry, {**toolchain.run_environment(program_options(name)), 'JSC_aotCountsPath': os.path.abspath(counts)}, after=['print("@evaluated")', *asked], cwd=os.path.dirname(path))
     printed = output.split('\n')
-    if '@counters' not in printed: return exit_code, None
-    fields = [line.split('\t') for line in printed[printed.index('@counters') + 1:]]
-    return exit_code, {f[1].split(':', 1)[1]: int(f[0]) for f in fields if len(f) == 2 and f[0].isdigit() and (f[1].startswith(('counter:', 'exit:', 'limit:')) or f[1].startswith('operation:') and f[1].split(':', 1)[1] in operations)}
+    if '@evaluated' not in printed or not os.path.isfile(counts): return exit_code, None
+    counters = {operation: 0 for operation in operations if '@operation:' + operation in printed}
+    for line in open(counts, errors='replace').read().split('\n'):
+        count, _, what = line.partition('\t')
+        kind, _, counter = what.partition(':')
+        if count.isdigit() and (kind in ('counter', 'exit', 'limit') or kind == 'operation' and counter in counters): counters[counter] = counters.get(counter, 0) + int(count)
+    return exit_code, counters
 
 
 def counter_failure(rest, counters, exit_code):
     """Why a COUNTER: line is not met, or None."""
     if counters is None: return 'the program ends with %s before its counters are printed' % exit_code
-    found = re.fullmatch(r'(\w+) (=|>=|<=) (\d+)', rest.strip())
+    found = re.fullmatch(r'(\w+) (=|>=|<=) (\d+)(?: Todo: .+)?', rest.strip())
     if not found: return 'not of the form <RuntimeCounter> (= | >= | <=) <n>'
     counter, relation, limit = found.group(1), found.group(2), int(found.group(3))
     if counter not in counters: return 'no counter %s' % counter
@@ -257,64 +335,63 @@ def counter_failure(rest, counters, exit_code):
 
 
 def expected_remarks(path):
-    """[(the half-open range of byte offsets of a source line, the remarks its //! comment lists)], for each line that has the comment."""
-    found, start = [], 0
-    for line in open(path, 'rb').read().split(b'\n'):
-        comment = ALLOCATION.search(line.decode(errors='replace'))
-        if comment: found.append(((start, start + len(line)), [item.strip() for item in comment.group(1).split(';')]))
-        start += len(line) + 1
+    """[(the number of a source line, the remarks its //! comment lists)], for each line that has the comment."""
+    found = []
+    for number, line in enumerate(open(path, errors='replace').read().split('\n'), 1):
+        comment = ALLOCATION.search(line)
+        if comment: found.append((number, [item.strip() for item in comment.group(1).split(';')]))
     return found
 
 
-def strip_other_origins(text, module, ranges):
-    """The IR text in which only the values of `module` whose position lies in one of `ranges` still have an origin."""
-    out, own = [], False
-    for line in text.split('\n'):
-        if line.startswith('function '):
-            found = re.search(r' module=(m\d+)', line)
-            own = (found.group(1) if found else 'm0') == module
-        else:
-            origin = ORIGIN.search(line)
-            if origin and not (own and any(start <= int(origin.group(1)) < end for start, end in ranges)): line = line[:origin.start()]
-        out.append(line)
-    return '\n'.join(out)
-
-
-def remark_failures(work, words, remarks):
-    """Checks the //! comments. `allocation-remarks` runs on IR text, which has no line table, so every remark it prints is for line 1. An allocation without an origin
-    gets no remark: with the origins outside the commented lines cut off, the remarks that are left are those of the commented lines, in order."""
+def remark_failures(work, words, remarks, path):
+    """Checks the //! comments. `allocation-remarks` prints `<file>:<line>: <remark>` for each allocation, function by function. What else the build says about the program, a warning for one, is not asked here."""
     try: text = toolchain.print_program(work + '.bin')
     except toolchain.ToolFailed: return [('//!', 'no IR text')]
-    module = entry_module(text)
-    if not module: return [('//!', 'the program has no entry module')]
-    items = [item for _, listed in remarks for item in listed]
-    directives = ['RUN: allocation-remarks', 'OPTIONS: references=narrow report=allocations ' + ' '.join(words), 'CHECK-NOT: :1:']
-    directives += ['%s: :1: %s' % ('CHECK-NEXT' if number else 'CHECK', item) for number, item in enumerate(items)]
-    passed, output = toolchain.run_ir_test(strip_other_origins(text, module, [span for span, _ in remarks]), work + '.remarks.ir', [*directives, 'CHECK-NOT: :1:'])
-    return [] if passed else [('//!', next((line for line in output.split('\n') if line.startswith('FAIL ')), output[-200:].replace('\n', ' | ')))]
+    _, output = toolchain.run_ir_test(text, work + '.remarks.ir', ['RUN: allocation-remarks', 'OPTIONS: references=narrow report=allocations ' + ' '.join(words)], show_output=True)
+    if not re.search(r'^OUTPUT ', output, re.M): return [('//!', 'no remarks: ' + output[-200:].replace('\n', ' | '))]
+    printed = {}
+    for line, remark in re.findall(r'^%s:(\d+): (.*)$' % re.escape(os.path.basename(path)), output, re.M): printed.setdefault(int(line), []).append(remark)
+    return [('//!', 'line %d: %s, not %s' % (number, '; '.join(printed.get(number, [])) or 'no remark', '; '.join(items))) for number, items in remarks
+            if len(printed.get(number, [])) != len(items) or not all(got.startswith(item) for got, item in zip(printed[number], items))]
+
+
+def counts_failure(name):
+    """Why what the program itself says about its counts does not hold in the shell, or None."""
+    env = {**os.environ, 'KNOWS_SHELL_FUNCTIONS': '1', 'PROGRAMS': PROGRAMS, 'WORK': WORK + '/counts', 'PLAIN': os.environ.get('PLAIN') or toolchain.tool('FRONT_END')}
+    _, said = toolchain.run([sys.executable, HERE + '/quick.py', name], seconds=900, env=env)
+    verdict = next((line[len(name) + 2:] for line in said.split('\n') if line.startswith(name + ': ')), 'quick.py has no verdict: ' + ' | '.join(said.strip().split('\n')[-2:])[:200])
+    # counts-known.txt is to those what known-failures.txt is to the lines.
+    return None if re.match(r'same \(|skipped: TODO: ', verdict) else verdict
 
 
 def check_program(name):
     path = source(name)
-    if not path: return name, [('', 'no source')], 0, 0
+    if not path: return name, [('', 'no source')], 0, 0, set(), set()
     text = open(path, errors='replace').read()
-    # Two were written for BSD's grep, whose end of a word is spelled so.
-    lines = [(kind, rest.replace('[[:>:]]', r'\b').replace('[[:<:]]', r'\b')) for kind, rest in LINE.findall(text)]
+    asks = quick.functions_that_count('%s/%s' % (PROGRAMS, name), path)
+    lines = expectation_lines(text)
     remarks = expected_remarks(path)
-    total = len(lines) + sum(len(items) for _, items in remarks)
+    unread = [(line, 'nothing reads a line of this kind') for line in lines_that_nothing_reads(text)]
+    for other in other_files(name, path):
+        there = open(other, errors='replace').read()
+        # ../run-parallel.ts asks a COUNTER: line wherever it stands.
+        unread += [(line, 'only %s is read, and this stands in %s' % (os.path.basename(path), os.path.relpath(other, os.path.dirname(path)))) for line in [found.group(0) for found in LINE.finditer(there) if found.group(1) != 'COUNTER:'] + lines_that_nothing_reads(there)]
+        if ALLOCATION.search(there): unread.append(('//!', 'only %s is read, and a remark stands in %s' % (os.path.basename(path), os.path.relpath(other, os.path.dirname(path)))))
+    total = len(lines) + sum(len(items) for _, items in remarks) + bool(asks) + len(unread)
     work = '%s/%s' % (WORK, name.replace('/', '.'))
     front_flags, words = option_words(name)
     for suffix in SUFFIXES:
         if os.path.exists(work + suffix): os.remove(work + suffix)
     try: toolchain.front_end(path, work + '.bin', front_flags, cwd=os.path.dirname(path))
-    except toolchain.ToolFailed: return name, [('', 'no IR')], total, 0
-    failures, skipped = [], 0
+    except toolchain.ToolFailed: return name, [('', 'no IR')], total, 0, set(), set()
+    failures, skipped = unread, 0
     kinds = {kind for kind, _ in lines}
     last_passes = [rest.strip() for kind, rest in lines if kind == 'IR-UNTIL']
     if len(last_passes) > 1: failures.append(('', 'more than one IR-UNTIL'))
     ir = ''
     if kinds & IR_KINDS:
-        try: ir = toolchain.print_program(work + '.bin', last_passes[0] if last_passes else toolchain.OPTIMIZED, words)
+        # The dump quotes the text of each module, and with it these very lines: a pattern would find itself there.
+        try: ir = TEXT_OF_A_MODULE.sub('', toolchain.print_program(work + '.bin', last_passes[0] if last_passes else toolchain.OPTIMIZED, words))
         except toolchain.ToolFailed: pass
     # An expectation of nothing is met by no dump at all.
     if kinds & IR_KINDS and not re.search(r'^function ', ir, re.M): failures.append(('', 'THE DUMP HAS NO FUNCTION'))
@@ -330,26 +407,37 @@ def check_program(name):
             # The map writes a backslash twice.
             expressions = {line.rstrip('\n').split('\t')[5].replace('\\\\', '\\') for line in open(work + '.map', errors='replace') if line.startswith('X') and line.count('\t') >= 5}
             thunks = sum(1 for line in open(work + '.map', errors='replace') if re.match(r'T\t\d+\t.*(#\d+| to \w+)$', line))
-    exit_code, counters = runtime_counters(name, path, work + '.img', entries[0], [rest.split()[0] for kind, rest in lines if kind == 'COUNTER:' and rest.startswith('operationAOT')]) if entries and 'COUNTER:' in kinds else (None, None)
+    called_without_types = {}
+    if kinds & {'JSCALLS+', 'JSCALLS-'} and (ARM64 or X86_64):
+        try:
+            toolchain.front_end(path, work + '.erased.bin', [*front_flags, '--aot-erase-types'], cwd=os.path.dirname(path))
+            toolchain.compile_image(work + '.erased.bin', work + '.erased.img', ['check=validate-references', *words], ['--aotMapFilePath=' + work + '.erased.map'])
+        except toolchain.ToolFailed as failed: failures.append(('', 'not compiled without its types: %s' % failed.code))
+        else: called_without_types = calls(work + '.erased.img', work + '.erased.map')[0]
+    exit_code, counters = runtime_counters(name, path, work + '.img', work + '.counts', entries[0], [rest.split()[0] for kind, rest in lines if kind == 'COUNTER:' and rest.startswith('operationAOT')]) if entries and 'COUNTER:' in kinds else (None, None)
     for kind, rest in lines:
         bad = Failures(failures, '// %s %s' % (kind, rest))
         if kind == 'IR-UNTIL': continue
         elif kind in ('IR+', 'IR-'):
             if bool(re.search(rest, ir, re.M)) != (kind == 'IR+'): bad.append('%s /%s/' % ('no line matches' if kind == 'IR+' else 'a line matches', rest))
-        elif kind in ('IR=', 'IRT=', 'IRM='):
+            # `IR- <a declaration>[\s\S]*<a use of it>`: without the declaration there is no use to find.
+            elif kind == 'IR-' and ANYTHING_BETWEEN in rest and not re.search(rest.split(ANYTHING_BETWEEN)[0], ir, re.M): bad.append('it cannot fail: nothing matches what it begins with, /%s/' % rest.split(ANYTHING_BETWEEN)[0])
+        elif kind in ('IR=', 'IR@=', 'IRT=', 'IRM='):
             if kind == 'IRM=':
                 count, pattern = rest.split(' ', 1); fn = 'the module'
                 module = entry_module(ir)
                 found = module and re.search(r'^module %s .*?\bbody=(f\d+)\b' % module, ir, re.M)
-                body = bodies(ir, lambda head: head.split(' ')[1] == found.group(1)) if found else []
+                # The code of a module that awaits is in the body of a coroutine: `body` names the ramp, which only makes the promise.
+                body = bodies(ir, lambda head: head.split(' ')[1] == found.group(1) or re.search(r' creator=Coroutine\{[^}]*\bramp=%s\b' % found.group(1), head)) if found else []
             else:
                 count, fn, pattern = rest.split(' ', 2)
-                body = bodies(ir, lambda head: head.split(' ')[2] == 'name="%s"' % fn and (kind == 'IR=' or function_role(head) in TYPED_BODY_ROLES))
+                body = bodies(ir, lambda head: head.split(' ')[2] == 'name="%s"' % fn and (kind != 'IRT=' or function_role(head) in TYPED_BODY_ROLES))
             # A function all of whose calls were copied has no body any more: nothing is found in it, whatever is looked for.
             if not any(' = ' in line for line in body): bad.append('the function %s has no body in the dump' % fn); continue
             typed_bodies = sum(1 for line in body if line.startswith('function ')) if kind == 'IRT=' else 1
-            got = sum(1 for line in body if re.search(pattern, line))
-            if got != int(count) * typed_bodies: bad.append('%s has %d of /%s/, not %s%s' % (fn, got, pattern, count, ' in each of its %d typed bodies' % typed_bodies if typed_bodies > 1 else ''))
+            matching = [line for line in body if re.search(pattern, line)]
+            got = len({PLACE_IN_SOURCE.search(line).group(0) or line for line in matching}) if kind == 'IR@=' else len(matching)
+            if got != int(count) * typed_bodies: bad.append('%s has %d %sof /%s/, not %s%s' % (fn, got, 'places ' if kind == 'IR@=' else '', pattern, count, ' in each of its %d typed bodies' % typed_bodies if typed_bodies > 1 else ''))
         elif kind in ('KNOWN', 'PARTLY'):
             if rest.split(' ', 1)[1] not in expressions: bad.append('not in the image: %s' % rest[:70])
         elif kind == 'UNKNOWN':
@@ -382,13 +470,17 @@ def check_program(name):
             if not (fn in sizes and sizes[fn] < int(limit)): bad.append('%s is %s bytes, not under %s' % (fn, sizes.get(fn, '?'), limit))
         else:
             fn, pattern = rest.split(' ', 1)
-            if fn not in called: bad.append('no function %s in the image' % fn); continue
-            if bool(re.search(pattern, called[fn])) != (kind == 'CALLS+'): bad.append('%s %s /%s/' % (fn, 'does not call' if kind == 'CALLS+' else 'calls', pattern))
-    if remarks: failures += remark_failures(work, words, remarks)
+            summaries = called_without_types if kind.startswith('JS') else called
+            if fn not in summaries: bad.append('no function %s in the image' % fn); continue
+            if bool(re.search(pattern, summaries[fn])) != kind.endswith('+'): bad.append('%s %s /%s/' % (fn, 'does not call' if kind.endswith('+') else 'calls', pattern))
+    if remarks: failures += remark_failures(work, words, remarks, path)
+    if asks:
+        failure = counts_failure(name)
+        if failure: failures.append(('asks ' + ', '.join(asks), failure))
     if not failures:
         for suffix in SUFFIXES:
             if os.path.exists(work + suffix): os.remove(work + suffix)
-    return name, failures, total, skipped
+    return name, failures, total, skipped, set(WORD.findall(ir)), {*called.values(), *called_without_types.values()}
 
 
 flags = [a for a in sys.argv[1:] if a.startswith('--')]
@@ -402,19 +494,27 @@ KNOWN = HERE + '/known-failures.txt'
 known = {tuple(line.split('\t', 1)) for line in open(KNOWN).read().split('\n') if line and not line.startswith('#')} if os.path.isfile(KNOWN) else set()
 failed = total = untried = old = 0
 seen = set()
-with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
-    for name, bad, count, skipped in pool.map(check_program, names):
-        total += count; untried += skipped
-        seen |= {(name, line) for line, _ in bad}
-        new = [text for line, text in bad if (name, line) not in known]
-        old += len(bad) - len(new)
-        if new:
-            failed += 1
-            for line, text in bad:
-                if (name, line) not in known: print('FAIL %s\t%s\t%s' % (name, line, text))
-        else: print('ok   %s: %d expectations%s%s' % (name, count - skipped - len(bad), ', %d skipped on this platform' % skipped if skipped else '', ', %d known failures' % len(bad) if bad else ''))
+with concurrent.futures.ThreadPoolExecutor(jobs) as pool: checked = list(pool.map(check_program, names))
+if arguments == ['all']:
+    words_of_dumps, summaries = ('\n'.join(sorted(set().union(*(program[member] for program in checked)))) for member in (4, 5))
+    for name, bad, *_ in checked:
+        for kind, rest in expectation_lines(open(source(name), errors='replace').read()) if source(name) else []:
+            in_vain = names_what_nothing_has(kind, rest, words_of_dumps, summaries)
+            if in_vain and '// %s %s' % (kind, rest) not in [line for line, _ in bad]: bad.append(('// %s %s' % (kind, rest), 'it cannot fail: ' + in_vain))
+for name, bad, count, skipped, *_ in checked:
+    total += count; untried += skipped
+    seen |= {(name, line) for line, _ in bad}
+    new = [text for line, text in bad if (name, line) not in known]
+    old += len(bad) - len(new)
+    if new:
+        failed += 1
+        for line, text in bad:
+            if (name, line) not in known: print('FAIL %s\t%s\t%s' % (name, line, text))
+    else: print('ok   %s: %d expectations%s%s' % (name, count - skipped - len(bad), ', %d skipped on this platform' % skipped if skipped else '', ', %d known failures' % len(bad) if bad else ''))
 if '--write-known' in flags: open(KNOWN, 'w').write('# <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.\n' + ''.join('%s\t%s\n' % pair for pair in sorted(seen)))
-fixed = sorted(pair for pair in known - seen if pair[0] in names and (pair[0], '') not in seen and (not re.match(r'// (CALLS|SIZE)', pair[1]) or is_checked_on_host(*pair[1][3:].split(' ', 1))))
+# Whether a line names what no program has, only a run over all of them can tell.
+fixed = sorted(pair for pair in known - seen if pair[0] in names and (pair[0], '') not in seen and (not re.match(r'// (JSCALLS|CALLS|SIZE)', pair[1]) or is_checked_on_host(*pair[1][3:].split(' ', 1)))
+               and (arguments == ['all'] or not is_met_by_nothing(*pair[1][3:].split(' ', 1))))
 for pair in fixed: print('PASSES AGAIN, remove it from known-failures.txt: %s: %s' % pair)
 print('%d programs, %d expectation lines: %d programs fail; %d lines are known failures%s' % (len(names), total, failed, old, '; %d lines are for ARM64 only and were skipped' % untried if untried else ''))
 sys.exit(1 if failed or fixed else 0)

@@ -580,6 +580,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfExecutableGetter, (JSC::JSGlobalObject *
     return JSValue::encode(Bun::mainModuleOfExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)));
 }
 
+// The property is read-only, so no store gets here. What describes it holds a function under `set`, as it does where the accessor is made of a function of the library.
+JSC_DEFINE_CUSTOM_SETTER(jsRequireMainOfExecutableSetter, (JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return true;
+}
+
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -588,7 +594,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
     if (Bun::hasCompiledModules()) {
-        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, jsRequireMainOfExecutableSetter), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
         return;
     }
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
@@ -649,7 +655,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         return JSValue::encode(parent);
     }
 
-    auto* parentOfCompiledModule = Bun::parentOfCompiledModule(thisObject);
+    auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
         thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
@@ -842,12 +848,16 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
+    thisObject->m_isParentStored = true;
 
     if (auto* parent = dynamicDowncast<JSCommonJSModule>(decodedValue)) {
         thisObject->m_parent = parent;
         thisObject->m_overriddenParent.clear();
     } else {
         thisObject->m_parent = {};
+        bool keepsFormerParentAlive = thisObject->m_overriddenParent && dynamicDowncast<JSCommonJSModule>(thisObject->m_overriddenParent.get());
+        if (keepsFormerParentAlive)
+            thisObject->m_overriddenParent.clear();
     }
 
     return true;

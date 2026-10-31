@@ -2380,7 +2380,7 @@ where
         bun_removable_features::removable_definition!(BunInfo, Self::on_bun_info_request);
         jsc::mark_binding!();
         if !self.config.get().address.is_unix()
-            && (!bake::is_allowed_host_header(req, Some(&self.config.get().address))
+            && (!bake::is_allowed_host_header(req, Some(self.config.get()))
                 || !resp
                     .get_remote_socket_info()
                     .is_some_and(|address| address.is_loopback()))

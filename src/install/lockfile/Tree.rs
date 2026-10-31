@@ -461,17 +461,29 @@ pub(crate) struct Hoisted {
 
 /// Returns a key for each tree's `node_modules` folder: the `place_key` of the package that owns
 /// the folder. Two hoists give the same folder the same key, even when its tree id differs.
-pub(crate) fn folder_keys(trees: &[Tree], dependencies: &[Dependency]) -> Vec<u64> {
-    let mut keys: Vec<u64> = Vec::with_capacity(trees.len());
+/// The second key starts again at each tree of a workspace, because all of them are one folder.
+pub(crate) fn folder_keys(
+    trees: &[Tree],
+    dependencies: &[Dependency],
+    resolutions: &[PackageID],
+    packages: &[Resolution],
+) -> Vec<[u64; 2]> {
+    let mut keys: Vec<[u64; 2]> = Vec::with_capacity(trees.len());
     for tree in trees {
         // A tree always comes after its parent, so the parent's key is already in `keys`.
-        let key = match (
+        let mut key = match (
             keys.get(tree.parent as usize),
             dependencies.get(tree.dependency_id as usize),
         ) {
-            (Some(&parent), Some(owner)) => place_key(parent, owner.name_hash),
-            _ => 0,
+            (Some(parent), Some(owner)) => parent.map(|key| place_key(key, owner.name_hash)),
+            _ => [0; 2],
         };
+        if let Some(&owner) = resolutions.get(tree.dependency_id as usize)
+            && let Some(res) = packages.get(owner as usize)
+            && res.tag == crate::resolution::Tag::Workspace
+        {
+            key[1] = place_key(u64::MAX, u64::from(owner));
+        }
         keys.push(key);
     }
     keys
@@ -486,14 +498,22 @@ fn places_of(
     rows: &[DependencyIDList],
     dependencies: &[Dependency],
     resolutions: &[PackageID],
+    packages: &[Resolution],
+    kept: &RowMap,
 ) -> Vec<(u64, PackageID)> {
-    let folders = folder_keys(trees, dependencies);
+    let folders = folder_keys(trees, dependencies, resolutions, packages);
+    let place = |folder: u64, row: DependencyID| {
+        let name_hash = dependencies[row as usize].name_hash;
+        (place_key(folder, name_hash), resolutions[row as usize])
+    };
     let mut places = Vec::with_capacity(rows.iter().map(Vec::len).sum());
-    for (&folder, rows) in folders.iter().zip(rows) {
-        places.extend(rows.iter().map(|&row| {
-            let name_hash = dependencies[row as usize].name_hash;
-            (place_key(folder, name_hash), resolutions[row as usize])
-        }));
+    for ((tree, &[folder, shared]), rows) in trees.iter().zip(&folders).zip(rows) {
+        places.extend(rows.iter().map(|&row| place(folder, row)));
+        // Not the rows that this install leaves out, because it doesn't keep those up to date.
+        if shared != folder {
+            let kept = rows.iter().filter_map(|&row| kept.get(tree.id, row));
+            places.extend(kept.map(|installed| place(shared, installed)));
+        }
     }
     places
 }
@@ -560,6 +580,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) older_layout: bool,
     /// The `place_key` of every row, with the package placed there. Left empty when `older_layout`
     /// would place every row that this install keeps exactly where it is now.
+    /// A row that this install keeps is also there by the second of its `folder_keys`.
     pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
 }
@@ -954,15 +975,17 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             return;
         };
         let (kept, older_layout_can_differ) = rows.walk();
-        self.kept = kept;
-        if older_layout_can_differ {
+        if let (Some(kept), true) = (&kept, older_layout_can_differ) {
             self.places = places_of(
                 self.list.items_tree(),
                 self.list.items_dependencies(),
                 self.dependencies,
                 &*self.resolutions,
+                self.lockfile.get().packages.items_resolution(),
+                kept,
             );
         }
+        self.kept = kept;
     }
 }
 

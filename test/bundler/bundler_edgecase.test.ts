@@ -1842,6 +1842,93 @@ describe("bundler", () => {
       });
     },
   });
+  // More rows of the same rule. Each case builds with files that say "INLINED" and runs the
+  // output beside files that say "LOADED". An import that the output still has prints "LOADED".
+  const namedAliasFiles = {
+    "/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"], "util/*": ["./src/util/*"] } } }`,
+    "/src/a.ts": `export const a = "INLINED";`,
+    "/src/util/a.ts": `export const a = "INLINED";`,
+  };
+  const namedAliasFilesAtRunTime = Object.fromEntries(
+    Object.entries(namedAliasFiles).map(([file, text]) => [file, text.replaceAll("INLINED", "LOADED")]),
+  );
+  const namedAliasCases: [
+    id: string,
+    specifier: string,
+    external: string[],
+    stdout: "LOADED" | "INLINED",
+    options: Partial<BundlerTestInput>,
+  ][] = [
+    [
+      "AfterPluginDeclines",
+      "@/a",
+      ["@/a"],
+      "LOADED",
+      { plugins: builder => void builder.onResolve({ filter: /.*/ }, () => undefined) },
+    ],
+    // `target: "node"` makes the names of node's builtin modules external. `external` does not
+    // name those, so an alias that starts with one is still bundled.
+    ["TargetNode", "@/a", ["@/a"], "LOADED", { target: "node" }],
+    ["TargetNodeBuiltinName", "util/a", [], "INLINED", { target: "node" }],
+    ["TargetNodeBuiltinNameAndOtherExternal", "util/a", ["pkg"], "INLINED", { target: "node" }],
+    ["TargetNodeBuiltinNameInExternal", "util/a", ["util"], "LOADED", { target: "node" }],
+  ];
+  for (const [id, specifier, external, stdout, options] of namedAliasCases) {
+    itBundled(`edgecase/ExternalNameBeatsTSConfigPaths/${id}`, {
+      files: { "/entry.ts": `import { a } from "${specifier}"; console.log(a);`, ...namedAliasFiles },
+      runtimeFiles: namedAliasFilesAtRunTime,
+      packages: "external",
+      external,
+      target: "bun",
+      ...options,
+      run: { stdout },
+    });
+  }
+  // The alias of a named specifier is not looked up, so the build does not read the folder that
+  // the alias names. A lookup reports the package.json of that folder.
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/IsNotLookedUp", {
+    files: {
+      "/entry.ts": `import { a } from "@/folder"; console.log(a);`,
+      "/tsconfig.json": namedAliasFiles["/tsconfig.json"],
+      "/src/folder/package.json": `{ "main": `,
+      "/src/folder/index.ts": `export const a = "INLINED";`,
+    },
+    runtimeFiles: {
+      "/src/folder/package.json": `{ "main": "./index.ts" }`,
+      "/src/folder/index.ts": `export const a = "LOADED";`,
+    },
+    packages: "external",
+    external: ["@/folder"],
+    target: "bun",
+    run: { stdout: "LOADED" },
+  });
+  // The named file is not read either, so an error in it is not an error of the build.
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/IsNotParsed", {
+    files: {
+      "/entry.ts": `import { a } from "@/a"; console.log(a);`,
+      ...namedAliasFiles,
+      "/src/a.ts": `export const a = ;`,
+    },
+    runtimeFiles: namedAliasFilesAtRunTime,
+    packages: "external",
+    external: ["@/a"],
+    target: "bun",
+    run: { stdout: "LOADED" },
+  });
+  itBundled("edgecase/ExternalNameBeatsTSConfigPaths/CSSImport", {
+    files: {
+      "/entry.css": `@import "@/b.css";\n.a { color: red; }`,
+      "/src/b.css": `.b { color: blue; }`,
+      "/tsconfig.json": namedAliasFiles["/tsconfig.json"],
+    },
+    packages: "external",
+    external: ["@/b.css"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toContain(`@import "@/b.css";`);
+      api.expectFile("/out.css").not.toContain(".b {");
+    },
+  });
   // Today `external` applies to a macro import too (#40631 is about that): the macro is then
   // loaded by its specifier from the working directory. These two tests pin which specifier.
   describe("a macro import that `external` names", () => {

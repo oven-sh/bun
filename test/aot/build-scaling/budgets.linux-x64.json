@@ -349,6 +349,7 @@
     "megabytes": 164,
     "growth": {
       "instructions": 3.31,
+      "peakBytes": 2.58,
       "counts": {
         "HandedOnReferencesRead": 4,
         "FunctionsBelowEntrancesInCyclesVisited": 4

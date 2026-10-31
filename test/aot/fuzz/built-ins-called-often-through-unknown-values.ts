@@ -106,10 +106,7 @@ function changeOf(random: Random, one: Case, how: string, declared: string[]): s
   const objects = [one.receiver, ...one.operands].filter((text): text is string => !!text && declared.includes(text));
   if (objects.length) {
     const target = random.pick(objects);
-    choices.push(`${target}.added = "added";`);
-    // Error.captureStackTrace defines `stack` anew whatever the object allows: what a frozen object answers behind it is not asked here.
-    if (one.callee !== "Error.captureStackTrace")
-      choices.push(`Object.freeze(${target});`, `Object.preventExtensions(${target});`);
+    choices.push(`${target}.added = "added";`, `Object.freeze(${target});`, `Object.preventExtensions(${target});`);
     // Without its counter an iterator never ends.
     if (!/\+\+|\bnext\b/.test(one.setup)) choices.push(`delete ${target}[Reflect.ownKeys(${target})[0]];`);
   }

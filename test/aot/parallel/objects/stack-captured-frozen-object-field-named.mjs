@@ -1,4 +1,4 @@
-// Error.captureStackTrace defines "stack" on an object that is closed, so the object is no longer frozen or sealed.
+// Error.captureStackTrace refuses an object that is closed: it throws, and the object stays frozen or sealed.
 const target = { x: 1, stack: "mine" };
 Object.freeze(target);
 

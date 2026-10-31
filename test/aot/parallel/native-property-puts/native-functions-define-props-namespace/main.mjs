@@ -1,4 +1,4 @@
-// What Error.captureStackTrace() and the date getters of fs.Stats define on a namespace object is listed by Reflect.ownKeys() after the exports and is not readable.
+// Error.captureStackTrace() refuses a namespace object, which takes no new property. What the date getters of fs.Stats define on one is listed by Reflect.ownKeys() after the exports and is not readable.
 import { Stats } from "node:fs";
 import * as own from "./main.mjs";
 import * as named from "./exports-the-names.mjs";
@@ -18,6 +18,14 @@ function remove(o, k) {
     return delete o[keyOf(k)];
   } catch (e) {
     return e.constructor.name;
+  }
+}
+function capture(ns) {
+  try {
+    Error.captureStackTrace(ns);
+    return "captured";
+  } catch (e) {
+    return e.constructor.name + ": " + e.message;
   }
 }
 function show(text, ns) {
@@ -61,10 +69,10 @@ function show(text, ns) {
 const dynamic = await import("./imported-by-a-call.mjs");
 for (const [text, ns] of Object.entries({ own, named, other, stars, commonjs, json, path, dynamic })) {
   show(text + " before", ns);
-  Error.captureStackTrace(ns);
+  console.log(text, "| capture:", capture(ns));
   console.log(typeof Reflect.get(Stats.prototype, "atime", ns));
   Error.prepareStackTrace = () => "prepared";
-  Error.captureStackTrace(ns);
+  console.log(text, "| capture, prepared:", capture(ns));
   Error.prepareStackTrace = undefined;
   console.log(typeof Reflect.get(Stats.prototype, "mtime", ns));
   show(text + " after", ns);

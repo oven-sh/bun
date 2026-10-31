@@ -426,6 +426,7 @@ impl Stdio {
                 )));
             }
 
+            // Node's spawnSync truncates instead: NaN and 0.5 are fd 0 there.
             if !value.is_integer() || file_fd >= i32::MAX as _ {
                 let mut formatter = jsc::console_object::Formatter::new(cx.global());
                 // `defer formatter.deinit()` — handled by Drop.

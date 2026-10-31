@@ -239,7 +239,7 @@ ALWAYS_INLINE static const Char* scanForAnyByte(const Char* start, const Char* e
 // 0xC2 0x9x, so C1 introducers and the C1 ST are matched as that pair (a bare
 // byte in 0x80-0x9F is a continuation byte, never a control), and an nF
 // intermediate skips a whole codepoint. Latin-1 and UTF-16 inputs use the
-// default, where one code unit is one codepoint.
+// default, where a C1 control is one code unit. A surrogate pair is one codepoint.
 template<bool Utf8 = false, typename Char>
 static const Char* consumeANSI(const Char* start, const Char* end)
 {
@@ -367,6 +367,9 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             if constexpr (Utf8) {
                 // Skip the whole codepoint, not just its lead byte.
                 while (it + 1 != end && (static_cast<uint8_t>(*(it + 1)) & 0xC0) == 0x80)
+                    ++it;
+            } else if constexpr (sizeof(Char) == 2) {
+                if (U16_IS_LEAD(c) && it + 1 != end && U16_IS_TRAIL(*(it + 1)))
                     ++it;
             }
             state = State::start;

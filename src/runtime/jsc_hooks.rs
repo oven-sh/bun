@@ -4054,12 +4054,20 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     if blob.needs_to_read_file() {
                         path = Fs::Path::init(filename);
                     }
+                } else if blob.needs_to_read_file() {
+                    // A `Bun.file(fd)` has no path to read the module from.
+                    return Err(crate::Error::BlobNotInMemory);
                 }
 
                 if !blob.needs_to_read_file() {
-                    virtual_source = Some(virtual_source_to_use.insert(
-                        bun_ast::Source::init_path_string(path.text, blob.shared_view()),
-                    ));
+                    // An S3-backed Blob has no bytes in memory.
+                    let Some(view) = blob.in_memory_view() else {
+                        return Err(crate::Error::BlobNotInMemory);
+                    };
+                    virtual_source = Some(
+                        virtual_source_to_use
+                            .insert(bun_ast::Source::init_path_string(path.text, view)),
+                    );
                 }
             }
             None => return Err(crate::Error::BlobNotFound),
@@ -4287,6 +4295,21 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
 const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 
+/// What a module load from a `blob:` URL throws when the Blob is not in memory.
+#[cold]
+#[inline(never)]
+fn blob_not_in_memory_error(global: &JSGlobalObject, specifier: &[u8]) -> JSValue {
+    global
+        .err(
+            bun_jsc::ErrCode::ERR_INVALID_ARG_TYPE,
+            format_args!(
+                "Cannot load a module from {}: the Blob is S3-backed or file-descriptor-backed, so its bytes are not in memory. Read it first: URL.createObjectURL(new File([await blob.bytes()], blob.name ?? \"\", {{ type: blob.type }}))",
+                bun_core::fmt::quote(specifier),
+            ),
+        )
+        .to_js()
+}
+
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
@@ -4408,6 +4431,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         )
     } {
         Ok(lr) => lr,
+        Err(crate::Error::BlobNotInMemory) => {
+            *ret =
+                ErrorableResolvedSource::err(blob_not_in_memory_error(global, _specifier.slice()));
+            return ptr::null_mut();
+        }
         Err(_) => {
             let js = global
                 .err(

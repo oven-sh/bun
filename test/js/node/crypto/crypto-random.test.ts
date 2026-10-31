@@ -11,7 +11,7 @@ import {
   randomUUID,
 } from "crypto";
 import { statSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
 describe("arguments are validated as in Node", () => {
@@ -395,7 +395,9 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 4500,
+      // Below the per-test timeout in both places (5 s locally, 90 s or more in
+      // CI), so a search that never ends is killed here and not orphaned.
+      timeout: isCI ? 60_000 : 4500,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
@@ -506,10 +508,14 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
     ]);
   });
 
-  it("a generation that fails (add 0) throws the BoringSSL error, as in Node", () => {
-    expect(() => generatePrimeSync(64, { safe: true, add: 0n, bigint: true })).toThrow(
-      expect.objectContaining({ code: "ERR_OSSL_BN_DIV_BY_ZERO" }),
-    );
+  it("a generation that fails (add 0) throws the BoringSSL error, as in Node", async () => {
+    const options = { safe: true, add: 0n, bigint: true };
+    const expected = expect.objectContaining({ code: "ERR_OSSL_BN_DIV_BY_ZERO" });
+    expect(() => generatePrimeSync(64, options)).toThrow(expected);
+
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    generatePrime(64, options, (err, p) => (err ? resolve(err) : reject(new Error(`returned ${p}`))));
+    expect(await promise).toEqual(expected);
   });
 });
 

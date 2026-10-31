@@ -4,6 +4,8 @@
 // src/runtime/node/node_path.bind.ts
 extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__NodePath__dirnamePosix(JSC::JSGlobalObject*, JSC::JSString*);
 extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__NodePath__dirnameWin32(JSC::JSGlobalObject*, JSC::JSString*);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__NodePath__resolvePosix(JSC::JSGlobalObject*, const JSC::EncodedJSValue*, size_t);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__NodePath__resolveWin32(JSC::JSGlobalObject*, const JSC::EncodedJSValue*, size_t);
 
 namespace Bun {
 
@@ -20,6 +22,16 @@ JSC::JSValue pathDirname(JSC::JSGlobalObject* globalObject, JSC::JSValue path)
     RELEASE_AND_RETURN(scope, JSC::JSValue::decode(Bun__Bindgen__NodePath__dirnameWin32(globalObject, string)));
 #else
     RELEASE_AND_RETURN(scope, JSC::JSValue::decode(Bun__Bindgen__NodePath__dirnamePosix(globalObject, string)));
+#endif
+}
+
+JSC::JSValue pathResolve(JSC::JSGlobalObject* globalObject, JSC::JSString* path)
+{
+    JSC::EncodedJSValue paths[] = { JSC::JSValue::encode(path) };
+#if OS(WINDOWS)
+    return JSC::JSValue::decode(Bun__Bindgen__NodePath__resolveWin32(globalObject, paths, 1));
+#else
+    return JSC::JSValue::decode(Bun__Bindgen__NodePath__resolvePosix(globalObject, paths, 1));
 #endif
 }
 

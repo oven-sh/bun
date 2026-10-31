@@ -217,7 +217,11 @@ const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverse
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
+// A built-in handler of Module._extensions loads a file that is an ES module through it, and module._compile the text of one.
+const esModuleIntoModuleFunctions = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
+
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
+  "%ModuleObject%._compile": esModuleIntoModuleFunctions,
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
@@ -256,7 +260,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "console._stderr": standardOutputFunctionsOf(2, "console._stderr", ...writtenByWarnings),
   "console._stdout": standardOutputFunctionsOf(1, "console._stdout"),
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
-  "node:module": functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
+  "node:module": esModuleIntoModuleFunctions,
+  "node:module.prototype._compile": esModuleIntoModuleFunctions,
   "node:module.wrapper": [
     b.functionUsed(
       b.functionIn("builtins/CommonJS", "getWrapperArrayProxy"),

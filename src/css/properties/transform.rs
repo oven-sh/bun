@@ -144,7 +144,7 @@ pub enum Transform {
 
 impl Transform {
     pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
-        let function = input.expect_function_cloned()?;
+        let function = input.expect_function()?;
 
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
@@ -768,7 +768,7 @@ impl Rotate {
 
         let xyz = match input.try_parse(|i| -> Result<Xyz> {
             let location = i.current_source_location();
-            let ident = i.expect_ident_cloned()?;
+            let ident = i.expect_ident()?;
             crate::match_ignore_ascii_case! { ident, {
                 b"x" => Ok(Xyz { x: 1.0, y: 0.0, z: 0.0 }),
                 b"y" => Ok(Xyz { x: 0.0, y: 1.0, z: 0.0 }),

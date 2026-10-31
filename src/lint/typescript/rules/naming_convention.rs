@@ -13,25 +13,25 @@ pub struct NamingConvention {
     validators: [Validator; Selector::COUNT],
 }
 
-const DOES_NOT_MATCH_FORMAT: Message = Message::new(
+const DOES_NOT_MATCH_FORMAT: &Message = &Message::new(
     "doesNotMatchFormat",
     "{{type}} name `{{name}}` must match one of the following formats: {{formats}}",
 );
-const DOES_NOT_MATCH_FORMAT_TRIMMED: Message = Message::new(
+const DOES_NOT_MATCH_FORMAT_TRIMMED: &Message = &Message::new(
     "doesNotMatchFormatTrimmed",
     "{{type}} name `{{name}}` trimmed as `{{processedName}}` must match one of the following formats: {{formats}}",
 );
-const MISSING_AFFIX: Message = Message::new(
+const MISSING_AFFIX: &Message = &Message::new(
     "missingAffix",
     "{{type}} name `{{name}}` must have one of the following {{position}}es: {{affixes}}",
 );
-const MISSING_UNDERSCORE: Message = Message::new(
+const MISSING_UNDERSCORE: &Message = &Message::new(
     "missingUnderscore",
     "{{type}} name `{{name}}` must have {{count}} {{position}} underscore(s).",
 );
-const SATISFY_CUSTOM: Message =
-    Message::new("satisfyCustom", "{{type}} name `{{name}}` must {{regexMatch}} the RegExp: {{regex}}");
-const UNEXPECTED_UNDERSCORE: Message = Message::new(
+const SATISFY_CUSTOM: &Message =
+    &Message::new("satisfyCustom", "{{type}} name `{{name}}` must {{regexMatch}} the RegExp: {{regex}}");
+const UNEXPECTED_UNDERSCORE: &Message = &Message::new(
     "unexpectedUnderscore",
     "{{type}} name `{{name}}` must not have a {{position}} underscore.",
 );
@@ -528,7 +528,7 @@ fn validate_underscore(
     option: Option<UnderscoreOption>,
     is_leading: bool,
     name: &[u8],
-) -> Result<&[u8], (Message, &'static str)> {
+) -> Result<&[u8], (&'static Message, &'static str)> {
     let Some(option) = option else {
         return Ok(name);
     };
@@ -669,7 +669,7 @@ impl NamingConvention {
 
     /// The function that upstream's `createValidator` returns.
     fn validate<'a>(&self, cx: &Cx<'a, Self>, selector: Selector, id: Identifier<'a>, modifiers: u32) {
-        let report = |message: Message| {
+        let report = |message: &'static Message| {
             cx.report(id.span, message).data("type", selector.message_string()).data("name", id.name)
         };
         for config in self.validator(selector).configs.iter().filter_map(|&index| self.options.get(index)) {

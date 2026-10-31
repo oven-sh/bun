@@ -297,8 +297,6 @@ impl DevServer {
 }
 
 impl DevServer {
-    pub(crate) fn emit_visualizer_message_if_needed(&mut self) {}
-
     #[inline]
     pub(super) fn timer_heap(&self) -> &mut crate::timer::All {
         crate::jsc_hooks::timer_all_mut()
@@ -313,8 +311,6 @@ impl DevServer {
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         dev.timer_heap().update(timer, &next);
     }
-
-    pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {
         debug_assert!(self.emit_memory_visualizer_events > 0);

@@ -275,8 +275,8 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[Number]
-function f10 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f11 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f10 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f11 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -538,8 +538,8 @@ function f18 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v199 = TruncateNewArray v197, v198
     Return v199
 }
-runtimefunction id=65 function=f11
-runtimefunction id=69 function=f10
+runtimefunction id=64 function=f11
+runtimefunction id=68 function=f10
 runtimefunction id=131091 function=f18 visibility=Private
 # -- generated: read
 # CHECK-LABEL: function {{*}}name="read"

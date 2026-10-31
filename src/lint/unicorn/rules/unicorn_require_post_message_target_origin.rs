@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce using the `targetOrigin` argument with `window.postMessage()`.
 pub struct RequirePostMessageTargetOrigin;
 
-const MISSING_TARGET_ORIGIN: Message = Message::new("", "Missing the `targetOrigin` argument.");
+const MISSING_TARGET_ORIGIN: &Message = &Message::new("", "Missing the `targetOrigin` argument.");
 
 /// `port`, `channel.port1`, `event.ports[0]`, and any property of one of those.
 fn is_message_port_expression(e: Expr) -> bool {

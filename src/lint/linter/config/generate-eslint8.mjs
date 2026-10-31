@@ -111,8 +111,8 @@ ${[...environments.keys()]
 
 /// The rule, a message's id in today's rule, and that message in ESLint 8.
 #[rustfmt::skip]
-static MESSAGES: [(&str, &str, Message); ${messages.length}] = [
-${messages.map(([name, id, idBefore, text]) => `    ("${name}", "${id}", Message::new("${idBefore}", ${quoted(text)})),`).join("\n")}
+static MESSAGES: [(&str, &str, &Message); ${messages.length}] = [
+${messages.map(([name, id, idBefore, text]) => `    ("${name}", "${id}", &Message::new("${idBefore}", ${quoted(text)})),`).join("\n")}
 ];
 
 /// \`meta.schema\` as JSON, where it differs from \`schema::data\`. Sorted by rule name.

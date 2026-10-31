@@ -1974,10 +1974,21 @@ impl VirtualMachine {
     }
 
     /// Acquires the JSC API lock for the duration of `f()`.
-    ///
+    pub fn run_with_api_lock<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        Self::hold_api_lock(self.jsc_vm(), f)
+    }
+
+    /// Like [`run_with_api_lock`](Self::run_with_api_lock), and lends `self` to `f`.
+    pub fn run_with_api_lock_mut<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        Self::hold_api_lock(VM::opaque_ref(self.jsc_vm), move || f(self))
+    }
+
     /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
     /// trampoline so the JSC API lock is held for the full duration of `f()`.
-    pub fn run_with_api_lock<F, R>(&self, f: F) -> R
+    fn hold_api_lock<F, R>(jsc_vm: &VM, f: F) -> R
     where
         F: FnOnce() -> R,
     {
@@ -2006,7 +2017,7 @@ impl VirtualMachine {
         };
         // `t` lives on this stack frame for the duration of the FFI call, which
         // invokes `call` exactly once before returning.
-        JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>);
+        JSC__VM__holdAPILock(jsc_vm, (&raw mut t).cast(), call::<F, R>);
         // SAFETY: `call` wrote `t.result` exactly once above.
         unsafe { t.result.assume_init() }
     }
@@ -7798,7 +7809,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

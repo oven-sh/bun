@@ -4362,6 +4362,92 @@ export {};
       `);
     });
 
+    // A member of an object literal is a method, an accessor or a property by its syntax, even when the binder gave it
+    // no symbol. A class that inherits it through `ReturnType`, a type alias or interface merging overrides it as tsc
+    // allows: TS2425 only for a property, TS2426 for an accessor, and TS2611 for a method overridden by an accessor.
+    test("reports overrides of members inherited from an object literal like tsc", async () => {
+      using dir = project({
+        "a.ts": `
+function mixin() {
+  return {
+    method(): number { return 1; },
+    prop: (): number => 1,
+    get getter(): number { return 1; },
+    get both(): number { return 1; },
+    set both(v: number) {},
+    async asyncMethod() {},
+    *gen() {},
+  };
+}
+interface Base extends ReturnType<typeof mixin> {}
+declare class Base {}
+class D1 extends Base {
+  override method(): number { return 2; }
+  override prop = (): number => 2;
+  override asyncMethod = async () => {};
+  override gen = function* () {};
+}
+class D2 extends Base {
+  override method = (): number => 2;
+  override prop(): number { return 2; }
+  override getter(): number { return 2; }
+  override both = 3;
+}
+class D3 extends Base {
+  override get method(): number { return 2; }
+  override get prop(): number { return 2; }
+  override get getter(): number { return 2; }
+  override get both(): number { return 2; }
+  override set both(v: number) {}
+}
+const obj = { method(): number { return 1; } };
+type T = typeof obj;
+declare class B2 {}
+interface B2 extends T {}
+class D4 extends B2 { method(): number { return 2; } }
+class D5 extends B2 { method = (): number => 2; }
+class D6 extends B2 { get method(): number { return 2; } }
+declare class B3 {}
+interface B3 extends Omit<typeof obj, never> {}
+class D7 extends B3 { method(): number { return 2; } }
+declare class B4 {}
+interface B4 { method: typeof obj.method }
+class D8 extends B4 { method(): number { return 2; } }
+const spread = { ...obj, other(): string { return ""; } };
+declare class B5 {}
+interface B5 extends Readonly<typeof spread> {}
+class D9 extends B5 { method(): number { return 2; } other(): string { return ""; } }
+declare class B6 {}
+interface B6 extends Identity<typeof obj> {}
+type Identity<U> = U extends infer V ? V : never;
+class D10 extends B6 { method(): number { return 2; } }
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(23,12): error TS2425: Class 'Base' defines instance member property 'prop', but extended class 'D2' defines it as instance member function.
+        a.ts(24,12): error TS2416: Property 'getter' in type 'D2' is not assignable to the same property in base type 'Base'.
+          Type '() => number' is not assignable to type 'number'.
+        a.ts(24,12): error TS2426: Class 'Base' defines instance member accessor 'getter', but extended class 'D2' defines it as instance member function.
+        a.ts(25,12): error TS2610: 'both' is defined as an accessor in class 'Base', but is overridden here in 'D2' as an instance property.
+        a.ts(28,16): error TS2416: Property 'method' in type 'D3' is not assignable to the same property in base type 'Base'.
+          Type 'number' is not assignable to type '() => number'.
+        a.ts(28,16): error TS2611: 'method' is defined as a property in class 'Base', but is overridden here in 'D3' as an accessor.
+        a.ts(29,16): error TS2416: Property 'prop' in type 'D3' is not assignable to the same property in base type 'Base'.
+          Type 'number' is not assignable to type '() => number'.
+        a.ts(29,16): error TS2611: 'prop' is defined as a property in class 'Base', but is overridden here in 'D3' as an accessor.
+        a.ts(40,27): error TS2416: Property 'method' in type 'D6' is not assignable to the same property in base type 'B2'.
+          Type 'number' is not assignable to type '() => number'.
+        a.ts(40,27): error TS2611: 'method' is defined as a property in class 'B2', but is overridden here in 'D6' as an accessor.
+        a.ts(43,23): error TS2425: Class 'B3' defines instance member property 'method', but extended class 'D7' defines it as instance member function.
+        a.ts(46,23): error TS2425: Class 'B4' defines instance member property 'method', but extended class 'D8' defines it as instance member function.
+        a.ts(50,23): error TS2425: Class 'B5' defines instance member property 'method', but extended class 'D9' defines it as instance member function.
+        a.ts(50,54): error TS2425: Class 'B5' defines instance member property 'other', but extended class 'D9' defines it as instance member function."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2322, TS2367 and TS2678 for unrelated literal, enum and template literal types", async () => {
       using dir = project({
         "a.ts": `

@@ -20,6 +20,31 @@ it("spawn test file", () => {
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("defaults no-type .js dependencies without module syntax to CommonJS", async () => {
+  using dir = tempDir("resolve-no-type-commonjs", {
+    "node_modules/no-type-commonjs/package.json": JSON.stringify({
+      name: "no-type-commonjs",
+      main: "index.js",
+    }),
+    "node_modules/no-type-commonjs/index.js": "void 0;",
+    "entry.mjs": `
+      import value from "no-type-commonjs";
+      console.log(JSON.stringify(value));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "{}\n", stderr: "", exitCode: 0 });
+});
+
 function writePackageJSONExportsFixture() {
   try {
     mkdirSync(join(import.meta.dir, "./node_modules/package-json-exports/foo"), {

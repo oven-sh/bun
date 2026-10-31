@@ -1134,11 +1134,28 @@ extern "C" size_t Bun__forEachStalledTopLevelAwait(Zig::GlobalObject* globalObje
 extern "C" void Bun__rejectStalledTopLevelAwait(Zig::GlobalObject* globalObject, const BunString* rootKey, JSC::EncodedJSValue error)
 {
     WTF::Vector<JSC::CyclicModuleRecord*, 4> stalled;
+    std::optional<int64_t> firstOrder;
     forEachStalledModule(globalObject, rootKey, [&](JSC::AbstractModuleRecord* record) {
-        stalled.append(uncheckedDowncast<JSC::CyclicModuleRecord>(record));
+        auto* cyclic = uncheckedDowncast<JSC::CyclicModuleRecord>(record);
+        stalled.append(cyclic);
+        firstOrder = std::min(firstOrder.value_or(std::numeric_limits<int64_t>::max()), cyclic->asyncEvaluationOrder().order());
     });
-    for (auto* record : stalled)
-        record->asyncExecutionRejected(globalObject, JSC::JSValue::decode(error));
+    if (!firstOrder)
+        return;
+    // A module that one of them reached with import() is in no list of theirs. It began to evaluate after them, and is over with them.
+    for (const auto& entry : globalObject->moduleLoader()->moduleMap()) {
+        JSC::AbstractModuleRecord* record = entry.value->record();
+        if (!record || !isStalledOnOwnAwait(record))
+            continue;
+        auto* cyclic = uncheckedDowncast<JSC::CyclicModuleRecord>(record);
+        if (cyclic->asyncEvaluationOrder().order() > *firstOrder && !stalled.contains(cyclic))
+            stalled.append(cyclic);
+    }
+    // The rejection of one reaches the modules that wait for it, and one of the others can be among them.
+    for (auto* record : stalled) {
+        if (record->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            record->asyncExecutionRejected(globalObject, JSC::JSValue::decode(error));
+    }
 }
 
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin

@@ -529,6 +529,17 @@ describe.concurrent("an unsettled top-level await in other kinds of entry", () =
     });
   });
 
+  test("--print prints the result of a module that a 'beforeExit' listener lets finish", async () => {
+    using dir = tempDir("unsettled-tla-print-late", {});
+    const script = `let resolve; process.on("beforeExit", () => resolve()); await new Promise(r => (resolve = r)); 5`;
+    expect(await spawned([bunExe(), "-p", script], String(dir))).toEqual({
+      stdout: "5\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("--print still prints a pending promise that the script evaluates to", async () => {
     using dir = tempDir("unsettled-tla-print-pending", {});
     expect(await spawned([bunExe(), "-p", "new Promise(() => {})"], String(dir))).toEqual({

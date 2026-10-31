@@ -1415,6 +1415,8 @@ impl WebWorker {
         // before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.
         Bun__freeSharedHeaderBufferForThreadExit();
+        // The path buffer that a resolve that found nothing allocated on this thread.
+        virtual_machine::free_specifier_cache_resolver_buf();
         drop(arena.take());
         log!(
             "[{}] shutdown: thread state freed",

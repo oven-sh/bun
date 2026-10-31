@@ -746,8 +746,6 @@ public:
 
 namespace Bun {
 
-void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
-
 ALWAYS_INLINE void* vm(JSC::VM& vm)
 {
     return WebCore::clientData(vm)->bunVM;
@@ -790,13 +788,13 @@ inline Zig::GlobalObject* getDefaultGlobalObject()
 }
 }
 
+// A subclass with its own ClassInfo, another kind of global object, or none.
+Zig::GlobalObject* defaultGlobalObjectSlow(JSC::JSGlobalObject*);
 inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    if (!globalObject) {
-        return ___private___::getDefaultGlobalObject();
-    }
-    return globalObject;
+    if (lexicalGlobalObject && lexicalGlobalObject->classInfo() == Zig::GlobalObject::info()) [[likely]]
+        return uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    return defaultGlobalObjectSlow(lexicalGlobalObject);
 }
 inline Zig::GlobalObject* defaultGlobalObject()
 {

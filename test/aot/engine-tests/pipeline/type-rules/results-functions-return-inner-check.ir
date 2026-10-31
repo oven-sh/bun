@@ -776,7 +776,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f16 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f16 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -799,7 +799,7 @@ function f16 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-function f17 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f17 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -862,7 +862,7 @@ function f17 name="map" module=m2 position=5210 kind=Method role=Library flags=[
     v43 = ThrowNewError errorKind=TypeError message="Array.prototype.map callback must be a function"
     Unreachable
 }
-function f18 name="some" module=m2 position=5857 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w84}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f18 name="some" module=m2 position=5857 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w84}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1973,9 +1973,9 @@ function f25 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b252(v555):
     Return v555
 }
-runtimefunction id=65 function=f17
-runtimefunction id=69 function=f16
-runtimefunction id=89 function=f18
+runtimefunction id=64 function=f17
+runtimefunction id=68 function=f16
+runtimefunction id=88 function=f18
 runtimefunction id=131091 function=f25 visibility=Private
 # -- generated: head truncate hasMark pick picked pickedOrShort describe report f10 f11
 # CHECK-LABEL: function {{*}}name="head"

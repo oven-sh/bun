@@ -546,8 +546,8 @@ function f69 module=m1 role=Signature thisType={type=anything} results=[{type=an
 function f70 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f71 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f72 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f73 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f74 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f73 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f74 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f75 module=m4 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0():
     v0 = Data data=d15
@@ -660,8 +660,8 @@ function f115 module=m8 kind=Module role=Library flags=[IsChecked] thisType={typ
     Return v35
 }
 function f116 name="matchesGlob" module=m8 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w125}, {type=undefined|null|string site=w126 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w128}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f73
-runtimefunction id=70 function=f74 visibility=Private
+runtimefunction id=68 function=f73
+runtimefunction id=69 function=f74 visibility=Private
 runtimefunction id=65574 function=f55
 runtimefunction id=65580 function=f54
 # -- generated: f0 F L R f24 f55 writeOut f78 f115

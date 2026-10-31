@@ -1255,38 +1255,6 @@ impl ReactCompilerState {
         has_rest_arg: bool,
         body: &[Stmt],
     ) -> bool {
-        self.may_compile_if(is_top_level, has_react_hooks_suppression, body, || {
-            get_component_or_hook_like(host, name, args, has_rest_arg, body, in_react_hoc).is_some()
-        })
-    }
-
-    /// For a top-level function of which only the name and the directives are known. True wherever [`Self::may_compile`] is.
-    pub fn may_compile_by_name(
-        &self,
-        name: Option<&[u8]>,
-        in_react_hoc: bool,
-        directives: &[Stmt],
-    ) -> bool {
-        let is_top_level = true;
-        let has_react_hooks_suppression = false;
-        self.may_compile_if(
-            is_top_level,
-            has_react_hooks_suppression,
-            directives,
-            || {
-                name.is_some_and(|name| is_component_name(name) || is_hook_name(name))
-                    || in_react_hoc
-            },
-        )
-    }
-
-    fn may_compile_if(
-        &self,
-        is_top_level: bool,
-        has_react_hooks_suppression: bool,
-        body: &[Stmt],
-        is_component_or_hook_like: impl FnOnce() -> bool,
-    ) -> bool {
         if self.fatal.is_some()
             || self.context.has_module_scope_opt_out
             || has_react_hooks_suppression
@@ -1318,7 +1286,10 @@ impl ReactCompilerState {
         }
         match mode {
             "all" => true,
-            "infer" => is_component_or_hook_like(),
+            "infer" => {
+                get_component_or_hook_like(host, name, args, has_rest_arg, body, in_react_hoc)
+                    .is_some()
+            }
             _ => false,
         }
     }

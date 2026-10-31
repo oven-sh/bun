@@ -380,6 +380,76 @@ describe("Bun.Image", () => {
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
     });
+
+    describe("height only", () => {
+      // 20×13: 13 → 5 derives 20 × 5 / 13 = 7.69, so rounding and truncation
+      // disagree (8 vs 7) and a clamp-to-1 width would give 1×5.
+      const src = makePng(20, 13, (x, y) => [(x * 12) & 255, (y * 19) & 255, 0, 255]);
+      const dims = async (img: Bun.Image) => {
+        const { w, h } = decodePngRaw(await img.png().bytes());
+        return { w, h };
+      };
+
+      test.each([null, undefined, 0])("resize(%p, h) derives the width from the aspect ratio", async width => {
+        expect(await dims(new Bun.Image(src).resize(width, 5))).toEqual({ w: 8, h: 5 });
+      });
+
+      test("resize(w) rounds the derived height", async () => {
+        // 13 × 12 / 20 = 7.8 → 8.
+        expect(await dims(new Bun.Image(src).resize(12))).toEqual({ w: 12, h: 8 });
+      });
+
+      test("fit: 'inside' keeps the given side of a single-axis resize", async () => {
+        // The derived side rounds down here (90 × 61 / 160 = 34.3 → 34), so a
+        // re-fit of the derived box would shave the given side to 60 (#47203).
+        const tall = makePng(90, 160, (x, y) => [(x * 2) & 255, y & 255, 0, 255]);
+        expect(await dims(new Bun.Image(tall).resize(null, 61, { fit: "inside" }))).toEqual({ w: 34, h: 61 });
+        const wide = makePng(300, 100, (x, y) => [x & 255, (y * 2) & 255, 0, 255]);
+        expect(await dims(new Bun.Image(wide).resize(31, undefined, { fit: "inside" }))).toEqual({ w: 31, h: 10 });
+        // Both sides given: the box still shrinks to the source ratio.
+        expect(await dims(new Bun.Image(wide).resize(31, 31, { fit: "inside" }))).toEqual({ w: 31, h: 10 });
+      });
+
+      test("withoutEnlargement returns the source size when the height is larger", async () => {
+        expect(await dims(new Bun.Image(src).resize(null, 26, { withoutEnlargement: true }))).toEqual({
+          w: 20,
+          h: 13,
+        });
+        expect(await dims(new Bun.Image(src).resize(null, 26))).toEqual({ w: 40, h: 26 });
+      });
+
+      test("resize(0, 0) keeps the source size", async () => {
+        expect(await dims(new Bun.Image(src).resize(0, 0))).toEqual({ w: 20, h: 13 });
+      });
+
+      test("JPEG source goes through the decode-time downscale hint", async () => {
+        // 64×48 → height 10: the IDCT picker may decode at 1/4 (16×12), which
+        // must still land on round(64 × 10 / 48) = 13 × 10.
+        const big = makePng(64, 48, (x, y) => [(x * 4) & 255, (y * 5) & 255, 128, 255]);
+        const jpg = await new Bun.Image(big).jpeg({ quality: 90 }).bytes();
+        expect(await dims(new Bun.Image(jpg).resize(null, 10))).toEqual({ w: 13, h: 10 });
+        expect(await dims(new Bun.Image(jpg).resize(null, 12))).toEqual({ w: 16, h: 12 });
+        // 8×6 is exactly 1/8 of 64×48, so a hinted decode yields the scaled
+        // IDCT frame with no resample pass. Its bytes match the explicit 8×6
+        // request and differ from a full decode followed by a resize.
+        const viaHint = await new Bun.Image(jpg).resize(null, 6).png().bytes();
+        expect(viaHint).toEqual(await new Bun.Image(jpg).resize(8, 6).png().bytes());
+        const fullDecode = await new Bun.Image(jpg).png().bytes();
+        expect(viaHint).not.toEqual(await new Bun.Image(fullDecode).resize(null, 6).png().bytes());
+      });
+
+      test("a nullish width with no height still throws", () => {
+        const resize =
+          (...args: unknown[]) =>
+          () => {
+            const img = new Bun.Image(src);
+            return (img.resize as Function).call(img, ...args);
+          };
+        for (const args of [[], [null], [undefined], [undefined, undefined], [null, "5"], ["5", 5]]) {
+          expect(resize(...args)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+        }
+      });
+    });
   });
 
   test("path string input reads from disk", async () => {
@@ -1054,8 +1124,13 @@ describe("Bun.Image", () => {
       expect(() => new Bun.Image(cornersPng).rotate(v)).toThrow(/only multiples of 90/);
     }
     // resize/quality/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
+    // The resize lo bound is the aspect-ratio sentinel, so NaN on both sides
+    // keeps the 4×3 source and NaN on one side derives it from the other.
     const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg({ quality: NaN }).bytes();
     expect(out[0]).toBe(0xff);
+    expect(await new Bun.Image(out).metadata()).toMatchObject({ width: 4, height: 3 });
+    const halfNaN = await new Bun.Image(cornersPng).resize(NaN, 6).png().bytes();
+    expect(await new Bun.Image(halfNaN).metadata()).toMatchObject({ width: 8, height: 6 });
     expect((await new Bun.Image(gradientPng, { maxPixels: Infinity }).metadata()).width).toBe(16);
     // Infinity width clamps to the per-side cap; output then exceeds maxPixels
     // and rejects with the bomb-guard error.

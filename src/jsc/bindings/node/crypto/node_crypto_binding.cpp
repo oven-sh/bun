@@ -34,6 +34,7 @@
 #include "CryptoGenKeyPair.h"
 #include "CryptoKeys.h"
 #include "CryptoDhJob.h"
+#include "CryptoKemJob.h"
 #include "CryptoSignJob.h"
 
 using namespace JSC;
@@ -347,6 +348,11 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
         globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject));
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "diffieHellman"_s)),
         JSFunction::create(vm, globalObject, 2, "diffieHellman"_s, jsDiffieHellman, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "encapsulate"_s)),
+        JSFunction::create(vm, globalObject, 2, "encapsulate"_s, jsEncapsulate, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "decapsulate"_s)),
+        JSFunction::create(vm, globalObject, 3, "decapsulate"_s, jsDecapsulate, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generatePrime"_s)),
         JSFunction::create(vm, globalObject, 3, "generatePrime"_s, jsGeneratePrime, ImplementationVisibility::Public, NoIntrinsic), 0);

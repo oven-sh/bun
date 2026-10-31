@@ -641,6 +641,13 @@ public:
         unsigned char* out,
         int* out_len,
         bool finalize = false);
+
+    // Not upstream: BoringSSL's calls that are told how much room `out` has, and how much they need at most.
+    size_t maxUpdateSize(size_t in_len) const;
+    size_t maxFinalSize() const;
+    bool update(const Buffer<const unsigned char>& in, std::span<unsigned char> out, size_t* out_len);
+    bool finalize(std::span<unsigned char> out, size_t* out_len);
+
     bool getAeadTag(size_t len, unsigned char* out);
 
 private:

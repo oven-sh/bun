@@ -1384,9 +1384,9 @@ function stripAsanWarning(stderr: string): string {
     .join("\n");
 }
 
-async function runWildcardScript(dir: string, entry: string) {
+async function runWildcardScript(dir: string, entry: string, ...flags: string[]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), entry],
+    cmd: [bunExe(), ...flags, entry],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -1983,7 +1983,8 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
       `,
     });
 
-    const result = await runWildcardScript(String(dir), "entry.ts");
+    // The fixture has no node_modules: without --no-install, auto-install asks the npm registry for this import.
+    const result = await runWildcardScript(String(dir), "entry.ts", "--no-install");
     expect(result.stderr).toContain(`Cannot find package 'types-only'`);
     expect(result.exitCode).not.toBe(0);
   });

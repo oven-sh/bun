@@ -10,6 +10,9 @@ using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ConsoleObject);
+    // ConsoleClient is CanMakeCheckedPtr: deleting one must go through this override
+    // (declared on the most derived class), which also catches a CheckedPtr outliving it.
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleObject);
 
 public:
     ~ConsoleObject() final {}

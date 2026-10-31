@@ -1390,6 +1390,98 @@ test.concurrent("a route keeps failing when its broken module was imported throu
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
 });
 
+// A stylesheet link must not put a script in the page. The route fails, and no response runs the linked file.
+describe("html route whose page has a stylesheet link to a script", () => {
+  // Serves the route in each mode. For each response: the status, and whether the page's script holds the linked file.
+  const serveInEachMode = /*ts*/ `
+    import page from "./index.html";
+
+    async function serve(development, requestCount) {
+      using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+      const responses = [];
+      for (let i = 0; i < requestCount; i++) {
+        const response = await fetch(server.url);
+        const scriptSrc = (await response.text()).match(/<script[^>]*\\ssrc="([^"]+)"/)?.[1];
+        const script = scriptSrc ? await (await fetch(new URL(scriptSrc, server.url))).text() : "";
+        responses.push({ status: response.status, runsTheFile: script.includes("linked-file-marker") });
+      }
+      return responses;
+    }
+
+    console.log(
+      JSON.stringify({
+        devServer: await serve(true, 2),
+        devWithoutHmr: await serve({ hmr: false }, 2),
+        // Requests after a failed build are the subject of #37916.
+        production: await serve(false, 1),
+      }),
+    );
+  `;
+  const page = (href: string) =>
+    `<!DOCTYPE html><html><head><link rel="stylesheet" href="${href}"></head><body></body></html>`;
+
+  test.concurrent.each(["0", "1"])("fails, BUN_ASSUME_PERFECT_INCREMENTAL=%s", async assumePerfectIncremental => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-to-script", {
+      "index.html": page("./theme.js"),
+      "theme.js": `console.log("linked-file-marker");`,
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+      BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+    });
+    const failed = { status: 500, runsTheFile: false };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ devServer: [failed, failed], devWithoutHmr: [failed, failed], production: [failed] }),
+      exitCode: 0,
+    });
+    // Printed by the dev server and by the development build. Production says nothing.
+    expect(stderr).toContain('error: Cannot use "theme.js" as a stylesheet');
+  });
+
+  // A plugin can make a script of a stylesheet, to add the styles at run time. That page is served.
+  test.concurrent("is served when a plugin loads the stylesheet as a script", async () => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-css-to-js-plugin", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.html": page("./styles.css"),
+      "styles.css": `body { color: red; }`,
+      "plugin.ts": /*ts*/ `
+        export default {
+          name: "css-to-js",
+          setup(build) {
+            build.onLoad({ filter: /\\.css$/ }, () => ({ contents: "console.log('linked-file-marker');", loader: "js" }));
+          },
+        };
+      `,
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    const served = { status: 200, runsTheFile: true };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ devServer: [served, served], devWithoutHmr: [served, served], production: [served] }),
+      exitCode: 0,
+    });
+  });
+
+  // The check is about scripts and pages only. It does not decide what a link to a data file becomes.
+  test.concurrent("is served when the link is to a data file", async () => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-to-data-file", {
+      "index.html": page("./data.json"),
+      "data.json": `{ "marker": "linked-file-marker" }`,
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    // Only the statuses. What the page's script holds for a data file is not the subject here.
+    expect({ stdout: stdout.replace(/,"runsTheFile":(true|false)/g, ""), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        devServer: [{ status: 200 }, { status: 200 }],
+        devWithoutHmr: [{ status: 200 }, { status: 200 }],
+        production: [{ status: 200 }],
+      }),
+      exitCode: 0,
+    });
+  });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion

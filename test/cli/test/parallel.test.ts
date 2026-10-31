@@ -1591,3 +1591,125 @@ test("--parallel --no-isolate: a worker keeps one global and module registry acr
   expect(shared.stderr).not.toContain("error:");
   expect(shared.exitCode).toBe(0);
 });
+
+// The channel to the coordinator is the runner's, not the file's: it must not count as work of the file.
+// On Windows it is a libuv pipe, and a pipe that keeps the loop alive never lets this wait end.
+test("--parallel: a worker waits for its file's event loop to run dry under BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+  // The wait is what lets the timer fire: without it the end of the file cancels the timer.
+  const fixture = (name: string) =>
+    `import {test} from "bun:test"; test("${name}", () => { setTimeout(() => console.log("timer of ${name} fired"), 1); });`;
+  using dir = tempDir("parallel-drain-event-loop", { "a.test.js": fixture("a"), "b.test.js": fixture("b") });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files, and waits for the coordinator between them.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000"],
+    env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).match(/^timer of \w fired$/gm)).toEqual(["timer of a fired", "timer of b fired"]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});
+
+// On Windows a frame that is still in flight to the coordinator counts as work, and work before the wait ends means a second 'beforeExit'.
+test("--parallel: a file with nothing left to do gets one 'beforeExit' under BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+  const fixture = (name: string, tests: number) => `
+    import { test } from "bun:test";
+    let dispatched = 0;
+    // console.log writes at once. On Windows process.stdout.write to a pipe is itself work of the file.
+    process.on("beforeExit", () => console.log("beforeExit of ${name} #" + ++dispatched));
+    for (let i = 0; i < ${tests}; i++) test("${name} " + i, () => {});`;
+  // The result frames of the fifty tests queue behind the one that is in flight.
+  using dir = tempDir("parallel-drain-before-exit", { "a.test.js": fixture("a", 1), "b.test.js": fixture("b", 50) });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000"],
+    env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).match(/^beforeExit of \w #\d+$/gm)).toEqual(["beforeExit of a #1", "beforeExit of b #1"]);
+  expect(stderr).toContain("51 pass");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel: the channel to the coordinator does not keep a worker's event loop alive", async () => {
+  const fixture = (name: string) => `
+    import { test } from "bun:test";
+    import { getEventLoopStats } from "bun:internal-for-testing";
+    test("${name}", async () => {
+      // A frame that the worker wrote to the coordinator can still be in flight. It takes a turn of the loop to finish.
+      for (let turn = 0; turn < 100 && getEventLoopStats().loopActive; turn++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const stats = getEventLoopStats();
+      console.log(stats.loopActive || stats.eventLoopAlive ? "${name} is alive: " + JSON.stringify(stats) : "${name} is idle");
+    });`;
+  using dir = tempDir("parallel-worker-loop-idle", { "a.test.js": fixture("a"), "b.test.js": fixture("b") });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files, and waits for the coordinator between them.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).match(/^\w is (idle|alive).*$/gm)).toEqual(["a is idle", "b is idle"]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});
+
+// On Windows the worker refs the loop for this wait, so the wait blocks.
+// On POSIX a worker polls in this wait (thousands of turns in each sample), so the test cannot pass there.
+test.skipIf(!isWindows)("--parallel: a worker blocks while it waits for the coordinator", async () => {
+  using dir = tempDir("parallel-worker-wait", {
+    "a.test.js": `
+      import { test } from "bun:test";
+      import { getEventLoopStats } from "bun:internal-for-testing";
+      import { appendFileSync } from "node:fs";
+      test("a", () => {
+        let last = getEventLoopStats().iteration;
+        // Left behind and unref'd: with --no-isolate it is the only script that runs while the worker waits.
+        // Each time it fires, it records the turns that the loop made since it last fired.
+        globalThis.leftover = setInterval(() => {
+          const now = getEventLoopStats().iteration;
+          appendFileSync(import.meta.dir + "/turns", now - last + "\\n");
+          last = now;
+        }, 1).unref();
+        // More than a pipe holds. The coordinator prints it before it answers, so it cannot answer until its output is read.
+        console.log(Buffer.alloc(1 << 20, "y").toString());
+      });`,
+    "b.test.js": `import { test } from "bun:test"; clearInterval(globalThis.leftover); test("b", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files, and waits for the coordinator between them.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", "--no-isolate"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Nothing reads the output of the coordinator until the timer has fired twenty times.
+    lazy: true,
+  });
+  let turns: number[] = [];
+  for (let i = 0; i < 400 && turns.length < 20 && proc.exitCode === null; i++) {
+    await Bun.sleep(25);
+    const recorded = await Bun.file(path.join(String(dir), "turns"))
+      .text()
+      .catch(() => "");
+    turns = recorded.split("\n").slice(0, -1).map(Number);
+  }
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A wait that blocks makes one turn for each time the timer fires. A wait that polls makes hundreds.
+  // The first samples can hold turns of the file itself.
+  expect(turns.length).toBeGreaterThanOrEqual(20);
+  expect(Math.max(...turns.slice(-5))).toBeLessThan(10);
+  // The summary is at the end, after 1 MiB of forwarded output.
+  expect(stderr.slice(-300)).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});

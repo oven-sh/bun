@@ -504,6 +504,26 @@ impl ChannelOwner for WorkerCommands {
     }
 }
 
+/// Windows: refs the loop for the wait between files, so that wait blocks. The channel's pipe is unref'd (`Channel::adopt`).
+#[cfg(windows)]
+#[must_use = "without it the wait polls in a busy loop"]
+struct CoordinatorWait<'a>(&'a VirtualMachine);
+
+#[cfg(windows)]
+impl<'a> CoordinatorWait<'a> {
+    fn begin(vm: &'a VirtualMachine) -> Self {
+        vm.uws_loop_mut().ref_();
+        Self(vm)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for CoordinatorWait<'_> {
+    fn drop(&mut self) {
+        self.0.uws_loop_mut().unref();
+    }
+}
+
 // Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
@@ -544,6 +564,9 @@ impl<'a> WorkerLoop<'a> {
         self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
+            // POSIX has no guard and polls in this wait: a block was slower in some suites, faster in others (#47437).
+            #[cfg(windows)]
+            let waiting = CoordinatorWait::begin(vm);
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
                 if self.cmds.pending_idx.is_some() || self.cmds.done {
@@ -551,6 +574,8 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop_ref().auto_tick();
             }
+            #[cfg(windows)]
+            drop(waiting);
             let Some(idx) = self.cmds.pending_idx else {
                 break;
             };
@@ -647,17 +672,7 @@ pub(crate) fn run_as_worker(
     worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    vm.run_with_api_lock(|| {
-        while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).tick() };
-            if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-                break;
-            }
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).auto_tick() };
-        }
-    });
+    vm.run_with_api_lock(|| flush_frames(&wloop.cmds.channel, vm));
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code = 0;
@@ -669,6 +684,18 @@ pub(crate) fn run_as_worker(
     });
     {
         Global::exit(0);
+    }
+}
+
+/// Ticks until every frame written so far is out, or the channel is done.
+fn flush_frames(channel: &Channel<WorkerCommands>, vm: &VirtualMachine) {
+    let pending = || channel.has_pending_writes() && !channel.done.get();
+    while pending() {
+        vm.event_loop_ref().tick();
+        if !pending() {
+            break;
+        }
+        vm.event_loop_ref().auto_tick();
     }
 }
 
@@ -734,6 +761,18 @@ pub(crate) fn worker_emit_test_done(
             encode_test_case(wf, test);
         }
     });
+}
+
+/// Windows: a frame in flight is a `uv_write`, an active request, so the loop reads as alive until its callback runs.
+#[cfg(windows)]
+pub(crate) fn worker_flush_frames(vm: &VirtualMachine) {
+    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
+    let Some(cmds) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
+    // SAFETY: `cmds` is the worker's live `WorkerCommands`; the process exits before it drops. Every field of `Channel`
+    // is a cell, so this `&` stays valid while a tick runs the callbacks of the channel.
+    flush_frames(unsafe { &(*cmds).channel }, vm);
 }
 
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {

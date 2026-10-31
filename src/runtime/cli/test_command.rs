@@ -2996,8 +2996,11 @@ impl TestCommand {
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // it early-returns when unhandled_error_counter > 0, which is fine
-                // here since such a file already failed. Opt-in; one file per process.
+                // here since such a file already failed. Opt-in.
                 if should_drain_event_loop() {
+                    // POSIX: a frame that waits on the socket of a --parallel worker does not keep the loop alive.
+                    #[cfg(windows)]
+                    ParallelRunner::worker_flush_frames(vm);
                     vm.on_before_exit();
                 }
                 drop(buntest_strong);

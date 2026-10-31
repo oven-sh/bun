@@ -500,8 +500,8 @@ WTF::String formatStackTrace(
                 showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
 #endif
                 if (showsSourcePosition) {
-                    // An Error gets the two with its stack, at the first read. Another object got locked since the head of
-                    // Error.captureStackTrace, if it takes no new properties.
+                    // An Error gets the two with its stack, at its first read. Any other object took new properties at the head
+                    // of Error.captureStackTrace: one that does not was closed since.
                     if (errorInstance && (errorInstance->type() == JSC::ErrorInstanceType || isExtensibleWithoutTrap(errorInstance))) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);

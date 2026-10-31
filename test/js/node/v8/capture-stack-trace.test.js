@@ -2397,7 +2397,10 @@ test("Error.captureStackTrace adds nothing to a target that the Error.prepareSta
   // The target belongs to a node:vm context, so Bun's function reads Error.prepareStackTrace from the Error of that context.
   const context = vm.createContext({});
   const target = vm.runInContext("({})", context);
-  vm.runInContext("(target => Object.defineProperty(Error, 'prepareStackTrace', { get() { Object.preventExtensions(target); } }))", context)(target);
+  vm.runInContext(
+    "(target => Object.defineProperty(Error, 'prepareStackTrace', { get() { Object.preventExtensions(target); } }))",
+    context,
+  )(target);
   expect(thrownBy(() => Error.captureStackTrace(target))).toBe("nothing");
   expect(Object.isExtensible(target)).toBe(false);
   expect(Reflect.ownKeys(target)).toEqual([]);

@@ -1,7 +1,5 @@
-#[cfg(any(target_os = "macos", windows))]
-use core::ffi::c_int;
 #[cfg(windows)]
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
@@ -102,46 +100,10 @@ impl FdExt for Fd {
         };
 
         let result: Option<sys::Error> = {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(unix)]
             {
                 debug_assert!(self.native() >= 0);
-                // Raw `SYS_close` via rustix — no glibc wrapper (which is a
-                // pthread cancellation point). Never retry on EINTR.
-                match sys::linux_syscall::close(self.native()) {
-                    Err(e) if e == libc::EBADF => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::close,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                }
-            }
-            #[cfg(target_os = "freebsd")]
-            {
-                debug_assert!(self.native() >= 0);
-                match sys::get_errno(sys::safe_libc::close(self.native())) {
-                    sys::E::EBADF => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::close,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                }
-            }
-            #[cfg(target_os = "macos")]
-            {
-                debug_assert!(self.native() >= 0);
-                match sys::get_errno(close_nocancel(self.native())) {
-                    sys::E::EBADF => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::close,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                }
+                sys::posix_impl::close_error(self)
             }
             #[cfg(windows)]
             {
@@ -293,16 +255,8 @@ impl FdExt for Fd {
 // bun.sys.File.
 
 // ──────────────────────────────────────────────────────────────────────────
-// Platform helpers (Windows libuv / macOS close_nocancel).
+// Platform helpers (Windows libuv).
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(target_os = "macos")]
-unsafe extern "C" {
-    // Darwin libc: close that doesn't get interrupted by pthread cancellation.
-    // By-value `c_int` only; bad fd → `EBADF`, no UB.
-    #[link_name = "close$NOCANCEL"]
-    safe fn close_nocancel(fd: c_int) -> c_int;
-}
-
 #[cfg(windows)]
 fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     let out = bun_core::fd::uv_open_osfhandle(in_);

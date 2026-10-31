@@ -41,6 +41,7 @@
 //   // Todo: <why>                     it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
 //                                      `// Todo: Not every time: <why>`: it is skipped either way
 //   // Todo on win32 x64: <why>        the same where process.platform and process.arch are those two, and nothing anywhere else. There it goes before a `// Todo:`
+//   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. Under --more-flags it is built and run, and what it prints is not compared
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
 //                                      ImageFunctionsAndJumpsInTheirPlace: ImageFunctionsEmitted and JumpOnlyFunctionsRemoved added up. A Bun with assertions generates checks
@@ -682,7 +683,10 @@ function read(file: string): Program {
     namesModules,
     writesToBuiltIn: writesToBuiltIn.test(text),
     exitCode: Number(lines("Exit code")[0] ?? 0),
-    todo: lines(`Todo on ${process.platform} ${process.arch}`)[0] ?? lines("Todo")[0],
+    todo:
+      (isASAN ? lines("Todo under ASAN")[0] : undefined) ??
+      lines(`Todo on ${process.platform} ${process.arch}`)[0] ??
+      lines("Todo")[0],
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
     counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
     boundsNotRead: boundLines.filter(line => !readBound(line)),

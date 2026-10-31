@@ -77,7 +77,8 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 // One exception: the engine of WebKit e8f704815e94 has 167,808 bytes more that a trimmed executable keeps, and the second bound went up with it.
 const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_880_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
-const mostBytesOfCompiler = 22_750_000;
+// Restated once, where the compiler was merged: it measured 23,647,988.
+const mostBytesOfCompiler = 23_750_000;
 
 const importsItsArguments = `
   import { join } from "node:path";

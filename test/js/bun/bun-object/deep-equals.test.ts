@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { createSecretKey } from "node:crypto";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -57,6 +58,32 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, foo)).toBe(true);
     expect(deepEquals(foo, bar)).toBe(false);
     expect(deepEquals(foo, baz)).toBe(false);
+  });
+
+  it("KeyObjects and CryptoKeys are compared by what they hold", () => {
+    const key = (fill: number) => createSecretKey(Buffer.alloc(16, fill));
+    const cryptoKey = (fill: number, extractable = true) => key(fill).toCryptoKey("AES-GCM", extractable, ["encrypt"]);
+    expect({
+      sameKeyObject: deepEquals(key(1), key(1)),
+      otherKeyObject: deepEquals(key(1), key(2)),
+      nestedKeyObject: deepEquals({ keys: [key(1)] }, { keys: [key(2)] }),
+      sameCryptoKey: deepEquals(cryptoKey(1), cryptoKey(1)),
+      otherCryptoKey: deepEquals(cryptoKey(1), cryptoKey(2)),
+      otherExtractable: deepEquals(cryptoKey(1), cryptoKey(1, false)),
+    }).toEqual({
+      sameKeyObject: true,
+      otherKeyObject: false,
+      nestedKeyObject: false,
+      sameCryptoKey: true,
+      otherCryptoKey: false,
+      otherExtractable: false,
+    });
+
+    const matcher = strict ? "toStrictEqual" : "toEqual";
+    expect(key(1))[matcher](key(1));
+    expect(key(1)).not[matcher](key(2));
+    expect(cryptoKey(1))[matcher](cryptoKey(1));
+    expect(cryptoKey(1)).not[matcher](cryptoKey(2));
   });
 
   describe("global object", () => {

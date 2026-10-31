@@ -270,6 +270,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     }
 
     uint32_t len = hash->m_mdLen;
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // EVP_DigestFinal_ex cleanses the context (SHA-3 then spins in EVP_DigestUpdate), so free it here and serve later calls from m_digest.
     if (!hash->m_digest && len > 0) {
@@ -343,6 +344,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     JSValue algorithmOrHashInstanceValue = callFrame->argument(0);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // Because we aren't checking if m_finalized true in Hash.prototype.copy, we need to check here
     // and make sure we validate arguments in the correct order.

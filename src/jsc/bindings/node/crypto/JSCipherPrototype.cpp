@@ -56,14 +56,14 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    MarkPopErrorOnReturn popError;
+    ClearErrorOnReturn clearError;
 
     if (dataView->byteLength() > INT_MAX) {
         return ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "data is too big"_s, 0, INT_MAX, jsNumber(dataView->byteLength()));
     }
 
     if (!cipher->m_ctx) {
-        throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
@@ -80,7 +80,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
 
     const int32_t blockSize = cipher->m_ctx.getBlockSize();
     if (dataView->byteLength() + blockSize > INT_MAX) {
-        throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
     int32_t bufLen = dataView->byteLength() + blockSize;
@@ -91,7 +91,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     };
 
     if (cipher->m_kind == CipherKind::Cipher && cipher->m_ctx.isWrapMode() && !cipher->m_ctx.update(buf, nullptr, &bufLen)) {
-        throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
@@ -116,7 +116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     }
 
     if (res != 1) {
-        throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
@@ -129,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    MarkPopErrorOnReturn popError;
+    ClearErrorOnReturn clearError;
 
     JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
@@ -145,8 +145,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
 
     const bool isAuthMode = cipher->isAuthenticatedMode();
 
-    auto throwCryptoErrorWithAuth = [isAuthMode, &popError](JSGlobalObject* globalObject, ThrowScope& scope) {
-        throwCryptoError(globalObject, scope, popError.peekError(), isAuthMode ? "Unsupported state or unable to authenticate data" : "Unsupported state");
+    auto throwCryptoErrorWithAuth = [isAuthMode](JSGlobalObject* globalObject, ThrowScope& scope) {
+        throwCryptoError(globalObject, scope, ERR_peek_error(), isAuthMode ? "Unsupported state or unable to authenticate data" : "Unsupported state");
     };
 
     int32_t outLen = cipher->m_ctx.getBlockSize();

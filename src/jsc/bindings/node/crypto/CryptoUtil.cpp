@@ -315,8 +315,22 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Captures (and drains) the queue on construction.
     ncrypto::CryptoErrorList errorStack;
-    errorStack.capture();
+
+    if (errorStack.size() > 0) {
+        PutPropertySlot stackSlot(errorObject, false);
+        auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
+        RETURN_IF_EXCEPTION(scope, {});
+        // Most recent error first, like Node's CryptoErrorStore::Capture.
+        unsigned i = 0;
+        for (const WTF::String& error : errorStack) {
+            arr->putDirectIndex(globalObject, i++, jsString(vm, error));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // If there's an OpenSSL error code, decorate the error object with additional info
     if (err != 0) {
@@ -405,20 +419,6 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "code"_s), jsString(vm, code), codeSlot);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    }
-
-    // If there are multiple errors, add them to the error stack
-    if (errorStack.size() > 0) {
-        PutPropertySlot stackSlot(errorObject, false);
-        auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
-        RETURN_IF_EXCEPTION(scope, {});
-        for (int32_t i = 0; i < errorStack.size(); i++) {
-            WTF::String error = errorStack.pop_back().value();
-            arr->putDirectIndex(globalObject, i, jsString(vm, error));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return errorObject;

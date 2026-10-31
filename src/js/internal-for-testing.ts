@@ -24,6 +24,15 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
+// This thread's BoringSSL error queue. An API that returns with entries on it makes the next unrelated failure that
+// reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns what it held, oldest first.
+export const putBoringSSLErrorForTesting: () => void = $newCppFunction("NodeTLS.cpp", "putBoringSSLErrorForTesting", 0);
+export const takeBoringSSLErrorQueueForTesting: () => string[] = $newCppFunction(
+  "NodeTLS.cpp",
+  "takeBoringSSLErrorQueueForTesting",
+  0,
+);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(

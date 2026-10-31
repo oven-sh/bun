@@ -362,4 +362,25 @@ JSC_DEFINE_HOST_FUNCTION(clearBlockedSPKIsForTesting, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(putBoringSSLErrorForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(takeBoringSSLErrorQueueForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* errors = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    while (uint32_t error = ERR_get_error()) {
+        char message[256];
+        ERR_error_string_n(error, message, sizeof(message));
+        errors->putDirectIndex(globalObject, errors->length(), jsString(vm, String::fromUTF8(message)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(errors);
+}
+
 } // namespace Bun

@@ -161,19 +161,29 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
         break;
     }
 
+    if (keyData.x.isNull())
+        return nullptr;
+
+    // Node's decoder takes either base64 alphabet.
+    auto decode = [](const String& encoded) {
+        auto decoded = base64URLDecode(encoded);
+        return decoded ? decoded : base64Decode(encoded);
+    };
+
+    auto x = decode(keyData.x);
+    if (!x)
+        return nullptr;
+
     if (!keyData.d.isNull()) {
-        auto d = base64URLDecode(keyData.d);
-        if (!d)
+        auto d = decode(keyData.d);
+        if (!d || d->size() < externalKeySizeInBytesFromNamedCurve(namedCurve))
+            return nullptr;
+        // RFC 8037 section 2: "x" is required, and it is the public key of "d".
+        if (*x != (namedCurve == NamedCurve::Ed25519 ? ed25519PublicFromPrivate(*d) : x25519PublicFromPrivate(*d)))
             return nullptr;
         return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(*d), extractable, usages);
     }
 
-    if (keyData.x.isNull())
-        return nullptr;
-
-    auto x = base64URLDecode(keyData.x);
-    if (!x)
-        return nullptr;
     return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(*x), extractable, usages);
 }
 

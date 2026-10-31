@@ -24,7 +24,6 @@ const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
 fn crypto_error<'a>(heap: &JsHeap<'a>, code: u32) -> bindgen::Error<'a> {
     // SAFETY: makes an `Error`.
     let error = create_crypto_error(unsafe { heap.global() }, code);
-    boring_ssl::ERR_clear_error();
     bindgen::Error::from_value(JsLocal::new(heap, error))
 }
 

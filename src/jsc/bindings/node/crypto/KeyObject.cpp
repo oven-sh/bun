@@ -230,6 +230,7 @@ JSC::JSValue KeyObject::exportJwkEcKey(JSC::JSGlobalObject* lexicalGlobalObject,
     int degree_bits = EC_GROUP_get_degree(group);
     int degree_bytes = (degree_bits / CHAR_BIT) + (7 + (degree_bits % CHAR_BIT)) / 8;
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto x = ncrypto::BignumPointer::New();
     auto y = ncrypto::BignumPointer::New();
 
@@ -559,6 +560,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
         return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
     auto res = pkey.writePublicKey(config);
     if (!res) {
@@ -591,6 +593,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
         return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
     auto res = pkey.writePrivateKey(config);
     if (!res) {
@@ -920,6 +923,35 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 }
 
+// The CryptoKey branch of Node's deep equality:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L426-L457
+bool KeyObject::cryptoKeysEqual(WebCore::CryptoKey& a, WebCore::CryptoKey& b)
+{
+    if (a.type() != b.type() || a.extractable() != b.extractable() || a.usagesBitmap() != b.usagesBitmap() || a.algorithmIdentifier() != b.algorithmIdentifier()) {
+        return false;
+    }
+
+    // The other members of `algorithm` (lengths, curve, modulus, exponent) follow from the key material.
+    static constexpr auto hashName = [](const WebCore::CryptoKey::KeyAlgorithm& algorithm) {
+        return std::visit(
+            WTF::makeVisitor(
+                [](const WebCore::CryptoHmacKeyAlgorithm& hmac) { return hmac.hash.name; },
+                [](const WebCore::CryptoRsaHashedKeyAlgorithm& rsa) { return rsa.hash.name; },
+                [](const auto&) { return String(); }),
+            algorithm);
+    };
+    if (hashName(a.algorithm()) != hashName(b.algorithm())) {
+        return false;
+    }
+
+    auto keyA = create(a);
+    auto keyB = create(b);
+    if (keyA.hasException() || keyB.hasException()) {
+        return false;
+    }
+    return keyA.returnValue().equals(keyB.returnValue()).value_or(false);
+}
+
 static std::optional<Vector<uint8_t>> marshalAsymmetricKey(const ncrypto::EVPKeyPointer& pkey, bool isPublic)
 {
     return WebCore::marshalEVPKey(pkey.get(), isPublic);
@@ -1178,6 +1210,12 @@ inline BignumPointer jwkBufToBn(JSArrayBufferView* buf)
     return BignumPointer(reinterpret_cast<uint8_t*>(buf->vector()), buf->byteLength());
 }
 
+static bool hasRawPublicKey(const EVPKeyPointer& key, std::span<const uint8_t> expected)
+{
+    auto derived = key.rawPublicKey();
+    return derived && derived.size() == expected.size() && CRYPTO_memcmp(derived.get(), expected.data(), expected.size()) == 0;
+}
+
 __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, PrepareAsymmetricKeyMode mode)
 {
     auto ktyView = getJwkStringView(globalObject, scope, jwk, "kty"_s, "key.kty"_s);
@@ -1275,14 +1313,9 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         }
 
         // "pub" must agree with the public key derived from the seed.
-        if (jwkType == CryptoKeyType::Private) {
-            auto derivedPub = key.rawPublicKey();
-            auto expected = pubBuf->span();
-            if (!derivedPub || derivedPub.size() != expected.size()
-                || CRYPTO_memcmp(derivedPub.get(), expected.data(), expected.size()) != 0) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
-                return {};
-            }
+        if (jwkType == CryptoKeyType::Private && !hasRawPublicKey(key, pubBuf->span())) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+            return {};
         }
 
         JSC::ensureStillAliveHere(pubBuf);
@@ -1323,6 +1356,12 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         RETURN_IF_EXCEPTION(scope, {});
         auto bufSpan = dataBuf->span();
 
+        JSArrayBufferView* xBuf = dataBuf;
+        if (keyType != CryptoKeyType::Public) {
+            xBuf = decodeJwkString(globalObject, scope, xView, "key.x"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
         switch (nid) {
         case EVP_PKEY_ED25519:
         case EVP_PKEY_X25519:
@@ -1355,12 +1394,20 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         auto key = keyType == CryptoKeyType::Public
             ? EVPKeyPointer::NewRawPublic(nid, buf)
             : EVPKeyPointer::NewRawPrivate(nid, buf);
+        JSC::ensureStillAliveHere(dataBuf);
 
         if (!key) {
             ERR::CRYPTO_INVALID_JWK(scope, globalObject);
             return {};
         }
 
+        // "x" must agree with the public key derived from "d".
+        if (keyType != CryptoKeyType::Public && !hasRawPublicKey(key, xBuf->span())) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK OKP key"_s);
+            return {};
+        }
+
+        JSC::ensureStillAliveHere(xBuf);
         return create(keyType, WTF::move(key));
     }
     case Kty::Ec: {

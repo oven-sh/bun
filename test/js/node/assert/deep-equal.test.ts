@@ -3,6 +3,7 @@
 // cross-checked against Node.js. Cases Bun gets wrong today are marked `test.failing`.
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
+import { createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
 import util from "node:util";
 
 type Thunk = () => unknown;
@@ -107,6 +108,10 @@ function argumentsObject(...values: unknown[]) {
     } as (...args: unknown[]) => IArguments
   )(...values);
 }
+
+const ecKeys = [generateKeyPairSync("ec", { namedCurve: "P-256" }), generateKeyPairSync("ec", { namedCurve: "P-256" })];
+const aesKey = (fill: number, algorithm: any = "AES-GCM", extractable = true, usages: KeyUsage[] = ["encrypt"]) =>
+  createSecretKey(Buffer.alloc(16, fill)).toCryptoKey(algorithm, extractable, usages);
 
 const cases: Case[] = [
   // Loose mode compares primitives with ==, strict mode with Object.is.
@@ -944,6 +949,104 @@ const cases: Case[] = [
     b: () => argumentsObject(1),
     strict: true,
     loose: true,
+  },
+  {
+    name: "secret KeyObjects with the same bytes",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => createSecretKey(Buffer.alloc(16, 1)),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "secret KeyObjects with different bytes",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => createSecretKey(Buffer.alloc(16, 2)),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "objects holding different secret KeyObjects",
+    a: () => ({ key: createSecretKey(Buffer.alloc(16, 1)) }),
+    b: () => ({ key: createSecretKey(Buffer.alloc(16, 2)) }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "the public KeyObjects of two key pairs",
+    a: () => ecKeys[0].publicKey,
+    b: () => ecKeys[1].publicKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "the private KeyObjects of two key pairs",
+    a: () => ecKeys[0].privateKey,
+    b: () => ecKeys[1].privateKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two public KeyObjects made from one private key",
+    a: () => createPublicKey(ecKeys[0].privateKey),
+    b: () => createPublicKey(ecKeys[0].privateKey),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "public KeyObjects imported twice from the same bytes",
+    a: () => createPublicKey(ecKeys[0].publicKey.export({ type: "spki", format: "pem" })),
+    b: () => createPublicKey(ecKeys[0].publicKey.export({ type: "spki", format: "pem" })),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a KeyObject and an empty object",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys with the same bytes",
+    a: () => aesKey(1),
+    b: () => aesKey(1),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "CryptoKeys with different bytes",
+    a: () => aesKey(1),
+    b: () => aesKey(2),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys that differ in extractable",
+    a: () => aesKey(1),
+    b: () => aesKey(1, "AES-GCM", false),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys that differ in usages",
+    a: () => aesKey(1),
+    b: () => aesKey(1, "AES-GCM", true, ["encrypt", "decrypt"]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys that differ in algorithm",
+    a: () => aesKey(1),
+    b: () => aesKey(1, "AES-CBC"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "HMAC CryptoKeys that differ in hash",
+    a: () => aesKey(1, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+    b: () => aesKey(1, { name: "HMAC", hash: "SHA-512" }, true, ["sign"]),
+    strict: false,
+    loose: false,
   },
 ];
 

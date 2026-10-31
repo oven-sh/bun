@@ -251,6 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     String name = cipher.getName();
 
     if (keyLengthOpt.has_value() || ivLengthOpt.has_value()) {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         auto ctx = ncrypto::CipherCtxPointer::New();
         if (!ctx.init(cipher, true)) {
             return JSValue::encode(jsUndefined());

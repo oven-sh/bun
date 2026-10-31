@@ -1169,11 +1169,100 @@ enum {
   US_IDENTITY_UNCHECKED = 2,
 };
 
-/* A blocked public key (blocked_spkis.cpp) is reported the way X509_verify_cert reports its own errors: to the SSL's
- * verify callback, which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
+/* The syntax check of OpenSSL's cn2dnsid: whether a common name reads as a host name of two or more labels.
+ * https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/x509/v3_ncons.c#L341 */
+static int us_looks_like_dns_name(const unsigned char *in, int len) {
+  int is_dns_name = 0;
+  for (int i = 0; i < len; i++) {
+    unsigned char c = in[i];
+    if (OPENSSL_isalnum(c) || c == '_') continue;
+    if (i == 0 || i == len - 1) return 0;
+    if (c == '-') continue;
+    if (c != '.' || in[i + 1] == '.' || in[i - 1] == '-' || in[i + 1] == '-') return 0;
+    is_dns_name = 1;
+  }
+  return is_dns_name;
+}
+
+/* OpenSSL's NAME_CONSTRAINTS_check_CN, which BoringSSL has no equivalent of: when the leaf's subjectAltName lists no DNS
+ * name, its common names are checked against the chain's constraints on DNS names. */
+static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
+  STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
+  int constrained = 0;
+  for (size_t i = 1; i < sk_X509_num(chain) && !constrained; i++) {
+    constrained = X509_get_ext_by_NID(sk_X509_value(chain, i), NID_name_constraints, -1) >= 0;
+  }
+  if (!constrained) return X509_V_OK;
+
+  X509 *leaf = sk_X509_value(chain, 0);
+  GENERAL_NAMES *names = X509_get_ext_d2i(leaf, NID_subject_alt_name, NULL, NULL);
+  int has_dns_name = 0;
+  for (size_t i = 0; i < sk_GENERAL_NAME_num(names) && !has_dns_name; i++) {
+    has_dns_name = sk_GENERAL_NAME_value(names, i)->type == GEN_DNS;
+  }
+  GENERAL_NAMES_free(names);
+  if (has_dns_name) return X509_V_OK;
+
+  /* NAME_CONSTRAINTS_check takes a certificate: this one's DNS names are the leaf's common names. */
+  int error = X509_V_ERR_OUT_OF_MEM;
+  X509 *stand_in = X509_new();
+  names = sk_GENERAL_NAME_new_null();
+  if (!stand_in || !names) goto done;
+  const X509_NAME *subject = X509_get_subject_name(leaf);
+  for (int i = -1; (i = X509_NAME_get_index_by_NID(subject, NID_commonName, i)) >= 0;) {
+    unsigned char *common_name = NULL;
+    int len = ASN1_STRING_to_UTF8(&common_name, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, i)));
+    int ok = len >= 0;
+    while (len > 0 && common_name[len - 1] == '\0') len--;
+    if (len > 0 && memchr(common_name, 0, len)) {
+      error = X509_V_ERR_UNSUPPORTED_NAME_SYNTAX;
+      ok = 0;
+    }
+    if (ok && us_looks_like_dns_name(common_name, len)) {
+      GENERAL_NAME *name = GENERAL_NAME_new();
+      ASN1_IA5STRING *value = ASN1_IA5STRING_new();
+      ok = name && value && ASN1_STRING_set(value, common_name, len);
+      if (ok) {
+        GENERAL_NAME_set0_value(name, GEN_DNS, value);
+        value = NULL;
+        ok = sk_GENERAL_NAME_push(names, name) != 0;
+        if (ok) name = NULL;
+      }
+      GENERAL_NAME_free(name);
+      ASN1_IA5STRING_free(value);
+    }
+    OPENSSL_free(common_name);
+    if (!ok) goto done;
+  }
+  if (!X509_add1_ext_i2d(stand_in, NID_subject_alt_name, names, 0, 0)) goto done;
+  /* Parses the extension into where NAME_CONSTRAINTS_check looks for it. */
+  X509_get_extension_flags(stand_in);
+
+  error = X509_V_OK;
+  for (size_t i = 1; i < sk_X509_num(chain) && error == X509_V_OK; i++) {
+    NAME_CONSTRAINTS *constraints = X509_get_ext_d2i(sk_X509_value(chain, i), NID_name_constraints, NULL, NULL);
+    if (constraints) error = NAME_CONSTRAINTS_check(stand_in, constraints);
+    NAME_CONSTRAINTS_free(constraints);
+  }
+
+done:
+  GENERAL_NAMES_free(names);
+  X509_free(stand_in);
+  return error;
+}
+
+/* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
+ * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
+ * which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_blocked_key_error(ctx);
+  if (error == X509_V_OK && X509_STORE_CTX_get_error(ctx) == X509_V_OK) {
+    /* Its unsigned stand-in puts an error on the queue, which BoringSSL does not clear after quic.c's custom_verify. */
+    ERR_set_mark();
+    error = us_x509_store_ctx_common_name_error(ctx);
+    ERR_pop_to_mark();
+  }
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
   SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());

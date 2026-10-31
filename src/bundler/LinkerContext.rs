@@ -4066,8 +4066,9 @@ impl<'a> LinkerContext<'a> {
                         // at run time too, so there is nothing to say.
                         let is_call_item = self
                             .is_call_record(prev_source_index, named_import.import_record_index);
-                        // In node that result has the names of an external `export *`.
+                        // In node that result has the names of an external `export *`, which does not re-export `default`.
                         let lacks_external_names = is_call_item
+                            && alias != b"default"
                             && !self
                                 .external_export_stars_of(next_tracker.source_index.get())
                                 .is_empty();
@@ -4291,6 +4292,7 @@ impl<'a> LinkerContext<'a> {
         let Some(alias) = named_import.alias else {
             return;
         };
+        let alias = alias.slice();
         let import_records = self.graph.ast.items_import_records();
         let target = import_records[source_index as usize].as_slice()
             [named_import.import_record_index as usize]
@@ -4298,9 +4300,17 @@ impl<'a> LinkerContext<'a> {
         if !target.is_valid() {
             return;
         }
+        let stars = self.external_export_stars_of(target.get());
+        // `export *` does not re-export `default`. A name that `target` has was dropped further down its chain, not here.
+        if stars.is_empty()
+            || alias == b"default"
+            || self.graph.meta.items_resolved_exports()[target.get() as usize].contains(alias)
+        {
+            return;
+        }
         // The linker does not know which of these modules has the name.
         let mut modules: Vec<&[u8]> = Vec::new();
-        for star in self.external_export_stars_of(target.get()) {
+        for star in stars {
             let path = import_records[star.source_index as usize].as_slice()
                 [star.import_record_index as usize]
                 .path
@@ -4309,13 +4319,17 @@ impl<'a> LinkerContext<'a> {
                 modules.push(path);
             }
         }
-        if modules.is_empty() {
-            return;
-        }
         let source = self.get_source(source_index);
         let r = source.range_of_identifier(named_import.alias_loc);
-        let alias = bstr::BStr::new(alias.slice());
+        let alias = bstr::BStr::new(alias);
         let target_path = bstr::BStr::new(&self.get_source(target.get()).path.pretty);
+        let is_typescript =
+            self.parse_graph().input_files.items_loader()[source_index as usize].is_typescript();
+        let type_hint = if is_typescript {
+            " Use \"export type\" for a type."
+        } else {
+            ""
+        };
         self.log_disjoint().add_range_warning_fmt_with_note(
             Some(source),
             r,
@@ -4323,7 +4337,7 @@ impl<'a> LinkerContext<'a> {
                 "Re-export \"{alias}\" is dropped because there is no matching export in \"{target_path}\""
             ),
             format_args!(
-                "\"{target_path}\" re-exports \"{}\" with \"export *\". Re-export a value from the module that has it. Use \"export type\" for a type.",
+                "\"{target_path}\" re-exports \"{}\" with \"export *\". Re-export a value from the module that has it.{type_hint}",
                 bun_core::fmt::fmt_slice(&modules, "\", \""),
             ),
             r,

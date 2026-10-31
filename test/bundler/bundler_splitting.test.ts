@@ -4966,7 +4966,8 @@ describe("bundler", () => {
   });
   // A relative path prints as written. The code of pages/a.js is in a shared
   // chunk in "/out", which imports "./ext.js" from there. The output of
-  // pages/a.js in "/out/pages" does not name a second file with the same path.
+  // pages/a.js in "/out/pages" does not name a second file with the same path,
+  // so it loads where it loaded before. It does not have the name `a`.
   itBundled("splitting/EntryPointRelativeExternalExportStarOfSharedChunk", {
     files: {
       "/src/pages/a.js": `export * from "./ext.js"; export const own = 1;`,
@@ -4989,6 +4990,29 @@ describe("bundler", () => {
       expect(api.readFile("/out/pages/a.js")).not.toContain("ext.js");
     },
     run: { file: "/check.js", stdout: "1" },
+  });
+  // With both output files in one directory the path names the same file from
+  // each. The output of a.js still has no statement for it: the chunk of an
+  // entry point does not know the directory of another chunk at that point.
+  itBundled("splitting/EntryPointRelativeExternalExportStarOfSharedChunkSameDirectory", {
+    todo: true,
+    files: {
+      "/a.js": `export * from "./ext.js"; export const own = 1;`,
+      "/ext.js": `export const a = 1;`,
+      "/b.js": `import { own } from "./a.js"; console.log(own);`,
+    },
+    runtimeFiles: {
+      "/out/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as a from "./out/a.js";
+        console.log(JSON.stringify(a));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["{{root}}/ext.js"],
+    run: { file: "/check.js", stdout: `{"a":1,"own":1}` },
   });
 
   // Chunks are printed with placeholders where they refer to other chunks and

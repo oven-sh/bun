@@ -4464,9 +4464,37 @@ describe("bundler", () => {
       expect(api.readFile("/out/index.js").match(/export \* from "pkx";/g)).toHaveLength(1);
     },
   });
-  // A relative path names a file beside the file that has the statement. The
-  // entry point re-exports it when that file is in its own directory.
+  // A relative path of an external module prints as written. The end of an
+  // output file repeats one only when that file already imports it: there the
+  // statement is sure to name the same file. lib.js has a wrapper here.
+  itBundled("edgecase/EntryPointExternalExportStarRelativePathOfWrappedFile", {
+    files: {
+      "/lib.js": `export * from "./ext.js"; export const b = 2;`,
+      "/required.js": `export const b = require("./lib.js").b;`,
+      "/ext.js": `export const a = 1;`,
+    },
+    runtimeFiles: {
+      "/out/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as lib from "./out/lib.js";
+        import * as required from "./out/required.js";
+        console.log(JSON.stringify([lib, required]));
+      `,
+    },
+    entryPoints: ["/lib.js", "/required.js"],
+    outdir: "/out",
+    external: ["{{root}}/ext.js"],
+    target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/required.js")).not.toContain("export *");
+    },
+    run: { file: "/check.js", stdout: `[{"a":1,"b":2},{"b":2}]` },
+  });
+  // Nothing of mid.js prints in the output of index.js, so no statement there
+  // imports "./ext.js", and the name `a` is missing. To print the path of an
+  // external module relative to each output file is a change of its own.
   itBundled("edgecase/EntryPointExternalExportStarRelativePath", {
+    todo: true,
     files: {
       "/lib/package.json": `{ "name": "lib", "type": "module", "sideEffects": false }`,
       "/lib/index.js": `export * from "./mid.js"; export const c = 3;`,
@@ -4512,8 +4540,8 @@ describe("bundler", () => {
     run: { file: "/check.js", stdout: `{"a":1,"c":3}` },
   });
   itBundled("edgecase/EntryPointExternalExportStarRelativePathOfOtherDirectory", {
-    // Nothing of sub/mid.js prints in the output of index.js. That output has
-    // no `export * from` that names "./sub/ext.js", so the name `a` is missing.
+    // The same with mid.js in another directory: the statement that the output
+    // of index.js needs names "./sub/ext.js".
     todo: true,
     files: {
       "/lib/package.json": `{ "name": "lib", "type": "module", "sideEffects": false }`,
@@ -4649,18 +4677,21 @@ describe("bundler", () => {
   // it. Through an entry point that has an external `export *` it can also be a
   // value of that module, which only that module knows: the drop has a warning,
   // once, at the statement that reaches the `export *` (also through.ts).
+  // value-again.ts gets none: value.ts has the name `a`, and "pky" is not where
+  // it comes from.
   for (const splitting of [false, true]) {
     const typescript = {
       files: {
         "/lib.ts": `export * from "pkx"; export const b = 2; export type Options = { b: number };`,
         "/through.ts": `export * from "./lib.ts";`,
-        "/value.ts": `export { a } from "./lib.ts"; export const d = 4;`,
+        "/value.ts": `export { a } from "./lib.ts"; export * from "pky"; export const d = 4;`,
         "/value-again.ts": `export { a } from "./value.ts"; export const g = 7;`,
         "/value-through.ts": `export { a } from "./through.ts"; export const e = 5;`,
         "/types.ts": `export { Options } from "./lib.ts"; export const own = 1;`,
       },
       runtimeFiles: {
         "/node_modules/pkx/index.js": `export const a = 1;`,
+        "/node_modules/pky/index.js": `export const y = 3;`,
         "/check.js": /* js */ `
           import * as value from "./out/value.js";
           import * as valueAgain from "./out/value-again.js";
@@ -4671,7 +4702,7 @@ describe("bundler", () => {
       },
       entryPoints: ["/lib.ts", "/value.ts", "/value-again.ts", "/value-through.ts", "/types.ts"],
       outdir: "/out",
-      external: ["pkx"],
+      external: ["pkx", "pky"],
       splitting,
       bundleWarnings: {
         "/value.ts": [`Re-export "a" is dropped because there is no matching export in "lib.ts"`],
@@ -4681,35 +4712,85 @@ describe("bundler", () => {
     };
     itBundled(`edgecase/EntryPointExternalExportStarMissingReExportTypeScript${splitting ? "Splitting" : ""}`, {
       ...typescript,
-      run: { file: "/check.js", stdout: `[{"d":4},{"g":7},{"e":5},{"own":1}]` },
+      run: { file: "/check.js", stdout: `[{"d":4,"y":3},{"g":7},{"e":5},{"own":1}]` },
     });
     itBundled(`edgecase/EntryPointExternalExportStarValueReExportTypeScript${splitting ? "Splitting" : ""}`, {
       // value.js, value-again.js and value-through.js export no `a`.
       todo: true,
       ...typescript,
-      run: { file: "/check.js", stdout: `[{"a":1,"d":4},{"a":1,"g":7},{"a":1,"e":5},{"own":1}]` },
+      run: { file: "/check.js", stdout: `[{"a":1,"d":4,"y":3},{"a":1,"g":7},{"a":1,"e":5},{"own":1}]` },
     });
   }
+  // index.ts has the name `Options`: its own re-export of a type of types.ts.
+  // The linker drops that one in index.ts, where no external module can have
+  // the name, so neither file gets the warning.
+  itBundled("edgecase/EntryPointExternalExportStarTypeReExportOfOtherFileTypeScript", {
+    files: {
+      "/index.ts": `export * from "pkx"; export { Options } from "./types.ts"; export const b = 2;`,
+      "/types.ts": `export interface Options { b: number } export const t = 1;`,
+      "/extra.ts": `export { Options } from "./index.ts"; export const extra = 1;`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as index from "./out/index.js";
+        import * as extra from "./out/extra.js";
+        console.log(JSON.stringify([index, extra]));
+      `,
+    },
+    entryPoints: ["/index.ts", "/extra.ts"],
+    outdir: "/out",
+    external: ["pkx"],
+    run: { file: "/check.js", stdout: `[{"a":1,"b":2},{"extra":1}]` },
+  });
+  // `export *` does not re-export `default`, so no external module can have it:
+  // both reads are as silent as they are without the `export *`.
+  itBundled("edgecase/EntryPointExternalExportStarDefaultIsNotReExported", {
+    files: {
+      "/lib.ts": `export * from "pkx"; export const b = 2;`,
+      "/reexport.ts": `export { default } from "./lib.ts"; export const h = 8;`,
+      "/imported.js": `import("./lib.ts").then(lib => console.log(lib.default, lib.b));`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1; export default "pkx";`,
+      "/check.js": /* js */ `
+        import * as reexport from "./out/reexport.js";
+        console.log(JSON.stringify(reexport));
+      `,
+    },
+    entryPoints: ["/lib.ts", "/reexport.ts", "/imported.js"],
+    outdir: "/out",
+    external: ["pkx"],
+    target: "bun",
+    run: [
+      { file: "/out/imported.js", stdout: "undefined 2" },
+      { file: "/check.js", stdout: `{"h":8}` },
+    ],
+  });
   // The linker does not know which external module has the name. The note of
-  // the warning names each module that lib.ts re-exports, once.
+  // the warning names each module that lib.ts re-exports, once. Only a
+  // TypeScript file can take the "export type" advice.
   test.concurrent("edgecase/EntryPointExternalExportStarMissingReExportTypeScriptNote", async () => {
     using dir = tempDir("external-export-star-note", {
       "lib.ts": `export * from "pkx"; export * from "./mid.ts"; export * from "pky";`,
       "mid.ts": `export * from "pkx"; export * from "pkz";`,
       "value.ts": `export { a } from "./lib.ts";`,
+      "plain.js": `export { a } from "./lib.ts";`,
     });
     const externals = ["pkx", "pky", "pkz"].flatMap(name => ["--external", name]);
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "./lib.ts", "./mid.ts", "./value.ts", "--outdir=out", ...externals],
+      cmd: [bunExe(), "build", "./lib.ts", "./mid.ts", "./value.ts", "./plain.js", "--outdir=out", ...externals],
       cwd: String(dir),
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(stderr).toContain(`warn: Re-export "a" is dropped because there is no matching export in "lib.ts"\n`);
-    expect(stderr).toContain(
-      `note: "lib.ts" re-exports "pkx", "pkz", "pky" with "export *". Re-export a value from the module that has it. Use "export type" for a type.\n`,
-    );
+    const note = `note: "lib.ts" re-exports "pkx", "pkz", "pky" with "export *". Re-export a value from the module that has it.`;
+    const lines = stderr.split(/\r?\n/);
+    const lineAfter = (line: string) => lines[lines.indexOf(line) + 1];
+    expect(lineAfter(`${note} Use "export type" for a type.`)).toEndWith("value.ts:1:10");
+    expect(lineAfter(note)).toEndWith("plain.js:1:10");
     expect(exitCode).toBe(0);
   });
 

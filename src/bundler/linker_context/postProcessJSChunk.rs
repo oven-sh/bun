@@ -1326,26 +1326,6 @@ fn print_entry_point_external_export_stars(
     let record_of = |star: &ExternalExportStar| {
         &import_records[star.source_index as usize].as_slice()[star.import_record_index as usize]
     };
-    let sources = c.parse_graph().input_files.items_source();
-    let directory = |file: IndexInt| bun_paths::dirname(sources[file as usize].path.text);
-    let entry_bits = c.graph.files.items_entry_bits();
-    let entry_point_id = chunk.entry_point.entry_point_id() as usize;
-    let parts = c.graph.ast.items_parts();
-    // Whether this chunk, or a chunk that loads with it, prints the import of the statement.
-    let import_prints = |star: &ExternalExportStar| {
-        let file = star.source_index as usize;
-        entry_bits[file].is_set(entry_point_id)
-            && parts[file]
-                .as_slice()
-                .iter()
-                .enumerate()
-                .any(|(part_index, part)| {
-                    c.graph.parts_live[file].is_set(part_index)
-                        && part
-                            .import_record_indices
-                            .contains(&star.import_record_index)
-                })
-    };
     let in_place = chunk.prints_entry_point_file_in_place(source_index, wrap);
 
     let mut exported = bun_collections::StringSet::new();
@@ -1372,16 +1352,12 @@ fn print_entry_point_external_export_stars(
         if exported.contains(path) {
             continue;
         }
-        // A relative path prints as written. It names the same file only beside the import of its statement, or from the directory of that file when nothing prints the import.
-        if !bun_paths::is_absolute(path) && !bun_paths::is_package_path_not_absolute(path) {
-            let names_the_same_file = if import_prints(star) {
-                chunk.files_with_parts_in_chunk.contains(&star.source_index)
-            } else {
-                directory(star.source_index) == directory(source_index)
-            };
-            if !names_the_same_file {
-                continue;
-            }
+        // A relative path prints as written, so it names the file of the statement only in a chunk that has the import of that statement.
+        if !bun_paths::is_absolute(path)
+            && !bun_paths::is_package_path_not_absolute(path)
+            && !chunk.files_with_parts_in_chunk.contains(&star.source_index)
+        {
+            continue;
         }
         bun_core::handle_oom(exported.insert(path));
         stmts.push(Stmt::alloc(

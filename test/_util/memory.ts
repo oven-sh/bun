@@ -9,15 +9,8 @@ function anonymousBytes(): number {
   for (const mapping of readFileSync("/proc/self/smaps", "utf8").split("\nAnonymous:").slice(1)) {
     kilobytes += parseInt(mapping);
   }
+  if (!kilobytes) throw new Error("/proc/self/smaps has no Anonymous: field");
   return kilobytes * 1024;
-}
-
-function readsSmaps(): boolean {
-  try {
-    return anonymousBytes() > 0;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -34,8 +27,7 @@ function readsSmaps(): boolean {
  *   are low, by up to 180 MB. torvalds/linux@6d065f507d82 fixes it in 6.10, 6.9.5 and 6.6.34. The
  *   6.1 series does not have the fix.
  *
- * Elsewhere, and where smaps cannot be read, it is process.memoryUsage.rss(). One source serves the
- * whole run, because the two do not count the same pages.
+ * Elsewhere it is process.memoryUsage.rss(). Linux does not fall back to that: a test sizes its
+ * loop and its bound for the source of its platform, so a fixture that cannot read smaps throws.
  */
-export const residentBytes: () => number =
-  process.platform === "linux" && readsSmaps() ? anonymousBytes : process.memoryUsage.rss;
+export const residentBytes: () => number = process.platform === "linux" ? anonymousBytes : process.memoryUsage.rss;

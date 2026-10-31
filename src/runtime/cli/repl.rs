@@ -14,6 +14,7 @@
 #[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
+use core::ops::ControlFlow;
 
 use bstr::BStr;
 
@@ -47,13 +48,6 @@ unsafe extern "C" {
         exception: *mut JSValue,
     ) -> JSValue;
 
-    fn Bun__REPL__getCompletions(
-        globalObject: *const JSGlobalObject,
-        targetValue: JSValue,
-        prefixPtr: *const u8,
-        prefixLen: usize,
-    ) -> JSValue;
-
     fn Bun__REPL__getProperty(
         globalObject: *const JSGlobalObject,
         baseValue: JSValue,
@@ -62,12 +56,142 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+/// The only receiver of property names from JSC. A name leaves this module as an
+/// [`IdentName`](completion::IdentName), so the ghost text, the inserted completion, the
+/// candidate list and its count hold nothing that needs brackets after a `.` or that carries
+/// terminal control characters.
+mod completion {
+    use core::ffi::c_void;
+    use core::fmt;
+    use core::ops::ControlFlow;
+
+    use bun_core::strings::EncodingNonAscii;
+    use bun_core::{BoundedArray, String, Utf8Bytes, identifier};
+    use bun_jsc::{JSGlobalObject, JSValue};
+
+    /// A property name that is an ECMAScript identifier.
+    #[derive(Clone, Copy)]
+    pub(super) struct IdentName<'a>(&'a String);
+
+    impl<'a> IdentName<'a> {
+        /// Borrows an ASCII name and transcodes any other.
+        pub(super) fn to_utf8(self) -> Utf8Bytes<'a> {
+            self.0.to_utf8()
+        }
+    }
+
+    impl fmt::Display for IdentName<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt(self.0, f)
+        }
+    }
+
+    /// The first `N` names it is given. It holds a reference to each JSC string, so no name
+    /// is copied.
+    pub(super) struct IdentNames<const N: usize>(BoundedArray<String, N>);
+
+    impl<const N: usize> Default for IdentNames<N> {
+        fn default() -> Self {
+            Self(BoundedArray::default())
+        }
+    }
+
+    impl<const N: usize> IdentNames<N> {
+        /// Keeps `name` while there is room for it.
+        pub(super) fn push(&mut self, name: IdentName<'_>) {
+            if self.0.len() < N {
+                self.0.append_assume_capacity(name.0.clone());
+            }
+        }
+
+        pub(super) fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        pub(super) fn iter(&self) -> impl Iterator<Item = IdentName<'_>> {
+            self.0.as_slice().iter().map(IdentName)
+        }
+    }
+
+    struct Visitor<F> {
+        each: F,
+        skipped_non_identifier: bool,
+    }
+
+    /// Tests the name in the encoding it has, so a name that is not kept is never transcoded.
+    fn is_identifier(name: &String) -> bool {
+        match name.encoding() {
+            EncodingNonAscii::Latin1 => identifier::is_identifier_latin1(name.latin1()),
+            EncodingNonAscii::Utf16 => identifier::is_identifier_utf16(name.utf16()),
+            EncodingNonAscii::Utf8 => identifier::is_identifier(name.byte_slice()),
+        }
+    }
+
+    extern "C" fn visit<F>(ctx: *mut c_void, name: &String) -> bool
+    where
+        F: FnMut(IdentName<'_>) -> ControlFlow<()>,
+    {
+        // SAFETY: `ctx` is the `Visitor<F>` that `for_each` lends to C++ for the call.
+        let visitor = unsafe { &mut *ctx.cast::<Visitor<F>>() };
+        if !is_identifier(name) {
+            visitor.skipped_non_identifier = true;
+            return true;
+        }
+        (visitor.each)(IdentName(name)).is_continue()
+    }
+
+    /// Calls `each` with every own and inherited property name of `target` (of the global
+    /// object when `target` is undefined) that starts with `prefix` and is an identifier,
+    /// until `each` breaks. Returns whether a name that starts with `prefix` was left out
+    /// because it is not an identifier.
+    pub(super) fn for_each<F>(
+        global: &JSGlobalObject,
+        target: JSValue,
+        prefix: &[u8],
+        each: F,
+    ) -> bool
+    where
+        F: FnMut(IdentName<'_>) -> ControlFlow<()>,
+    {
+        unsafe extern "C" {
+            fn Bun__REPL__forEachCompletion(
+                global: &JSGlobalObject,
+                target: JSValue,
+                prefix_ptr: *const u8,
+                prefix_len: usize,
+                ctx: *mut c_void,
+                visit: extern "C" fn(*mut c_void, &String) -> bool,
+            );
+        }
+
+        let mut visitor = Visitor {
+            each,
+            skipped_non_identifier: false,
+        };
+        // SAFETY: the prefix and `visitor` outlive the call. C++ hands `visitor` back only to
+        // `visit::<F>`, which runs no JS, and lets no exception escape.
+        unsafe {
+            Bun__REPL__forEachCompletion(
+                global,
+                target,
+                prefix.as_ptr(),
+                prefix.len(),
+                (&raw mut visitor).cast(),
+                visit::<F>,
+            );
+        }
+        visitor.skipped_non_identifier
+    }
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
+/// Tab prints the candidates up to this many, and only their count above it.
+const MAX_LISTED_COMPLETIONS: usize = 50;
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -1514,58 +1638,27 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; the prefix ptr/len
-        // pair is valid for the duration of the call.
-        let completions = unsafe {
-            Bun__REPL__getCompletions(global, target, ctx.prefix.as_ptr(), ctx.prefix.len())
-        };
-
         let mut best_len: usize = usize::MAX;
-
-        if !completions.is_undefined_or_null() && completions.is_array() {
-            let len: u32 = match completions.get_length(global) {
-                Ok(n) => n as u32,
-                Err(_) => {
-                    global.clear_exception();
-                    0
-                }
+        let suggestion = &mut self.suggestion;
+        completion::for_each(global, target, ctx.prefix, |name| {
+            let name = name.to_utf8();
+            let Some(rest) = name.strip_prefix(ctx.prefix) else {
+                return ControlFlow::Continue(());
             };
-            for idx in 0..len {
-                let item = match completions.get_index(global, idx) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        global.clear_exception();
-                        continue;
-                    }
-                };
-                if !item.is_string() {
-                    continue;
-                }
-                let slice = match item.to_utf8(global) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global.clear_exception();
-                        continue;
-                    }
-                };
-                let name = slice.slice();
-                let Some(rest) = name.strip_prefix(ctx.prefix) else {
-                    continue;
-                };
-                // Skips keys like `"foo-bar"` or `"0"`, which can't follow a `.`.
-                if rest.is_empty() || !identifier::is_identifier(name) {
-                    continue;
-                }
-                if name.len() < best_len {
-                    best_len = name.len();
-                    self.suggestion.clear();
-                    self.suggestion.extend_from_slice(rest);
-                    if ctx.prefix.is_empty() {
-                        break;
-                    }
-                }
+            // The shortest name wins. One that equals the prefix has nothing left to suggest.
+            if rest.is_empty() || name.len() >= best_len {
+                return ControlFlow::Continue(());
             }
-        }
+            best_len = name.len();
+            suggestion.clear();
+            suggestion.extend_from_slice(rest);
+            // With no prefix to narrow them down, the first name is the suggestion.
+            if ctx.prefix.is_empty() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        });
 
         if self.suggestion.is_empty() && ctx.object_expr.is_empty() && !ctx.prefix.is_empty() {
             for &kw in JS_KEYWORDS {
@@ -2743,85 +2836,39 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
-        // are valid for the duration of the call.
-        let completions =
-            unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
+        // `names` keeps as many as Tab lists. Past that, only their count is shown.
+        let mut names = completion::IdentNames::<MAX_LISTED_COMPLETIONS>::default();
+        let mut len: usize = 0;
+        let skipped_non_identifier = completion::for_each(global, target, prefix, |name| {
+            names.push(name);
+            len += 1;
+            ControlFlow::Continue(())
+        });
 
-        if completions.is_undefined() || !completions.is_array() {
-            self.insert_tab_spaces();
-            return;
-        }
-
-        // Get array length
-        let len = match completions.get_length(global) {
-            Ok(n) => n,
-            Err(_) => {
-                global.clear_exception();
-                0
-            }
-        };
         if len == 0 {
-            self.insert_tab_spaces();
+            if skipped_non_identifier {
+                // Names start with the prefix, but each needs brackets: nothing to insert or list.
+                self.refresh_line();
+            } else {
+                self.insert_tab_spaces();
+            }
             return;
         }
 
         if len == 1 {
             // Single completion - insert it
-            let item = match completions.get_index(global, 0) {
-                Ok(v) => v,
-                Err(_) => {
-                    global.clear_exception();
-                    JSValue::UNDEFINED
+            if let Some(completion) = names.iter().next() {
+                while self.line_editor.cursor > word_start {
+                    self.line_editor.backspace();
                 }
-            };
-            if item.is_string() {
-                let slice = match item.to_utf8(global) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global.clear_exception();
-                        return;
-                    }
-                };
-                let completion = slice.slice();
-                if identifier::is_identifier(completion) {
-                    while self.line_editor.cursor > word_start {
-                        self.line_editor.backspace();
-                    }
-                    let _ = self.line_editor.insert_slice(completion);
-                }
-                self.refresh_line();
+                let _ = self.line_editor.insert_slice(&completion.to_utf8());
             }
-        } else if len <= 50 {
+            self.refresh_line();
+        } else if len == names.len() {
             // Multiple completions - show them
             self.leave_input(b"");
-            let mut i: u32 = 0;
-            while i < (len as u32) {
-                let item = match completions.get_index(global, i) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        global.clear_exception();
-                        JSValue::UNDEFINED
-                    }
-                };
-                if item.is_string() {
-                    match item.to_utf8(global) {
-                        Ok(slice) => {
-                            self.print(format_args!(
-                                "  {}{}{}\n",
-                                Color::CYAN,
-                                BStr::new(slice.slice()),
-                                Color::RESET
-                            ));
-                        }
-                        Err(_) => {
-                            global.clear_exception();
-                            i += 1;
-                            continue;
-                        }
-                    }
-                }
-                i += 1;
+            for name in names.iter() {
+                self.print(format_args!("  {}{}{}\n", Color::CYAN, name, Color::RESET));
             }
             self.refresh_line();
         } else {

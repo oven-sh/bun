@@ -11,8 +11,9 @@ import { bunEnv, bunExe } from "harness";
 import zlib from "node:zlib";
 
 // estimateShallowMemoryUsageOf(cell) == sizeof(cell) + estimated_size(). `min`
-// is a floor below the per-mode footprint the constructor caches (brotli encode
-// 5143, brotli decode 855, zstd compress 5272, zstd decompress 95968).
+// is a floor below the per-mode footprint the constructor caches (brotli: the
+// size of the Rust encoder or decoder, about 700 and 9200; zstd compress 5272,
+// zstd decompress 95968).
 function checkFootprintStableAcrossClose(create: () => any, min: number) {
   const engine = create();
   engine.on("error", () => {});
@@ -26,11 +27,11 @@ function checkFootprintStableAcrossClose(create: () => any, min: number) {
 }
 
 test("brotli compress: estimated size stays tied to construction mode across close", () => {
-  checkFootprintStableAcrossClose(() => zlib.createBrotliCompress(), 5000);
+  checkFootprintStableAcrossClose(() => zlib.createBrotliCompress(), 500);
 });
 
 test("brotli decompress: estimated size stays tied to construction mode across close", () => {
-  checkFootprintStableAcrossClose(() => zlib.createBrotliDecompress(), 855);
+  checkFootprintStableAcrossClose(() => zlib.createBrotliDecompress(), 5000);
 });
 
 test("zstd compress: estimated size stays tied to construction mode across close", () => {

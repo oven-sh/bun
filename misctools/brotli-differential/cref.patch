@@ -1,0 +1,119 @@
+--- a/c/dec/decode.c
++++ b/c/dec/decode.c
+@@ -1551,16 +1551,18 @@
+   BrotliDecoderCompoundDictionary* addon = state->compound_dictionary;
+   /* 256 = (1 << 8) slots in block map. */
+   int block_bits = 8;
+-  int cursor = 0;
++  /* Unsigned on upstream's master. As an int it overflows in the last of the
++     256 steps if there are more than 2^31 - 2^23 bytes of dictionaries. */
++  uint32_t cursor = 0;
+   int index = 0;
+   if (addon->block_bits != -1) return;
+   while (((addon->total_size - 1) >> block_bits) != 0) block_bits++;
+   block_bits -= 8;
+   addon->block_bits = block_bits;
+-  while (cursor < addon->total_size) {
+-    while (addon->chunk_offsets[index + 1] < cursor) index++;
++  while (cursor < (uint32_t)addon->total_size) {
++    while ((uint32_t)addon->chunk_offsets[index + 1] < cursor) index++;
+     addon->block_map[cursor >> block_bits] = (uint8_t)index;
+-    cursor += 1 << block_bits;
++    cursor += 1u << block_bits;
+   }
+ }
+ 
+--- a/c/enc/backward_references_hq.c
++++ b/c/enc/backward_references_hq.c
+@@ -473,6 +473,12 @@
+         /* Word dictionary -> ignore. */
+         continue;
+       }
++      /* Upstream takes a last distance plus 1 to 3 that is in a compound
++         dictionary even if it is more than the decoder accepts. One more step
++         and the sum above overflows. */
++      if (backward > BROTLI_MAX_ALLOWED_DISTANCE) {
++        continue;
++      }
+       if (backward <= max_distance) {
+         /* Regular backward reference. */
+         if (prev_ix >= cur_ix) {
+--- a/c/enc/encode.c
++++ b/c/enc/encode.c
+@@ -890,6 +890,13 @@
+   uint64_t last_processed_pos = s->last_processed_pos_ - last_copy_len;
+   uint64_t max_distance = last_processed_pos < max_backward_distance ?
+       last_processed_pos : max_backward_distance;
++  /* Upstream takes max_distance for the start of the dictionary. With a stream
++     offset the distances into the dictionary start later, as in
++     backward_references_inc.h, so it went on with the copy at the wrong place
++     in the dictionary. */
++  uint64_t dictionary_start =
++      last_processed_pos + s->params.stream_offset < max_backward_distance ?
++      last_processed_pos + s->params.stream_offset : max_backward_distance;
+   uint64_t cmd_dist = (uint64_t)s->dist_cache_[0];
+   uint32_t distance_code = CommandRestoreDistanceCode(last_command,
+                                                       &s->params.dist);
+@@ -905,10 +912,11 @@
+         (*wrapped_last_processed_pos)++;
+       }
+     } else {
+-      if ((cmd_dist - max_distance - 1) < compound_dictionary_size &&
+-          last_copy_len < cmd_dist - max_distance) {
++      if (cmd_dist > dictionary_start &&
++          (cmd_dist - dictionary_start - 1) < compound_dictionary_size &&
++          last_copy_len < cmd_dist - dictionary_start) {
+         size_t address =
+-            compound_dictionary_size - (size_t)(cmd_dist - max_distance) +
++            compound_dictionary_size - (size_t)(cmd_dist - dictionary_start) +
+             (size_t)last_copy_len;
+         size_t br_index = 0;
+         size_t br_offset;
+@@ -1500,6 +1508,11 @@
+         *next_out += out_bytes;
+         *available_out -= out_bytes;
+         s->total_out_ += out_bytes;
++        /* Upstream leaves next_out_ stale here. After a metadata block whose
++           last 14 to 16 bytes went through tiny_buf_, it points at the end of
++           tiny_buf_, and InjectBytePaddingBlock then writes past it, over
++           remaining_metadata_bytes_, which makes every later call fail. */
++        s->next_out_ = NULL;
+         SetTotalOut(s, total_out);
+       } else {
+         size_t out_bytes = storage_ix >> 3;
+@@ -1675,14 +1688,17 @@
+             (*available_in == 0) && op == BROTLI_OPERATION_FINISH);
+         BROTLI_BOOL force_flush = TO_BROTLI_BOOL(
+             (*available_in == 0) && op == BROTLI_OPERATION_FLUSH);
++        BROTLI_BOOL is_flint = BROTLI_FALSE;
+         BROTLI_BOOL result;
+-        /* Force emitting (uncompressed) piece containing flint. */
++        /* Force emitting (uncompressed) piece containing flint. Upstream makes
++           that a flush, which the caller did not ask for but has to complete:
++           if its 5 bytes find no room, the next call with input fails. */
+         if (!is_last && s->flint_ == 0) {
+-          s->flint_ = BROTLI_FLINT_WAITING_FOR_FLUSHING;
+-          force_flush = BROTLI_TRUE;
++          s->flint_ = BROTLI_FLINT_DONE;
++          is_flint = BROTLI_TRUE;
+         }
+         UpdateSizeHint(s, *available_in);
+-        result = EncodeData(s, is_last, force_flush,
++        result = EncodeData(s, is_last, TO_BROTLI_BOOL(force_flush || is_flint),
+             &s->available_out_, &s->next_out_);
+         if (!result) return BROTLI_FALSE;
+         if (force_flush) s->stream_state_ = BROTLI_STREAM_FLUSH_REQUESTED;
+--- a/c/enc/hash_longest_match_quickly_inc.h
++++ b/c/enc/hash_longest_match_quickly_inc.h
+@@ -168,7 +168,10 @@
+   BROTLI_DCHECK(cur_ix_masked + max_length <= ring_buffer_mask);
+ 
+   out->len_code_delta = 0;
+-  if (prev_ix < cur_ix) {
++  /* From upstream commit 54f74c7. The last distance can be one into a compound
++     dictionary (H55), beyond the window: what is that far back in the ring
++     buffer is not what the decoder copies. */
++  if (prev_ix < cur_ix && cached_backward <= max_backward) {
+     prev_ix &= (uint32_t)ring_buffer_mask;
+     if (compare_char == data[prev_ix + best_len]) {
+       const size_t len = FindMatchLengthWithLimit(

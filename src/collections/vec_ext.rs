@@ -128,7 +128,7 @@ pub trait VecExt<T>: Sized {
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
     /// `reserve(additional)` then [`expand_to_capacity`], returning the
     /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
-    /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
+    /// `(next_out, avail_out)` for C streaming APIs (zlib, zstd).
     /// Unlike [`writable_slice`] this exposes the *full* over-allocated
     /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
     /// callee can use the allocator's slack. Pass `additional = 0` when the

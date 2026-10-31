@@ -845,7 +845,9 @@ for (const [name, reExported, extra, first, second] of [
   [
     "a plain module that accepts the update",
     "accepting.ts",
-    { "accepting.ts": `import { v as saved } from "./saved.ts"; export const v = saved * 10; import.meta.hot.accept();` },
+    {
+      "accepting.ts": `import { v as saved } from "./saved.ts"; export const v = saved * 10; import.meta.hot.accept();`,
+    },
     "10 1",
     "20 2",
   ],

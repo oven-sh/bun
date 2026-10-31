@@ -2925,9 +2925,9 @@ export default <>hi</>
           "bunfig.toml": 'logLevel = "error"\n',
           "fixture.js": `
             const messagesOf = e => (e instanceof AggregateError ? e.errors : [e]).map(m => [m.level, m.message]);
-            const thrownBy = fn => {
+            const thrownBy = async fn => {
               try {
-                fn();
+                await fn();
               } catch (e) {
                 return messagesOf(e);
               }
@@ -2937,12 +2937,11 @@ export default <>hi</>
             const out = {};
             for (const level of ["default", "warn"]) {
               const logLevel = level === "default" ? undefined : level;
-              out[level] = {
-                method: thrownBy(() => new Bun.Transpiler({ loader: "js", logLevel }).transformSync(code)),
-                constructor: thrownBy(() => new Bun.Transpiler({ ...config, logLevel })),
-              };
+              out[level] = { constructor: await thrownBy(() => new Bun.Transpiler({ ...config, logLevel })) };
+              const t = new Bun.Transpiler({ loader: "js", logLevel });
+              for (const fn of ${JSON.stringify(methods)}) out[level][fn] = await thrownBy(() => t[fn](code));
             }
-            console.log(JSON.stringify(out));
+            console.log(JSON.stringify(out, null, 2));
           `,
         });
         await using proc = Bun.spawn({
@@ -2953,17 +2952,18 @@ export default <>hi</>
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const warning = ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'];
+        const error = ["error", "Unexpected ?"];
+        const everyMethod = messages => Object.fromEntries(methods.map(fn => [fn, messages]));
+        const expected = {
+          default: { constructor: [unexpectedEnd], ...everyMethod([error]) },
+          warn: {
+            constructor: [["warn", 'Duplicate key "jsx" in object literal'], unexpectedEnd],
+            ...everyMethod([warning, error]),
+          },
+        };
         expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-          stdout: JSON.stringify({
-            default: { method: [["error", "Unexpected ?"]], constructor: [unexpectedEnd] },
-            warn: {
-              method: [
-                ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'],
-                ["error", "Unexpected ?"],
-              ],
-              constructor: [["warn", 'Duplicate key "jsx" in object literal'], unexpectedEnd],
-            },
-          }),
+          stdout: JSON.stringify(expected, null, 2),
           stderr: "",
           exitCode: 0,
         });

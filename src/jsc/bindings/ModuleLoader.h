@@ -55,9 +55,14 @@ struct OnLoadResult {
 
 extern "C" bool isBunTest;
 
-class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
+class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<4> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<3>;
+    using Base = JSC::JSInternalFieldObjectImpl<4>;
+
+    // Fields 0 to 2 are the specifier, the referrer and the promise. These are empty when unused.
+    enum Field : unsigned {
+        ModuleGraph = 3,
+    };
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

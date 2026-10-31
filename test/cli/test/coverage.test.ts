@@ -1010,6 +1010,41 @@ test("b", () => {
 `,
   };
 
+  // CommonJS text from a plugin's onLoad. Not async: require() cannot wait for a promise.
+  const pluginCommonJSFiles = {
+    "bunfig.toml": `[test]\npreload = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+import { plugin } from "bun";
+import { readFileSync } from "node:fs";
+
+plugin({
+  name: "passthrough",
+  setup(build) {
+    build.onLoad({ filter: /plugin-loaded\\.cjs$/ }, ({ path }) => {
+      return { contents: readFileSync(path, "utf8"), loader: "js" };
+    });
+  },
+});
+`,
+    "plugin-loaded.cjs": cjs,
+    "a.test.ts": `
+import { expect, test } from "bun:test";
+import { covered } from "./plugin-loaded.cjs";
+
+test("a", () => {
+  expect(covered(10)).toBe(20);
+});
+`,
+    "b.test.ts": `
+import { expect, test } from "bun:test";
+const { covered } = require("./plugin-loaded.cjs");
+
+test("b", () => {
+  expect(covered(1)).toBe(2);
+});
+`,
+  };
+
   type Row = { functions: string; lines: string; uncovered: string };
   async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
     using dir = tempDir("cov-loaded-twice", fixture);
@@ -1065,6 +1100,11 @@ test("b", () => {
 
   test("from a plugin's onLoad, by two test files under --isolate", () => {
     expect(pluginUnderIsolate.rows["plugin-loaded.ts"]).toEqual(fullyCovered);
+  });
+
+  test("CommonJS from a plugin's onLoad, imported by one test file and required by the next under --isolate", async () => {
+    const { rows } = await run(pluginCommonJSFiles, ["--isolate", "./a.test.ts", "./b.test.ts"]);
+    expect(rows["plugin-loaded.cjs"]).toEqual(fullyCovered);
   });
 
   test("lcov has the functions and the lines of both loads (#35345)", () => {

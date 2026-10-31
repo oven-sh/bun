@@ -220,6 +220,15 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, con
 bool isModuleMockInUse(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 // The exports, or a JSCommonJSModule that has them as `module.exports`. Null until the factory settles.
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
+// The factory is an async function that is running, or that nothing has called. require() can't wait for it, and calling it
+// from there would make the test file the file of a running factory, whose own import of the module gets the original.
+bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
+// Nothing has called it, and no import is loading the original, which a require() would disturb.
+bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+// What jest.requireActual() returns for the mocked module.
+JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+// "node:fs" for "node:fs?actual", the key of the original of a mocked builtin.
+std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);

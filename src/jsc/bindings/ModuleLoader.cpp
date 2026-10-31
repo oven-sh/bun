@@ -454,6 +454,14 @@ static JSValue handleVirtualModuleResult(
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* moduleMock = wasModuleMock ? virtualModuleResult.getObject() : nullptr;
     if (wasModuleMock) {
+        if (commonJSModule && Bun::canRequireOriginalOfModuleMock(globalObject, moduleMock)) {
+            // As in Vitest. Otherwise require() of a mock with a pending factory throws below.
+            JSValue exports = Bun::requireOriginalOfModuleMock(globalObject, moduleMock);
+            RETURN_IF_EXCEPTION(scope, {});
+            commonJSModule->setExportsObject(exports);
+            commonJSModule->hasEvaluated = true;
+            return commonJSModule;
+        }
         JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock, specifier->toWTFString(BunString::ZeroCopy), !allowPromise || commonJSModule);
         RETURN_IF_EXCEPTION(scope, {});
         if (pending)
@@ -639,16 +647,23 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    BunString original;
     if (globalObject->onLoadPlugins.hasVirtualModules() && isBunTest) [[unlikely]] {
-        if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier)) {
+        // The file of a running factory gets this key for the builtin that it mocks.
+        if (auto builtin = Bun::builtinModuleOfOriginalKey(specifier->toWTFString(BunString::ZeroCopy))) {
+            original = Bun::toStringView(*builtin);
+            specifier = &original;
+        } else if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier); moduleMock && !Bun::hasModuleMockUnsettledAsyncFactory(moduleMock.getObject())) {
             JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock.getObject(), specifier->toWTFString(BunString::ZeroCopy), true);
             RETURN_IF_EXCEPTION(scope, {});
-            // Until an async factory settles, require() returns the builtin itself, as in Vitest.
-            if (JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject())) {
-                JSValue exports = commonJSExportsOfObjectModule(globalObject, result, true);
-                RETURN_IF_EXCEPTION(scope, {});
-                return { Kind::Exports, exports };
+            JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject());
+            if (!result) {
+                JSC::throwException(globalObject, scope, createAsyncModuleRequiredError(globalObject, specifier->toWTFString(BunString::ZeroCopy)));
+                return {};
             }
+            JSValue exports = commonJSExportsOfObjectModule(globalObject, result, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            return { Kind::Exports, exports };
         }
     }
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, true, res)) {

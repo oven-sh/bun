@@ -825,25 +825,53 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
-  test("require() of a builtin returns the original until an async factory settles", async () => {
+  test("require() returns the original until an async factory settles", async () => {
     await expectFixturesToPass(
       {
-        "early.cjs": `module.exports = require("node:fs").existsSync("/does/not/exist");`,
-        "late.cjs": `module.exports = require("node:fs").existsSync("/does/not/exist");`,
+        ...modules,
+        "early-builtin.cjs": `module.exports = require("node:fs").existsSync("/does/not/exist");`,
+        "late-builtin.cjs": `module.exports = require("node:fs").existsSync("/does/not/exist");`,
+        "early-package.cjs": `module.exports = require("cjs-pkg");`,
         "original.test.ts": `
           import { expect, test, vi } from "bun:test";
-          import early from "./early.cjs";
+          import earlyBuiltin from "./early-builtin.cjs";
+          import earlyPackage from "./early-package.cjs";
+          import * as fs from "node:fs";
+          import * as cjs from "cjs-pkg";
 
+          const seen = vi.hoisted(() => ({}));
           vi.mock("node:fs", async importOriginal => ({ ...(await importOriginal()), existsSync: () => true }));
+          vi.mock("cjs-pkg", async importOriginal => ({ ...(seen.original = await importOriginal()), hello: () => "mocked-hello" }));
 
-          test("builtin", async () => {
-            expect(early).toBe(false);
-            expect((await import("node:fs")).existsSync("/does/not/exist")).toBe(true);
-            expect(require("./late.cjs")).toBe(true);
+          test("a builtin, and this file's own import is the mock", () => {
+            expect(earlyBuiltin).toBe(false);
+            expect(fs.existsSync("/does/not/exist")).toBe(true);
+            expect(require("./late-builtin.cjs")).toBe(true);
+          });
+
+          test("a package, which is not evaluated twice", () => {
+            expect([earlyPackage.hello(), cjs.hello()]).toEqual(["real-hello", "mocked-hello"]);
+            expect(earlyPackage.hello).toBe(seen.original.hello);
+          });
+
+          test("a builtin, in the file of a factory that is running", async () => {
+            const started = Promise.withResolvers();
+            const finish = Promise.withResolvers();
+            vi.doMock("node:os", async importOriginal => {
+              started.resolve();
+              await finish.promise;
+              return { ...(await importOriginal()), platform: () => "mocked" };
+            });
+            const imported = import("node:os");
+            await started.promise;
+            for (const name of ["node:os", "os"]) expect(require(name).platform()).toBe(process.platform);
+            finish.resolve();
+            expect((await imported).platform()).toBe("mocked");
+            expect(require("node:os").platform()).toBe("mocked");
           });
         `,
       },
-      1,
+      3,
     );
   });
 

@@ -4329,6 +4329,51 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
 }
 
+static bool hasUncalledAsyncFactory(Zig::JSModuleMock* mock)
+{
+    if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)
+        return false;
+    // Empty for an automock.
+    JSValue value = mock->factory.get();
+    auto* factory = value ? dynamicDowncast<JSC::JSFunction>(value) : nullptr;
+    return factory && !factory->isHostOrBuiltinFunction() && JSC::isAsyncFunctionParseMode(factory->jsExecutable()->parseMode());
+}
+
+bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock)
+{
+    auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
+    if (mock && mock->state == Zig::JSModuleMock::State::Running)
+        return mock->result && mock->result->inherits<JSC::JSPromise>();
+    return hasUncalledAsyncFactory(mock);
+}
+
+bool canRequireOriginalOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock)
+{
+    auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
+    if (!hasUncalledAsyncFactory(mock))
+        return false;
+    // An import of the mock loads what the original imports before it calls a factory that takes the original.
+    String key = Zig::originalModuleKey(mock->specifier->tryGetValue().data);
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
+    if (!entry)
+        return true;
+    auto* cyclic = entry->record() ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+    return entry->record() && (!cyclic || cyclic->isSCCEvaluated());
+}
+
+JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* mock = Zig::toModuleMock(globalObject, scope, moduleMock);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, Zig::requireOriginalModule(globalObject, mock));
+}
+
+std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key)
+{
+    return Zig::builtinModuleOfOriginalKey(key);
+}
+
 __attribute__((minsize)) static JSC::JSObject* generateSettledModuleMock(JSValue source, JSC::JSGlobalObject* globalObject, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(globalObject);

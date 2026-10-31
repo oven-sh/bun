@@ -837,6 +837,7 @@ public:
     bool isRsaVariant() const;
     bool isOneShotVariant() const;
     bool isSigVariant() const;
+    bool hasSmallOrderEdDsaPoint(const Buffer<const unsigned char>& signature) const;
     bool validateDsaParameters() const;
 
 private:
@@ -1267,6 +1268,11 @@ bool checkHkdfLength(const Digest& digest, size_t length);
 bool extractP1363(const Buffer<const unsigned char>& buf,
     unsigned char* dest,
     size_t n);
+
+// Whether an Ed25519 signature's R or the public key A encodes (canonically or not) a
+// small-order point. Node and WebCrypto reject those; BoringSSL's ED25519_verify does not
+// look for them.
+bool hasSmallOrderEd25519Point(std::span<const uint8_t> signature, std::span<const uint8_t> publicKey);
 
 DataPointer hkdf(const Digest& md,
     const Buffer<const unsigned char>& key,

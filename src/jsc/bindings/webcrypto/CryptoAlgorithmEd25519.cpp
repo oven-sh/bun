@@ -34,6 +34,7 @@
 
 // -- BUN --
 #include <openssl/curve25519.h>
+#include "ncrypto.h"
 
 namespace WebCore {
 
@@ -59,6 +60,10 @@ static ExceptionOr<bool> verifyEd25519(const Vector<uint8_t>& key, size_t keyLen
         return false;
 
     if (signature.size() != keyLengthInBytes * 2)
+        return false;
+
+    // WPT WebCryptoAPI/sign_verify/eddsa_small_order_points.js
+    if (ncrypto::hasSmallOrderEd25519Point(signature.span(), key.span()))
         return false;
 
     return ED25519_verify(data.begin(), data.size(), signature.begin(), key.begin()) == 1;

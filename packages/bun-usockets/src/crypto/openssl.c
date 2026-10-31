@@ -1258,7 +1258,10 @@ static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_blocked_key_error(ctx);
   if (error == X509_V_OK && X509_STORE_CTX_get_error(ctx) == X509_V_OK) {
+    /* Its unsigned stand-in puts an error on the queue, which BoringSSL does not clear after quic.c's custom_verify. */
+    ERR_set_mark();
     error = us_x509_store_ctx_common_name_error(ctx);
+    ERR_pop_to_mark();
   }
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);

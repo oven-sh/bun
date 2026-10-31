@@ -906,12 +906,6 @@ impl TagExt for Tag {
                                         }
                                     }
 
-                                    if let Ok(Some(info)) =
-                                        hosted_git_info::HostedGitInfo::from_url(dependency)
-                                    {
-                                        return hgi_to_tag(&info);
-                                    }
-
                                     return Tag::Git;
                                 }
                             }
@@ -950,12 +944,6 @@ impl TagExt for Tag {
                                             ) {
                                                 return Tag::Github;
                                             }
-                                        }
-
-                                        if let Ok(Some(info)) =
-                                            hosted_git_info::HostedGitInfo::from_url(dependency)
-                                        {
-                                            return hgi_to_tag(&info);
                                         }
 
                                         return Tag::Git;

@@ -23,6 +23,7 @@
 #include <wtf/ListHashSet.h>
 #include <wtf/Lock.h>
 
+#include <algorithm>
 #include <optional>
 #include <unordered_set>
 #include <variant>

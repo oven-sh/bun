@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -342,6 +342,46 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // delete + write
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
+  });
+
+  test("bun run cache entries do not suppress implicit test globals", async () => {
+    const filler = Buffer.alloc(80 * 1024, "/").toString();
+    writeFileSync(
+      join(temp_dir, "globals.js"),
+      `export function globals() { return [typeof jest, typeof describe]; }\n//${filler}`,
+    );
+    writeFileSync(
+      join(temp_dir, "run.js"),
+      'import { globals } from "./globals.js"; console.log(JSON.stringify(globals()));',
+    );
+    writeFileSync(
+      join(temp_dir, "globals.test.js"),
+      `import { test, expect } from "bun:test";
+       import { globals } from "./globals.js";
+       test("implicit globals", () => {
+         expect(globals()).toEqual(["object", "function"]);
+         console.log(JSON.stringify(globals()));
+       });`,
+    );
+
+    for (let i = 0; i < 2; i++) {
+      expect(await bunRun(join(temp_dir, "run.js"), env)).toSpawn('["undefined","undefined"]');
+      expect(existsSync(cache_dir)).toBeTrue();
+      expect(readdirSync(cache_dir).filter(file => file.endsWith(".pile"))).toHaveLength(1);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "globals.test.js"],
+        cwd: temp_dir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: normalizeBunSnapshot(stdout), exitCode }, stderr).toEqual({
+        stdout: 'bun test <version> (<revision>)\n["object","function"]',
+        exitCode: 0,
+      });
+    }
   });
 
   // A define replaces an identifier at parse time, so the define table is part

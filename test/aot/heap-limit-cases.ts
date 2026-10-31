@@ -1,8 +1,10 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { linkSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { unsupported } from "./harness/compiler";
+import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 import { run as runCommand } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
 
@@ -174,104 +176,260 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
   const { stdout, stderr, exitCode } = await inTurn(() =>
     runCommand(cmd, cwd, { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env }),
   );
-  // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
+  // The message of the error goes on with the limit and the option that lifts it. A test that reads stderr reads all of it; what a program prints of a message is compared without.
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };
 }
 
-async function build(cwd: string, ...moreEntryPoints: string[]) {
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "program.ts", ...moreEntryPoints, "--outfile", "program"],
-    cwd,
-  );
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-    stderr: expect.not.stringMatching(/^error\b/m),
-    exitCode: 0,
-  });
-  return join(cwd, "program");
-}
+// A process that ends with an error that nobody caught says the error, the frames of its stack and the version of Bun. The
+// frames go by how far the program had come, and the version by the build.
+const withoutFramesAndVersion = (stderr: string) =>
+  stderr.replace(/^ +at .+\n/gm, "").replace(/\nBun v\S+ \(.+\)\n$/, "");
+const outOfMemory = "RangeError: Out of memory: " + limitOf64MB + "\n";
 
-// node:worker_threads brings the streams of Node.js along, which makes a build thirty times dearer. The programs that import it are files of one program: its entry points import the files of
-// the case that the working directory names.
-const programsTogether: Record<string, Record<string, string>> = {};
-function together(name: string, files: Record<string, string>) {
-  programsTogether[name] = files;
-  return { "case.txt": name };
-}
-const importsTheCase = (file: string) =>
-  `const files: Record<string, () => Promise<unknown>> = {\n` +
-  Object.entries(programsTogether)
-    .filter(([, files]) => file in files)
-    .map(([name]) => `  "${name}": () => import("./${name}/${file}"),\n`)
-    .join("") +
-  `};\nawait files[await Bun.file("case.txt").text()]!();\n`;
-let builtTogether: Promise<string> | undefined;
-let folderTogether: Disposable | undefined;
-afterAll(() => folderTogether?.[Symbol.dispose]());
-/** Puts the executable of all those programs into `cwd` as ./program. */
-async function linkTogether(cwd: string) {
-  const executable = await (builtTogether ??= (async () => {
-    const files: Record<string, string> = {};
-    const alone: string[] = [];
-    for (const [name, ofCase] of Object.entries(programsTogether))
-      for (const [file, text] of Object.entries(ofCase)) {
-        const isShared = file === "program.ts" || file === "worker.ts";
-        files[isShared ? `${name}/${file}` : file] = text;
-        if (!isShared) alone.push(file);
+/** `ulimit -v`, in kB. `before` is what else the shell does first. */
+const withAddressSpaceOf =
+  (kilobytes: number, before = "") =>
+  (executable: string) => ["sh", "-c", `${before}ulimit -v ${kilobytes} && exec "$0"`, executable];
+
+/**
+ * The executables of one run of the file. `bun test --rerun-each` runs the file again in the same process: it evaluates the test
+ * file again and this module once, so a run keeps nothing in a variable of the module.
+ */
+function executables() {
+  const folders: Disposable[] = [];
+  const buildsUnderWay = new Set<{ kill(signal: "SIGKILL"): void }>();
+
+  /**
+   * `bun build --compile --aot <flags and entry points> --outfile <outfile>` in `cwd`. Answers what to start.
+   * A command has one turn, and there are as many turns as cores. So a build is told how many threads it has.
+   */
+  async function build(cwd: string, outfile: string, threads: number, ...flagsAndEntryPoints: string[]) {
+    const cmd = [bunExe(), "build", "--compile", "--aot", `--aot-threads=${threads}`, ...flagsAndEntryPoints];
+    const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
+    const { stderr, exitCode } = await inTurn(async () => {
+      await using proc = Bun.spawn({ cmd: [...cmd, "--outfile", outfile], cwd, env, stdout: "ignore", stderr: "pipe" });
+      using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram);
+      buildsUnderWay.add(proc);
+      try {
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        if (held.exceeded) throw new Error(`KILLED at its memory limit: ${cmd.join(" ")}\n${held.held}`);
+        return { stderr, exitCode };
+      } finally {
+        buildsUnderWay.delete(proc);
       }
-    files["program.ts"] = importsTheCase("program.ts");
-    files["worker.ts"] = importsTheCase("worker.ts");
-    folderTogether = tempDir("aot-heap-limit-together", files);
-    return build(String(folderTogether), "worker.ts", ...alone);
-  })());
-  const extension = isWindows ? ".exe" : "";
-  linkSync(executable + extension, join(cwd, "program" + extension));
-  return join(cwd, "program");
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+    return join(cwd, outfile);
+  }
+
+  // A build of its own costs a small program about three times what it costs as one of many, and writes an executable the size
+  // of Bun. So most programs that start no Worker are the entry points of one executable. --aot-separate-programs compiles each
+  // as it is when it is built alone, and BUN_AOT_START_AT names the one that a process starts with. The others take none of its
+  // room for objects or for their shapes. They take address space: the process maps the whole executable.
+  const programs: Record<string, string> = {};
+  const programsByThemselves = new Set<string>();
+  /** Adds a program to that executable and answers its name, which `start` takes. `isStarted`: whether a test starts it with the Bun under test. */
+  function oneOfMany(name: string, text: string, isStarted = true) {
+    if (name in programs && programs[name] !== text) throw new Error(`two programs are named ${name}`);
+    if (isStarted) programs[name] = text;
+    return name;
+  }
+  /** The same, for a program that has an executable of its own. Each place that asks for one says why. */
+  function byItself(name: string, text: string, isStarted = true) {
+    if (isStarted) programsByThemselves.add(name);
+    return oneOfMany(name, text, isStarted);
+  }
+
+  type Built = { executable: string; cwd: string };
+  const builtByThemselves = new Map<string, Promise<Built>>();
+  function buildByItself(name: string) {
+    return builtByThemselves.getOrInsertComputed(name, async () => {
+      const folder = tempDir("aot-heap-limit", { [name]: programs[name] });
+      folders.push(folder);
+      return { executable: await build(String(folder), "program", 1, name), cwd: String(folder) };
+    });
+  }
+
+  let builtOfMany: Promise<Built | undefined> | undefined;
+  /**
+   * Only a canary build of Bun reads BUN_AOT_START_AT. A Bun that does not read it starts an executable at its first entry
+   * point, which says so here. The answer is nothing then, and `start` builds each program by itself.
+   */
+  function buildOfMany() {
+    return (builtOfMany ??= (async () => {
+      const names = Object.keys(programs).filter(name => !programsByThemselves.has(name));
+      const first = "first.ts";
+      const folder = tempDir("aot-heap-limit", {
+        [first]: `console.log("started at the first entry point");\n`,
+        ...Object.fromEntries(names.map(name => [name, programs[name]])),
+      });
+      folders.push(folder);
+      const cwd = String(folder);
+      const entryPoints = [first, ...names].map(name => "./" + name);
+      const executable = await build(cwd, "programs", 1, "--aot-separate-programs", "--root=.", ...entryPoints);
+      const { stdout, stderr, exitCode } = await run([executable], cwd, { BUN_AOT_START_AT: "no-such-program.ts" });
+      if (stdout === "started at the first entry point\n" && exitCode === 0) return undefined;
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("BUN_AOT_START_AT names no entry point of the executable"),
+        exitCode: 1,
+      });
+      return { executable, cwd };
+    })());
+  }
+
+  /** Runs a program in a process of its own. `command` is what starts the executable. */
+  async function start(name: string, env: Record<string, string> = {}, command = (executable: string) => [executable]) {
+    if (!(name in programs)) throw new Error(`no test starts ${name} with this Bun, so it was not built`);
+    const ofMany = programsByThemselves.has(name) ? undefined : await buildOfMany();
+    const { executable, cwd } = ofMany ?? (await buildByItself(name));
+    return run(command(executable), cwd, ofMany ? { ...env, BUN_AOT_START_AT: name } : env);
+  }
+
+  // node:worker_threads brings the streams of Node.js along, which makes a build thirty times dearer. The programs that import it are files of one program: its entry points import the files of
+  // the case that the working directory names.
+  const programsTogether: Record<string, Record<string, string>> = {};
+  function together(name: string, files: Record<string, string>) {
+    programsTogether[name] = files;
+    return { "case.txt": name };
+  }
+  const importsTheCase = (file: string) =>
+    `const files: Record<string, () => Promise<unknown>> = {\n` +
+    Object.entries(programsTogether)
+      .filter(([, files]) => file in files)
+      .map(([name]) => `  "${name}": () => import("./${name}/${file}"),\n`)
+      .join("") +
+    `};\nawait files[await Bun.file("case.txt").text()]!();\n`;
+  let builtTogether: Promise<string> | undefined;
+  function buildTogether() {
+    return (builtTogether ??= (async () => {
+      const files: Record<string, string> = {};
+      const alone: string[] = [];
+      for (const [name, ofCase] of Object.entries(programsTogether))
+        for (const [file, text] of Object.entries(ofCase)) {
+          const isShared = file === "program.ts" || file === "worker.ts";
+          files[isShared ? `${name}/${file}` : file] = text;
+          if (!isShared) alone.push(file);
+        }
+      files["program.ts"] = importsTheCase("program.ts");
+      files["worker.ts"] = importsTheCase("worker.ts");
+      const folder = tempDir("aot-heap-limit-together", files);
+      folders.push(folder);
+      // On a machine with cores to spare this build is what the file waits for longest, so it has two threads, and four where
+      // the machine has eight cores or more. With AddressSanitizer a build with more than two threads takes longer.
+      const threads = isASAN || availableParallelism() < 8 ? 2 : 4;
+      return build(String(folder), "program", threads, "program.ts", "worker.ts", ...alone);
+    })());
+  }
+  /** Puts the executable of all those programs into `cwd` as ./program. */
+  async function linkTogether(cwd: string) {
+    const executable = await buildTogether();
+    const extension = isWindows ? ".exe" : "";
+    linkSync(executable + extension, join(cwd, "program" + extension));
+    return join(cwd, "program");
+  }
+
+  // A build may still be under way at the end: a filter left out the tests that wait for it, or it hangs. It is ended, and
+  // then its folder goes.
+  afterAll(async () => {
+    for (const build of buildsUnderWay) build.kill("SIGKILL");
+    await Promise.allSettled([builtOfMany, builtTogether, ...builtByThemselves.values()]);
+    folders.forEach(folder => folder[Symbol.dispose]());
+  });
+
+  return { oneOfMany, byItself, start, together, buildTogether, linkTogether };
 }
 
 // TODO: with AddressSanitizer these run out of room where a release build does not.
 const runsOutOfRoomEarly = isASAN;
+// `bun test` runs five tests at a time with AddressSanitizer and twenty without.
+const fewTestsRunAtATime = isASAN;
+// `ulimit -v` limits the address space of a process on Linux. A Bun with AddressSanitizer does not start under such a limit.
+const canLimitAddressSpace = isLinux && !isASAN;
+/** The file of the program of a row of a table. */
+const fileNamed = (row: string, extension: string) => row.replace(/[^A-Za-z0-9]+/g, "-") + extension;
 
 /** Every `parts`-th case from the `part`-th. */
 export function addressSpaceForObjects(part: number, parts: number) {
   let cases = 0;
   const isInPart = () => cases++ % parts === part - 1;
   const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
-  const inPart = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) => {
-    if (isInPart()) define(name, body, timeout);
-  };
+  const { oneOfMany, byItself, start, together, buildTogether, linkTogether } = executables();
+  // Tests start in the order in which they are defined, and few run at a time. So the order decides when the file ends. The
+  // tests that take longest are defined first: the short ones run beside them. The tests of Workers are defined last: their
+  // executable takes many times as long to build as the others, and a test that waits for its build keeps the next from
+  // starting. The first test starts that build behind its own, so that it is through when the last tests start. Of the tests
+  // of Workers the one that runs longest is the first: the file ends when the last of them ends.
+  const testsThatTakeLongest: (() => void)[] = [];
+  const testsBetween: (() => void)[] = [];
+  const testsOfWorkers: (() => void)[] = [];
+  const among =
+    (tests: (() => void)[], add: "push" | "unshift" = "push") =>
+    (define: typeof test) =>
+    (name: string, body: () => Promise<void>, timeout?: number) => {
+      if (isInPart()) tests[add](() => define(name, body, timeout));
+    };
+  const [inPart, inPartWithWorkers] = [among(testsBetween), among(testsOfWorkers)];
+  const inPartWithWorkersFirst = among(testsOfWorkers, "unshift");
+  const inPartFirst = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) =>
+    among(testsThatTakeLongest)(define)(
+      name,
+      () => {
+        const ended = body();
+        // Whether a filter (-t) leaves out the tests of Workers is not known here. Then nothing waits for this build, and it is
+        // ended with the file. Otherwise a test of a Worker says how it failed.
+        if (testsOfWorkers.length) buildTogether().catch(() => {});
+        return ended;
+      },
+      timeout,
+    );
+  /** `define.each(rows)` among the tests of `inPart`. The rows are dealt already. */
+  const eachOf =
+    (define: typeof test, rows: string[][]) =>
+    (name: string, body: (...row: string[]) => Promise<void>, timeout?: number) =>
+      void testsBetween.push(() => define.each(rows)(name, body, timeout));
 
   describe("the address space for objects of a compiled program", () => {
+    const keepsEverythingProgram = oneOfMany("keeps-everything.ts", keepsEverything);
     inPart(test)(
       "a program that keeps more objects alive than fit ends with a RangeError",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-        expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+        const { stdout, stderr, exitCode } = await start(keepsEverythingProgram, smallHeap);
+        expect({ stdout, stderr: withoutFramesAndVersion(stderr), exitCode }).toEqual({
+          stdout: "",
+          stderr: outOfMemory,
+          exitCode: 1,
+        });
       },
       120_000,
     );
 
+    const keepsEverythingInATry = oneOfMany("keeps-everything-in-a-try.ts", insideTry(keepsEverything));
     inPart(test)(
       "inside a try it ends with the same error, and the finally runs",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsEverything) });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-        expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout, exitCode }).toEqual({ stdout: "finally\n", exitCode: 1 });
+        const { stdout, stderr, exitCode } = await start(keepsEverythingInATry, smallHeap);
+        expect({ stdout, stderr: withoutFramesAndVersion(stderr), exitCode }).toEqual({
+          stdout: "finally\n",
+          stderr: outOfMemory,
+          exitCode: 1,
+        });
       },
       120_000,
     );
 
+    const isToldAndFillsOn = oneOfMany(
+      "is-told-and-fills-on.ts",
+      isToldAndGoesOnFilling("console.log"),
+      !runsOutOfRoomEarly,
+    );
     inPart(test.skipIf(runsOutOfRoomEarly))(
       "a program that is told and goes on filling stops and says why",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": isToldAndGoesOnFilling("console.log") });
-        const program = await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
-        expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use 64 MB");
+        const { stdout, stderr, exitCode } = await start(isToldAndFillsOn, smallHeap, executable =>
+          withoutCoreDump([executable]),
+        );
+        expect(stderr).toContain("FATAL: out of memory. " + limitOf64MB);
         expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
         expect(stderr).not.toContain("This indicates a bug in Bun");
         expect(stdout).toMatch(/^(told RangeError true\n)+$/);
@@ -281,28 +439,27 @@ export function addressSpaceForObjects(part: number, parts: number) {
     );
 
     // The function that fills the range has the handler. Nothing in its loop but the built-in makes anything, and a loop that ends with its list makes records.
-    inPart(test)(
-      "a loop inside a try that fills the range gets the RangeError in its own catch, whatever it fills the range with",
-      async () => {
-        const made: Record<string, string> = {
-          listsOfFractions: "[i + 0.5, i + 1.5, i + 2.5, i + 3.5]",
-          records: "{ a: i, b: i, c: i, d: i }",
-          keys: "Object.keys(source)",
-          padded: 'String(i).padStart(40, "-")',
-          matches: '/a(b)c/.exec("abc")',
-          dates: "new Date(i)",
-          symbols: 'Symbol("s")',
-          fixed: "(i / 3).toFixed(8)",
-          boxed: "new Number(i)",
-          bound: "fill_keys.bind(null)",
-          promises: "Promise.resolve(i)",
-          sets: "new Set(list)",
-          slices: "list.slice(1)",
-          bytes: "new Uint8Array(8)",
-          whatACallMakes: "make(i)",
-        };
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `const source: Record<string, number> = {};
+    const made: Record<string, string> = {
+      listsOfFractions: "[i + 0.5, i + 1.5, i + 2.5, i + 3.5]",
+      records: "{ a: i, b: i, c: i, d: i }",
+      keys: "Object.keys(source)",
+      padded: 'String(i).padStart(40, "-")',
+      matches: '/a(b)c/.exec("abc")',
+      dates: "new Date(i)",
+      symbols: 'Symbol("s")',
+      fixed: "(i / 3).toFixed(8)",
+      boxed: "new Number(i)",
+      bound: "fill_keys.bind(null)",
+      promises: "Promise.resolve(i)",
+      sets: "new Set(list)",
+      slices: "list.slice(1)",
+      bytes: "new Uint8Array(8)",
+      whatACallMakes: "make(i)",
+    };
+    // It runs many times as long as most. By itself it is built first, and it runs while the others are still being built.
+    const fillsInATry = byItself(
+      "fills-in-a-try.ts",
+      `const source: Record<string, number> = {};
 for (let i = 0; i < 24; i++) source["name" + i] = 1;
 const list = [1, 2, 3, 4, 5, 6, 7, 8];
 const many: number[] = [];
@@ -336,8 +493,8 @@ ${Object.entries(made)
   return false;
 }
 for (const fill of [${Object.keys(made)
-            .map(name => "fill_" + name)
-            .join(", ")}, fill_aRecordForEachOfAList]) {
+        .map(name => "fill_" + name)
+        .join(", ")}, fill_aRecordForEachOfAList]) {
   caught = 0;
   let escaped = 0;
   let answer = false;
@@ -349,8 +506,11 @@ for (const fill of [${Object.keys(made)
   console.log(fill.name, answer, caught, escaped);
 }
 `,
-        });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    );
+    inPartFirst(test)(
+      "a loop inside a try that fills the range gets the RangeError in its own catch, whatever it fills the range with",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(fillsInATry, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: [...Object.keys(made), "aRecordForEachOfAList"].map(name => `fill_${name} true 1 0\n`).join(""),
           stderr: "",
@@ -361,11 +521,11 @@ for (const fill of [${Object.keys(made)
     );
 
     // Where functions are entered, the error comes at the next entry that tests the stack, in a try or not.
+    const catchesThreeTimesProgram = oneOfMany("catches-three-times.ts", catchesThreeTimes);
     inPart(test)(
       "a program that fills the range in functions that call themselves catches a RangeError and goes on",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": catchesThreeTimes });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+        const { stdout, stderr, exitCode } = await start(catchesThreeTimesProgram, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "0 true Out of memory 1023\n1 true Out of memory 1023\n2 true Out of memory 1023\nafterward 4095\n",
           stderr: "",
@@ -375,16 +535,17 @@ for (const fill of [${Object.keys(made)
       120_000,
     );
 
-    inPart(test)(
+    // This program takes more than a third of the time of the build of many. Where few tests run at a time, a test that waits
+    // for that build keeps the next from starting. So there this program has a build of its own beside it, and its test is one
+    // of the first: the build of many is through a third sooner, and this build before it.
+    const callsValuesNobodyKnowsProgram = (fewTestsRunAtATime ? byItself : oneOfMany)(
+      "calls-values-nobody-knows.js",
+      callsValuesNobodyKnows,
+    );
+    (fewTestsRunAtATime ? inPartFirst : inPart)(test)(
       "so does one that calls values nobody knows",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.js": callsValuesNobodyKnows });
-        const built = await run(
-          [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
-          String(folder),
-        );
-        expect(built.exitCode).toBe(0);
-        const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), smallHeap);
+        const { stdout, stderr, exitCode } = await start(callsValuesNobodyKnowsProgram, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "0 true Out of memory true\n1 true Out of memory true\n2 true Out of memory true\nafterward 1\n",
           stderr: "",
@@ -394,29 +555,30 @@ for (const fill of [${Object.keys(made)
       120_000,
     );
 
-    inPart(test)(
-      "an error that nobody catches ends the process as any other does",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `${treeBuilder}const keep: (Tree | null)[] = [];
+    const nobodyCatches = oneOfMany(
+      "nobody-catches.ts",
+      `${treeBuilder}const keep: (Tree | null)[] = [];
 process.on("exit", (code: number) => console.log("exit", code, smallest(keep)));
 for (;;) keep.push(build(10, 1));
 `,
+    );
+    inPart(test)(
+      "an error that nobody catches ends the process as any other does",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(nobodyCatches, smallHeap);
+        expect({ stdout, stderr: withoutFramesAndVersion(stderr), exitCode }).toEqual({
+          stdout: "exit 1 1023\n",
+          stderr: outOfMemory,
+          exitCode: 1,
         });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-        expect(stderr).toContain("RangeError: Out of memory");
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1023\n", exitCode: 1 });
       },
       120_000,
     );
 
     // A loop that calls nothing enters no function. Its allocations go to the run time for each new block of memory, and there the error is thrown, as long as the function of the loop has no try of its own.
-    inPart(test)(
-      "loops that allocate and call nothing get the RangeError where they allocate",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `type Pair = { a: number; b: number };
+    const loopsThatCallNothing = oneOfMany(
+      "loops-that-call-nothing.ts",
+      `type Pair = { a: number; b: number };
 const source: number[] = new Array(3_000_000).fill(1);
 const wide: Record<string, number> = {};
 for (let i = 0; i < 300_000; i++) wide["k" + i] = i;
@@ -440,8 +602,11 @@ for (const [what, fill] of fills) {
 }
 console.log("afterward", short.slice(0, 1000).map(part => ({ part })).length);
 `,
-        });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    );
+    inPart(test)(
+      "loops that allocate and call nothing get the RangeError where they allocate",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(loopsThatCallNothing, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout:
             [
@@ -463,11 +628,9 @@ console.log("afterward", short.slice(0, 1000).map(part => ({ part })).length);
       120_000,
     );
 
-    inPart(test)(
-      "what the callers of such a loop have in finally and in using runs",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `type Pair = { a: number; b: number };
+    const callersWithFinallyAndUsing = oneOfMany(
+      "callers-with-finally-and-using.ts",
+      `type Pair = { a: number; b: number };
 let kept: Pair[] = [];
 function fill() {
   for (let i = 0; ; i++) kept.push({ a: i, b: i });
@@ -499,8 +662,11 @@ for (const run of [withFinally, withUsing]) {
 await later().catch(error => { kept = []; console.log("rejected", error.name, error.message); });
 console.log("afterward", kept.length);
 `,
-        });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    );
+    inPart(test)(
+      "what the callers of such a loop have in finally and in using runs",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(callersWithFinallyAndUsing, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout:
             "finally true\nwithFinally RangeError Out of memory\ndisposed true\nwithUsing RangeError Out of memory\nrejected RangeError Out of memory\nafterward 0\n",
@@ -513,11 +679,9 @@ console.log("afterward", kept.length);
 
     // Native code that makes an object for each piece of its input enters no function of the program: it asks by itself, once an object, whether the error is owed.
     // The list that is copied takes about half of the room. With its six copies it is larger than the whole range.
-    inPart(test.skipIf(runsOutOfRoomEarly))(
-      "one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `const text = "[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]';
+    const parsesAndCopies = oneOfMany(
+      "parses-and-copies.ts",
+      `const text = "[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]';
 function attempt(what: string, fill: () => unknown[]) {
   try {
     console.log(what, "finished", fill().length);
@@ -536,8 +700,12 @@ attempt("copies", () => {
 attempt("a small text afterward", () => JSON.parse("[1,2,3]"));
 attempt("a small copy afterward", () => structuredClone([1, { a: 2 }]));
 `,
-        });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      !runsOutOfRoomEarly,
+    );
+    inPart(test.skipIf(runsOutOfRoomEarly))(
+      "one text or one message with more objects than fit is a RangeError of JSON.parse and of structuredClone",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(parsesAndCopies, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout:
             "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
@@ -561,16 +729,16 @@ worker.postMessage("[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]');
 parentPort!.on("message", (text: string) => parentPort!.postMessage("parsed " + JSON.parse(text).length));
 `,
     });
-    inPart(test)(
+    inPartWithWorkers(test)(
       "a Worker that is sent such a text ends alone",
       async () => {
         using folder = tempDir("aot-heap-limit", case1);
         const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout, exitCode }).toEqual({
+        expect({ stdout, stderr, exitCode }).toEqual({
           stdout:
             "the Worker says: parsed 2\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100001\n",
+          stderr: "",
           exitCode: 0,
         });
       },
@@ -601,17 +769,17 @@ try {
 for (;;) keep.push(build(10, 1));
 `,
     });
-    inPart(test)(
+    inPartWithWorkers(test)(
       "a Worker catches its own, and one that it does not catch ends the Worker alone",
       async () => {
         using folder = tempDir("aot-heap-limit", case2);
         const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout, exitCode }).toEqual({
+        expect({ stdout, stderr, exitCode }).toEqual({
           stdout: expect.stringMatching(
             /^(?=[^]*the Worker says: caught RangeError: Out of memory behind a tree of 1023\n)(?=[^]*the Worker ends with: RangeError Out of memory\n)[^]*exit 1 and the main thread goes on: 100000\n$/,
           ),
+          stderr: "",
           exitCode: 0,
         });
       },
@@ -708,16 +876,14 @@ if (way === "objects in a try") {
 }
 `,
     });
-    inPart(test)(
+    inPartWithWorkersFirst(test)(
       "a Worker that fills its range inside a try catches the error, and one that does not catch it ends alone",
       async () => {
         using folder = tempDir("aot-heap-limit", case3);
         const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        expect(stderr).not.toContain("FATAL");
         // A push may be what finds the memory gone, and it throws: then the Worker catches the error. Either way it is a RangeError, the Worker ends with 1 and nothing else does.
         const lines = stdout
-          .replaceAll(": " + limitOf64MB, "")
           .split("\n")
           .filter(
             line =>
@@ -729,7 +895,7 @@ if (way === "objects in a try") {
           `${way}: exit 1 and the main thread goes on: 100000`,
         ];
         const aloneOrCaught = (way: string) => (lines.includes(alone(way)[0]) ? alone(way) : alone(way).slice(1));
-        expect({ lines, exitCode }).toEqual({
+        expect({ lines, stderr, exitCode }).toEqual({
           lines: [
             "objects in a try: the Worker says: caught RangeError: Out of memory",
             "objects in a try: exit 0 and the main thread goes on: 100000",
@@ -744,6 +910,7 @@ if (way === "objects in a try") {
             "on the web: close 0 and the main thread goes on: 100000",
             "",
           ],
+          stderr: "",
           exitCode: 0,
         });
       },
@@ -764,15 +931,15 @@ worker.on("exit", (code: number) => parentPort!.postMessage("the child: exit " +
 `,
       "child.ts": isToldAndGoesOnFilling("String"),
     });
-    inPart(test)(
+    inPartWithWorkers(test)(
       "a Worker of a Worker that ends so takes neither its parent nor the main thread along",
       async () => {
         using folder = tempDir("aot-heap-limit", case4);
         const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout: stdout.replaceAll(": " + limitOf64MB, ""), exitCode }).toEqual({
+        expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "the child ends with: RangeError Out of memory\nthe child: exit 1\nthe parent: exit 0\n",
+          stderr: "",
           exitCode: 0,
         });
       },
@@ -782,29 +949,31 @@ worker.on("exit", (code: number) => parentPort!.postMessage("the child: exit " +
     inPart(test)(
       "the same program runs to its end in the default range",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
-        const { stdout, exitCode } = await run([await build(String(folder))], String(folder));
-        expect({ stdout, exitCode }).toEqual({ stdout: "never full 3999999 4000000\n", exitCode: 0 });
+        const { stdout, stderr, exitCode } = await start(keepsEverythingProgram);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "never full 3999999 4000000\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
       120_000,
     );
 
+    const keepsLittleProgram = oneOfMany("keeps-little.ts", keepsLittle);
     inPart(test)(
       "garbage does not fill it",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": keepsLittle });
-        const { stdout, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-        expect({ stdout, exitCode }).toEqual({ stdout: "done 15999999\n", exitCode: 0 });
+        const { stdout, stderr, exitCode } = await start(keepsLittleProgram, smallHeap);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done 15999999\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
 
     // Some built-ins make their result where no collection may run: the list of a match is one. A range that such a built-in finds full is collected as soon as collections may run again.
-    inPart(test)(
-      "a program that let go of a full range fills it as far again, and what it makes and drops then costs no error",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `const names: string[] = [];
+    // It runs many times as long as most. By itself it is built first, and it runs while the others are still being built.
+    const letsGoAndFillsAgain = byItself(
+      "lets-go-and-fills-again.ts",
+      `const names: string[] = [];
 for (let i = 0; i < 24; i++) names.push("name" + i);
 let keep: unknown[] = [];
 const fills: [string, (turns: number, most: number) => void][] = [
@@ -836,8 +1005,11 @@ for (const [what, fill] of fills.slice(0, 4)) {
 }
 for (const [what, fill] of fills) console.log(what, (run(fills[0][1], Infinity, Infinity) as number) > 10_000, run(fill, 300_000, 1000));
 `,
-        });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    );
+    inPartFirst(test)(
+      "a program that let go of a full range fills it as far again, and what it makes and drops then costs no error",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(letsGoAndFillsAgain, smallHeap);
         const kinds = ["cells", "storage outside cells", "lists", "strings"];
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout:
@@ -852,7 +1024,8 @@ for (const [what, fill] of fills) console.log(what, (run(fills[0][1], Infinity, 
 
     // The fill, the error and its catch leave words on the stack that name the list. The frames of what runs next lie over them, and the collector reads every word of a frame, written or not.
     // Which words lie where depends on the frames, so on the processor.
-    test.skipIf(!isLinux || isArm64).each(
+    eachOf(
+      test.skipIf(!isLinux || isArm64),
       dealt([
         [
           "a built-in that a loop calls",
@@ -940,12 +1113,15 @@ console.log("filled", filledOwnList, filled, "work", worked);
 export {};
 `,
         ],
+      ]).map(([what, expected, text]) => [
+        what,
+        expected,
+        oneOfMany(fileNamed(what, ".ts"), text, isLinux && !isArm64),
       ]),
     )(
       "behind a fill that was caught and let go there is room for %s",
-      async (_, expected, program) => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": program });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      async (_, expected, name) => {
+        const { stdout, stderr, exitCode } = await start(name, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
       },
       240_000,
@@ -953,11 +1129,9 @@ export {};
 
     // A range that stays almost full of objects in use: every collection frees only what was made since the last one, so the program would collect
     // again for every few hundred objects it makes, and hardly move. After a few such collections in a row it gets the error.
-    inPart(test)(
-      "a program that keeps a full range and goes on making objects is told so, and goes on once it lets go",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `${treeBuilder}let keep: (Tree | null)[] = [];
+    const keepsAFullRange = oneOfMany(
+      "keeps-a-full-range.ts",
+      `${treeBuilder}let keep: (Tree | null)[] = [];
 try {
   for (;;) keep.push(build(10, 1));
 } catch (error) {
@@ -988,8 +1162,11 @@ console.log("told", told, (last as Error).name, (last as Error).message);
 console.log("kept", least);
 console.log("afterward", size(build(16, 1)));
 `,
-        });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    );
+    inPart(test)(
+      "a program that keeps a full range and goes on making objects is told so, and goes on once it lets go",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(keepsAFullRange, smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "full RangeError\ntold 3 RangeError Out of memory\nkept 1023\nafterward 65535\n",
           stderr: "",
@@ -1017,15 +1194,19 @@ try {
 }
 `;
 
+    const keepsAFullRangeInATry = oneOfMany(
+      "keeps-a-full-range-in-a-try.ts",
+      keepsAFullRangeAndGoesOnInATry("console.log"),
+    );
     inPart(test)(
       "inside a try it is told as well",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": keepsAFullRangeAndGoesOnInATry("console.log") });
-        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-        expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
-        expect(stderr).not.toContain("FATAL");
-        expect(stdout).toMatch(/^full RangeError\nfinished \d+ true\n$/);
-        expect(exitCode).toBe(1);
+        const { stdout, stderr, exitCode } = await start(keepsAFullRangeInATry, smallHeap);
+        expect({ stdout, stderr: withoutFramesAndVersion(stderr), exitCode }).toEqual({
+          stdout: expect.stringMatching(/^full RangeError\nfinished \d+ true\n$/),
+          stderr: outOfMemory,
+          exitCode: 1,
+        });
       },
       120_000,
     );
@@ -1048,16 +1229,16 @@ await new Promise<void>(resolve => {
       "worker.ts": `import { parentPort } from "node:worker_threads";
 ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
     });
-    inPart(test)(
+    inPartWithWorkers(test)(
       "a Worker that is told so and does not catch it ends alone",
       async () => {
         using folder = tempDir("aot-heap-limit", case5);
         const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout: stdout.replace(/finished \d+/, "finished"), exitCode }).toEqual({
+        expect({ stdout: stdout.replace(/finished \d+/, "finished"), stderr, exitCode }).toEqual({
           stdout:
             "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
+          stderr: "",
           exitCode: 0,
         });
       },
@@ -1065,7 +1246,7 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
     );
 
     const case6 = together("6", twoWorkersThatKeepMoreThanHalfARange);
-    inPart(test.skipIf(runsOutOfRoomEarly))(
+    inPartWithWorkers(test.skipIf(runsOutOfRoomEarly))(
       "two Workers each keep more alive than half a range holds",
       async () => {
         using folder = tempDir("aot-heap-limit", case6);
@@ -1073,8 +1254,11 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
         const { stdout, stderr, exitCode } = await run([program], String(folder), {
           BUN_JSC_markedBlockCageSizeInMB: "128",
         });
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout, exitCode }).toEqual({ stdout: "3002300000,3002300000 2000000000\n", exitCode: 0 });
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "3002300000,3002300000 2000000000\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
       120_000,
     );
@@ -1103,13 +1287,17 @@ for (let entry: Entry | null = head; entry; entry = entry.next) sum += entry.id;
 parentPort!.postMessage(sum);
 `,
     });
-    inPart(test.skipIf(!isLinux || isASAN))(
+    inPartWithWorkers(test.skipIf(!canLimitAddressSpace))(
       "where address space is limited a Worker shares the range of the main thread",
       async () => {
         using folder = tempDir("aot-heap-limit", case7);
-        await linkTogether(String(folder));
-        const { stdout, exitCode } = await run(["sh", "-c", "ulimit -v 67108864 && exec ./program"], String(folder));
-        expect({ stdout, exitCode }).toEqual({ stdout: "shares 4999950000 4999950000\n", exitCode: 0 });
+        const program = await linkTogether(String(folder));
+        const { stdout, stderr, exitCode } = await run(withAddressSpaceOf(67108864)(program), String(folder));
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "shares 4999950000 4999950000\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
       120_000,
     );
@@ -1141,15 +1329,12 @@ parentPort!.once("message", () => {});
 parentPort!.postMessage(sum);
 `,
     });
-    inPart(test.skipIf(!isLinux || isASAN))(
+    inPartWithWorkers(test.skipIf(!canLimitAddressSpace))(
       "where address space is limited much of it is left for Workers and their threads",
       async () => {
         using folder = tempDir("aot-heap-limit", case8);
-        await linkTogether(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 8388608 && exec ./program"],
-          String(folder),
-        );
+        const program = await linkTogether(String(folder));
+        const { stdout, stderr, exitCode } = await run(withAddressSpaceOf(8388608)(program), String(folder));
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout: "roomy 4999950000,4999950000,4999950000,4999950000\n",
           stderr: "",
@@ -1159,49 +1344,48 @@ parentPort!.postMessage(sum);
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
+    // A program that runs under a limit on address space is built by itself: the other programs of an executable take address space.
+    const keepsManyObjects = byItself("keeps-many-objects.ts", keepsObjects(45_000_000), canLimitAddressSpace);
+    inPart(test.skipIf(!canLimitAddressSpace))(
       "under a limit of 4 GB on address space objects get over a gigabyte",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": keepsObjects(45_000_000) });
-        await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
-          String(folder),
-        );
+        const { stdout, stderr, exitCode } = await start(keepsManyObjects, {}, withAddressSpaceOf(4194304));
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "kept 45000000\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "and what is no object gets over a gigabyte too",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `const buffers: ArrayBuffer[] = [];
+    const keepsManyBuffers = byItself(
+      "keeps-many-buffers.ts",
+      `const buffers: ArrayBuffer[] = [];
 for (let i = 0; i < 28; i++) buffers.push(new ArrayBuffer(50 * 1024 * 1024));
 console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) / (1024 * 1024), "MB");
 `,
-        });
-        await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
-          String(folder),
-        );
+      canLimitAddressSpace,
+    );
+    inPart(test.skipIf(!canLimitAddressSpace))(
+      "and what is no object gets over a gigabyte too",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(keepsManyBuffers, {}, withAddressSpaceOf(4194304));
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "kept 1400 MB\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
 
+    const keepsManyObjectsInATry = byItself(
+      "keeps-many-objects-in-a-try.ts",
+      insideTry(keepsObjects(45_000_000)),
+      canLimitAddressSpace,
+    );
     // TODO: in about one run of five the process ends with a crash report in place of the sentence. Under the limit the collector's
     // mark stack cannot grow, and whether that or the end of the objects' range comes first differs from run to run.
-    inPart(isLinux && !isASAN ? test.todo : test.skip)(
+    inPart(canLimitAddressSpace ? test.todo : test.skip)(
       "a program that fills what a limit on address space leaves says so",
       async () => {
-        using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsObjects(45_000_000)) });
-        await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
-          String(folder),
+        const { stdout, stderr, exitCode } = await start(
+          keepsManyObjectsInATry,
+          {},
+          withAddressSpaceOf(1048576, "ulimit -c 0 && "),
         );
         expect(stderr).toMatch(
           /FATAL: out of memory\. The limit on address space \(ulimit -v\) leaves no room for more JavaScript objects\. Raise the limit\./,
@@ -1212,48 +1396,42 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "under a limit of 4 GB on address space one buffer gets two gigabytes",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `const buffer = new ArrayBuffer(2048 * 1024 * 1024);
+    const makesOneBuffer = byItself(
+      "makes-one-buffer.ts",
+      `const buffer = new ArrayBuffer(2048 * 1024 * 1024);
 console.log("made", buffer.byteLength / (1024 * 1024), "MB");
 `,
-        });
-        await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
-          String(folder),
-        );
+      canLimitAddressSpace,
+    );
+    inPart(test.skipIf(!canLimitAddressSpace))(
+      "under a limit of 4 GB on address space one buffer gets two gigabytes",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(makesOneBuffer, {}, withAddressSpaceOf(4194304));
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "made 2048 MB\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "under a limit of 4 GB on address space an idle program reserves less than half of it",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { readFileSync } from "node:fs";
+    const isIdle = byItself(
+      "is-idle.ts",
+      `import { readFileSync } from "node:fs";
 const sizeInKB = Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
 console.log(sizeInKB < 2 * 1024 * 1024 ? "less than half" : sizeInKB + " kB");
 `,
-        });
-        await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
-          String(folder),
-        );
+      canLimitAddressSpace,
+    );
+    inPart(test.skipIf(!canLimitAddressSpace))(
+      "under a limit of 4 GB on address space an idle program reserves less than half of it",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(isIdle, {}, withAddressSpaceOf(4194304));
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "less than half\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "objects that outgrow what is reserved at the start are all still there",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `type Entry = { id: number; next: Entry | null };
+    const outgrowsWhatIsReserved = byItself(
+      "outgrows-what-is-reserved.ts",
+      `type Entry = { id: number; next: Entry | null };
 const heads: (Entry | null)[] = [];
 for (let chain = 0; chain < 60; chain++) {
   let head: Entry | null = null;
@@ -1266,22 +1444,20 @@ let sum = 0;
 for (const head of heads) for (let entry = head; entry; entry = entry.next) (entries++, (sum += entry.id));
 console.log(entries, sum);
 `,
-        });
-        await build(String(folder));
-        const { stdout, stderr, exitCode } = await run(
-          ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
-          String(folder),
-        );
+      canLimitAddressSpace,
+    );
+    inPart(test.skipIf(!canLimitAddressSpace))(
+      "objects that outgrow what is reserved at the start are all still there",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(outgrowsWhatIsReserved, {}, withAddressSpaceOf(4194304));
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "40000000 19999980000000\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
 
-    inPart(test)(
-      "a program that fills the room for the shapes of objects gets an error that names it",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.js": `let keep = [];
+    const fillsTheRoomForShapes = oneOfMany(
+      "fills-the-room-for-shapes.js",
+      `let keep = [];
 function fill() {
   for (let i = 0; ; i++) {
     const object = {};
@@ -1300,13 +1476,11 @@ for (let attempt = 0; attempt < 2; attempt++) {
 }
 console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
 `,
-        });
-        const built = await run(
-          [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
-          String(folder),
-        );
-        expect(built.exitCode).toBe(0);
-        const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
+    );
+    inPart(test)(
+      "a program that fills the room for the shapes of objects gets an error that names it",
+      async () => {
+        const { stdout, stderr, exitCode } = await start(fillsTheRoomForShapes, {
           BUN_JSC_structureHeapSizeInKB: "65536",
         });
         const message =
@@ -1320,23 +1494,7 @@ console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
       240_000,
     );
 
-    test.each(
-      dealt([
-        ["is given a name under a key", `const object = {}; object["p" + i] = i;`],
-        [
-          "is given a name by Object.defineProperty",
-          `const object = {}; Object.defineProperty(object, "p" + i, { value: i });`,
-        ],
-        ["is a function that is given a name under a key", `const object = function () {}; object["p" + i] = i;`],
-        ["is given a prototype", `const object = { a: 1 }; Object.setPrototypeOf(object, {});`],
-        ["has a field and is given a name under a key", `const object = { a: 1 }; object["p" + i] = i;`],
-        ["is made by a class and is given a name under a key", `const object = new Thing(); object["p" + i] = i;`],
-      ]),
-    )(
-      "a program that lets go of everything fills the room for the shapes of objects as far again, where each object %s",
-      async (_, makeObject) => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.js": `class Thing { constructor() { this.a = 1; } }
+    const fillsTheRoomForShapesAgain = (makeObject: string) => `class Thing { constructor() { this.a = 1; } }
 let keep = [];
 function fill() {
   for (let i = 0; ; i++) {
@@ -1355,30 +1513,40 @@ for (let attempt = 0; attempt < 4; attempt++) {
   }
 }
 console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
-`,
-        });
-        const built = await run(
-          [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
-          String(folder),
-        );
-        expect(built.exitCode).toBe(0);
-        const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
-          BUN_JSC_structureHeapSizeInKB: "16384",
-        });
+`;
+    eachOf(
+      test,
+      dealt([
+        ["is given a name under a key", `const object = {}; object["p" + i] = i;`],
+        [
+          "is given a name by Object.defineProperty",
+          `const object = {}; Object.defineProperty(object, "p" + i, { value: i });`,
+        ],
+        ["is a function that is given a name under a key", `const object = function () {}; object["p" + i] = i;`],
+        ["is given a prototype", `const object = { a: 1 }; Object.setPrototypeOf(object, {});`],
+        ["has a field and is given a name under a key", `const object = { a: 1 }; object["p" + i] = i;`],
+        ["is made by a class and is given a name under a key", `const object = new Thing(); object["p" + i] = i;`],
+      ]).map(([how, makeObject]) => [how, oneOfMany(fileNamed(how, ".js"), fillsTheRoomForShapesAgain(makeObject))]),
+    )(
+      "a program that lets go of everything fills the room for the shapes of objects as far again, where each object %s",
+      async (_, name) => {
+        const { stdout, stderr, exitCode } = await start(name, { BUN_JSC_structureHeapSizeInKB: "16384" });
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true,true,true,true\n", stderr: "", exitCode: 0 });
       },
       240_000,
     );
 
     const case9 = together("9", sixWorkersOneAfterTheOther);
-    inPart(test.skipIf(!isLinux))(
+    inPartWithWorkers(test.skipIf(!isLinux))(
       "the range of a Worker that has ended is given back",
       async () => {
         using folder = tempDir("aot-heap-limit", case9);
-        const { stdout, exitCode } = await run([await linkTogether(String(folder))], String(folder));
-        expect({ stdout, exitCode }).toEqual({ stdout: "given back\n", exitCode: 0 });
+        const { stdout, stderr, exitCode } = await run([await linkTogether(String(folder))], String(folder));
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "given back\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
+
+    for (const define of [...testsThatTakeLongest, ...testsBetween, ...testsOfWorkers]) define();
   });
 }

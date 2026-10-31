@@ -227,6 +227,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         other_bytes += memory_cost_array_list(&bundle.script_requests);
         other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();
         other_bytes += memory_cost_array_list(&bundle.joined_css_roots);
+        other_bytes += memory_cost_array_list(&bundle.joined_server_files);
     }
     // .next_bundle
     {

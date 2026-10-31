@@ -446,6 +446,7 @@ impl DevServer {
             script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
             joined_css_roots: Vec::new(),
+            joined_server_files: Vec::new(),
         });
 
         self.next_bundle.requests = deferred_request::List::default();
@@ -457,18 +458,20 @@ impl DevServer {
     fn stylesheets_repaired_by_current_bundle(
         &self,
         bv2: &BundleV2<'_>,
+        to_parse_for_server: &mut Vec<incremental_graph::ServerFileIndex>,
     ) -> (
         Vec<(incremental_graph::ClientFileIndex, bun_ast::Index)>,
-        Vec<bun_ast::Index>,
+        Vec<(incremental_graph::ServerFileIndex, bun_ast::Index)>,
     ) {
         let files = self.client_graph.bundled_files.values();
         let mut repaired: Vec<(incremental_graph::ClientFileIndex, bun_ast::Index)> = Vec::new();
-        let mut server_rows: Vec<bun_ast::Index> = Vec::new();
+        let mut server_rows: Vec<(incremental_graph::ServerFileIndex, bun_ast::Index)> = Vec::new();
         let mut lookups: usize = 0;
         let ast = &bv2.graph.ast;
         let rows = ast.items_css().iter().zip(ast.items_parts());
+        let rows = rows.zip(ast.items_target());
         let rows = rows.zip(bv2.graph.input_files.items_source());
-        for (source_index, ((css, parts), source)) in rows.enumerate() {
+        for (source_index, (((css, parts), target), source)) in rows.enumerate() {
             // The link step drops a file with no parts: a failed `@import` leaves it so.
             if css.is_none() || parts.is_empty() {
                 continue;
@@ -489,20 +492,33 @@ impl DevServer {
                     continue;
                 }
             }
-            let failed_on_server = self.css_failed_on_server_before_this_bundle(key);
-            if failed_on_client.is_none() && !failed_on_server {
+            let on_server = self.failed_on_server_before_this_bundle(key);
+            // A plugin can load one path as a stylesheet for the browser and as a module for the server.
+            let stylesheet_on_server = on_server.filter(|_| {
+                target.bake_graph() != bake::Graph::Client || Self::imported_by_server_row(bv2, row)
+            });
+            // The module that this bundle parsed for the server graph at this key drops that failure too.
+            let repaired_on_server = stylesheet_on_server.is_some()
+                || (on_server.is_some() && Self::parsed_as_module_for_server(bv2, key));
+            if let Some(file) = on_server.filter(|_| !repaired_on_server) {
+                to_parse_for_server.push(file);
+            }
+            if failed_on_client.is_none() && !repaired_on_server {
                 continue;
             }
             if let Some(file) = client {
-                if repaired.iter().any(|(known, _)| *known == file) {
-                    continue;
+                if !repaired.iter().any(|(known, _)| *known == file) {
+                    repaired.push((file, row));
                 }
-                repaired.push((file, row));
             }
-            if failed_on_server {
-                server_rows.push(row);
+            if let Some(file) = stylesheet_on_server {
+                if !server_rows.iter().any(|(known, _)| *known == file) {
+                    server_rows.push((file, row));
+                }
             }
         }
+        // A later row can be the stylesheet of a server graph that an earlier row of its key did not find.
+        to_parse_for_server.retain(|file| !server_rows.iter().any(|(known, _)| known == file));
         debug_log!(
             "join_holders_of_repaired: {} css lookups, {} repaired",
             lookups,
@@ -511,16 +527,76 @@ impl DevServer {
         (repaired, server_rows)
     }
 
-    /// True if the server graph holds a failure of the stylesheet `key` that an earlier bundle filed.
-    fn css_failed_on_server_before_this_bundle(&self, key: &[u8]) -> bool {
+    /// The file that the server graph has at `key`, if it holds a failure that an earlier bundle filed.
+    fn failed_on_server_before_this_bundle(
+        &self,
+        key: &[u8],
+    ) -> Option<incremental_graph::ServerFileIndex> {
         if self.frontend_only {
-            return false;
+            return None;
         }
-        self.server_graph.get_file_index(key).is_some_and(|file| {
+        self.server_graph.get_file_index(key).filter(|&file| {
             let owner = serialized_failure::OwnerPacked::new(bake::Side::Server, file.get());
             self.server_graph.get_file_by_index(file).failed
                 && self.has_failure_from_earlier_bundle(owner)
         })
+    }
+
+    /// True if a file that the bundle parsed for a server graph imports the row `imported`: graphs can share a row.
+    fn imported_by_server_row(bv2: &BundleV2<'_>, imported: bun_ast::Index) -> bool {
+        let ast = &bv2.graph.ast;
+        let rows = ast.items_target().iter().zip(ast.items_parts());
+        let mut rows = rows.zip(ast.items_import_records());
+        rows.any(|((target, parts), records)| {
+            let mut records = records.as_slice().iter();
+            target.bake_graph() != bake::Graph::Client
+                && !parts.is_empty()
+                && records.any(|record| record.source_index == imported)
+        })
+    }
+
+    /// True if the running bundle parsed the file at `key` for a server graph, and not as a stylesheet.
+    fn parsed_as_module_for_server(bv2: &BundleV2<'_>, key: &[u8]) -> bool {
+        let ast = &bv2.graph.ast;
+        let rows = ast.items_css().iter().zip(ast.items_parts());
+        let rows = rows.zip(ast.items_target());
+        let mut rows = rows.zip(bv2.graph.input_files.items_source());
+        rows.any(|(((css, parts), target), source)| {
+            css.is_none()
+                && !parts.is_empty()
+                && target.bake_graph() != bake::Graph::Client
+                && source.path.key_for_incremental_graph() == key
+        })
+    }
+
+    /// Parses `file` again in the running bundle, for each server graph that holds it.
+    fn enqueue_for_server_graphs(
+        &mut self,
+        file: incremental_graph::ServerFileIndex,
+        bv2: &mut BundleV2<'_>,
+    ) {
+        let key = &self.server_graph.bundled_files.keys()[file.get() as usize];
+        // The bundler enters a file by its path: the key of a file in a plugin namespace is none.
+        if !paths::is_absolute(key) {
+            return;
+        }
+        let on_server = self.server_graph.get_file_by_index(file);
+        let logged = (self.log.msgs.len(), self.log.errors, self.log.warnings);
+        let mut enqueue = |target| {
+            bun_core::handle_oom(
+                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(key, target, None),
+            )
+        };
+        if on_server.is_rsc {
+            enqueue(bun_ast::Target::Bun);
+        }
+        // The parse of a client component boundary for the server queues its SSR copy.
+        if on_server.is_ssr && !on_server.is_client_component_boundary {
+            enqueue(bun_ast::Target::ServerComponentsSsr);
+        }
+        // A path that no longer resolves left an error here: this bundle files none for it.
+        self.log.msgs.truncate(logged.0);
+        (self.log.errors, self.log.warnings) = (logged.1, logged.2);
     }
 
     /// Scan end of the running bundle: adds the css roots that hold a stylesheet it repaired.
@@ -529,18 +605,24 @@ impl DevServer {
     pub(super) fn join_holders_of_repaired(&mut self, bv2: &mut BundleV2<'_>) {
         debug_assert!(!self.bundling_failures.is_empty());
         let mut requests: Vec<incremental_graph::JoinRequest> = Vec::new();
+        let mut server_files: Vec<incremental_graph::ServerFileIndex> = Vec::new();
         {
             let _lock = self.graph_safety_lock.guard();
-            let (repaired, server_rows) = self.stylesheets_repaired_by_current_bundle(bv2);
-            if repaired.is_empty() && server_rows.is_empty() {
+            let (repaired, server_rows) =
+                self.stylesheets_repaired_by_current_bundle(bv2, &mut server_files);
+            if repaired.is_empty() && server_rows.is_empty() && server_files.is_empty() {
                 return;
             }
             let current_bundle = self
                 .current_bundle
                 .as_mut()
                 .expect("infallible: bundle active");
+            server_files.retain(|file| !current_bundle.joined_server_files.contains(file));
+            current_bundle
+                .joined_server_files
+                .extend_from_slice(&server_files);
             // Finalize drops a failure of the server graph where it adds the css root to that graph.
-            for row in server_rows {
+            for (_, row) in server_rows {
                 bun_core::handle_oom(
                     current_bundle
                         .start_data
@@ -557,6 +639,10 @@ impl DevServer {
                     &mut requests,
                 );
             }
+        }
+        // A stylesheet for the browser tells nothing of the failed file that the server graph has at its key.
+        for file in server_files {
+            self.enqueue_for_server_graphs(file, bv2);
         }
         // The graph lock is released first: the bundler's callbacks into the dev server take it.
         for request in requests {

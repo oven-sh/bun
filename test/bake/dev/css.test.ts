@@ -2088,6 +2088,77 @@ devTest("css file repaired with no file event comes back in a plugin stylesheet 
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [".dep-v2 .main-v2"] });
   },
 });
+for (const mode of ["0", "1"]) {
+  devTest(
+    `css file that an onLoad plugin loads as a module for the server fails its route until the module builds (BUN_ASSUME_PERFECT_INCREMENTAL=${mode})`,
+    {
+      framework: {
+        fileSystemRouterTypes: [
+          { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" },
+        ],
+      },
+      // For a server file "theme.css" is the module in "theme.server.txt". For the browser it is the stylesheet in
+      // "theme.client.txt". No bundle reads either file when it is written.
+      pluginFile: `
+        import { readFileSync } from "node:fs";
+        export default [
+          {
+            name: "module-for-the-server",
+            setup(build) {
+              build.onLoad({ filter: /theme\\.css$/ }, args => {
+                const side = args.side === "server" ? "server" : "client";
+                return {
+                  contents: readFileSync(args.path.replace(/css$/, side + ".txt"), "utf8"),
+                  loader: side === "server" ? "js" : "css",
+                };
+              });
+            },
+          },
+        ];
+      `,
+      // With "1" a request for a failed route answers with the recorded failure. With "0" it bundles the route again.
+      env: { BUN_ASSUME_PERFECT_INCREMENTAL: mode },
+      files: {
+        "server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+        // The browser gets the stylesheet as an @import of "app.css". The route imports the module.
+        "client.ts": `import "./app.css";`,
+        "app.css": `@import "./theme.css";\n.app-v1 { color: red; }`,
+        "theme.css": ``,
+        "theme.server.txt": `export default {`,
+        "theme.client.txt": `.theme-v1 { color: red; }`,
+        "routes/index.ts": `
+          import theme from "../theme.css";
+          export default (req, meta) => {
+            const links = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">');
+            return new Response("module=" + theme.name + links.join(""), { headers: { "content-type": "text/html" } });
+          };
+        `,
+      },
+      async test(dev) {
+        // The page of a build error, or the name that the module exports and the class names in each stylesheet.
+        const load = async () => {
+          const html = await dev.fetch("/").text();
+          if (html.includes("<title>Bun - Build Failed</title>")) return "build error";
+          return { module: html.match(/module=([a-z]+-v\d)/)?.[1], ...(await linkedStylesheets(dev, "/")) };
+        };
+        expect(await load()).toBe("build error");
+        // This bundle has "theme.css" as the @import of the saved stylesheet only, and the module still fails.
+        await dev.write("app.css", `@import "./theme.css";\n.app-v2 { color: red; }`, { errors: null });
+        expect(await load()).toBe("build error");
+        await Bun.write(dev.join("theme.server.txt"), `export default { name: "module-v1" };`);
+        await dev.write("theme.css", `/* saved */`, { errors: null });
+        expect(await load()).toEqual({ module: "module-v1", status: 200, sheets: [".theme-v1 .app-v2"] });
+        await Bun.write(dev.join("theme.server.txt"), `export default {`);
+        await dev.write("theme.css", `/* saved again */`, { errors: null });
+        expect(await load()).toBe("build error");
+        // The bundle of a stylesheet that imports "theme.css" builds the module again for the server.
+        await Bun.write(dev.join("theme.server.txt"), `export default { name: "module-v2" };`);
+        await dev.write("app.css", `@import "./theme.css";\n.app-v3 { color: red; }`, { errors: null });
+        expect(await load()).toEqual({ module: "module-v2", status: 200, sheets: [".theme-v1 .app-v3"] });
+      },
+    },
+  );
+}
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

@@ -198,9 +198,6 @@ async function receiveRequest(): Promise<LambdaRequest> {
     exit("Runtime received a request without a request ID");
   }
   traceId = response.headers.get("Lambda-Runtime-Trace-Id") ?? undefined;
-  if (traceId === undefined) {
-    exit("Runtime received a request without a trace ID");
-  }
   process.env["_X_AMZN_TRACE_ID"] = traceId;
   functionArn = response.headers.get("Lambda-Runtime-Invoked-Function-Arn") ?? undefined;
   if (functionArn === undefined) {

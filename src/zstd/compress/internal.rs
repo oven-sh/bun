@@ -901,7 +901,7 @@ impl<'a> Near<'a> {
     /// the order of what follows them. Only the sum of `match_pos` and `from` has to be a position.
     #[inline(always)]
     pub(crate) fn compare(self, pos: u32, match_pos: u32, from: u32) -> Common {
-        let mut len = match self.compare_chunks(pos, match_pos, from) {
+        let mut len = match self.compare_chunks::<false>(pos, match_pos, from) {
             Ok(common) => return common,
             Err(len) => len,
         };
@@ -917,20 +917,20 @@ impl<'a> Near<'a> {
     }
 
     /// [`Self::compare`], 16 bytes at a time as long as there are as many. Fails with how many bytes are known to be in
-    /// common when there are not.
+    /// common when there are not. With `FIRST_APART`, the first 16 bytes, where most differ, have code of their own.
     #[inline(always)]
-    pub(crate) fn compare_chunks(
+    pub(crate) fn compare_chunks<const FIRST_APART: bool>(
         self,
         pos: u32,
         match_pos: u32,
         from: u32,
     ) -> core::result::Result<Common, u32> {
-        self.compare_chunks_with(pos, self, match_pos, from)
+        self.compare_chunks_with::<FIRST_APART>(pos, self, match_pos, from)
     }
 
     /// [`Self::compare_chunks`], for a match that is at `match_pos` in `other`.
     #[inline(always)]
-    pub(crate) fn compare_chunks_with(
+    pub(crate) fn compare_chunks_with<const FIRST_APART: bool>(
         self,
         pos: u32,
         other: Self,
@@ -938,6 +938,19 @@ impl<'a> Near<'a> {
         from: u32,
     ) -> core::result::Result<Common, u32> {
         let mut len = from;
+        if FIRST_APART
+            && let (Some(bytes), Some(match_bytes)) = (
+                self.chunk16(pos.wrapping_add(len)),
+                other.chunk16(match_pos.wrapping_add(len)),
+            )
+        {
+            let differ = differences(bytes, match_bytes);
+            if differ != 0 {
+                let len = len + differ.trailing_zeros();
+                return Ok(Common::within(len, match_bytes, bytes));
+            }
+            len += 16;
+        }
         while let (Some(bytes), Some(match_bytes)) = (
             self.chunk16(pos.wrapping_add(len)),
             other.chunk16(match_pos.wrapping_add(len)),
@@ -945,6 +958,10 @@ impl<'a> Near<'a> {
             let differ = differences(bytes, match_bytes);
             if differ != 0 {
                 let first = differ.trailing_zeros();
+                if !FIRST_APART {
+                    return Ok(Common::within(len + first, match_bytes, bytes));
+                }
+                // After 16 bytes that are the same, that takes longer than it saves.
                 let byte = bytes.get(first as usize & 15).copied().unwrap_or(0);
                 let match_byte = match_bytes.get(first as usize & 15).copied().unwrap_or(0);
                 return Ok(Common::followed_by(len + first, match_byte, byte));
@@ -963,9 +980,7 @@ impl<'a> Near<'a> {
         if first >= 16 || first < from {
             return None;
         }
-        let byte = head.get(first as usize & 15).copied().unwrap_or(0);
-        let match_byte = match_bytes.get(first as usize & 15).copied().unwrap_or(0);
-        Some(Common::followed_by(first, match_byte, byte))
+        Some(Common::within(first, match_bytes, head))
     }
 
     /// A hint that `pos`, which may be anything, is about to be read.
@@ -1084,6 +1099,16 @@ impl Common {
         Self {
             len,
             match_is_smaller: Some(match_byte < byte),
+        }
+    }
+
+    /// [`Self::followed_by`] for bytes that differ somewhere. Which ones are smaller does not wait for where they differ.
+    #[inline(always)]
+    pub(crate) fn within(len: u32, match_bytes: &[u8; 16], bytes: &[u8; 16]) -> Self {
+        debug_assert!(match_bytes != bytes);
+        Self {
+            len,
+            match_is_smaller: Some(u128::from_be_bytes(*match_bytes) < u128::from_be_bytes(*bytes)),
         }
     }
 
@@ -1379,10 +1404,17 @@ pub(crate) fn bt_walk<const BY_HEAD: bool>(
         let match_pos = match_index.wrapping_sub(dict_limit);
         let common = match head.and_then(|head| near.compare_head(head, match_pos, from)) {
             Some(common) => common,
-            None => match near.compare_chunks(ip, match_pos, from) {
-                Ok(common) => common,
-                Err(from) => input.compare_rest(ip, match_index, from)?,
-            },
+            None => {
+                let by_chunks = if BY_HEAD {
+                    near.compare_chunks::<false>(ip, match_pos, from)
+                } else {
+                    near.compare_chunks::<true>(ip, match_pos, from)
+                };
+                match by_chunks {
+                    Ok(common) => common,
+                    Err(from) => input.compare_rest(ip, match_index, from)?,
+                }
+            }
         };
         if !visit(match_index, common)? {
             break;
@@ -1508,7 +1540,7 @@ impl<'a> DictTree<'a> {
             let match_pos = dict_match_index.wrapping_sub(self.low_limit);
             let chunks = input
                 .near
-                .compare_chunks_with(ip, self.content, match_pos, from);
+                .compare_chunks_with::<false>(ip, self.content, match_pos, from);
             let common = match chunks {
                 Ok(common) => common,
                 Err(from) => self.compare_rest(input, ip, dict_match_index, from)?,
@@ -2611,6 +2643,46 @@ mod tests {
         }
         assert!(Hasher::new(33, 4).of_4_bytes().is_none());
         assert!(Hasher::new(17, 5).of_4_bytes().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_head_of_a_position_is_compared_as_all_of_it() -> Result<()> {
+        const POS: u32 = 40;
+        for len in 0..=17 {
+            for (byte, match_byte) in [(1, 2), (2, 1), (0x7F, 0x80), (0x80, 0x7F)] {
+                // What follows the difference is in the other order.
+                let mut bytes = [vec![byte; POS as usize], vec![match_byte; POS as usize]].concat();
+                bytes.sub_mut(..len as usize)?.fill(9);
+                bytes.sub_mut(POS as usize..(POS + len) as usize)?.fill(9);
+                *bytes.at_mut(len as usize)? = match_byte;
+                *bytes.at_mut((POS + len) as usize)? = byte;
+                let near = Near::new(&bytes)?;
+                let head = near.chunk16(POS).ok_or(BUG)?;
+                for from in [0, len / 2, len] {
+                    for common in [
+                        near.compare_chunks::<false>(POS, 0, from),
+                        near.compare_chunks::<true>(POS, 0, from),
+                    ] {
+                        assert_eq!(
+                            common.map(|common| (common.len, common.match_is_smaller)),
+                            Ok((len, Some(match_byte < byte))),
+                            "{len} {from}"
+                        );
+                    }
+                }
+                for from in [0, len, len + 1] {
+                    let common = near.compare_head(head, 0, from);
+                    let common = common.map(|common| (common.len, common.match_is_smaller));
+                    let told = len < 16 && from <= len;
+                    assert_eq!(
+                        common,
+                        told.then_some((len, Some(match_byte < byte))),
+                        "{len} {from}"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 

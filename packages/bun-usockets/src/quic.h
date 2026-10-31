@@ -172,6 +172,15 @@ unsigned int us_quic_stream_header_count(us_quic_stream_t *s);
 const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsigned int i);
 /* Fields a request may have, pseudo-headers included. */
 #define US_QUIC_MAX_REQUEST_FIELDS 200
+/* Out-of-order CRYPTO frames a server keeps while the ClientHello is still
+ * incomplete (lsquic's es_max_crypto_stash, 20 by default). Chromium sends
+ * its ClientHello in two Initial packets with 2 or 3 CRYPTO frames each, and
+ * its chaos protection (quiche quic_chaos_protector.cc) adds up to 10 frames
+ * to each packet and shuffles them, so over 20 can arrive before the one at
+ * the read offset. A lost packet is resent with new frame bounds, which
+ * stashes again. 64 leaves room for both. lsquic's byte limit of 6 KB
+ * (IMICO_MAX_BUFFERED_CRYPTO) still bounds the data. */
+#define US_QUIC_MAX_CRYPTO_STASH 64
 /* The header set exceeds the size or the field count this endpoint accepts and is incomplete. */
 int us_quic_stream_headers_too_large(us_quic_stream_t *s);
 

@@ -1,4 +1,5 @@
 #include "internal/internal.h"
+#include "quic.h"
 #include "lsquic.h"
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
@@ -436,6 +437,7 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     lsquic_engine_init_settings(s, flags);
     s->es_versions = (1u << LSQVER_I001) | (1u << LSQVER_I002);
     s->es_ecn = 0;
+    s->es_max_crypto_stash = US_QUIC_MAX_CRYPTO_STASH;
     /* Static-table-only encoding, as quic.c does. The dynamic table also makes
      * the decoder stream carry acks, and lsquic delays a server's MAX_STREAMS
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */

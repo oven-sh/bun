@@ -282,11 +282,15 @@ test.skipIf(isWindows).each([
 ] as const)("a hardened GNU link %s", async (_name, imports, missing) => {
   using dir = tempDir("build-hardened-imports", {});
   const root = String(dir);
-  const tool = join(root, "llvm-fixture");
+  const tool = join(root, "llvm fixture");
   writeFileSync(
     tool,
-    `#!${bunExe()}
-if (process.argv.includes("--undefined-only")) console.log(process.env.FIXTURE_IMPORTS);
+    `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--undefined-only" ]; then
+    printf '%s\\n' "$FIXTURE_IMPORTS"
+  fi
+done
 `,
   );
   chmodSync(tool, 0o755);

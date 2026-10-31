@@ -950,6 +950,58 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
+// The module with top-level await that evaluation of `root`'s loaded graph has to wait for (ReadyForSyncExecution of the import defer proposal), or null.
+static JSC::AbstractModuleRecord* findPendingTopLevelAwait(JSC::AbstractModuleRecord* root)
+{
+    WTF::UncheckedKeyHashSet<JSC::AbstractModuleRecord*> visited;
+    WTF::Vector<JSC::AbstractModuleRecord*, 16> stack;
+    visited.add(root);
+    stack.append(root);
+    while (!stack.isEmpty()) {
+        auto* record = dynamicDowncast<JSC::CyclicModuleRecord>(stack.takeLast());
+        // Done with its whole cycle, or mid-evaluation below this require(): a cycle that require() reads as it is.
+        if (!record || record->isSCCEvaluated() || record->status() == JSC::CyclicModuleRecord::Status::Evaluating)
+            continue;
+        if (record->hasTLA())
+            return record;
+        const auto& requests = record->requestedModules();
+        const auto& loaded = record->loadedModules();
+        for (unsigned i = 0; i < requests.size(); ++i) {
+            // An edge between two modules of a prelinked graph (a compiled executable's) is not in [[LoadedModules]].
+            auto* dependency = record->prelinkedRequestedModule(i);
+            if (!dependency) {
+                auto iter = loaded.find(JSC::ModuleMapKey { requests[i].m_specifier.impl(), requests[i].type() });
+                dependency = iter == loaded.end() ? nullptr : iter->value.m_module.get();
+            }
+            if (dependency && visited.add(dependency).isNewEntry)
+                stack.append(dependency);
+        }
+    }
+    return nullptr;
+}
+
+static JSC::EncodedJSValue throwRequireAsyncModule(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& key, Bun::JSCommonJSModule* requirer, JSC::AbstractModuleRecord* asyncRecord)
+{
+    auto filenameOf = [&](Bun::JSCommonJSModule* module) -> WTF::String {
+        JSValue filename = module ? module->filename() : JSValue();
+        if (!filename || !filename.isString())
+            return {};
+        return asString(filename)->value(globalObject);
+    };
+    WTF::String parentFilename = filenameOf(requirer);
+    RETURN_IF_EXCEPTION(scope, {});
+    // A Module._extensions handler passes the module that is being loaded. The file whose require() this is, is its parent.
+    if (requirer && parentFilename == key) {
+        parentFilename = filenameOf(requirer->m_parent.get());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    WTF::String from = parentFilename.isEmpty() ? emptyString() : makeString("\n  From "_s, parentFilename);
+    WTF::String asyncKey = asyncRecord->moduleKey().isSymbol() ? WTF::String() : asyncRecord->moduleKey().string();
+    WTF::String where = asyncKey.isEmpty() || asyncKey == key ? emptyString() : makeString("\n  The top-level await is in "_s, asyncKey);
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_REQUIRE_ASYNC_MODULE,
+        makeString("require() cannot be used on an ESM graph with top-level await. Use import() instead."_s, from, "\n  Requiring "_s, key, where));
+}
+
 // No load of this entry is in flight: it evaluated (maybe with an error) or its load failed.
 static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 {
@@ -1119,9 +1171,45 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // Any other Evaluating record (one with top-level await) must not
         // reach loadModuleSync: Link() and Evaluate() reject that status.
         if (isModuleEvaluating(entry->record()))
-            return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+            return throwRequireAsyncModule(globalObject, scope, keyString, requirer, entry->record());
     }
 
+    // Load the whole graph without evaluating it, so that top-level await is rejected before any ES module of it runs.
+    JSPromise* loadPromise;
+    {
+        JSC::VM::SynchronousModuleQueue queue;
+        queue.prev = vm.m_synchronousModuleQueue;
+        vm.m_synchronousModuleQueue = &queue;
+        loadPromise = loader->loadModule(globalObject, key, nullptr, nullptr, {});
+        if (!scope.exception())
+            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        vm.m_synchronousModuleQueue = queue.prev;
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    switch (loadPromise->status()) {
+    case JSPromise::Status::Fulfilled: {
+        auto* entry = loader->registryEntry(key);
+        if (auto* record = entry ? entry->record() : nullptr) {
+            if (auto* asyncRecord = findPendingTopLevelAwait(record))
+                return throwRequireAsyncModule(globalObject, scope, keyString, requirer, asyncRecord);
+        }
+        break;
+    }
+    case JSPromise::Status::Rejected: {
+        loadPromise->markAsHandled();
+        scope.throwException(globalObject, loadPromise->result());
+        return {};
+    }
+    case JSPromise::Status::Pending: {
+        loadPromise->markAsHandled();
+        // A fetch is genuinely asynchronous (a plugin's async onLoad). A fetch an import already started is not: JSC runs it again synchronously.
+        if (!entryExistedBefore)
+            loader->removeEntry(key); // only the entry this call created, as below
+        return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+    }
+    }
+
+    // Link and evaluate. Nothing in the graph is left to wait for, so this settles synchronously.
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 

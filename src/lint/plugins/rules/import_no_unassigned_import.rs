@@ -86,10 +86,10 @@ impl NoUnassignedImport {
         };
         let cwd = modules.cwd();
         if !matches!(source.first(), Some(b'.' | b'/')) {
-            return self.allow.matches(cwd, source);
+            return self.allow.matches(file, cwd, source);
         }
         let filename = paths::portable(file.path(), file.path());
         let directory = paths::resolve(cwd, paths::dirname(&filename));
-        self.allow.matches(cwd, &paths::resolve(&directory, source))
+        self.allow.matches(file, cwd, &paths::resolve(&directory, source))
     }
 }

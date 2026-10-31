@@ -135,7 +135,7 @@ impl Host<'_> {
 
     /// Calls ESLint's `Linter.verify`. `run` is JSON with what all files of a config file share: `from`, `basePath`,
     /// `allowInlineConfig`, `onlyErrors`, `aboutLayout`, and for [`Configuration::whole`] `file`, `ignores` and `added`.
-    /// `reviveOverride` in `worker/eslint.js` turns each object in `added` into one that every ESLint 9 and 10 accepts.
+    /// `reviveOverride` in `worker/eslint.js` turns each object in `added` into one that the installed ESLint accepts.
     pub fn lint_with_eslint(
         &self,
         configuration: &Configuration,

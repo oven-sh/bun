@@ -217,8 +217,9 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
+        source_mapping_url: bun_ast::Range,
     ) -> bun_js_printer::Result<()> {
-        self.put_mappings(source, chunk.buffer)
+        self.put_mappings(source, chunk.buffer, source_mapping_url)
     }
 }
 
@@ -236,10 +237,12 @@ impl Drop for SavedSourceMap {
 }
 
 impl SavedSourceMap {
+    /// `source_mapping_url` is `Ast::source_mapping_url` of `source`, from the parse or from the transpiler cache.
     pub fn put_mappings(
         &mut self,
         source: &bun_ast::Source,
         mut mappings: MutableString,
+        _source_mapping_url: bun_ast::Range,
     ) -> bun_js_printer::Result<()> {
         // Readers trust a stored blob's header, so validate it here.
         if !InternalSourceMap::is_valid_blob(mappings.list.as_slice()) {

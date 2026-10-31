@@ -85,7 +85,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-const EXPECTED_VERSION: u32 = 51;
+/// Version 52: An entry has the place of the URL of the source's `sourceMappingURL` comment.
+const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -152,6 +153,9 @@ pub struct Metadata {
     pub(crate) esm_record_byte_offset: u64,
     pub(crate) esm_record_byte_length: u64,
     pub(crate) esm_record_hash: u64,
+
+    /// `Ast::source_mapping_url` of the source, which a hit gives `SavedSourceMap::put_mappings` as the print did.
+    pub source_mapping_url: bun_ast::Range,
 }
 
 impl Default for Metadata {
@@ -172,13 +176,14 @@ impl Default for Metadata {
             esm_record_byte_offset: 0,
             esm_record_byte_length: 0,
             esm_record_hash: 0,
+            source_mapping_url: bun_ast::Range::NONE,
         }
     }
 }
 
 impl Metadata {
-    // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    // 1×u32 + 2×u8 (enum reprs) + 12×u64 + 2×i32 = 4 + 2 + 96 + 8 = 110
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8 + 2 * 4;
 
     pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
@@ -201,6 +206,9 @@ impl Metadata {
         writer.write_int_le::<u64>(self.esm_record_byte_offset)?;
         writer.write_int_le::<u64>(self.esm_record_byte_length)?;
         writer.write_int_le::<u64>(self.esm_record_hash)?;
+
+        writer.write_int_le::<i32>(self.source_mapping_url.loc.start)?;
+        writer.write_int_le::<i32>(self.source_mapping_url.len)?;
         Ok(())
     }
 
@@ -238,6 +246,9 @@ impl Metadata {
         self.esm_record_byte_length = reader.read_int_le::<u64>()?;
         self.esm_record_hash = reader.read_int_le::<u64>()?;
 
+        self.source_mapping_url.loc.start = reader.read_int_le::<i32>()?;
+        self.source_mapping_url.len = reader.read_int_le::<i32>()?;
+
         self.module_type = match module_type_raw {
             1 => ModuleType::Esm,
             2 => ModuleType::Cjs,
@@ -273,6 +284,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
+        source_mapping_url: bun_ast::Range,
         output_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
@@ -323,6 +335,7 @@ impl Entry {
                     esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len())
                         as u64,
                     esm_record_byte_length: esm_record.len() as u64,
+                    source_mapping_url,
                     ..Default::default()
                 };
 
@@ -824,6 +837,7 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
+        source_mapping_url: bun_ast::Range,
         source_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
@@ -872,6 +886,7 @@ impl RuntimeTranspilerCache {
             features_hash,
             sourcemap,
             esm_record,
+            source_mapping_url,
             source_code,
             exports_kind,
         )
@@ -1019,7 +1034,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             hit
         },
-        put(output_code_bytes, sourcemap, esm_record) => {
+        put(output_code_bytes, sourcemap, esm_record, source_mapping_url) => {
             let this = &mut *this;
             if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
                 return;
@@ -1046,6 +1061,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 },
                 sourcemap,
                 esm_record,
+                source_mapping_url,
                 &output_code,
                 this.exports_kind,
             );

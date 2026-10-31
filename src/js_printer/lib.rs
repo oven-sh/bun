@@ -1253,7 +1253,8 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // ───────────────────────────────────────────────────────────────────────────
 pub struct SourceMapHandler<'a> {
     pub(crate) ctx: NonNull<()>,
-    pub(crate) callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
+    pub(crate) callback:
+        fn(*mut (), SourceMap::Chunk, &bun_ast::Source, bun_ast::Range) -> crate::Result<()>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -1261,10 +1262,12 @@ pub struct SourceMapHandler<'a> {
 /// into a captureless `fn(*mut (), ..)` thunk, so the handler is a trait method
 /// and the thunk is monomorphized over `T: OnSourceMapChunk`.
 pub trait OnSourceMapChunk {
+    /// `source_mapping_url` is `Ast::source_mapping_url` of the tree that was printed.
     fn on_source_map_chunk(
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
+        source_mapping_url: bun_ast::Range,
     ) -> crate::Result<()>;
 }
 
@@ -1273,6 +1276,7 @@ impl OnSourceMapChunk for Option<SourceMap::Chunk> {
         &mut self,
         chunk: SourceMap::Chunk,
         _: &bun_ast::Source,
+        _: bun_ast::Range,
     ) -> crate::Result<()> {
         *self = Some(chunk);
         Ok(())
@@ -1284,8 +1288,9 @@ impl<'a> SourceMapHandler<'a> {
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
+        source_mapping_url: bun_ast::Range,
     ) -> crate::Result<()> {
-        (self.callback)(self.ctx.as_ptr(), chunk, source)
+        (self.callback)(self.ctx.as_ptr(), chunk, source, source_mapping_url)
     }
 
     pub fn for_<T: OnSourceMapChunk>(ctx: &'a mut T) -> SourceMapHandler<'a> {
@@ -1294,11 +1299,12 @@ impl<'a> SourceMapHandler<'a> {
             p: *mut (),
             chunk: SourceMap::Chunk,
             source: &bun_ast::Source,
+            source_mapping_url: bun_ast::Range,
         ) -> crate::Result<()> {
             // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
             // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
             // valid, exclusive `*mut T` for as long as the handler exists.
-            unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
+            unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source, source_mapping_url) }
         }
         SourceMapHandler {
             // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
@@ -7910,12 +7916,17 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .map(|c| c.buffer.list.as_slice())
                 .unwrap_or(b""),
             &srlz_res,
+            tree.source_mapping_url,
         );
     }
 
     if GENERATE_SOURCE_MAP {
         if let Some(handler) = &printer.options.source_map_handler {
-            handler.on_source_map_chunk(source_maps_chunk.take().unwrap(), source)?;
+            handler.on_source_map_chunk(
+                source_maps_chunk.take().unwrap(),
+                source,
+                tree.source_mapping_url,
+            )?;
         }
     }
 

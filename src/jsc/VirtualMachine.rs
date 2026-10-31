@@ -4187,6 +4187,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         &mut self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
+        source_mapping_url: bun_ast::Range,
     ) -> bun_js_printer::Result<()> {
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
@@ -4202,7 +4203,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
-            .put_mappings(source, chunk.buffer)
+            .put_mappings(source, chunk.buffer, source_mapping_url)
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the

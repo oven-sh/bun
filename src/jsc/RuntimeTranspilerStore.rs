@@ -1011,6 +1011,7 @@ impl TranspilerJob {
                 MutableString {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),
                 },
+                entry.metadata.source_mapping_url,
             );
 
             if bun_core::env::DUMP_SOURCE {

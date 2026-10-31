@@ -675,6 +675,36 @@ describe("bundler", () => {
       run: { stdout: defaultFactoryStdout },
     });
 
+    test("a warning about a pragma points at the pragma's argument", async () => {
+      using dir = tempDir("jsx-pragma-warning-position", {
+        "index.jsx": [
+          "const before = 1;",
+          "  // @jsx .",
+          "console.log(<a></a>);",
+          "/* a block comment",
+          "   @jsxFrag .. */",
+          "console.log(<></>, before);",
+          "",
+        ].join("\n"),
+      });
+      const build = await Bun.build({
+        entrypoints: [`${dir}/index.jsx`],
+        target: "bun",
+        jsx: { runtime: "classic" },
+        throw: false,
+      });
+      const warnings = build.logs.map(({ message, position }) => ({
+        message,
+        line: position?.line,
+        column: position?.column,
+        lineText: position?.lineText,
+      }));
+      expect(warnings).toEqual([
+        { message: 'Invalid JSX factory: "."', line: 2, column: 11, lineText: "  // @jsx ." },
+        { message: 'Invalid JSX fragment: ".."', line: 5, column: 13, lineText: "   @jsxFrag .. */" },
+      ]);
+    });
+
     // "React" is a prefix of the default "React.createElement" / "React.Fragment".
     // It used to compare equal to the default, which left the default in place.
     const prefixPrelude = /* js */ `

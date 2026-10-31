@@ -280,11 +280,13 @@ function ZlibBase(
     // prettier-ignore
     maxOutputLength = checkRangesOrGetDefault(opts.maxOutputLength, "options.maxOutputLength", 1, kMaxLength, kMaxLength);
 
-    if (opts.encoding || opts.objectMode || opts.writableObjectMode) {
+    // The native handle takes only buffers: https://github.com/nodejs/node/blob/v26.12.1/lib/zlib.js#L277-L284
+    if (opts.encoding || opts.objectMode || opts.writableObjectMode || opts.decodeStrings === false) {
       opts = { ...opts };
       opts.encoding = null;
       opts.objectMode = false;
       opts.writableObjectMode = false;
+      opts.decodeStrings = true;
     }
   }
 

@@ -1,0 +1,396 @@
+# reduce and reduceRight hold a number accumulator bare only where the compiler knows the callback; a callback that is some value gets the accumulator as it came back from the last call.
+# IR= 0 sumsOf IsKnownFunction
+# IR= 0 sumsOf  = Call
+# IR= 1 sumsWith IsKnownFunction
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="reduce-with-a-callback-nobody-knows.js" displayPath="reduce-with-a-callback-nobody-knows.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1530 fields=[{key="adds" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsRequired]}, {key="bigintAtTheEnd" declared={type=undefined|null|function|f19 flags=[IsExpected]} flags=[IsRequired]}, {key="bound" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="counts" declared={type=undefined|null|function|f22 flags=[IsExpected]} flags=[IsRequired]}, {key="fraction" declared={type=undefined|null|function|f13 flags=[IsExpected]} flags=[IsRequired]}, {key="host" declared={type=undefined|null|function|builtin(MathMax) flags=[IsExpected]} flags=[IsRequired]}, {key="hostTwo" declared={type=undefined|null|function|builtin(MathHypot) flags=[IsExpected]} flags=[IsRequired]}, {key="infinite" declared={type=undefined|null|function|f11 flags=[IsExpected]} flags=[IsRequired]}, {key="large" declared={type=undefined|null|function|f12 flags=[IsExpected]} flags=[IsRequired]}, {key="multiplies" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="negativeZero" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="notANumber" declared={type=undefined|null|function|f10 flags=[IsExpected]} flags=[IsRequired]}, {key="nothing" declared={type=undefined|null|function|f20 flags=[IsExpected]} flags=[IsRequired]}, {key="objectThenNumber" declared={type=undefined|null|function|f18 flags=[IsExpected]} flags=[IsRequired]}, {key="overflows" declared={type=undefined|null|function|f15 flags=[IsExpected]} flags=[IsRequired]}, {key="proxy" declared={type=undefined|null|function|f26 flags=[IsExpected]} flags=[IsRequired]}, {key="records" declared={type=undefined|null|function|f21 flags=[IsExpected]} flags=[IsRequired]}, {key="sloppyThis" declared={type=undefined|null|function|f23 flags=[IsExpected]} flags=[IsRequired]}, {key="strictThis" declared={type=undefined|null|function|f24 flags=[IsExpected]} flags=[IsRequired]}, {key="subtracts" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired]}, {key="textAtTheSecond" declared={type=undefined|null|function|f16 flags=[IsExpected]} flags=[IsRequired]}, {key="undefinedAtTheSecond" declared={type=undefined|null|function|f17 flags=[IsExpected]} flags=[IsRequired]}, {key="wholeDouble" declared={type=undefined|null|function|f14 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 9, 19, 10, 11, 7, 8, 4, 22, 14, 20, 21, 13, 1, 12, 16, 3, 17, 18, 5, 6, 2, 15] ownFieldCount=23
+layout L1 module=m0 position=2020 fields=[{key="k" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 name="ProxyHandler<(a: any, x: any) => any>" fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=number elements=[Number{value=4.5}, Number{value=5.5}]} module=m0
+data d3 root=Array{contents=undefined|null|string elements=[String{value="a"}]} module=m0
+data d4 root=Array{contents=number elements=[Number{value=2147483648}, Number{value=1}]} module=m0
+data d5 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d6 root=Array{contents=anything} module=m0
+data d7 root=Array{contents=anything elements=[Number{value=4.5}, Number{value=5.5}]} module=m0
+data d8 root=Array{contents=anything elements=[Number{value=2147483648}, Number{value=1}]} module=m0
+data d9 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]}]} module=m0
+data d10 root=Object{layout=L2} module=m0
+data d11 root=Array{contents=undefined|null|boolean|number|string|bigint elements=[Number{}, Number{value=1.5}, Number{value=-0}, Number{value=NaN}, Number{value=2147483647}, String{value="s"}, Null, Undefined, BigInt{digits="5"}, Boolean{value=true}]} module=m0
+variable g0 name="described" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="callbacks" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewArray v1, v3 contents=undefined|null|function|f2|f3
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|function|f2|f3> flags=[IsExpected]}
+    v8 = Data data=d0
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v10 = Data data=d1
+    v11 = Convert v10 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v12 = Data data=d2
+    v13 = Convert v12 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v14 = Integer integer=6
+    v15 = Integer integer=7
+    v16 = NewArray v14, v15 contents=undefined|number holes=[1]
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|number> flags=[IsExpected]}
+    v18 = Data data=d3
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v20 = Data data=d4
+    v21 = Convert v20 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v22 = NewArray v9, v11, v13, v17, v19, v21 contents=undefined|null|Array<undefined|null|number|string>
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|number|string>> flags=[IsExpected]}
+    v24 = Integer integer=1
+    v25 = ElemGet v7, v24
+    v26 = Convert v25 declared={type=undefined|null|function|f2|f3 flags=[IsExpected]}
+    v27 = Data data=d5
+    v28 = Convert v27 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v29 = Data data=d6
+    v30 = Convert v29 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v31 = Data data=d7
+    v32 = Convert v31 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v33 = Integer integer=6
+    v34 = Integer integer=7
+    v35 = NewArray v33, v34 contents=anything holes=[1]
+    v36 = Convert v35 declared={type=undefined|null|Array<undefined|number> flags=[IsExpected]}
+    v37 = Data data=d8
+    v38 = Convert v37 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v39 = NewArray v28, v30, v32, v36, v38 contents=anything
+    v40 = Convert v39 declared={type=undefined|null|Array<undefined|null|Array<undefined|number>> flags=[IsExpected]}
+    v41 = NewClosure function=f5
+    v42 = Call v26, v7, v40, v41 calleeName="kept[1]"
+    v43 = Integer integer=1
+    v44 = ElemGet v7, v43
+    v45 = Convert v44 declared={type=undefined|null|function|f2|f3 flags=[IsExpected]}
+    v46 = Data data=d9
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[IsExpected]}
+    v48 = Builtin builtin=MathMax
+    v49 = Call v45, v7, v47, v48 calleeName="kept[1]"
+    v50 = NewObject layout=L0
+    v51 = NewClosure function=f25
+    v52 = PropGet v51 key="bind"
+    v53 = Convert v52 declared={type=undefined|null|function flags=[IsExpected]}
+    v54 = Null
+    v55 = Integer integer=3
+    v56 = Call v53, v51, v54, v55 calleeKey="bind" calleeName="bind"
+    v57 = Convert v56 declared={type=undefined|null|function flags=[IsExpected]}
+    PropDefine v50, v57 key="bound"
+    v59 = Builtin builtin=Proxy
+    v60 = NewClosure function=f26
+    v61 = Data data=d10
+    v62 = Construct v59, -, v60, v61 calleeName="Proxy"
+    v63 = Convert v62 declared={type=undefined|null|function|f26 flags=[IsExpected]}
+    PropDefine v50, v63 key="proxy"
+    v65 = FinishObject v50
+    v66 = Convert v65 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v66 variable=g1
+    v68 = ForInOpen v66
+    v69 = ForInStep v68, v66
+    v70 = ResultAt v69 index=1
+    v71 = Convert v70 declared={type=undefined|null|string flags=[IsExpected]}
+    v72 = IteratorOpen v23
+    v73 = IteratorResume v72
+    v74 = ResultAt v73 index=1
+    Jump -> next b1()
+  b1() handler=b5():
+    v75 = Convert v74 declared={type=undefined|null|Array<undefined|null|number|string> flags=[IsExpected]}
+    v76 = Data data=d11
+    v77 = Convert v76 declared={type=undefined|null|Array<undefined|null|boolean|number|string|bigint> flags=[IsExpected]}
+    v78 = IteratorOpen v77
+    Jump -> next b2()
+  b2() handler=b5():
+    LoopHint
+    v80 = IteratorResume v78
+    v81 = ResultAt v80 index=1
+    Jump -> next b3()
+  b3() handler=b4():
+    v82 = Convert v81 declared={type=undefined|null|boolean|number|string|bigint flags=[IsExpected]}
+    v83 = NewClosure v71, v75, v82 function=f27
+    v84 = Call v5, -, v83 calleeName="attempt"
+    Jump -> next b2()
+  b4() role=IterationCleanup subject=v78 handler=b5():
+    v85 = CatchException
+    Rethrow v85
+  b5() role=IterationCleanup subject=v72:
+    v86 = CatchException
+    Rethrow v86
+}
+function f1 name="described" module=m0 position=629 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|bigint flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="sumsOf" module=m0 position=336 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="sumsWith" module=m0 position=487 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = ElemGet v0, v7
+    v10 = PropGet v9 key="reduce"
+    v11 = Convert v10 declared={type=undefined|null|function flags=[IsExpected]}
+    v12 = Integer
+    v13 = Call v11, v9, v1, v12 calleeKey="reduce" calleeName="lists[i].reduce"
+    v14 = Add v6, v13
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Increment v7
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v15, v17)
+}
+function f4 name="attempt" module=m0 position=1020 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0 calleeName="run"
+    v3 = Convert v2 declared={type=undefined|null|number|bigint flags=[IsExpected]}
+    v4 = Call v1, -, v3 calleeName="described"
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v5
+  b2() role=CatchHandler:
+    v6 = CatchValue
+    v7 = PropGet v6 key="constructor"
+    v8 = PropGet v7 key="name"
+    Return v8
+}
+function f5 module=m0 position=1418 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="adds" module=m0 position=1540 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="multiplies" module=m0 position=1571 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="subtracts" module=m0 position=1601 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="negativeZero" module=m0 position=1634 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="notANumber" module=m0 position=1662 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="infinite" module=m0 position=1689 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="large" module=m0 position=1715 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="fraction" module=m0 position=1750 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="wholeDouble" module=m0 position=1784 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 name="overflows" module=m0 position=1822 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 name="textAtTheSecond" module=m0 position=1867 kind=Arrow length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 name="undefinedAtTheSecond" module=m0 position=1932 kind=Arrow length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 name="objectThenNumber" module=m0 position=1996 kind=Arrow length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|7|L1 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 name="bigintAtTheEnd" module=m0 position=2050 kind=Arrow length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|bigint flags=[IsExpected]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 name="nothing" module=m0 position=2117 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 name="records" module=m0 position=2138 kind=Arrow length=4 thisType={type=anything} parameters=[{type=undefined|null|number|bigint flags=[IsExpected]}, {type=undefined|null|number|bigint flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 name="counts" module=m0 position=2257 flags=[HasArgumentCount, HasHiddenRest] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 name="sloppyThis" module=m0 position=2313 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 name="strictThis" module=m0 position=2387 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f25 module=m0 position=2510 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 module=m0 position=2584 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f27 module=m0 position=2943 kind=Arrow captures=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|Array<undefined|null|number|string> flags=[IsExpected]}, {type=undefined|null|boolean|number|string|bigint flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|boolean|number|string|bigint flags=[IsExpected]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|Array<undefined|null|number|string>, v2: undefined|null|boolean|number|string|bigint):
+    v3 = PropGet v1 key="reduceRight"
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g1
+    v6 = CheckInitialized v5 name="callbacks"
+    v7 = ElemGet v6, v0
+    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = Call v4, v1, v8, v2 calleeKey="reduceRight" calleeName="list.reduceRight"
+    ReturnCall v9 casts=[{declared={type=undefined|null|boolean|number|string|bigint flags=[IsExpected]}}]
+}
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f29]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f51]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f49 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f50 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f51 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 sumsWith attempt f27
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=0
+# CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=1
+# CHECK-NEXT: v2: f4 = NewClosure function=f4 allocationSite=2
+# CHECK-NEXT: v3: Array<f2|f3, Contiguous> = NewArray v0, v1 contents=f2|f3 allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v72: Array<f2|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<f2|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: Array<int[1, 3]> = Data data=d0 allocationSite=4
+# CHECK-NEXT: v73: Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: Array = Data data=d1 allocationSite=5
+# CHECK-NEXT: v6: Array ~ Array<never> = Upcast v5 castType=Array
+# CHECK-NEXT: v74: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: Array<fractional> = Data data=d2 allocationSite=6
+# CHECK-NEXT: v75: Array<fractional, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<fractional, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: 6 = Integer integer=6
+# CHECK-NEXT: v9: 7 = Integer integer=7
+# CHECK-NEXT: v10: Array<int[6, 7]> = NewArray v8, v9 contents=int[6, 7] holes=[1] allocationSite=7 [contentsAreProven]
+# CHECK-NEXT: v76: Array<int[6, 7], proven, pristine[Storage, Names]> = AssumeType v10 provenType=Array<int[6, 7], proven, pristine[Storage, Names]>
+# CHECK-NEXT: v11: Array<undefined|null|string> = Data data=d3 allocationSite=8
+# CHECK-NEXT: v77: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Array<int[1, 2147483648]> = Data data=d4 allocationSite=9
+# CHECK-NEXT: v78: Array<int[1, 2147483648], proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<int[1, 2147483648], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: Array<Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]>, Contiguous> = NewArray v73, v74, v75, v76, v77, v78 contents=Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]> allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v79: Array<Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: undefined|f2|f3 = ElemGet v72, v14 accessSite=0
+# CHECK-NEXT: v80: undefined|f2|f3 = AssumeType v15 provenType=undefined|f2|f3
+# CHECK-NEXT: v16: Array<int[1, 3]> = Data data=d5 allocationSite=11
+# CHECK-NEXT: v17: Array<int[1, 3]> = Upcast v16 castType=Array
+# CHECK-NEXT: v81: Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v18: Array = Data data=d6 allocationSite=12
+# CHECK-NEXT: v19: Array ~ Array<never> = Upcast v18 castType=Array
+# CHECK-NEXT: v82: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<fractional> = Data data=d7 allocationSite=13
+# CHECK-NEXT: v21: Array<fractional> = Upcast v20 castType=Array
+# CHECK-NEXT: v83: Array<fractional, proven, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<fractional, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v22: 6 = Integer integer=6
+# CHECK-NEXT: v23: 7 = Integer integer=7
+# CHECK-NEXT: v24: Array<int[6, 7]> = NewArray v22, v23 contents=int[6, 7] holes=[1] allocationSite=14 [contentsAreProven]
+# CHECK-NEXT: v84: Array<int[6, 7], proven, pristine[Storage, Names]> = AssumeType v24 provenType=Array<int[6, 7], proven, pristine[Storage, Names]>
+# CHECK-NEXT: v25: Array<int[6, 7], proven, pristine[Storage, Names]> = Upcast v84 castType=Array
+# CHECK-NEXT: v85: Array<int[6, 7], proven, pristine[Storage, Names]> = AssumeType v25 provenType=Array<int[6, 7], proven, pristine[Storage, Names]>
+# CHECK-NEXT: v26: Array<int[1, 2147483648]> = Data data=d8 allocationSite=15
+# CHECK-NEXT: v27: Array<int[1, 2147483648]> = Upcast v26 castType=Array
+# CHECK-NEXT: v86: Array<int[1, 2147483648], proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<int[1, 2147483648], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v28: Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, Contiguous> = NewArray v81, v82, v83, v85, v86 contents=Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]> allocationSite=16 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v87: Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v87 castType=Array
+# CHECK-NEXT: v88: Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: f5 = NewClosure function=f5 allocationSite=17
+# CHECK-NEXT: v31: anything = Call v80, v72, v88, v30 calleeName="kept[1]" accessSite=1 callees=[f2, f3]
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: undefined|f2|f3 = ElemGet v72, v32 accessSite=2
+# CHECK-NEXT: v89: undefined|f2|f3 = AssumeType v33 provenType=undefined|f2|f3
+# CHECK-NEXT: v34: Array = Data data=d9 allocationSite=18
+# CHECK-NEXT: v35: Array ~ Array<undefined|null|Array<number>> = Upcast v34 castType=Array
+# CHECK-NEXT: v90: Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v36: builtin(MathMax) = Builtin builtin=MathMax
+# CHECK-NEXT: v37: anything = Call v89, v72, v90, v36 calleeName="kept[1]" accessSite=3 callees=[f2, f3]
+# CHECK-NEXT: v38: L0 = NewObject layout=L0 allocationSite=19 allocationClass=0
+# CHECK-NEXT: v39: f25 = NewClosure function=f25 allocationSite=20
+# CHECK-NEXT: v40: anything = PropGet v39 key="bind" accessSite=4
+# CHECK-NEXT: v91: builtin(FunctionPrototypeBind) = AssumeType v40 provenType=builtin(FunctionPrototypeBind)
+# CHECK-NEXT: v41: builtin(FunctionPrototypeBind) = Upcast v91 castType=anything
+# CHECK-NEXT: v92: builtin(FunctionPrototypeBind) = AssumeType v41 provenType=builtin(FunctionPrototypeBind)
+# CHECK-NEXT: v42: null = Null
+# CHECK-NEXT: v43: 3 = Integer integer=3
+# CHECK-NEXT: v44: anything = Call v92, v39, v42, v43 calleeKey="bind" calleeName="bind" accessSite=5 callees=[builtin(FunctionPrototypeBind)]
+# CHECK-NEXT: v93: function = AssumeType v44 provenType=function
+# CHECK-NEXT: v45: function = Upcast v93 castType=anything
+# CHECK-NEXT: v94: function = AssumeType v45 provenType=function
+# CHECK-NEXT: PropDefine v38, v94 key="bound" accessSite=6 receivers=[L0]
+# CHECK-NEXT: v47: builtin(Proxy) = Builtin builtin=Proxy
+# CHECK-NEXT: v48: f26 = NewClosure function=f26 allocationSite=21
+# CHECK-NEXT: v49: L2 = Data data=d10 allocationSite=22
+# CHECK-NEXT: v50: anything ~ object = Construct v47, -, v48, v49 calleeName="Proxy" accessSite=7 callees=[builtin(Proxy)]
+# CHECK-NEXT: v95: Proxy = AssumeType v50 provenType=Proxy
+# CHECK-NEXT: v51: Proxy = Upcast v95 castType=anything
+# CHECK-NEXT: v96: Proxy = AssumeType v51 provenType=Proxy
+# CHECK-NEXT: PropDefine v38, v96 key="proxy" accessSite=8 receivers=[L0]
+# CHECK-NEXT: v53: L0 = FinishObject v38
+# CHECK-NEXT: PutModuleVariable v53 variable=g1
+# CHECK-NEXT: v55: enumerator = ForInOpen v53
+# CHECK-NEXT: v56: undefined = ForInStep v55, v53
+# CHECK-NEXT: v57: string = ResultAt v56 index=1
+# CHECK-NEXT: v58: iteratorstate = IteratorOpen v79 [storageIsUndecided]
+# CHECK-NEXT: v59: undefined = IteratorResume v58
+# CHECK-NEXT: v60: anything = ResultAt v59 index=1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b5():
+# CHECK-NEXT: v61: anything ~ undefined|null|Array<undefined|null|number|string> = Upcast v60 castType=anything
+# CHECK-NEXT: v62: Array<undefined|null|boolean|number|string|bigint> = Data data=d11 allocationSite=23
+# CHECK-NEXT: v97: Array<undefined|null|true|int[0, 2147483647]|double|string|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v62 provenType=Array<undefined|null|true|int[0, 2147483647]|double|string|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v63: iteratorstate = IteratorOpen v97
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b5():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v65: undefined = IteratorResume v63
+# CHECK-NEXT: v66: anything = ResultAt v65 index=1
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() handler=b4():
+# CHECK-NEXT: v67: anything ~ undefined|null|boolean|number|string|bigint = Upcast v66 castType=anything
+# CHECK-NEXT: v98: undefined|Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]> = AssumeType v61 provenType=undefined|Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]>
+# CHECK-NEXT: v99: undefined|null|true|number|string|bigint = AssumeType v67 provenType=undefined|null|true|number|string|bigint
+# CHECK-NEXT: v68: f27 = NewClosure v57, v98, v99 function=f27 allocationSite=24
+# CHECK-NEXT: v69: anything = Call v2, -, v68 calleeName="attempt" accessSite=9 callees=[f4]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b4() role=IterationCleanup subject=v63 handler=b5():
+# CHECK-NEXT: v70: exception = CatchException
+# CHECK-NEXT: Rethrow v70
+# CHECK-NEXT: b5() role=IterationCleanup subject=v58:
+# CHECK-NEXT: v71: exception = CatchException
+# CHECK-NEXT: Rethrow v71
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="sumsWith"
+# CHECK: module=m0 position=487 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=f5|builtin(MathMax)}] results=[{type=number flags=[IsExpected]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>, v1: f5|builtin(MathMax)):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: number, v5: int|whole ~ int[0, 2147483647]):
+# CHECK-NEXT: v16: number = AssumeType v4 provenType=number
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: undefined|Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]> = ElemGet v0, v5 accessSite=10
+# CHECK-NEXT: v17: undefined|Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]> = AssumeType v7 provenType=undefined|Array<int[1, 2147483648]|fractional, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v8: anything = PropGet v17 key="reduce" accessSite=11
+# CHECK-NEXT: v18: builtin(ArrayPrototypeReduce) = AssumeType v8 provenType=builtin(ArrayPrototypeReduce)
+# CHECK-NEXT: v9: builtin(ArrayPrototypeReduce) = Upcast v18 castType=anything
+# CHECK-NEXT: v19: builtin(ArrayPrototypeReduce) = AssumeType v9 provenType=builtin(ArrayPrototypeReduce)
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: anything = Call v19, v17, v1, v10 calleeKey="reduce" calleeName="lists[i].reduce" accessSite=12 callees=[builtin(ArrayPrototypeReduce)]
+# CHECK-NEXT: v20: number = AssumeType v11 provenType=number
+# CHECK-NEXT: v12: number = Add v16, v20
+# CHECK-NEXT: v21: number = AssumeType v12 provenType=number
+# CHECK-NEXT: v13: number = Upcast v21 castType=number|string|bigint
+# CHECK-NEXT: v14: int|whole ~ int[1, 2147483648] = Increment v5
+# CHECK-NEXT: v15: int|whole ~ int[1, 2147483647] = Upcast v14 castType=int|whole
+# CHECK-NEXT: Jump -> next b1(v13, v15)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=1020 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f27}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f27):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v1: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: anything ~ undefined|null|boolean|number|string|bigint = Call v0 calleeName="run" accessSite=13 callees=[f27]
+# CHECK-NEXT: v3: anything ~ undefined|null|number|bigint = Upcast v2 castType=anything
+# CHECK-NEXT: v4: anything ~ undefined|null|string = Call v1, -, v3 calleeName="described" accessSite=14 callees=[f1]
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: anything = PropGet v5 key="constructor" accessSite=15
+# CHECK-NEXT: v7: anything = PropGet v6 key="name" accessSite=16
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function f27 module=
+# CHECK: m0 position=2943 kind=Arrow captures=[{type=string}, {type=undefined|Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]>}, {type=undefined|null|true|number|string|bigint}] thisType={type=anything} results=[{type=undefined|null|boolean|number|string|bigint flags=[IsExpected]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: undefined|Array<int[1, 2147483648]|fractional|"a", proven, pristine[Storage, Names]>, v2: undefined|null|true|number|string|bigint):
+# CHECK-NEXT: v3: anything = PropGet v1 key="reduceRight" accessSite=17
+# CHECK-NEXT: v10: builtin(ArrayPrototypeReduceRight) = AssumeType v3 provenType=builtin(ArrayPrototypeReduceRight)
+# CHECK-NEXT: v4: builtin(ArrayPrototypeReduceRight) = Upcast v10 castType=anything
+# CHECK-NEXT: v11: builtin(ArrayPrototypeReduceRight) = AssumeType v4 provenType=builtin(ArrayPrototypeReduceRight)
+# CHECK-NEXT: v5: L0 = GetModuleVariable variable=g1
+# CHECK-NEXT: v6: L0 = CheckInitialized v5 name="callbacks"
+# CHECK-NEXT: v12: L0 = AssumeType v6 provenType=L0
+# CHECK-NEXT: v7: anything = ElemGet v12, v0 accessSite=18 receivers=[L0]
+# CHECK-NEXT: v13: undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)|Proxy = AssumeType v7 provenType=undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)|Proxy
+# CHECK-NEXT: v8: undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)|Proxy ~ undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = Upcast v13 castType=anything
+# CHECK-NEXT: v14: undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)|Proxy ~ undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v8 provenType=undefined|function|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)|Proxy
+# CHECK-NEXT: v9: anything = Call v11, v1, v14, v2 calleeKey="reduceRight" calleeName="list.reduceRight" accessSite=19 callees=[builtin(ArrayPrototypeReduceRight)]
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|null|boolean|number|string|bigint flags=[IsExpected]} resolution=Nothing}]
+# CHECK-NEXT: }

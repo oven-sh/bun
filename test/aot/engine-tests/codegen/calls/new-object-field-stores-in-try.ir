@@ -1,0 +1,490 @@
+# Field stores inside `try` into a new object, before and after other code has seen the object.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="new-object-field-stores-in-try.ts" displayPath="new-object-field-stores-in-try.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="C" module=m0 position=131 constructor=f8 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}, {key="w" declared={type=undefined|number}}] ownFieldCount=4
+layout L1 kind=Instance name="D" module=m0 position=404 base=L0 constructor=f9 fields=[{key="d" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 module=m0 position=2757 fields=[{key="w" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=3089 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="self" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+variable g0 name="freeze" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="name" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="C" module=m0 declared={type=absent|f8 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 name="D" module=m0 declared={type=absent|f9 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 name="O" module=m0 declared={type=undefined|null|function|absent|builtin(Object) flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f5
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f6
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f7
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f8
+    v11 = NewClass v10 layout=L0
+    v12 = FinishClass v11 layout=L0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v13 variable=g2
+    v15 = ResolveHeritage v13
+    v16 = NewClosure function=f9
+    v17 = NewClass v16, v13, v15 layout=L1
+    v18 = FinishClass v17 layout=L1
+    v19 = Convert v18 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v19 variable=g3
+    v21 = Builtin builtin=Object
+    v22 = Convert v21 declared={type=undefined|null|function|builtin(Object) flags=[IsExpected]}
+    PutModuleVariable v22 variable=g4
+    v24 = Integer
+    v25 = Convert v24 declared={type=number}
+    Jump -> next b1(v25)
+  b1(v26: number):
+    LoopHint
+    v28 = Integer integer=3
+    v29 = Less v26, v28
+    Branch v29 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v30):
+    v31 = Integer integer=1
+    v32 = Call v1, -, v31 calleeName="onOneWay"
+    v33 = Integer integer=2
+    v34 = Call v1, -, v33 calleeName="onOneWay"
+    v35 = Integer integer=4
+    v36 = Call v3, -, v35 calleeName="otherPrototype"
+    v37 = Integer integer=6
+    v38 = Call v5, -, v37 calleeName="asItsOwnValue"
+    v39 = String string="s"
+    v40 = Call v7, -, v39 calleeName="wrongType"
+    v41 = Integer integer=5
+    v42 = Call v9, -, v41 calleeName="unseen"
+    v43 = Increment v30
+    v44 = Convert v43 declared={type=number}
+    Jump -> next b1(v44)
+  b3(v45):
+    v46 = Undefined
+    Return v46
+}
+function f1 name="freeze" module=m0 position=699 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="name" module=m0 position=985 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="onOneWay" module=m0 position=2336 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1() handler=b5():
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="C"
+    v3 = String string="o"
+    v4 = Construct v2, -, v0, v3 calleeName="C"
+    v5 = Convert v4 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}
+    v6 = Integer integer=1
+    v7 = BitAnd v0, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v9) handler=b5():
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v5 calleeName="freeze"
+    Jump -> next b4()
+  b3(v12) handler=b5():
+    Jump -> next b4()
+  b4() handler=b5():
+    v13 = Convert v0 declared={type=number}
+    PropSet v5, v13 key="z"
+    v15 = String string="stored "
+    v16 = PropGet v5 key="z"
+    v17 = Add v15, v16
+    v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v18
+  b5() role=CatchHandler:
+    v19 = CatchValue
+    v20 = GetModuleVariable variable=g1
+    v21 = Call v20, -, v19 calleeName="name"
+    ReturnCall v21 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f4 name="otherPrototype" module=m0 position=2661 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="C"
+    v3 = String string="p"
+    v4 = Construct v2, -, v0, v3 calleeName="C"
+    v5 = Convert v4 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}
+    v6 = GetModuleVariable variable=g4
+    v7 = CheckInitialized v6 name="O"
+    v8 = PropGet v7 key="setPrototypeOf"
+    v9 = Convert v8 declared={type=builtin(ObjectSetPrototypeOf) flags=[IsExpected]}
+    v10 = NewObject layout=L2
+    v11 = FinishObject v10
+    v12 = Call v9, v7, v5, v11 calleeKey="setPrototypeOf" calleeName="O.setPrototypeOf"
+    v13 = String string="stored "
+    v14 = PropGet v5 key="w"
+    v15 = Convert v14 declared={type=number} illTypedCause=Assertion
+    v16 = Add v13, v15
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v17
+  b2() role=CatchHandler:
+    v18 = CatchValue
+    v19 = GetModuleVariable variable=g1
+    v20 = Call v19, -, v18 calleeName="name"
+    ReturnCall v20 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f5 name="asItsOwnValue" module=m0 position=3030 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Undefined
+    v2 = Convert v0 declared={type=number}
+    v3 = NewObject -, v1, v2 layout=L3 fields=[1, 0]
+    v4 = FinishObject v3
+    v5 = Convert v4 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v5, v5 key="self"
+    v7 = GetModuleVariable variable=g4
+    v8 = CheckInitialized v7 name="O"
+    v9 = PropGet v8 key="freeze"
+    v10 = Convert v9 declared={type=builtin(ObjectFreeze) flags=[IsExpected]}
+    v11 = PropGet v5 key="self"
+    v12 = Convert v11 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v13 = Call v10, v8, v12 calleeKey="freeze" calleeName="O.freeze"
+    v14 = String string="stored "
+    v15 = PropGet v5 key="n"
+    v16 = Add v14, v15
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v17
+  b2() role=CatchHandler:
+    v18 = CatchValue
+    v19 = GetModuleVariable variable=g1
+    v20 = Call v19, -, v18 calleeName="name"
+    ReturnCall v20 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f6 name="wrongType" module=m0 position=4092 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="C"
+    v3 = Integer integer=1
+    v4 = String string="w"
+    v5 = Construct v2, -, v3, v4 calleeName="C"
+    v6 = Convert v5 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Convert v0 declared={type=number} illTypedCause=FromLooseType
+    PropSet v6, v7 key="z"
+    v9 = String string="stored "
+    v10 = PropGet v6 key="z"
+    v11 = TypeOf v10
+    v12 = Add v9, v11
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v13
+  b2() role=CatchHandler:
+    v14 = CatchValue
+    v15 = GetModuleVariable variable=g1
+    v16 = Call v15, -, v14 calleeName="name"
+    ReturnCall v16 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f7 name="unseen" module=m0 position=4317 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="C"
+    v3 = String string="u"
+    v4 = Construct v2, -, v0, v3 calleeName="C"
+    v5 = Convert v4 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}
+    v6 = Integer integer=1
+    v7 = Add v0, v6
+    v8 = Convert v7 declared={type=undefined|number}
+    PropSet v5, v8 key="w"
+    v10 = GetModuleVariable variable=g3
+    v11 = CheckInitialized v10 name="D"
+    v12 = Construct v11, -, v0 calleeName="D"
+    v13 = Convert v12 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v14 = String string="stored "
+    v15 = PropGet v5 key="z"
+    v16 = Add v14, v15
+    v17 = PropGet v5 key="w"
+    v18 = Convert v17 declared={type=number} illTypedCause=Assertion
+    v19 = Add v16, v18
+    v20 = PropGet v13 key="z"
+    v21 = Add v19, v20
+    v22 = PropGet v13 key="d"
+    v23 = Add v21, v22
+    v24 = GetModuleVariable variable=g4
+    v25 = CheckInitialized v24 name="O"
+    v26 = PropGet v25 key="keys"
+    v27 = Convert v26 declared={type=builtin(ObjectKeys) flags=[IsExpected]}
+    v28 = Call v27, v25, v5 calleeKey="keys" calleeName="O.keys"
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v30 = PropGet v29 key="join"
+    v31 = String string=""
+    v32 = Call v30, v29, v31 calleeKey="join" calleeName="join"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v34 = Add v23, v33
+    v35 = GetModuleVariable variable=g4
+    v36 = CheckInitialized v35 name="O"
+    v37 = PropGet v36 key="keys"
+    v38 = Convert v37 declared={type=builtin(ObjectKeys) flags=[IsExpected]}
+    v39 = Call v38, v36, v13 calleeKey="keys" calleeName="O.keys"
+    v40 = Convert v39 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v41 = PropGet v40 key="join"
+    v42 = String string=""
+    v43 = Call v41, v40, v42 calleeKey="join" calleeName="join"
+    v44 = Convert v43 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v45 = Add v34, v44
+    v46 = Convert v45 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v46
+  b2() role=CatchHandler:
+    v47 = CatchValue
+    v48 = GetModuleVariable variable=g1
+    v49 = Call v48, -, v47 calleeName="name"
+    ReturnCall v49 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f8 name="C" module=m0 position=187 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number, v2: undefined|null|string):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    v5 = Convert v4 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f10
+    v7 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PropSet v5, v7 key="y"
+    v9 = Undefined
+    Return v5
+}
+function f9 name="D" module=m0 position=440 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: number):
+    v3 = Absent
+    v4 = GetSuperBase v0
+    v5 = String string="d"
+    v6 = SuperConstruct v4, v1, v2, v5 layout=L1
+    v7 = Convert v6 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Convert v2 declared={type=number}
+    PropSet v7, v8 key="d"
+    v10 = Undefined
+    Return v7
+}
+function f10 module=m0 position=131 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Undefined
+    PropDefine v1, v2 key="x"
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    PropDefine v1, v5 key="z"
+    v7 = Undefined
+    PropDefine v1, v7 key="w"
+    v9 = Undefined
+    Return v9
+}
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+# -- generated: onOneWay
+# CHECK-LABEL: function {{*}}name="onOneWay"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@19 = Trunc(b@18)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@22 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v1:String)
+# CHECK-NEXT: Int64 b@27 = Load(b@22, offset = 888, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v1:String)
+# CHECK-NEXT: Int32 b@31 = Const32(1, v5:Integer)
+# CHECK-NEXT: Int32 b@32 = BitAnd(b@19, $1(b@31), v6:BitAnd)
+# CHECK-NEXT: Int64 b@33 = Const64(2, v7:NewObject)
+# CHECK-NEXT: Int64 b@34 = Patchpoint($2(b@33):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v7:NewObject)
+# CHECK-NEXT: Int64 b@89 = Load(b@10, offset = -80, ReadsImmutable, v7:NewObject)
+# CHECK-NEXT: Void b@36 = Store(b@89, b@34, offset = 24, ControlDependent|Writes:ObjectFields.0, v7:NewObject)
+# CHECK-NEXT: Void b@84 = Patchpoint(b@34:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numFPScratchRegisters = 1, Writes:ObjectFields, v7:NewObject)
+# CHECK-NEXT: Int64 b@62 = Load(b@10, offset = -104, ReadsImmutable, v7:NewObject)
+# CHECK-NEXT: Void b@38 = Store(b@62, b@34, offset = 56, ControlDependent|Writes:ObjectFields.49, v7:NewObject)
+# CHECK-NEXT: Void b@39 = Store(b@27, b@34, offset = 32, ControlDependent|Writes:ObjectFields.37, v7:NewObject)
+# CHECK-NEXT: Void b@40 = Fence(Fence|Reads:jscRoot, v7:NewObject)
+# CHECK-NEXT: Int32 b@57 = Const32(192, v11:HasLayoutPrototype)
+# CHECK-NEXT: Void b@42 = Branch(b@32, Terminal, v8:ToBoolean)
+# CHECK-NEXT: Successors: Then:Unlikely:#1, Else:#3
+# CHECK-NEXT: BB#3: ; frequency = 0.941176
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@101 = Load8Z(b@34, offset = 6, ControlDependent|Reads:JSCell_typeInfoFlags, v14:HasNoFieldOutsideSlot)
+# CHECK-NEXT: Int32 b@102 = BitAnd(b@101, $192(b@57), v14:HasNoFieldOutsideSlot)
+# CHECK-NEXT: Void b@104 = Branch(b@102, Terminal, v14:HasNoFieldOutsideSlot)
+# CHECK-NEXT: Successors: Then:Rare:#7, Else:#4
+# CHECK-NEXT: BB#4: ; frequency = 0.940257
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Int64 b@105 = ZExt32(b@19, v17:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@106 = Load(b@34, offset = 40, ControlDependent|Reads:ObjectFields.11, v17:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@103 = Load(b@10, offset = -88, ReadsImmutable, v17:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@107 = Equal(b@106, b@103, v17:PutSlotOrAdd)
+# CHECK-NEXT: Void b@108 = Branch(b@107, Terminal, v17:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:Unlikely:#32, Else:#34
+# CHECK-NEXT: BB#34: ; frequency = 0.940257
+# CHECK-NEXT: Predecessors: #4, #36, #35
+# CHECK-NEXT: Void b@120 = Store(b@105, b@34, offset = 40, ControlDependent|Writes:ObjectFields.11, v17:PutSlotOrAdd)
+# CHECK-NEXT: Void b@121 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#9: ; frequency = 0.941233
+# CHECK-NEXT: Predecessors: #34, #7
+# CHECK-NEXT: Int64 b@126 = Load(b@34, offset = 40, ControlDependent|Reads:ObjectFields.11, v19:IsSlotFilled)
+# CHECK-NEXT: Int64 b@83 = Const64(4611686018427387903, v35:IsSlotFilled)
+# CHECK-NEXT: Int32 b@127 = LessEqual(b@126, $4611686018427387903(b@83), v19:IsSlotFilled)
+# CHECK-NEXT: Void b@128 = Branch(b@127, Terminal, v19:IsSlotFilled)
+# CHECK-NEXT: Successors: Then:#10, Else:Rare:#11
+# CHECK-NEXT: BB#10: ; frequency = 0.940314
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int64 b@130 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:String)
+# CHECK-NEXT: Int64 b@131 = Load(b@130, ControlDependent|Reads:AOTInstance_stringCells, v22:String)
+# CHECK-NEXT: Void b@133 = Branch(b@131, Terminal, v22:String)
+# CHECK-NEXT: Successors: Then:#37, Else:Rare:#38
+# CHECK-NEXT: BB#37: ; frequency = 0.939395
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Void b@134 = Upsilon(b@131, ^139, WritesLocalState, v22:String)
+# CHECK-NEXT: Void b@135 = Jump(Terminal, v22:String)
+# CHECK-NEXT: Successors: #39
+# CHECK-NEXT: BB#39: ; frequency = 0.940314
+# CHECK-NEXT: Predecessors: #38, #37
+# CHECK-NEXT: Int64 b@139 = Phi(ReadsLocalState, v22:String)
+# CHECK-NEXT: Int64 b@140 = Patchpoint(b@126:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v23:Add)
+# CHECK-NEXT: Int64 b@141 = Patchpoint(b@139:Register(%rax), b@140:Register(%rdx), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v23:Add)
+# CHECK-NEXT: Successors: #40, Rare:#18
+# CHECK-NEXT: BB#40: ; frequency = 0.939395
+# CHECK-NEXT: Predecessors: #39
+# CHECK-NEXT: Void b@142 = Return(b@141, Terminal)
+# CHECK-NEXT: BB#18: ; frequency = 0.001036
+# CHECK-NEXT: Predecessors: #11, #41, #39, #7, #21, #30
+# CHECK-NEXT: Int64 b@147 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, RuntimeState}|Reads:{frameSlots, RuntimeState}, v27:CatchValue)
+# CHECK-NEXT: Int64 b@148 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:AOTInstance_closureCells|Reads:{argumentBuffer, ModuleVariables.37}, v28:GetModuleVariable)
+# CHECK-NEXT: Void b@149 = Patchpoint(b@148:Register(%r8), b@147:Register(%rdi), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|WritesPinned|ReadsPinned|Fence|Writes:Top|Reads:Top, v29:Call)
+# CHECK-NEXT: BB#38: ; frequency = 0.000918
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int64 b@136 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x0, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v22:String)
+# CHECK-NEXT: Void b@137 = Upsilon(b@136, ^139, WritesLocalState, v22:String)
+# CHECK-NEXT: Void b@138 = Jump(Terminal, v22:String)
+# CHECK-NEXT: Successors: #39
+# CHECK-NEXT: BB#11: ; frequency = 0.000919
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int64 b@143 = Patchpoint(b@34:SomeRegister, resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v24:PropGet)
+# CHECK-NEXT: Successors: #41, Rare:#18
+# CHECK-NEXT: BB#41: ; frequency = 0.000918
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Int64 b@144 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x0, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v25:String)
+# CHECK-NEXT: Int64 b@145 = Patchpoint(b@144:Register(%rax), b@143:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v26:Add)
+# CHECK-NEXT: Successors: #42, Rare:#18
+# CHECK-NEXT: BB#42: ; frequency = 0.000917
+# CHECK-NEXT: Predecessors: #41
+# CHECK-NEXT: Void b@146 = Return(b@145, Terminal)
+# CHECK-NEXT: BB#32: ; frequency = 0.055309
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Int64 b@109 = Load(b@34, offset = 8, ControlDependent|Reads:OrderWords, v17:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@110 = Load(b@10, offset = 65024, ControlDependent|Reads:RuntimeState, v17:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@111 = Equal(b@109, b@110, v17:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@112 = Load(b@10, offset = 65032, ControlDependent|Reads:RuntimeState, v17:PutSlotOrAdd)
+# CHECK-NEXT: Void b@113 = Branch(b@111, Terminal, v17:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:#35, Else:Unlikely:#36
+# CHECK-NEXT: BB#35: ; frequency = 0.052056
+# CHECK-NEXT: Predecessors: #32
+# CHECK-NEXT: Void b@114 = Store(b@112, b@34, offset = 8, ControlDependent|Writes:OrderWords, v17:PutSlotOrAdd)
+# CHECK-NEXT: Void b@115 = Jump(Terminal, v17:PutSlotOrAdd)
+# CHECK-NEXT: Successors: #34
+# CHECK-NEXT: BB#36: ; frequency = 0.003253
+# CHECK-NEXT: Predecessors: #32
+# CHECK-NEXT: Int64 b@59 = Const64(40, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@116 = Const64(1, v17:PutSlotOrAdd)
+# CHECK-NEXT: Void b@117 = Patchpoint(b@34:Register(%rsi), $40(b@59):Register(%rdx), $1(b@116):Register(%rax), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_header, OrderWords, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v17:PutSlotOrAdd)
+# CHECK-NEXT: Void b@118 = Jump(Terminal, v17:PutSlotOrAdd)
+# CHECK-NEXT: Successors: #34
+# CHECK-NEXT: BB#7: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #3, #22
+# CHECK-NEXT: Int64 b@122 = ZExt32(b@19, v18:PropSet)
+# CHECK-NEXT: Int64 b@132 = Load(b@10, offset = 96, ReadsImmutable, v18:PropSet)
+# CHECK-NEXT: Int64 b@123 = Add(b@122, b@132, v18:PropSet)
+# CHECK-NEXT: Void b@124 = Patchpoint(b@34:Register(%rax), b@123:Register(%rsi), resultConstraints = WarmAny, lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v18:PropSet)
+# CHECK-NEXT: Successors: #9, Rare:#18
+# CHECK-NEXT: BB#1: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@43 = Load(b@10, offset = 80, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v9:GetModuleVariable)
+# CHECK-NEXT: Int64 b@44 = Load(b@43, offset = 8, ControlDependent|Reads:AOTInstance_closureCells, v9:GetModuleVariable)
+# CHECK-NEXT: Void b@46 = Branch(b@44, Terminal, v9:GetModuleVariable)
+# CHECK-NEXT: Successors: Then:#19, Else:Rare:#20
+# CHECK-NEXT: BB#19: ; frequency = 0.058766
+# CHECK-NEXT: Predecessors: #1
+# CHECK-NEXT: Void b@47 = Upsilon(b@44, ^52, WritesLocalState, v9:GetModuleVariable)
+# CHECK-NEXT: Void b@48 = Jump(Terminal, v9:GetModuleVariable)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#21: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #20, #19
+# CHECK-NEXT: Int64 b@52 = Phi(ReadsLocalState, v9:GetModuleVariable)
+# CHECK-NEXT: Int64 b@54 = Patchpoint(b@52:Register(%r8), b@34:Register(%rdi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v10:Call)
+# CHECK-NEXT: Successors: #22, Rare:#18
+# CHECK-NEXT: BB#22: ; frequency = 0.058766
+# CHECK-NEXT: Predecessors: #21
+# CHECK-NEXT: Int32 b@56 = Load8Z(b@34, offset = 6, ControlDependent|Reads:JSCell_typeInfoFlags, v11:HasLayoutPrototype)
+# CHECK-NEXT: Int32 b@58 = BitAnd(b@56, $192(b@57), v11:HasLayoutPrototype)
+# CHECK-NEXT: Void b@60 = Branch(b@58, Terminal, v11:HasLayoutPrototype)
+# CHECK-NEXT: Successors: Then:Rare:#7, Else:#2
+# CHECK-NEXT: BB#2: ; frequency = 0.058709
+# CHECK-NEXT: Predecessors: #22
+# CHECK-NEXT: Int64 b@65 = ZExt32(b@19, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@66 = Load(b@34, offset = 40, ControlDependent|Reads:ObjectFields.11, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@63 = Load(b@10, offset = -88, ReadsImmutable, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@68 = Equal(b@66, b@63, v34:PutSlotOrAdd)
+# CHECK-NEXT: Void b@69 = Branch(b@68, Terminal, v34:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:Unlikely:#23, Else:#25
+# CHECK-NEXT: BB#25: ; frequency = 0.058709
+# CHECK-NEXT: Predecessors: #2, #27, #26
+# CHECK-NEXT: Void b@81 = Store(b@65, b@34, offset = 40, ControlDependent|Writes:ObjectFields.11, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v38:String)
+# CHECK-NEXT: Int64 b@88 = Load(b@87, ControlDependent|Reads:AOTInstance_stringCells, v38:String)
+# CHECK-NEXT: Void b@90 = Branch(b@88, Terminal, v38:String)
+# CHECK-NEXT: Successors: Then:#28, Else:Rare:#29
+# CHECK-NEXT: BB#28: ; frequency = 0.058651
+# CHECK-NEXT: Predecessors: #25
+# CHECK-NEXT: Void b@91 = Upsilon(b@88, ^96, WritesLocalState, v38:String)
+# CHECK-NEXT: Void b@92 = Jump(Terminal, v38:String)
+# CHECK-NEXT: Successors: #30
+# CHECK-NEXT: BB#30: ; frequency = 0.058709
+# CHECK-NEXT: Predecessors: #29, #28
+# CHECK-NEXT: Int64 b@96 = Phi(ReadsLocalState, v38:String)
+# CHECK-NEXT: Int64 b@97 = Patchpoint(b@65:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v39:Add)
+# CHECK-NEXT: Int64 b@98 = Patchpoint(b@96:Register(%rax), b@97:Register(%rdx), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v39:Add)
+# CHECK-NEXT: Successors: #31, Rare:#18
+# CHECK-NEXT: BB#31: ; frequency = 0.058651
+# CHECK-NEXT: Predecessors: #30
+# CHECK-NEXT: Void b@99 = Return(b@98, Terminal)
+# CHECK-NEXT: BB#29: ; frequency = 0.000057
+# CHECK-NEXT: Predecessors: #25
+# CHECK-NEXT: Int64 b@93 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x0, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v38:String)
+# CHECK-NEXT: Void b@94 = Upsilon(b@93, ^96, WritesLocalState, v38:String)
+# CHECK-NEXT: Void b@95 = Jump(Terminal, v38:String)
+# CHECK-NEXT: Successors: #30
+# CHECK-NEXT: BB#23: ; frequency = 0.003453
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Int64 b@70 = Load(b@34, offset = 8, ControlDependent|Reads:OrderWords, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@71 = Load(b@10, offset = 65040, ControlDependent|Reads:RuntimeState, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@72 = Equal(b@70, b@71, v34:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@73 = Load(b@10, offset = 65048, ControlDependent|Reads:RuntimeState, v34:PutSlotOrAdd)
+# CHECK-NEXT: Void b@74 = Branch(b@72, Terminal, v34:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:#26, Else:Unlikely:#27
+# CHECK-NEXT: BB#26: ; frequency = 0.003250
+# CHECK-NEXT: Predecessors: #23
+# CHECK-NEXT: Void b@75 = Store(b@73, b@34, offset = 8, ControlDependent|Writes:OrderWords, v34:PutSlotOrAdd)
+# CHECK-NEXT: Void b@76 = Jump(Terminal, v34:PutSlotOrAdd)
+# CHECK-NEXT: Successors: #25
+# CHECK-NEXT: BB#27: ; frequency = 0.000203
+# CHECK-NEXT: Predecessors: #23
+# CHECK-NEXT: Int64 b@77 = Const64(40, v34:PutSlotOrAdd)
+# CHECK-NEXT: Void b@78 = Patchpoint(b@34:Register(%rsi), $40(b@77):Register(%rdx), $2(b@33):Register(%rax), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_header, OrderWords, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v34:PutSlotOrAdd)
+# CHECK-NEXT: Void b@79 = Jump(Terminal, v34:PutSlotOrAdd)
+# CHECK-NEXT: Successors: #25
+# CHECK-NEXT: BB#20: ; frequency = 0.000057
+# CHECK-NEXT: Predecessors: #1
+# CHECK-NEXT: Int64 b@49 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AllocatorState, RuntimeState}|Reads:jscRoot, v9:GetModuleVariable)
+# CHECK-NEXT: Void b@50 = Upsilon(b@49, ^52, WritesLocalState, v9:GetModuleVariable)
+# CHECK-NEXT: Void b@51 = Jump(Terminal, v9:GetModuleVariable)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 425984
+# CHECK-NEXT: b@19: range = [1,2]
+# CHECK-NEXT: b@34: dereferenceableBytes = 64
+# CHECK-NEXT: b@96: dereferenceableBytes = 16
+# CHECK-NEXT: b@98: dereferenceableBytes = 16
+# CHECK-NEXT: b@139: dereferenceableBytes = 16
+# CHECK-NEXT: b@141: dereferenceableBytes = 16
+# CHECK-NEXT: end of function f3

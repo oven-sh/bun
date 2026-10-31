@@ -1,0 +1,1667 @@
+# -- source: generator-delegates-undefined-null-loops.ts
+# // Generators delegate to undefined or null. Loops over lists stand behind the delegation, in front of it, around it and in its handlers.
+# function show(value: unknown): void {
+#   console.log(value);
+# }
+#
+# function listOf(text: string): number[] {
+#   return JSON.parse(text);
+# }
+#
+# function nothing(): undefined {
+#   return undefined;
+# }
+#
+# function drain(name: string, made: Iterable<unknown>): void {
+#   try {
+#     for (const value of made) console.log(name, "yields", value);
+#     console.log(name, "ends");
+#   } catch (error) {
+#     console.log(name, "throws", (error as Error).name);
+#   }
+# }
+#
+# function* loopBehind(list: number[]) {
+#   yield* undefined as any;
+#   for (const element of list) show(element);
+# }
+#
+# function* loopInFrontAndDelegationBehind(list: number[], more: number[]) {
+#   for (const element of list) show(element);
+#   yield* null as any;
+#   yield* more;
+# }
+#
+# function* loopsOnBothSides(list: number[], more: number[]) {
+#   for (const element of list) show(element);
+#   yield* undefined as any;
+#   for (const element of more) show(element);
+# }
+#
+# function* answerOfACall(list: number[]) {
+#   yield* nothing() as any;
+#   for (const element of list) show(element);
+# }
+#
+# function* onOnePath(list: number[], delegates: boolean) {
+#   if (delegates) yield* null as any;
+#   for (const element of list) show(element);
+# }
+#
+# function* insideALoop(list: number[]) {
+#   for (const element of list) {
+#     show(element);
+#     yield* undefined as any;
+#     for (const inner of list) show(inner);
+#   }
+# }
+#
+# function* caught(list: number[]) {
+#   try {
+#     yield* undefined as any;
+#     for (const element of list) show(element);
+#   } catch (error) {
+#     show((error as Error).name);
+#   }
+#   for (const element of list) show(element);
+#   yield* list;
+# }
+#
+# function* caughtByTheOuterOfTwo(list: number[]) {
+#   try {
+#     try {
+#       yield* null as any;
+#       for (const element of list) show(element);
+#     } finally {
+#       for (const element of list) show(element);
+#     }
+#   } catch (error) {
+#     show((error as Error).name);
+#   }
+#   yield* list;
+# }
+#
+# function* loopThatLeavesEarlyBehind(list: number[]) {
+#   yield* undefined as any;
+#   for (const element of list) {
+#     show(element);
+#     if (element > 1) break;
+#   }
+# }
+#
+# drain("loopBehind", loopBehind(listOf("[1,2]")));
+# drain("loopInFrontAndDelegationBehind", loopInFrontAndDelegationBehind(listOf("[1,2]"), listOf("[3]")));
+# drain("loopsOnBothSides", loopsOnBothSides(listOf("[1,2]"), listOf("[3]")));
+# drain("answerOfACall", answerOfACall(listOf("[1,2]")));
+# drain("onOnePath", onOnePath(listOf("[1,2]"), true));
+# drain("onOnePath", onOnePath(listOf("[1,2]"), false));
+# drain("insideALoop", insideALoop(listOf("[1,2]")));
+# drain("caught", caught(listOf("[1,2]")));
+# drain("caughtByTheOuterOfTwo", caughtByTheOuterOfTwo(listOf("[1,2]")));
+# drain("loopThatLeavesEarlyBehind", loopThatLeavesEarlyBehind(listOf("[1,2,3]")));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="generator-delegates-undefined-null-loops.ts" displayPath="generator-delegates-undefined-null-loops.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+typesite w0 module=m0 position=273 kind=Result
+typesite w1 module=m0 position=217 kind=Parameter
+typesite w2 module=m0 position=201 kind=Result
+typesite w3 module=m0 position=343 kind=Parameter
+typesite w4 module=m0 position=599 kind=Parameter
+typesite w5 module=m0 position=733 kind=Parameter
+typesite w6 module=m0 position=749 kind=Parameter
+typesite w7 module=m0 position=879 kind=Parameter
+typesite w8 module=m0 position=895 kind=Parameter
+typesite w9 module=m0 position=1057 kind=Parameter
+typesite w10 module=m0 position=1170 kind=Parameter
+typesite w11 module=m0 position=1186 kind=Parameter
+typesite w12 module=m0 position=1315 kind=Parameter
+typesite w13 module=m0 position=1480 kind=Parameter
+typesite w14 module=m0 position=1734 kind=Parameter
+typesite w15 module=m0 position=2027 kind=Parameter
+typesite w16 module=m0 position=2189 kind=CallResult
+typesite w17 module=m0 position=2279 kind=CallResult
+typesite w18 module=m0 position=2296 kind=CallResult
+typesite w19 module=m0 position=2356 kind=CallResult
+typesite w20 module=m0 position=2373 kind=CallResult
+typesite w21 module=m0 position=2427 kind=CallResult
+typesite w22 module=m0 position=2475 kind=CallResult
+typesite w23 module=m0 position=2529 kind=CallResult
+typesite w24 module=m0 position=2588 kind=CallResult
+typesite w25 module=m0 position=2630 kind=CallResult
+typesite w26 module=m0 position=2702 kind=CallResult
+typesite w27 module=m0 position=2782 kind=CallResult
+typesite w28 module=m0 position=547 kind=PropertyRead
+typesite w29 module=m0 position=657 kind=Element
+typesite w30 module=m0 position=780 kind=Element
+typesite w31 module=m0 position=926 kind=Element
+typesite w32 module=m0 position=998 kind=Element
+typesite w33 module=m0 position=1084 kind=CallResult
+typesite w34 module=m0 position=1115 kind=Element
+typesite w35 module=m0 position=1258 kind=Element
+typesite w36 module=m0 position=1346 kind=Element
+typesite w37 module=m0 position=1428 kind=Element
+typesite w38 module=m0 position=1550 kind=Element
+typesite w39 module=m0 position=1611 kind=PropertyRead
+typesite w40 module=m0 position=1652 kind=Element
+typesite w41 module=m0 position=1813 kind=Element
+typesite w42 module=m0 position=1878 kind=Element
+typesite w43 module=m0 position=1945 kind=PropertyRead
+typesite w44 module=m0 position=2085 kind=Element
+variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="nothing" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f5
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f6
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f7
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f8
+    v11 = Convert v10 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f9
+    v13 = Convert v12 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f10
+    v15 = Convert v14 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f11
+    v17 = Convert v16 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClosure function=f12
+    v19 = Convert v18 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = NewClosure function=f13
+    v21 = Convert v20 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v22 = String string="loopBehind"
+    v23 = String string="[1,2]"
+    v24 = Call v1, -, v23 calleeName="listOf"
+    v25 = Convert v24 declared={type=undefined|null|Array<number> site=w16 flags=[OmitsNull, OmitsUndefined]}
+    v26 = Call v5, -, v25 calleeName="loopBehind"
+    v27 = Convert v26 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v28 = Call v3, -, v22, v27 calleeName="drain"
+    v29 = String string="loopInFrontAndDelegationBehind"
+    v30 = String string="[1,2]"
+    v31 = Call v1, -, v30 calleeName="listOf"
+    v32 = Convert v31 declared={type=undefined|null|Array<number> site=w17 flags=[OmitsNull, OmitsUndefined]}
+    v33 = String string="[3]"
+    v34 = Call v1, -, v33 calleeName="listOf"
+    v35 = Convert v34 declared={type=undefined|null|Array<number> site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v36 = Call v7, -, v32, v35 calleeName="loopInFrontAndDelegationBehind"
+    v37 = Convert v36 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v38 = Call v3, -, v29, v37 calleeName="drain"
+    v39 = String string="loopsOnBothSides"
+    v40 = String string="[1,2]"
+    v41 = Call v1, -, v40 calleeName="listOf"
+    v42 = Convert v41 declared={type=undefined|null|Array<number> site=w19 flags=[OmitsNull, OmitsUndefined]}
+    v43 = String string="[3]"
+    v44 = Call v1, -, v43 calleeName="listOf"
+    v45 = Convert v44 declared={type=undefined|null|Array<number> site=w20 flags=[OmitsNull, OmitsUndefined]}
+    v46 = Call v9, -, v42, v45 calleeName="loopsOnBothSides"
+    v47 = Convert v46 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v48 = Call v3, -, v39, v47 calleeName="drain"
+    v49 = String string="answerOfACall"
+    v50 = String string="[1,2]"
+    v51 = Call v1, -, v50 calleeName="listOf"
+    v52 = Convert v51 declared={type=undefined|null|Array<number> site=w21 flags=[OmitsNull, OmitsUndefined]}
+    v53 = Call v11, -, v52 calleeName="answerOfACall"
+    v54 = Convert v53 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v55 = Call v3, -, v49, v54 calleeName="drain"
+    v56 = String string="onOnePath"
+    v57 = String string="[1,2]"
+    v58 = Call v1, -, v57 calleeName="listOf"
+    v59 = Convert v58 declared={type=undefined|null|Array<number> site=w22 flags=[OmitsNull, OmitsUndefined]}
+    v60 = Boolean boolean=true
+    v61 = Call v13, -, v59, v60 calleeName="onOnePath"
+    v62 = Convert v61 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v63 = Call v3, -, v56, v62 calleeName="drain"
+    v64 = String string="onOnePath"
+    v65 = String string="[1,2]"
+    v66 = Call v1, -, v65 calleeName="listOf"
+    v67 = Convert v66 declared={type=undefined|null|Array<number> site=w23 flags=[OmitsNull, OmitsUndefined]}
+    v68 = Boolean
+    v69 = Call v13, -, v67, v68 calleeName="onOnePath"
+    v70 = Convert v69 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v71 = Call v3, -, v64, v70 calleeName="drain"
+    v72 = String string="insideALoop"
+    v73 = String string="[1,2]"
+    v74 = Call v1, -, v73 calleeName="listOf"
+    v75 = Convert v74 declared={type=undefined|null|Array<number> site=w24 flags=[OmitsNull, OmitsUndefined]}
+    v76 = Call v15, -, v75 calleeName="insideALoop"
+    v77 = Convert v76 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v78 = Call v3, -, v72, v77 calleeName="drain"
+    v79 = String string="caught"
+    v80 = String string="[1,2]"
+    v81 = Call v1, -, v80 calleeName="listOf"
+    v82 = Convert v81 declared={type=undefined|null|Array<number> site=w25 flags=[OmitsNull, OmitsUndefined]}
+    v83 = Call v17, -, v82 calleeName="caught"
+    v84 = Convert v83 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v85 = Call v3, -, v79, v84 calleeName="drain"
+    v86 = String string="caughtByTheOuterOfTwo"
+    v87 = String string="[1,2]"
+    v88 = Call v1, -, v87 calleeName="listOf"
+    v89 = Convert v88 declared={type=undefined|null|Array<number> site=w26 flags=[OmitsNull, OmitsUndefined]}
+    v90 = Call v19, -, v89 calleeName="caughtByTheOuterOfTwo"
+    v91 = Convert v90 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v92 = Call v3, -, v86, v91 calleeName="drain"
+    v93 = String string="loopThatLeavesEarlyBehind"
+    v94 = String string="[1,2,3]"
+    v95 = Call v1, -, v94 calleeName="listOf"
+    v96 = Convert v95 declared={type=undefined|null|Array<number> site=w27 flags=[OmitsNull, OmitsUndefined]}
+    v97 = Call v21, -, v96 calleeName="loopThatLeavesEarlyBehind"
+    v98 = Convert v97 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v99 = Call v3, -, v93, v98 calleeName="drain"
+    v100 = Undefined
+    Return v100
+}
+function f1 name="show" module=m0 position=138 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="console" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
+    v4 = PropGet v3 key="log"
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v6 = Call v5, v3, v0 calleeKey="log" calleeName="console.log"
+    v7 = Undefined
+    Return v7
+}
+function f2 name="nothing" module=m0 position=273 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    v1 = Convert v0 declared={type=undefined site=w0}
+    Return v1
+}
+function f3 name="listOf" module=m0 position=201 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f4 name="drain" module=m0 position=328 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string|Array):
+    Jump -> next b1()
+  b1():
+    Jump -> next b2()
+  b2() handler=b9():
+    v2 = IteratorOpen v1
+    Jump -> next b3()
+  b3() handler=b9():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b4(), notTaken b6()
+  b4() handler=b9():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="console" [isFreeName]
+    v9 = Convert v8 declared={type=builtin(Console) flags=[IsExpected]}
+    v10 = PropGet v9 key="log"
+    v11 = Convert v10 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v12 = String string="ends"
+    v13 = Call v11, v9, v0, v12 calleeKey="log" calleeName="console.log"
+    Jump -> next b5()
+  b5():
+    Jump -> next b10()
+  b6() handler=b9():
+    Jump -> next b7()
+  b7() handler=b8():
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="console" [isFreeName]
+    v16 = Convert v15 declared={type=builtin(Console) flags=[IsExpected]}
+    v17 = PropGet v16 key="log"
+    v18 = Convert v17 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v19 = String string="yields"
+    v20 = Call v18, v16, v0, v19, v6 calleeKey="log" calleeName="console.log"
+    Jump -> next b3()
+  b8() role=IterationCleanup subject=v2 handler=b9():
+    v21 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v21
+  b9() role=CatchHandler:
+    v23 = CatchValue
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="console" [isFreeName]
+    v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]}
+    v27 = PropGet v26 key="log"
+    v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v29 = String string="throws"
+    v30 = Convert v23 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v31 = PropGet v30 key="name"
+    v32 = Convert v31 declared={type=undefined|null|string site=w28} illTypedCause=Assertion
+    v33 = Call v28, v26, v0, v29, v32 calleeKey="log" calleeName="console.log"
+    Jump -> next b10()
+  b10():
+    v34 = Undefined
+    Return v34
+}
+function f5 name="loopBehind" module=m0 position=578 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    v4 = Undefined
+    v5 = IteratorOpen v4 [isDelegating]
+    v6 = Undefined
+    Jump -> next b2(v6)
+  b2(v7):
+    v8 = IteratorResume v5, v7 [readsValueWhenDone]
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b5(v10), notTaken b3(v10)
+  b3(v11):
+    LoopHint
+    v13 = Yield v11, v2
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Switch v15 cases=[1, 2] -> case b4(v14), case b11(v14), otherwise b2(v14)
+  b4(v16):
+    v17 = IteratorResume v5, v16 resumeMode=Throw [readsValueWhenDone]
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    Branch v18 -> taken b5(v19), notTaken b3(v19)
+  b5(v20):
+    v21 = IteratorOpen v2
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v23 = IteratorResume v21
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b7(), notTaken b8()
+  b7():
+    v26 = Undefined
+    Return v26
+  b8():
+    Jump -> next b9()
+  b9() handler=b10():
+    v27 = Convert v25 declared={type=number site=w29} illTypedCause=ContainerWriterUnseen
+    v28 = GetModuleVariable variable=g0
+    v29 = Call v28, -, v27 calleeName="show"
+    Jump -> next b6()
+  b10() role=IterationCleanup subject=v21:
+    v30 = CatchException
+    IteratorClose v21 completion=Throw
+    Rethrow v30
+  b11(v32):
+    v33 = IteratorResume v5, v32 resumeMode=Return [readsValueWhenDone]
+    v34 = ResultAt v33
+    v35 = ResultAt v33 index=1
+    Branch v34 -> taken b12(v35), notTaken b3(v35)
+  b12(v36):
+    Return v36
+}
+function f6 name="loopInFrontAndDelegationBehind" module=m0 position=692 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>, v3: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2, v3
+    v5 = IteratorOpen v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b16()
+  b3():
+    v10 = Null
+    v11 = IteratorOpen v10 [isDelegating]
+    v12 = Undefined
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = IteratorResume v11, v13 [readsValueWhenDone]
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Branch v15 -> taken b7(v16), notTaken b5(v16)
+  b5(v17):
+    LoopHint
+    v19 = Yield v17, v2, v3
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Switch v21 cases=[1, 2] -> case b6(v20), case b14(v20), otherwise b4(v20)
+  b6(v22):
+    v23 = IteratorResume v11, v22 resumeMode=Throw [readsValueWhenDone]
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b7(v25), notTaken b5(v25)
+  b7(v26):
+    v27 = IteratorOpen v3 [isDelegating]
+    v28 = Undefined
+    Jump -> next b8(v28)
+  b8(v29):
+    v30 = IteratorResume v27, v29 [readsValueWhenDone]
+    v31 = ResultAt v30
+    v32 = ResultAt v30 index=1
+    Branch v31 -> taken b11(v32), notTaken b9(v32)
+  b9(v33):
+    LoopHint
+    v35 = Yield v33, v2, v3
+    v36 = ResultAt v35
+    v37 = ResultAt v35 index=1
+    Switch v37 cases=[1, 2] -> case b10(v36), case b12(v36), otherwise b8(v36)
+  b10(v38):
+    v39 = IteratorResume v27, v38 resumeMode=Throw [readsValueWhenDone]
+    v40 = ResultAt v39
+    v41 = ResultAt v39 index=1
+    Branch v40 -> taken b11(v41), notTaken b9(v41)
+  b11(v42):
+    v43 = Undefined
+    Return v43
+  b12(v44):
+    v45 = IteratorResume v27, v44 resumeMode=Return [readsValueWhenDone]
+    v46 = ResultAt v45
+    v47 = ResultAt v45 index=1
+    Branch v46 -> taken b13(v47), notTaken b9(v47)
+  b13(v48):
+    Return v48
+  b14(v49):
+    v50 = IteratorResume v11, v49 resumeMode=Return [readsValueWhenDone]
+    v51 = ResultAt v50
+    v52 = ResultAt v50 index=1
+    Branch v51 -> taken b15(v52), notTaken b5(v52)
+  b15(v53):
+    Return v53
+  b16():
+    Jump -> next b17()
+  b17() handler=b18():
+    v54 = Convert v9 declared={type=number site=w30} illTypedCause=ContainerWriterUnseen
+    v55 = GetModuleVariable variable=g0
+    v56 = Call v55, -, v54 calleeName="show"
+    Jump -> next b2()
+  b18() role=IterationCleanup subject=v5:
+    v57 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v57
+}
+function f7 name="loopsOnBothSides" module=m0 position=852 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>, v3: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2, v3
+    v5 = IteratorOpen v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b15()
+  b3():
+    v10 = Undefined
+    v11 = IteratorOpen v10 [isDelegating]
+    v12 = Undefined
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = IteratorResume v11, v13 [readsValueWhenDone]
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Branch v15 -> taken b7(v16), notTaken b5(v16)
+  b5(v17):
+    LoopHint
+    v19 = Yield v17, v2, v3
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Switch v21 cases=[1, 2] -> case b6(v20), case b13(v20), otherwise b4(v20)
+  b6(v22):
+    v23 = IteratorResume v11, v22 resumeMode=Throw [readsValueWhenDone]
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b7(v25), notTaken b5(v25)
+  b7(v26):
+    v27 = IteratorOpen v3
+    Jump -> next b8()
+  b8():
+    LoopHint
+    v29 = IteratorResume v27
+    v30 = ResultAt v29
+    v31 = ResultAt v29 index=1
+    Branch v30 -> taken b9(), notTaken b10()
+  b9():
+    v32 = Undefined
+    Return v32
+  b10():
+    Jump -> next b11()
+  b11() handler=b12():
+    v33 = Convert v31 declared={type=number site=w32} illTypedCause=ContainerWriterUnseen
+    v34 = GetModuleVariable variable=g0
+    v35 = Call v34, -, v33 calleeName="show"
+    Jump -> next b8()
+  b12() role=IterationCleanup subject=v27:
+    v36 = CatchException
+    IteratorClose v27 completion=Throw
+    Rethrow v36
+  b13(v38):
+    v39 = IteratorResume v11, v38 resumeMode=Return [readsValueWhenDone]
+    v40 = ResultAt v39
+    v41 = ResultAt v39 index=1
+    Branch v40 -> taken b14(v41), notTaken b5(v41)
+  b14(v42):
+    Return v42
+  b15():
+    Jump -> next b16()
+  b16() handler=b17():
+    v43 = Convert v9 declared={type=number site=w31} illTypedCause=ContainerWriterUnseen
+    v44 = GetModuleVariable variable=g0
+    v45 = Call v44, -, v43 calleeName="show"
+    Jump -> next b2()
+  b17() role=IterationCleanup subject=v5:
+    v46 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v46
+}
+function f8 name="answerOfACall" module=m0 position=1033 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4 calleeName="nothing"
+    v6 = Convert v5 declared={type=undefined site=w33}
+    v7 = IteratorOpen v6 [isDelegating]
+    v8 = Undefined
+    Jump -> next b2(v8)
+  b2(v9):
+    v10 = IteratorResume v7, v9 [readsValueWhenDone]
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b5(v12), notTaken b3(v12)
+  b3(v13):
+    LoopHint
+    v15 = Yield v13, v2
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Switch v17 cases=[1, 2] -> case b4(v16), case b11(v16), otherwise b2(v16)
+  b4(v18):
+    v19 = IteratorResume v7, v18 resumeMode=Throw [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b3(v21)
+  b5(v22):
+    v23 = IteratorOpen v2
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v25 = IteratorResume v23
+    v26 = ResultAt v25
+    v27 = ResultAt v25 index=1
+    Branch v26 -> taken b7(), notTaken b8()
+  b7():
+    v28 = Undefined
+    Return v28
+  b8():
+    Jump -> next b9()
+  b9() handler=b10():
+    v29 = Convert v27 declared={type=number site=w34} illTypedCause=ContainerWriterUnseen
+    v30 = GetModuleVariable variable=g0
+    v31 = Call v30, -, v29 calleeName="show"
+    Jump -> next b6()
+  b10() role=IterationCleanup subject=v23:
+    v32 = CatchException
+    IteratorClose v23 completion=Throw
+    Rethrow v32
+  b11(v34):
+    v35 = IteratorResume v7, v34 resumeMode=Return [readsValueWhenDone]
+    v36 = ResultAt v35
+    v37 = ResultAt v35 index=1
+    Branch v36 -> taken b12(v37), notTaken b3(v37)
+  b12(v38):
+    Return v38
+}
+function f9 name="onOnePath" module=m0 position=1150 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w11}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>, v3: boolean):
+    Jump -> next b1()
+  b1():
+    InitialYield v2, v3
+    v5 = ToBoolean v3
+    Branch v5 -> taken b2(| 0), notTaken b10(| 0)
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = Null
+    v8 = IteratorOpen v7 [isDelegating]
+    v9 = Undefined
+    Jump -> next b4(v9)
+  b4(v10):
+    v11 = IteratorResume v8, v10 [readsValueWhenDone]
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Branch v12 -> taken b7(v13), notTaken b5(v13)
+  b5(v14):
+    LoopHint
+    v16 = Yield v14, v2, v6
+    v17 = ResultAt v16
+    v18 = ResultAt v16 index=1
+    Switch v18 cases=[1, 2] -> case b6(v17), case b8(v17), otherwise b4(v17)
+  b6(v19):
+    v20 = IteratorResume v8, v19 resumeMode=Throw [readsValueWhenDone]
+    v21 = ResultAt v20
+    v22 = ResultAt v20 index=1
+    Branch v21 -> taken b7(v22), notTaken b5(v22)
+  b7(v23):
+    Jump -> next b11()
+  b8(v24):
+    v25 = IteratorResume v8, v24 resumeMode=Return [readsValueWhenDone]
+    v26 = ResultAt v25
+    v27 = ResultAt v25 index=1
+    Branch v26 -> taken b9(v27), notTaken b5(v27)
+  b9(v28):
+    Return v28
+  b10(v29):
+    Jump -> next b11()
+  b11():
+    v30 = IteratorOpen v2
+    Jump -> next b12()
+  b12():
+    LoopHint
+    v32 = IteratorResume v30
+    v33 = ResultAt v32
+    v34 = ResultAt v32 index=1
+    Branch v33 -> taken b13(), notTaken b14()
+  b13():
+    v35 = Undefined
+    Return v35
+  b14():
+    Jump -> next b15()
+  b15() handler=b16():
+    v36 = Convert v34 declared={type=number site=w35} illTypedCause=ContainerWriterUnseen
+    v37 = GetModuleVariable variable=g0
+    v38 = Call v37, -, v36 calleeName="show"
+    Jump -> next b12()
+  b16() role=IterationCleanup subject=v30:
+    v39 = CatchException
+    IteratorClose v30 completion=Throw
+    Rethrow v39
+}
+function f10 name="insideALoop" module=m0 position=1293 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    v4 = IteratorOpen v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Undefined
+    Return v9
+  b4():
+    Jump -> next b5()
+  b5() handler=b18():
+    v10 = Convert v8 declared={type=number site=w36} illTypedCause=ContainerWriterUnseen
+    v11 = GetModuleVariable variable=g0
+    v12 = Call v11, -, v10 calleeName="show"
+    v13 = Undefined
+    v14 = IteratorOpen v13 [isDelegating]
+    v15 = Undefined
+    Jump -> next b6(v15)
+  b6(v16) handler=b18():
+    v17 = IteratorResume v14, v16 [readsValueWhenDone]
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    Branch v18 -> taken b9(v19), notTaken b7(v19)
+  b7(v20) handler=b18():
+    LoopHint
+    v22 = Yield v20, v2
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    Switch v24 cases=[1, 2] -> case b8(v23), case b15(v23), otherwise b6(v23)
+  b8(v25) handler=b18():
+    v26 = IteratorResume v14, v25 resumeMode=Throw [readsValueWhenDone]
+    v27 = ResultAt v26
+    v28 = ResultAt v26 index=1
+    Branch v27 -> taken b9(v28), notTaken b7(v28)
+  b9(v29) handler=b18():
+    v30 = IteratorOpen v2
+    Jump -> next b10()
+  b10() handler=b18():
+    LoopHint
+    v32 = IteratorResume v30
+    v33 = ResultAt v32
+    v34 = ResultAt v32 index=1
+    Branch v33 -> taken b11(), notTaken b12()
+  b11() handler=b18():
+    Jump -> next b2()
+  b12() handler=b18():
+    Jump -> next b13()
+  b13() handler=b14():
+    v35 = Convert v34 declared={type=number site=w37} illTypedCause=ContainerWriterUnseen
+    v36 = GetModuleVariable variable=g0
+    v37 = Call v36, -, v35 calleeName="show"
+    Jump -> next b10()
+  b14() role=IterationCleanup subject=v30 handler=b18():
+    v38 = CatchException
+    IteratorClose v30 completion=Throw
+    Rethrow v38
+  b15(v40) handler=b18():
+    v41 = IteratorResume v14, v40 resumeMode=Return [readsValueWhenDone]
+    v42 = ResultAt v41
+    v43 = ResultAt v41 index=1
+    Branch v42 -> taken b16(v43), notTaken b7(v43)
+  b16(v44) handler=b18():
+    Jump -> next b17(v44)
+  b17(v45):
+    IteratorClose v4
+    Return v45
+  b18() role=IterationCleanup subject=v4:
+    v47 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v47
+}
+function f11 name="caught" module=m0 position=1463 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    Jump -> next b2()
+  b2() handler=b15():
+    v4 = Undefined
+    v5 = IteratorOpen v4 [isDelegating]
+    v6 = Undefined
+    Jump -> next b3(v6)
+  b3(v7) handler=b15():
+    v8 = IteratorResume v5, v7 [readsValueWhenDone]
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b6(v10), notTaken b4(v10)
+  b4(v11) handler=b15():
+    LoopHint
+    v13 = Yield v11, v2
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Switch v15 cases=[1, 2] -> case b5(v14), case b13(v14), otherwise b3(v14)
+  b5(v16) handler=b15():
+    v17 = IteratorResume v5, v16 resumeMode=Throw [readsValueWhenDone]
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    Branch v18 -> taken b6(v19), notTaken b4(v19)
+  b6(v20) handler=b15():
+    v21 = IteratorOpen v2
+    Jump -> next b7()
+  b7() handler=b15():
+    LoopHint
+    v23 = IteratorResume v21
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b8(), notTaken b10()
+  b8() handler=b15():
+    Jump -> next b9()
+  b9():
+    Jump -> next b16()
+  b10() handler=b15():
+    Jump -> next b11()
+  b11() handler=b12():
+    v26 = Convert v25 declared={type=number site=w38} illTypedCause=ContainerWriterUnseen
+    v27 = GetModuleVariable variable=g0
+    v28 = Call v27, -, v26 calleeName="show"
+    Jump -> next b7()
+  b12() role=IterationCleanup subject=v21 handler=b15():
+    v29 = CatchException
+    IteratorClose v21 completion=Throw
+    Rethrow v29
+  b13(v31) handler=b15():
+    v32 = IteratorResume v5, v31 resumeMode=Return [readsValueWhenDone]
+    v33 = ResultAt v32
+    v34 = ResultAt v32 index=1
+    Branch v33 -> taken b14(v34), notTaken b4(v34)
+  b14(v35) handler=b15():
+    Return v35
+  b15() role=CatchHandler:
+    v36 = CatchValue
+    v37 = GetModuleVariable variable=g0
+    v38 = Convert v36 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v39 = PropGet v38 key="name"
+    v40 = Convert v39 declared={type=undefined|null|string site=w39} illTypedCause=Assertion
+    v41 = Call v37, -, v40 calleeName="show"
+    Jump -> next b16()
+  b16():
+    v42 = IteratorOpen v2
+    Jump -> next b17()
+  b17():
+    LoopHint
+    v44 = IteratorResume v42
+    v45 = ResultAt v44
+    v46 = ResultAt v44 index=1
+    Branch v45 -> taken b18(), notTaken b25()
+  b18():
+    v47 = IteratorOpen v2 [isDelegating]
+    v48 = Undefined
+    Jump -> next b19(v48)
+  b19(v49):
+    v50 = IteratorResume v47, v49 [readsValueWhenDone]
+    v51 = ResultAt v50
+    v52 = ResultAt v50 index=1
+    Branch v51 -> taken b22(v52), notTaken b20(v52)
+  b20(v53):
+    LoopHint
+    v55 = Yield v53, v2
+    v56 = ResultAt v55
+    v57 = ResultAt v55 index=1
+    Switch v57 cases=[1, 2] -> case b21(v56), case b23(v56), otherwise b19(v56)
+  b21(v58):
+    v59 = IteratorResume v47, v58 resumeMode=Throw [readsValueWhenDone]
+    v60 = ResultAt v59
+    v61 = ResultAt v59 index=1
+    Branch v60 -> taken b22(v61), notTaken b20(v61)
+  b22(v62):
+    v63 = Undefined
+    Return v63
+  b23(v64):
+    v65 = IteratorResume v47, v64 resumeMode=Return [readsValueWhenDone]
+    v66 = ResultAt v65
+    v67 = ResultAt v65 index=1
+    Branch v66 -> taken b24(v67), notTaken b20(v67)
+  b24(v68):
+    Return v68
+  b25():
+    Jump -> next b26()
+  b26() handler=b27():
+    v69 = Convert v46 declared={type=number site=w40} illTypedCause=ContainerWriterUnseen
+    v70 = GetModuleVariable variable=g0
+    v71 = Call v70, -, v69 calleeName="show"
+    Jump -> next b17()
+  b27() role=IterationCleanup subject=v42:
+    v72 = CatchException
+    IteratorClose v42 completion=Throw
+    Rethrow v72
+}
+function f12 name="caughtByTheOuterOfTwo" module=m0 position=1702 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w14 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    Jump -> next b2()
+  b2() handler=b29():
+    Jump -> next b3()
+  b3() handler=b17():
+    v4 = Null
+    v5 = IteratorOpen v4 [isDelegating]
+    v6 = Undefined
+    Jump -> next b4(v6)
+  b4(v7) handler=b17():
+    v8 = IteratorResume v5, v7 [readsValueWhenDone]
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b7(v10), notTaken b5(v10)
+  b5(v11) handler=b17():
+    LoopHint
+    v13 = Yield v11, v2
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Switch v15 cases=[1, 2] -> case b6(v14), case b14(v14), otherwise b4(v14)
+  b6(v16) handler=b17():
+    v17 = IteratorResume v5, v16 resumeMode=Throw [readsValueWhenDone]
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    Branch v18 -> taken b7(v19), notTaken b5(v19)
+  b7(v20) handler=b17():
+    v21 = IteratorOpen v2
+    Jump -> next b8()
+  b8() handler=b17():
+    LoopHint
+    v23 = IteratorResume v21
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b9(), notTaken b11()
+  b9() handler=b17():
+    Jump -> next b10()
+  b10() handler=b29():
+    v26 = Integer
+    v27 = Undefined
+    v28 = Undefined
+    Jump -> next b18(v26, v27, v28)
+  b11() handler=b17():
+    Jump -> next b12()
+  b12() handler=b13():
+    v29 = Convert v25 declared={type=number site=w41} illTypedCause=ContainerWriterUnseen
+    v30 = GetModuleVariable variable=g0
+    v31 = Call v30, -, v29 calleeName="show"
+    Jump -> next b8()
+  b13() role=IterationCleanup subject=v21 handler=b17():
+    v32 = CatchException
+    IteratorClose v21 completion=Throw
+    Rethrow v32
+  b14(v34) handler=b17():
+    v35 = IteratorResume v5, v34 resumeMode=Return [readsValueWhenDone]
+    v36 = ResultAt v35
+    v37 = ResultAt v35 index=1
+    Branch v36 -> taken b15(v37), notTaken b5(v37)
+  b15(v38) handler=b17():
+    Jump -> next b16(v38)
+  b16(v39) handler=b29():
+    v40 = Integer integer=1
+    v41 = Undefined
+    Jump -> next b18(v40, v39, v41)
+  b17() role=CleanupHandler handler=b29():
+    v42 = CatchValue
+    v43 = Integer integer=2
+    v44 = Undefined
+    Jump -> next b18(v43, v44, v42)
+  b18(v45, v46, v47) handler=b29():
+    v48 = IteratorOpen v2
+    Jump -> next b19()
+  b19() handler=b29():
+    LoopHint
+    v50 = IteratorResume v48
+    v51 = ResultAt v50
+    v52 = ResultAt v50 index=1
+    Branch v51 -> taken b20(), notTaken b26()
+  b20() handler=b29():
+    Switch v45 cases=[0, 1] -> case b21(), case b24(), otherwise b25()
+  b21() handler=b29():
+    Jump -> next b22()
+  b22() handler=b29():
+    Jump -> next b23()
+  b23():
+    Jump -> next b30()
+  b24() handler=b29():
+    Return v46
+  b25() handler=b29():
+    Throw v47
+  b26() handler=b29():
+    Jump -> next b27()
+  b27() handler=b28():
+    v53 = Convert v52 declared={type=number site=w42} illTypedCause=ContainerWriterUnseen
+    v54 = GetModuleVariable variable=g0
+    v55 = Call v54, -, v53 calleeName="show"
+    Jump -> next b19()
+  b28() role=IterationCleanup subject=v48 handler=b29():
+    v56 = CatchException
+    IteratorClose v48 completion=Throw
+    Rethrow v56
+  b29() role=CatchHandler:
+    v58 = CatchValue
+    v59 = GetModuleVariable variable=g0
+    v60 = Convert v58 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v61 = PropGet v60 key="name"
+    v62 = Convert v61 declared={type=undefined|null|string site=w43} illTypedCause=Assertion
+    v63 = Call v59, -, v62 calleeName="show"
+    Jump -> next b30()
+  b30():
+    v64 = IteratorOpen v2 [isDelegating]
+    v65 = Undefined
+    Jump -> next b31(v65)
+  b31(v66):
+    v67 = IteratorResume v64, v66 [readsValueWhenDone]
+    v68 = ResultAt v67
+    v69 = ResultAt v67 index=1
+    Branch v68 -> taken b34(v69), notTaken b32(v69)
+  b32(v70):
+    LoopHint
+    v72 = Yield v70, v2
+    v73 = ResultAt v72
+    v74 = ResultAt v72 index=1
+    Switch v74 cases=[1, 2] -> case b33(v73), case b35(v73), otherwise b31(v73)
+  b33(v75):
+    v76 = IteratorResume v64, v75 resumeMode=Throw [readsValueWhenDone]
+    v77 = ResultAt v76
+    v78 = ResultAt v76 index=1
+    Branch v77 -> taken b34(v78), notTaken b32(v78)
+  b34(v79):
+    v80 = Undefined
+    Return v80
+  b35(v81):
+    v82 = IteratorResume v64, v81 resumeMode=Return [readsValueWhenDone]
+    v83 = ResultAt v82
+    v84 = ResultAt v82 index=1
+    Branch v83 -> taken b36(v84), notTaken b32(v84)
+  b36(v85):
+    Return v85
+}
+function f13 name="loopThatLeavesEarlyBehind" module=m0 position=1991 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    InitialYield v2
+    v4 = Undefined
+    v5 = IteratorOpen v4 [isDelegating]
+    v6 = Undefined
+    Jump -> next b2(v6)
+  b2(v7):
+    v8 = IteratorResume v5, v7 [readsValueWhenDone]
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b5(v10), notTaken b3(v10)
+  b3(v11):
+    LoopHint
+    v13 = Yield v11, v2
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Switch v15 cases=[1, 2] -> case b4(v14), case b16(v14), otherwise b2(v14)
+  b4(v16):
+    v17 = IteratorResume v5, v16 resumeMode=Throw [readsValueWhenDone]
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    Branch v18 -> taken b5(v19), notTaken b3(v19)
+  b5(v20):
+    v21 = IteratorOpen v2
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v23 = IteratorResume v21
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b12(), notTaken b7()
+  b7():
+    Jump -> next b8()
+  b8() handler=b15():
+    v26 = Convert v25 declared={type=number site=w44} illTypedCause=ContainerWriterUnseen
+    v27 = GetModuleVariable variable=g0
+    v28 = Call v27, -, v26 calleeName="show"
+    v29 = Integer integer=1
+    v30 = Greater v26, v29
+    Branch v30 -> taken b9(| 0), notTaken b13(| 0)
+  b9(v31) handler=b15():
+    Jump -> next b10()
+  b10() handler=b15():
+    Jump -> next b11()
+  b11():
+    IteratorClose v21
+    Jump -> next b12()
+  b12():
+    v33 = Undefined
+    Return v33
+  b13(v34) handler=b15():
+    Jump -> next b14()
+  b14() handler=b15():
+    Jump -> next b6()
+  b15() role=IterationCleanup subject=v21:
+    v35 = CatchException
+    IteratorClose v21 completion=Throw
+    Rethrow v35
+  b16(v37):
+    v38 = IteratorResume v5, v37 resumeMode=Return [readsValueWhenDone]
+    v39 = ResultAt v38
+    v40 = ResultAt v38 index=1
+    Branch v39 -> taken b17(v40), notTaken b3(v40)
+  b17(v41):
+    Return v41
+}
+function f14 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = HasJSType v0 first=5 last=5
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5 index=1
+    v7 = ResultAt v5
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v9 = CreateIteratorResult v6, v8
+    Return v9
+  b4(v10):
+    Jump -> next b5()
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+    Unreachable
+}
+function f15 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=2
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = ResumeGenerator v0, v1
+    Return v8
+  b4(v9):
+    Jump -> next b5()
+  b5():
+    v10 = Integer integer=1
+    v11 = StrictEq v9, v10
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v13 = CreateIteratorResult v3, v12
+    Return v13
+}
+function f16 name="return" module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=85 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=2
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = ResumeGenerator v0, v1 resumeMode=Return
+    Return v8
+  b4(v9):
+    Jump -> next b5()
+  b5():
+    v10 = Integer integer=1
+    v11 = StrictEq v9, v10
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v13 = CreateIteratorResult v3, v12
+    Return v13
+}
+runtimefunction id=68 function=f14
+runtimefunction id=69 function=f15 visibility=Private
+runtimefunction id=85 function=f16 visibility=Private
+# -- generated: show nothing drain loopBehind loopInFrontAndDelegationBehind loopsOnBothSides answerOfACall insideALoop loopThatLeavesEarlyBehind
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m0 position=138 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v2: undefined = CallBuiltin v1, v0 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=34
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="nothing"
+# CHECK: module=m0 position=273 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="drain"
+# CHECK: module=m0 position=328 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: anything ~ undefined|null|string|Array):
+# CHECK-NEXT: v2: Generator<anything, pristine[Storage, Names]> = AssumeType v1 provenType=Generator<anything, pristine[Storage, Names]>
+# CHECK-NEXT: InitializeBuiltin builtin=GeneratorPrototypeNext
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b17():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: undefined = StepGenerator v2, v5 check=None
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: v10: boolean = StrictEq v8, v9
+# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b5()
+# CHECK-NEXT: b2() frequency=Rare handler=b17():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: v12: object = CallDirect v2, v11 function=f15
+# CHECK-NEXT: v13: anything = PropGet v12 key="done"
+# CHECK-NEXT: v14: boolean = ToBoolean v13
+# CHECK-NEXT: Branch v14 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b4() frequency=Rare handler=b17():
+# CHECK-NEXT: v15: anything = PropGet v12 key="value"
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: boolean = StrictEq v8, v16
+# CHECK-NEXT: Branch v17 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6() handler=b17():
+# CHECK-NEXT: v18: "ends" = String string="ends"
+# CHECK-NEXT: v19: undefined = CallBuiltin -, v0, v18 overload=ConsoleLog/0 accessSite=39
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Jump -> next b8(v7)
+# CHECK-NEXT: b8(v20: anything) handler=b9():
+# CHECK-NEXT: v21: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v22: "yields" = String string="yields"
+# CHECK-NEXT: v23: undefined = CallBuiltin v21, v0, v22, v20 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=42
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b9() role=CleanupHandler:
+# CHECK-NEXT: v24: exception = CatchException
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() frequency=Rare handler=b15():
+# CHECK-NEXT: InitializeBuiltin builtin=GeneratorPrototypeReturn
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: v27: undefined = StepGenerator v2, v26 resumeMode=Return check=None
+# CHECK-NEXT: v28: int[0, 2] = ResultAt v27 index=1
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: v30: boolean = StrictEq v28, v29
+# CHECK-NEXT: Branch v30 -> taken b11(), notTaken b14()
+# CHECK-NEXT: b11() frequency=Rare handler=b12():
+# CHECK-NEXT: InitializeBuiltin builtin=GeneratorPrototypeReturn
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: v33: object = CallDirect v2, v32 function=f16
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b12() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b15() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b16() handler=b17():
+# CHECK-NEXT: Rethrow v24
+# CHECK-NEXT: b17() role=CatchHandler:
+# CHECK-NEXT: v34: anything = CatchValue
+# CHECK-NEXT: v35: "throws" = String string="throws"
+# CHECK-NEXT: v36: anything ~ undefined|null|Error = Upcast v34 castType=anything
+# CHECK-NEXT: v37: anything = PropGet v36 key="name" accessSite=45
+# CHECK-NEXT: v38: anything ~ undefined|null|string = Expect v37 expectedType=undefined|null|string
+# CHECK-NEXT: v39: boolean ~ true = TypeTest v38 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v39 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v40: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v41: undefined = CallBuiltin -, v0, v35, v40 overload=ConsoleLog/0 accessSite=46
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b19(v42: bigint|object) frequency=Rare:
+# CHECK-NEXT: v43: undefined = CallBuiltin -, v0, v35, v42 overload=ConsoleLog/1 accessSite=46
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v44: undefined = Undefined
+# CHECK-NEXT: Return v44
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopBehind"
+# CHECK: module=m0 position=578 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f5 body=f20 promiseParameter=3}
+# CHECK-LABEL: function {{*}}name="loopInFrontAndDelegationBehind"
+# CHECK: module=m0 position=692 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f6 body=f21 promiseParameter=4}
+# CHECK-LABEL: function {{*}}name="loopsOnBothSides"
+# CHECK: module=m0 position=852 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f7 body=f22 promiseParameter=4}
+# CHECK-LABEL: function {{*}}name="answerOfACall"
+# CHECK: module=m0 position=1033 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w9 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f8 body=f23 promiseParameter=3}
+# CHECK-LABEL: function {{*}}name="insideALoop"
+# CHECK: module=m0 position=1293 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w12 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f10 body=f24 promiseParameter=3}
+# CHECK-LABEL: function {{*}}name="loopThatLeavesEarlyBehind"
+# CHECK: module=m0 position=1991 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w15 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f13 body=f27 promiseParameter=3}
+# CHECK-LABEL: function {{*}}name="loopBehind"
+# CHECK: module=m0 position=578 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Generator}] results=[{type=anything}] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{ramp=f5 body=f20 promiseParameter=3} {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: anything ~ undefined|null|Array<number>, v3: Generator):
+# CHECK-NEXT: v4: boolean = IsGeneratorRunning v3
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
+# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v7
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: never = RequireObjectCoercible v9 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopInFrontAndDelegationBehind"
+# CHECK: module=m0 position=692 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w6 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Generator}] results=[{type=anything}] derivation={source=f6 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]} creator=Coroutine{ramp=f6 body=f21 promiseParameter=4} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: anything ~ undefined|null|Array<number>, v3: anything ~ undefined|null|Array<number>, v4: Generator):
+# CHECK-NEXT: v5: boolean = IsGeneratorRunning v4
+# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v1, v2, v3
+# CHECK-NEXT: v8: anything = ResultAt v7
+# CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
+# CHECK-NEXT: Switch v9 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v8
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v10: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2 nullishAccess=Iterate
+# CHECK-NEXT: v11: boolean ~ true = TypeTest v10 testedType=Array<number>
+# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b16()
+# CHECK-NEXT: b5(v12: Array<number>):
+# CHECK-NEXT: v13: boolean = IsPristine v12 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v13 -> taken b6(), notTaken b16()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: b7(v15: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: v16: boolean = HasArrayStorage v12 arrayStorage=Double
+# CHECK-NEXT: Branch v16 -> taken b8(| 0), notTaken b12()
+# CHECK-NEXT: b8(v17: guard):
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b9(v18: int[0, 4294967295]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v21: boolean = Less v18, v20
+# CHECK-NEXT: Branch v21 -> taken b10(| 0), notTaken b23()
+# CHECK-NEXT: b10(v22: int[0, 4294967294]):
+# CHECK-NEXT: v23: boolean = IsElementPresent v12, v22, v17 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b15(v22)
+# CHECK-NEXT: b11(v24: guard):
+# CHECK-NEXT: v25: guard = AllGuards v17, v24
+# CHECK-NEXT: v26: number = GetArrayElement v12, v22, v25 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int[1, 4294967295] = Add v22, v27
+# CHECK-NEXT: v29: undefined = CallBuiltin -, v26 overload=ConsoleLog/0 accessSite=34
+# CHECK-NEXT: Jump -> next b9(v28)
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v12
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v33: boolean = Less v15, v32
+# CHECK-NEXT: Branch v33 -> taken b14(| 0), notTaken b23()
+# CHECK-NEXT: b14(v34: int[0, 4294967294] ~ 0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b15(v34)
+# CHECK-NEXT: b15(v35: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v36: anything ~ undefined|number = ElemGet v12, v35 [keyIsIntegral]
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: int[1, 4294967295] = Add v35, v37
+# CHECK-NEXT: v39: anything ~ number = Expect v36 expectedType=number
+# CHECK-NEXT: v40: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v41: undefined = CallBuiltin v40, v39 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=34
+# CHECK-NEXT: Jump -> next b7(v38)
+# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: v43: undefined = CallDirect v10 function=f36 [isNeverInlined]
+# CHECK-NEXT: v44: string|object = ResultAt v43
+# CHECK-NEXT: v45: anything = ResultAt v43 index=1
+# CHECK-NEXT: Jump -> next b17(v42)
+# CHECK-NEXT: b17(v46: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v48: boolean = TypeTest v44 testedType=string
+# CHECK-NEXT: Branch v48 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v49: string) frequency=Unlikely:
+# CHECK-NEXT: v50: undefined = CallDirect v49, v46 function=f37 [isNeverInlined]
+# CHECK-NEXT: v51: boolean = ResultAt v50
+# CHECK-NEXT: v52: anything = ResultAt v50 index=1
+# CHECK-NEXT: v53: int[0, 2147483648] = ResultAt v50 index=2
+# CHECK-NEXT: Jump -> next b22(v51, v52, v53)
+# CHECK-NEXT: b19(v54: object) frequency=Unlikely:
+# CHECK-NEXT: v55: anything = Call v45, v54
+# CHECK-NEXT: v56: object = RequireObject v55 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: v57: anything = PropGet v56 key="done"
+# CHECK-NEXT: v58: boolean = ToBoolean v57
+# CHECK-NEXT: Branch v58 -> taken b20(), notTaken b21()
+# CHECK-NEXT: b20() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: v59: anything = PropGet v56 key="value"
+# CHECK-NEXT: v60: false = Boolean
+# CHECK-NEXT: Jump -> next b22(v60, v59, v46)
+# CHECK-NEXT: b22(v61: boolean, v62: anything, v63: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: Branch v61 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v64: null = Null
+# CHECK-NEXT: v65: never = RequireObjectCoercible v64 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b24() frequency=Unlikely handler=b25():
+# CHECK-NEXT: v66: anything ~ number = Expect v62 expectedType=number
+# CHECK-NEXT: v67: undefined = CallDirect v66 function=f1 accessSite=48
+# CHECK-NEXT: Jump -> next b17(v63)
+# CHECK-NEXT: b25() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v68: exception = CatchException
+# CHECK-NEXT: v69: undefined = CallDirect v44 function=f39 [isNeverInlined]
+# CHECK-NEXT: Rethrow v68
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopsOnBothSides"
+# CHECK: module=m0 position=852 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Generator}] results=[{type=anything}] derivation={source=f7 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]} creator=Coroutine{ramp=f7 body=f22 promiseParameter=4} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: anything ~ undefined|null|Array<number>, v3: anything ~ undefined|null|Array<number>, v4: Generator):
+# CHECK-NEXT: v5: boolean = IsGeneratorRunning v4
+# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v1, v2, v3
+# CHECK-NEXT: v8: anything = ResultAt v7
+# CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
+# CHECK-NEXT: Switch v9 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v8
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v10: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2 nullishAccess=Iterate
+# CHECK-NEXT: v11: boolean ~ true = TypeTest v10 testedType=Array<number>
+# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b16()
+# CHECK-NEXT: b5(v12: Array<number>):
+# CHECK-NEXT: v13: boolean = IsPristine v12 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v13 -> taken b6(), notTaken b16()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: b7(v15: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: v16: boolean = HasArrayStorage v12 arrayStorage=Double
+# CHECK-NEXT: Branch v16 -> taken b8(| 0), notTaken b12()
+# CHECK-NEXT: b8(v17: guard):
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b9(v18: int[0, 4294967295]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v21: boolean = Less v18, v20
+# CHECK-NEXT: Branch v21 -> taken b10(| 0), notTaken b23()
+# CHECK-NEXT: b10(v22: int[0, 4294967294]):
+# CHECK-NEXT: v23: boolean = IsElementPresent v12, v22, v17 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b15(v22)
+# CHECK-NEXT: b11(v24: guard):
+# CHECK-NEXT: v25: guard = AllGuards v17, v24
+# CHECK-NEXT: v26: number = GetArrayElement v12, v22, v25 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int[1, 4294967295] = Add v22, v27
+# CHECK-NEXT: v29: undefined = CallBuiltin -, v26 overload=ConsoleLog/0 accessSite=34
+# CHECK-NEXT: Jump -> next b9(v28)
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v12
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v33: boolean = Less v15, v32
+# CHECK-NEXT: Branch v33 -> taken b14(| 0), notTaken b23()
+# CHECK-NEXT: b14(v34: int[0, 4294967294] ~ 0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b15(v34)
+# CHECK-NEXT: b15(v35: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v36: anything ~ undefined|number = ElemGet v12, v35 [keyIsIntegral]
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: int[1, 4294967295] = Add v35, v37
+# CHECK-NEXT: v39: anything ~ number = Expect v36 expectedType=number
+# CHECK-NEXT: v40: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v41: undefined = CallBuiltin v40, v39 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=34
+# CHECK-NEXT: Jump -> next b7(v38)
+# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: v43: undefined = CallDirect v10 function=f36 [isNeverInlined]
+# CHECK-NEXT: v44: string|object = ResultAt v43
+# CHECK-NEXT: v45: anything = ResultAt v43 index=1
+# CHECK-NEXT: Jump -> next b17(v42)
+# CHECK-NEXT: b17(v46: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v48: boolean = TypeTest v44 testedType=string
+# CHECK-NEXT: Branch v48 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v49: string) frequency=Unlikely:
+# CHECK-NEXT: v50: undefined = CallDirect v49, v46 function=f37 [isNeverInlined]
+# CHECK-NEXT: v51: boolean = ResultAt v50
+# CHECK-NEXT: v52: anything = ResultAt v50 index=1
+# CHECK-NEXT: v53: int[0, 2147483648] = ResultAt v50 index=2
+# CHECK-NEXT: Jump -> next b22(v51, v52, v53)
+# CHECK-NEXT: b19(v54: object) frequency=Unlikely:
+# CHECK-NEXT: v55: anything = Call v45, v54
+# CHECK-NEXT: v56: object = RequireObject v55 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: v57: anything = PropGet v56 key="done"
+# CHECK-NEXT: v58: boolean = ToBoolean v57
+# CHECK-NEXT: Branch v58 -> taken b20(), notTaken b21()
+# CHECK-NEXT: b20() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: v59: anything = PropGet v56 key="value"
+# CHECK-NEXT: v60: false = Boolean
+# CHECK-NEXT: Jump -> next b22(v60, v59, v46)
+# CHECK-NEXT: b22(v61: boolean, v62: anything, v63: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: Branch v61 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v64: undefined = Undefined
+# CHECK-NEXT: v65: never = RequireObjectCoercible v64 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b24() frequency=Unlikely handler=b25():
+# CHECK-NEXT: v66: anything ~ number = Expect v62 expectedType=number
+# CHECK-NEXT: v67: undefined = CallDirect v66 function=f1 accessSite=50
+# CHECK-NEXT: Jump -> next b17(v63)
+# CHECK-NEXT: b25() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v68: exception = CatchException
+# CHECK-NEXT: v69: undefined = CallDirect v44 function=f39 [isNeverInlined]
+# CHECK-NEXT: Rethrow v68
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="answerOfACall"
+# CHECK: module=m0 position=1033 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w9 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Generator}] results=[{type=anything}] derivation={source=f8 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{ramp=f8 body=f23 promiseParameter=3} {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: anything ~ undefined|null|Array<number>, v3: Generator):
+# CHECK-NEXT: v4: boolean = IsGeneratorRunning v3
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
+# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v7
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: never = RequireObjectCoercible v9 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="insideALoop"
+# CHECK: module=m0 position=1293 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w12 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Generator}] results=[{type=anything}] derivation={source=f10 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{ramp=f10 body=f24 promiseParameter=3} {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: anything ~ undefined|null|Array<number>, v3: Generator):
+# CHECK-NEXT: v4: boolean = IsGeneratorRunning v3
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
+# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v7
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2 nullishAccess=Iterate
+# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=Array<number>
+# CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v11: Array<number>):
+# CHECK-NEXT: v12: boolean = IsPristine v11 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v12 -> taken b6(), notTaken b8()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v13: 0 = Integer
+# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v11 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v15: boolean = Less v13, v14
+# CHECK-NEXT: Branch v15 -> taken b7(), notTaken b14()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v16: anything ~ undefined|number = ElemGet v11, v13 [keyIsIntegral]
+# CHECK-NEXT: v17: anything ~ number = Expect v16 expectedType=number
+# CHECK-NEXT: v18: undefined = CallDirect v17 function=f1 accessSite=54
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: v20: never = RequireObjectCoercible v19 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v21: undefined = CallDirect v9 function=f36 [isNeverInlined]
+# CHECK-NEXT: v22: string|object = ResultAt v21
+# CHECK-NEXT: v23: anything = ResultAt v21 index=1
+# CHECK-NEXT: v24: boolean = TypeTest v22 testedType=string
+# CHECK-NEXT: Branch v24 -> taken b9(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b9(v25: string) frequency=Unlikely:
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: undefined = CallDirect v25, v26 function=f37 [isNeverInlined]
+# CHECK-NEXT: v28: boolean = ResultAt v27
+# CHECK-NEXT: v29: anything = ResultAt v27 index=1
+# CHECK-NEXT: Jump -> next b13(v28, v29)
+# CHECK-NEXT: b10(v30: object) frequency=Unlikely:
+# CHECK-NEXT: v31: anything = Call v23, v30
+# CHECK-NEXT: v32: object = RequireObject v31 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: v33: anything = PropGet v32 key="done"
+# CHECK-NEXT: v34: boolean = ToBoolean v33
+# CHECK-NEXT: Branch v34 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: v35: anything = PropGet v32 key="value"
+# CHECK-NEXT: v36: false = Boolean
+# CHECK-NEXT: Jump -> next b13(v36, v35)
+# CHECK-NEXT: b13(v37: boolean, v38: anything) frequency=Unlikely:
+# CHECK-NEXT: Branch v37 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: Return v39
+# CHECK-NEXT: b15() frequency=Unlikely handler=b16():
+# CHECK-NEXT: v40: anything ~ number = Expect v38 expectedType=number
+# CHECK-NEXT: v41: undefined = CallDirect v40 function=f1 accessSite=54
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: v43: never = RequireObjectCoercible v42 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b16() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v44: exception = CatchException
+# CHECK-NEXT: v45: undefined = CallDirect v22 function=f39 [isNeverInlined]
+# CHECK-NEXT: Rethrow v44
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopThatLeavesEarlyBehind"
+# CHECK: module=m0 position=1991 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w15 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Generator}] results=[{type=anything}] derivation={source=f13 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{ramp=f13 body=f27 promiseParameter=3} {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: anything ~ undefined|null|Array<number>, v3: Generator):
+# CHECK-NEXT: v4: boolean = IsGeneratorRunning v3
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
+# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v7
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: never = RequireObjectCoercible v9 nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopBehind"
+# CHECK: module=m0 position=578 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopInFrontAndDelegationBehind"
+# CHECK: module=m0 position=692 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f6}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6} creator=Entrypoint{target=f6 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f6, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopsOnBothSides"
+# CHECK: module=m0 position=852 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f7}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="answerOfACall"
+# CHECK: module=m0 position=1033 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="insideALoop"
+# CHECK: module=m0 position=1293 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f10}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f10, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="loopThatLeavesEarlyBehind"
+# CHECK: module=m0 position=1991 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f13}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f13, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }

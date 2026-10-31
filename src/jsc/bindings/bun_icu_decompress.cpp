@@ -118,6 +118,9 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
         return p;
     uint32_t magic;
     std::memcpy(&magic, p, sizeof(magic));
+    // "BUNI": the 16 bytes `--trim` leaves where it removed a language's items.
+    if (magic == 0x494E5542u && !std::memcmp(p, "BUNICUREMOVED\0\0\0", 16)) [[unlikely]]
+        Bun__abortForRemovedLocaleData();
     if (magic != ZSTD_MAGICNUMBER) [[likely]]
         return p;
     return Bun::ICUDecompressor::get().decompress(p, length);

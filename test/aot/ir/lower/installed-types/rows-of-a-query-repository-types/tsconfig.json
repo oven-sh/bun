@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "typeRoots": ["../../../../../../packages"],
+    "types": ["bun-types"]
+  }
+}

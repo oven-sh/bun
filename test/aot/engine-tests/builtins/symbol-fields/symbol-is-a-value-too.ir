@@ -1,0 +1,96 @@
+# The symbol that names a field is also stored in fields, compared, put into collections and handed around. It stays the same symbol.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="symbol-is-a-value-too.ts" displayPath="symbol-is-a-value-too.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Holder" module=m0 position=183 constructor=f1 fields=[{key=symbol("self")@m0:0 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="self"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    v3 = Convert v2 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Convert v6 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Construct v7 calleeName="Holder"
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v10 = String string="found"
+    v11 = Builtin builtin=Map
+    v12 = Construct v11 calleeName="Map"
+    v13 = Builtin builtin=MapPrototypeSet [isNotReadFromHolder]
+    v14 = Call v13, v12, v3, v10
+    v15 = Builtin builtin=Object
+    v16 = Call v15, -, v3 calleeName="Object"
+    v17 = Convert v9 declared={type=undefined|null|object flags=[IsExpected]}
+    v18 = ElemGet v17, v16
+    v19 = Eq v16, v3
+    Jump -> next b1()
+  b1() handler=b3():
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v20 = Undefined
+    Return v20
+}
+function f1 name="Holder" module=m0 position=224 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f2
+    v5 = Undefined
+    Return v3
+}
+function f2 module=m0 position=183 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000000, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v0:KeyConstant)
+# CHECK-NEXT: Int64 b@20 = Const64(0, v1:NewClosure)
+# CHECK-NEXT: Int64 b@21 = Patchpoint($0(b@20):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewClosure)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@22 = Load(b@10, offset = 8256, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v1:NewClosure)
+# CHECK-NEXT: Void b@23 = Store(b@22, b@21, ControlDependent|Writes:JSCell_header, v1:NewClosure)
+# CHECK-NEXT: Void b@24 = Store($0(b@20), b@21, offset = 8, ControlDependent|Writes:JSObject_butterfly, v1:NewClosure)
+# CHECK-NEXT: Int64 b@25 = Load(b@10, offset = 112, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v1:NewClosure)
+# CHECK-NEXT: Void b@26 = Store(b@25, b@21, offset = 16, ControlDependent|Writes:JSCallee_scope, v1:NewClosure)
+# CHECK-NEXT: Int64 b@27 = Load(b@10, offset = 8208, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v1:NewClosure)
+# CHECK-NEXT: Void b@28 = Store(b@27, b@21, offset = 24, ControlDependent|Writes:JSFunction_executableOrRareData, v1:NewClosure)
+# CHECK-NEXT: Int64 b@29 = Load(b@10, offset = 8184, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v1:NewClosure)
+# CHECK-NEXT: Int64 b@30 = Load(b@29, offset = 40, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v1:NewClosure)
+# CHECK-NEXT: Void b@31 = Store(b@30, b@21, offset = 32, ControlDependent|Writes:AOTClosure_entry, v1:NewClosure)
+# CHECK-NEXT: Void b@32 = Fence(Fence|Reads:jscRoot, v1:NewClosure)
+# CHECK-NEXT: Int64 b@34 = Const64(4, v2:NewClass)
+# CHECK-NEXT: Int64 b@35 = Patchpoint($4(b@34):ColdAny, b@21:ColdAny, $0(b@20):ColdAny, $0(b@20):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.0, PrototypeLinks, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v2:NewClass)
+# CHECK-NEXT: Int64 b@36 = Const64(1, v3:NewObject)
+# CHECK-NEXT: Int64 b@37 = Patchpoint($1(b@36):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewObject)
+# CHECK-NEXT: Void b@38 = Fence(Fence|Reads:jscRoot, v3:NewObject)
+# CHECK-NEXT: Int64 b@39 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v4:String)
+# CHECK-NEXT: Int64 b@41 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v6:CallInline)
+# CHECK-NEXT: Int64 b@42 = Patchpoint(b@41:Register(%rax), b@19:Register(%rdi), b@39:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v8:CallInline)
+# CHECK-NEXT: Int64 b@43 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v9:CallBuiltin)
+# CHECK-NEXT: Int64 b@44 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000000, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v9:CallBuiltin)
+# CHECK-NEXT: Int64 b@45 = Patchpoint(b@43:Register(%r8), b@44:Register(%rax), b@19:Register(%rdi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState, RuntimeState}, v9:CallBuiltin)
+# CHECK-NEXT: Int64 b@46 = Patchpoint(b@37:Register(%rax), b@45:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v10:ElemGet)
+# CHECK-NEXT: Int64 b@47 = Patchpoint(b@45:Register(%rax), b@19:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v11:Eq)
+# CHECK-NEXT: Int64 b@40 = Const64(10, v5:Undefined)
+# CHECK-NEXT: Void b@49 = Return($10(b@40), Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 393216
+# CHECK-NEXT: b@21: dereferenceableBytes = 8
+# CHECK-NEXT: b@35: dereferenceableBytes = 8
+# CHECK-NEXT: b@37: dereferenceableBytes = 16
+# CHECK-NEXT: b@41: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f0

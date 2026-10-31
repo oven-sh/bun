@@ -10,7 +10,7 @@ export const FetchSession = b.class({
   internalFields: ["checkServerIdentity"],
   proto: {
     close: {},
-    fetch: { getter: b.any, cache: true, passThis: true, ...js },
+    fetch: { getter: b.any.returning("object"), cache: true, passThis: true, ...js },
     "@@dispose": { rustName: "close" },
   },
 });

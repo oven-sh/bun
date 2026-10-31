@@ -1133,7 +1133,7 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> 
 
 fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'static>> {
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
-    let found = bun_core::strings::last_index_of_t(source, needle)?;
+    let found = bun_core::strings::last_index_of_utf16(source, needle)?;
     let start = found + needle.len();
     let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)

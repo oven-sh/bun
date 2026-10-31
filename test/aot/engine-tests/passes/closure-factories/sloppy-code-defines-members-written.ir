@@ -1,0 +1,253 @@
+# Members that sloppy code defines under written names: on a literal, on exports, on the prototype of a constructor function.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="sloppy-code-defines-members-written.cjs" displayPath="sloppy-code-defines-members-written.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m1 position=4142 kind=Variable
+typesite w1 module=m1 position=4344 kind=Variable
+layout L0 module=m0 fields=[{key="tag" declared={type=anything}}] ownFieldCount=1
+layout L1 module=m0 position=139
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f11 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function|f12 flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+data d0 root=Object{layout=L1} module=m0
+data d1 root=Array{contents=undefined|null|string elements=[String{value="get"}, String{value="set"}, String{value="has"}]} module=m0
+data d2 root=Array{contents=undefined|null|string elements=[String{value="alpha"}, String{value="beta"}]} module=m0
+data d3 root=Array{contents=undefined|null|string elements=[String{value="x"}, String{value="y"}]} module=m0
+data d4 root=Array{contents=undefined|null|string elements=[String{value="on"}, String{value="off"}]} module=m0
+data d5 root=Array{contents=undefined|null|string elements=[String{value="q"}]} module=m0
+data d6 root=Array{contents=anything} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=undefined|i32 flags=[IsExpected]}
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    v5 = Data data=d4
+    v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v7 = PropGet v6 key="forEach"
+    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = NewClosure v1 function=f5
+    v10 = Call v8, v6, v9 calleeKey="forEach" calleeName="forEach"
+    v11 = Construct v1 calleeName="Emitter"
+    v12 = Data data=d5
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v14 = PropGet v13 key="forEach"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = NewClosure v1 function=f6
+    v17 = Call v15, v13, v16 calleeKey="forEach" calleeName="forEach"
+    v18 = Construct v1 calleeName="Emitter"
+    v19 = Convert v18 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v20 = String string="v"
+    PropSet v19, v20 key="q" mode=Sloppy
+    v22 = Undefined
+    Return v22
+}
+function f1 name="Emitter" module=m0 position=874 flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m0 position=173 flags=[IsSloppy] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 position=408 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|function|f8 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=685 flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = Undefined
+    Return v2
+}
+function f5 module=m0 position=918 flags=[IsSloppy] length=1 captures=[{type=f1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: f1, v1: undefined|null|string):
+    v2 = PropGet v0 key="prototype"
+    v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]}
+    v4 = NewClosure v1 function=f10
+    ElemSet v3, v1, v4 mode=Sloppy
+    v6 = Undefined
+    Return v6
+}
+function f6 module=m0 position=1133 flags=[IsSloppy] length=1 captures=[{type=f1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: f1, v1: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = PropGet v0 key="prototype"
+    v5 = NewObject layout=L2
+    v6 = NewClosure v1 function=f12
+    v7 = Convert v6 declared={type=undefined|null|function|f12 flags=[IsExpected]}
+    PropDefine v5, v7 key="set"
+    v9 = FinishObject v5
+    v10 = Call v3, v2, v4, v1, v9 calleeName="Object.defineProperty"
+    v11 = Undefined
+    Return v11
+}
+function f7 module=m0 position=211 flags=[IsSloppy, HasThis] length=1 captures=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=437 flags=[IsSloppy] captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=728 flags=[IsSloppy, HasThis] captures=[{type=undefined|null|string flags=[IsExpected]}, {type=number flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number, v2: anything):
+    v3 = ToThis v2
+    v4 = Convert v3 declared={type=object flags=[IsExpected]}
+    v5 = Add v0, v1
+    v6 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v7 = PropGet v6 key="tag"
+    v8 = Add v5, v7
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v9
+}
+function f10 module=m0 position=964 flags=[IsSloppy, HasThis] length=1 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything):
+    v3 = ToThis v1
+    v4 = Convert v3 declared={type=object flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
+    v6 = PropGet v5 key="log"
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
+    v8 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
+    Return v8
+}
+function f11 name="get" module=m0 position=1211 flags=[IsSloppy, HasThis] captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="set" module=m0 position=1284 flags=[IsSloppy, HasThis] length=1 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = ToThis v1
+    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
+    v5 = String string="_"
+    v6 = Add v5, v0
+    v7 = Add v2, v0
+    ElemSet v4, v6, v7 mode=Sloppy
+    v9 = Undefined
+    Return v9
+}
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 name="forEach" module=m1 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=43 function=f25
+# -- generated: f0 f5 f6 set
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 @Cell = NewClosure function=f1 allocationSite=0 closureForm=Slim
+# CHECK-NEXT: PutModuleVariable v0 variable=g1
+# CHECK-NEXT: v2: "on" @JSValue = String string="on"
+# CHECK-NEXT: v3: "off" @JSValue = String string="off"
+# CHECK-NEXT: v4: Array<"off"|"on", Contiguous> @Cell = NewArray v2, v3 contents="off"|"on" allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v5: Array<"off"|"on", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v4 provenType=Array<"off"|"on", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: f5 @Cell = NewClosure function=f5 allocationSite=2 closureForm=Slim
+# CHECK-NEXT: v7: undefined @JSValue = CallBuiltin v5, v6 overload=ArrayPrototypeForEach/0 accessSite=1
+# CHECK-NEXT: v8: anything @JSValue = Construct v0 calleeName="Emitter" accessSite=2 callees=[f1]
+# CHECK-NEXT: v9: "q" @JSValue = String string="q"
+# CHECK-NEXT: v10: Array<"q", Contiguous> @Cell = NewArray v9 contents="q" allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<"q", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v10 provenType=Array<"q", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: f6 @Cell = NewClosure function=f6 allocationSite=4 closureForm=Slim
+# CHECK-NEXT: v13: undefined @JSValue = CallBuiltin v11, v12 overload=ArrayPrototypeForEach/0 accessSite=4
+# CHECK-NEXT: v14: anything @JSValue = Construct v0 calleeName="Emitter" accessSite=5 callees=[f1]
+# CHECK-NEXT: v15: object @JSValue = AssumeType v14 provenType=object
+# CHECK-NEXT: v16: "v" @JSValue = String string="v"
+# CHECK-NEXT: PropSet v15, v16 key="q" mode=Sloppy accessSite=6
+# CHECK-NEXT: v18: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=918 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=undefined|"off"|"on"}] results=[{type=undefined}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"off"|"on" @LiteralString):
+# CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: "on" @LiteralString = String string="on"
+# CHECK-NEXT: v3: boolean @Boolean = StrictEq v0, v2 form=NullableStrings
+# CHECK-NEXT: TestAndBranch v3 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: anything @JSValue = PropGet v1 key="prototype" accessSite=7 siteCache=0
+# CHECK-NEXT: v5: object @JSValue = AssumeType v4 provenType=object
+# CHECK-NEXT: v6: f27 @Cell = NewClosure v2 function=f27 allocationSite=5 closureForm=Slim
+# CHECK-NEXT: PropSet v5, v6 key="on" mode=Sloppy accessSite=8 siteCache=1
+# CHECK-NEXT: v8: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b2(v9: undefined|"off" @LiteralString):
+# CHECK-NEXT: v10: "off" @LiteralString = String string="off"
+# CHECK-NEXT: v11: boolean @Boolean = StrictEq v9, v10 form=NullableStrings
+# CHECK-NEXT: TestAndBranch v11 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: anything @JSValue = PropGet v1 key="prototype" accessSite=9 siteCache=2
+# CHECK-NEXT: v13: object @JSValue = AssumeType v12 provenType=object
+# CHECK-NEXT: v14: f28 @Cell = NewClosure v10 function=f28 allocationSite=6 closureForm=Slim
+# CHECK-NEXT: PropSet v13, v14 key="off" mode=Sloppy accessSite=10 siteCache=3
+# CHECK-NEXT: v16: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v17: undefined @JSValue = Undefined
+# CHECK-NEXT: v18: anything @JSValue = PropGet v1 key="prototype" accessSite=11 siteCache=4
+# CHECK-NEXT: v19: object @JSValue = AssumeType v18 provenType=object
+# CHECK-NEXT: v20: f10 @Cell = NewClosure v17 function=f10 allocationSite=7 closureForm=Slim
+# CHECK-NEXT: PropSet v19, v20 key="undefined" mode=Sloppy accessSite=12 siteCache=5
+# CHECK-NEXT: v22: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v22
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=1133 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=undefined|"q"}] results=[{type=undefined}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"q" @LiteralString):
+# CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g1
+# CHECK-NEXT: v2: "q" @LiteralString = String string="q"
+# CHECK-NEXT: v3: boolean @Boolean = StrictEq v0, v2 form=NullableStrings
+# CHECK-NEXT: TestAndBranch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: anything @JSValue = PropGet v1 key="prototype" accessSite=13 siteCache=6
+# CHECK-NEXT: v5: object @JSValue = AssumeType v4 provenType=object
+# CHECK-NEXT: v6: f29 @Cell = NewClosure function=f29 allocationSite=9 closureForm=Slim
+# CHECK-NEXT: v7: object @Cell = DefineOwnProperty v5, v2, -, -, v6 descriptorFlags=[HasSet]
+# CHECK-NEXT: v8: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: undefined @JSValue = Undefined
+# CHECK-NEXT: v10: anything @JSValue = PropGet v1 key="prototype" accessSite=16 siteCache=7
+# CHECK-NEXT: v11: object @JSValue = AssumeType v10 provenType=object
+# CHECK-NEXT: v12: f12 @Cell = NewClosure v9 function=f12 allocationSite=11 closureForm=Slim
+# CHECK-NEXT: v13: string|symbol @Cell = ToPropertyKey v9 calledBuiltin=ObjectDefineProperty
+# CHECK-NEXT: v14: object @Cell = DefineOwnProperty v11, v13, -, -, v12 descriptorFlags=[HasSet]
+# CHECK-NEXT: v15: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="set"
+# CHECK: module=m0 position=1284 flags=[IsSloppy, HasThis] length=1 captures=[{type=undefined}] thisType={type=object} parameters=[{type=undefined|number|string|f10}] results=[{type=undefined}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined @JSValue, v1: object @Cell, v2: undefined|number|string|f10 @JSValue):
+# CHECK-NEXT: v3: number|string|bigint @JSValue = Add v2, v0 form=Generic
+# CHECK-NEXT: PropSet v1, v3 key="_undefined" mode=Sloppy accessSite=21 siteCache=8
+# CHECK-NEXT: v5: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="set"
+# CHECK: module=m0 position=1284 flags=[IsSloppy, HasThis] length=1 thisType={type=object} parameters=[{type=undefined|number|string}] results=[{type=undefined}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f12} {
+# CHECK-NEXT: b0(v0: object @Cell, v1: undefined|number|string @JSValue):
+# CHECK-NEXT: v2: "q" @Cell = String string="q"
+# CHECK-NEXT: v3: string @Cell = Add v1, v2 form=StringAndPrimitive
+# CHECK-NEXT: PropSet v0, v3 key="_q" mode=Sloppy accessSite=24 siteCache=9
+# CHECK-NEXT: v5: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="set"
+# CHECK: module=m0 position=1284 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f12}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12} creator=Entrypoint{target=f12 arguments=Registers} inlineFrames=[{}, {callee=f12 callPosition=1284 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f12 @Cell, v1: anything @JSValue, v2: anything @JSValue):
+# CHECK-NEXT: v3: undefined @JSValue = Undefined
+# CHECK-NEXT: v4: object @JSValue = AssumeType v1 provenType=object
+# CHECK-NEXT: v5: undefined|number|string|f10 @JSValue = AssumeType v2 provenType=undefined|number|string|f10
+# CHECK-NEXT: v6: number|string|bigint @JSValue = Add v5, v3 form=Generic
+# CHECK-NEXT: PropSet v4, v6 key="_undefined" mode=Sloppy accessSite=21 siteCache=10
+# CHECK-NEXT: v8: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="set"
+# CHECK: module=m0 position=1284 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f29}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f29} creator=Entrypoint{target=f29 arguments=Registers} inlineFrames=[{}, {callee=f29 callPosition=1284 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f29 @Cell, v1: anything @JSValue, v2: anything @JSValue):
+# CHECK-NEXT: v3: object @JSValue = AssumeType v1 provenType=object
+# CHECK-NEXT: v4: undefined|number|string @JSValue = AssumeType v2 provenType=undefined|number|string
+# CHECK-NEXT: v5: "q" @Cell = String string="q"
+# CHECK-NEXT: v6: string @Cell = Add v4, v5 form=StringAndPrimitive
+# CHECK-NEXT: PropSet v3, v6 key="_q" mode=Sloppy accessSite=24 siteCache=11
+# CHECK-NEXT: v8: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }

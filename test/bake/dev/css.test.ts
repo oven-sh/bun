@@ -770,6 +770,43 @@ devTest("a page recovers after its script was rebuilt together with a broken sty
     });
   },
 });
+// A stylesheet that a plugin loads from its own namespace has a syntax error. The page keeps
+// that build error on every load, also when the specifier is not the path the plugin returned.
+devTest("a page keeps the build error of a stylesheet that a plugin loads from a namespace", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-modules.ts"]
+    `,
+    "virtual-modules.ts": `
+      export default {
+        name: "virtual-modules",
+        setup(build) {
+          build.onResolve({ filter: /^virtual\\./ }, args => ({ path: args.path, namespace: "virtual" }));
+          build.onResolve({ filter: /^renamed\\./ }, args => ({ path: "virtual." + args.path, namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "h1 { color: red; }}", loader: "css" }));
+        },
+      };
+    `,
+    "linked.html": emptyHtmlFile({ styles: ["virtual.0.css"] }),
+    "imported.html": emptyHtmlFile({ scripts: ["./entry.ts"] }),
+    "entry.ts": `import "virtual.1.css";`,
+    "renamed.html": emptyHtmlFile({ scripts: ["./renamed.ts"] }),
+    "renamed.ts": `import "renamed.2.css";`,
+  },
+  async test(dev) {
+    const twoLoads = async (url: string) => [(await dev.fetch(url)).status, (await dev.fetch(url)).status];
+    expect({
+      linked: await twoLoads("/linked"),
+      imported: await twoLoads("/imported"),
+      renamed: await twoLoads("/renamed"),
+    }).toEqual({
+      linked: [500, 500],
+      imported: [500, 500],
+      renamed: [500, 500],
+    });
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

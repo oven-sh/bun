@@ -172,6 +172,13 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     /// The units' storage, for tape strings (whose encoding tag says how
     /// to read them back).
     fn bytes(units: &[Self]) -> &[u8];
+    /// The highway structural-index kernel for this width.
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize;
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
     const KEY_NAME: &'static [Self];
@@ -199,6 +206,15 @@ impl Unit for u8 {
     #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
         units
+    }
+    #[inline(always)]
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize {
+        bun_highway::xml_structural_index_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
     const KEY_NAME: &'static [Self] = b"name";
@@ -243,7 +259,16 @@ impl Unit for u16 {
     }
     #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
-        bytemuck::cast_slice(units)
+        bun_core::slice_as_bytes(units)
+    }
+    #[inline(always)]
+    fn structural_index_chunk(
+        chunk: &[Self],
+        base_offset: usize,
+        out: &mut [core::mem::MaybeUninit<u32>],
+        state: &mut [u64; 3],
+    ) -> usize {
+        bun_highway::xml_structural_index16_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");
     const KEY_NAME: &'static [Self] = utf16!(b"name");

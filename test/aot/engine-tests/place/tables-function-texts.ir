@@ -1,0 +1,91 @@
+# A function that is a value and has text has an entry under its generic entrypoint: its range in the retained text, which is the union of those ranges, module after module, so a nested or overlapping range adds no byte twice. A function that is never a value, one without text and one in a module of the runtime have none
+# OPTIONS: disable=pass:InlineCalls
+# RUN: tables functions function-texts
+# RUN(SIZES): tables
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}] functionText="0123456789"
+module m1 path="/b.ts" displayPath="b.ts" body=f9 functionText="abcdefghij"
+module m2 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f10 functionText="ABCDEFGHIJ"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f7
+    v6 = Call v1, -, v2, v3, v4, v5
+    v7 = CallDirect function=f4
+    Return
+}
+function f1 name="afterGap" text={start=8 end=10} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="nested" text={start=2 end=4} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="outer" text={start=1 end=6} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="neverAValue" text={start=6 end=8} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f5 name="overlapsPrevious" module=m1 text={start=3 end=8} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="overlapsNext" module=m1 text={start=1 end=5} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="withoutText" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="inRuntimeModule" module=m2 text={end=4} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="second" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f5
+    v3 = NewClosure function=f6
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f10 name="runtime" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f8
+    v3 = Call v1, -, v2
+    Return
+}
+
+# CHECK: function [[afterGap]] name="afterGap" {{*}}length=
+# CHECK: function [[nested]] name="nested" {{*}}length=
+# CHECK: function [[outer]] name="outer" {{*}}length=
+# CHECK: function [[overlapsPrevious]] name="overlapsPrevious" {{*}}length=
+# CHECK: function [[overlapsNext]] name="overlapsNext" {{*}}length=
+# CHECK: function {{*}}name="withoutText" {{*}}length=
+# CHECK: function {{*}}name="inRuntimeModule" {{*}}length=
+# CHECK-NOT: ..
+# CHECK: [[afterGap]] 5..7 "89"
+# CHECK-NEXT: [[nested]] 1..3 "23"
+# CHECK-NEXT: [[outer]] 0..5 "12345"
+# CHECK-NEXT: [[overlapsPrevious]] 9..14 "defgh"
+# CHECK-NEXT: [[overlapsNext]] 7..11 "bcde"
+# CHECK-NOT: ..
+# SIZES: magic ok
+# SIZES: functionTexts 1 12

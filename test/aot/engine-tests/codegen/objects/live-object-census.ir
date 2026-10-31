@@ -1,0 +1,123 @@
+# Known numbers of objects, arrays, maps and closures are alive when the program exits, and 100,000 more objects are garbage by then. object-census.test.ts runs it with BUN_JSC_dumpAOTObjectCensusAtExit=1 and looks for those numbers in the census. The output is that of plain Bun.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="live-object-census.ts" displayPath="live-object-census.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 position=288 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Convert v2 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v5)
+  b1(v6: number):
+    LoopHint
+    v8 = Integer integer=-2
+    v9 = Mul v8, v6
+    v10 = Construct v3, -, v6, v9 calleeName="Point"
+    v11 = Increment v6
+    v12 = Convert v11 declared={type=number}
+    Jump -> next b1(v12)
+}
+function f1 name="Point" module=m0 position=335 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@20 = Const64(0, v0:NewClosure)
+# CHECK-NEXT: Int64 b@21 = Patchpoint($0(b@20):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v0:NewClosure)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@22 = Load(b@10, offset = 8256, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:NewClosure)
+# CHECK-NEXT: Void b@23 = Store(b@22, b@21, ControlDependent|Writes:JSCell_header, v0:NewClosure)
+# CHECK-NEXT: Void b@24 = Store($0(b@20), b@21, offset = 8, ControlDependent|Writes:JSObject_butterfly, v0:NewClosure)
+# CHECK-NEXT: Int64 b@25 = Load(b@10, offset = 112, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:NewClosure)
+# CHECK-NEXT: Void b@26 = Store(b@25, b@21, offset = 16, ControlDependent|Writes:JSCallee_scope, v0:NewClosure)
+# CHECK-NEXT: Int64 b@27 = Load(b@10, offset = 8208, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:NewClosure)
+# CHECK-NEXT: Void b@28 = Store(b@27, b@21, offset = 24, ControlDependent|Writes:JSFunction_executableOrRareData, v0:NewClosure)
+# CHECK-NEXT: Int64 b@29 = Load(b@10, offset = 8184, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v0:NewClosure)
+# CHECK-NEXT: Int64 b@30 = Load(b@29, offset = 32, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v0:NewClosure)
+# CHECK-NEXT: Void b@31 = Store(b@30, b@21, offset = 32, ControlDependent|Writes:AOTClosure_entry, v0:NewClosure)
+# CHECK-NEXT: Void b@32 = Fence(Fence|Reads:jscRoot, v0:NewClosure)
+# CHECK-NEXT: Int64 b@34 = Const64(4, v1:NewClass)
+# CHECK-NEXT: Int64 b@35 = Patchpoint($4(b@34):ColdAny, b@21:ColdAny, $0(b@20):ColdAny, $0(b@20):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.0, PrototypeLinks, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v1:NewClass)
+# CHECK-NEXT: Double b@36 = ConstDouble(0.000000e+00(0), v3:Integer)
+# CHECK-NEXT: Void b@37 = Upsilon($0.000000(b@36), ^18, WritesLocalState)
+# CHECK-NEXT: Int64 b@74 = Const64(3, v8:Construct)
+# CHECK-NEXT: Int64 b@75 = Const64(10, v8:Construct)
+# CHECK-NEXT: Void b@38 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#2: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #0, #8
+# CHECK-NEXT: Double b@18 = Phi(ReadsLocalState, v4:Parameter)
+# CHECK-NEXT: Void b@39 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v5:LoopHint)
+# CHECK-NEXT: Double b@13 = Load(b@10, offset = -200, ReadsImmutable, v7:Mul)
+# CHECK-NEXT: Double b@33 = Add(b@18, b@18, v7:Mul)
+# CHECK-NEXT: Double b@16 = Sub(b@13, b@33, v7:Mul)
+# CHECK-NEXT: Int64 b@42 = Patchpoint(b@18:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v8:Construct)
+# CHECK-NEXT: Int32 b@43 = Trunc(b@42, v8:Construct)
+# CHECK-NEXT: Double b@44 = IToD(b@43, v8:Construct)
+# CHECK-NEXT: Int64 b@45 = BitwiseCast(b@44, v8:Construct)
+# CHECK-NEXT: Int64 b@46 = BitwiseCast(b@18, v8:Construct)
+# CHECK-NEXT: Int32 b@47 = Equal(b@45, b@46, v8:Construct)
+# CHECK-NEXT: Void b@48 = Branch(b@47, Terminal, v8:Construct)
+# CHECK-NEXT: Successors: Then:#3, Else:#4
+# CHECK-NEXT: BB#3: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Int64 b@49 = ZExt32(b@43, v8:Construct)
+# CHECK-NEXT: Int64 b@15 = Load(b@10, offset = 96, ReadsImmutable, v8:Construct)
+# CHECK-NEXT: Int64 b@50 = Add(b@49, b@15, v8:Construct)
+# CHECK-NEXT: Void b@51 = Upsilon(b@50, ^57, WritesLocalState, v8:Construct)
+# CHECK-NEXT: Void b@52 = Jump(Terminal, v8:Construct)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: BB#5: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #4, #3
+# CHECK-NEXT: Int64 b@57 = Phi(ReadsLocalState, v8:Construct)
+# CHECK-NEXT: Int64 b@58 = Patchpoint(b@16:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v8:Construct)
+# CHECK-NEXT: Int32 b@59 = Trunc(b@58, v8:Construct)
+# CHECK-NEXT: Double b@60 = IToD(b@59, v8:Construct)
+# CHECK-NEXT: Int64 b@61 = BitwiseCast(b@60, v8:Construct)
+# CHECK-NEXT: Int64 b@62 = BitwiseCast(b@16, v8:Construct)
+# CHECK-NEXT: Int32 b@63 = Equal(b@61, b@62, v8:Construct)
+# CHECK-NEXT: Void b@64 = Branch(b@63, Terminal, v8:Construct)
+# CHECK-NEXT: Successors: Then:#6, Else:#7
+# CHECK-NEXT: BB#6: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int64 b@65 = ZExt32(b@59, v8:Construct)
+# CHECK-NEXT: Int64 b@54 = Load(b@10, offset = 96, ReadsImmutable, v8:Construct)
+# CHECK-NEXT: Int64 b@66 = Add(b@65, b@54, v8:Construct)
+# CHECK-NEXT: Void b@67 = Upsilon(b@66, ^73, WritesLocalState, v8:Construct)
+# CHECK-NEXT: Void b@68 = Jump(Terminal, v8:Construct)
+# CHECK-NEXT: Successors: #8
+# CHECK-NEXT: BB#8: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #7, #6
+# CHECK-NEXT: Int64 b@73 = Phi(ReadsLocalState, v8:Construct)
+# CHECK-NEXT: Int64 b@76 = Patchpoint($3(b@74):Register(%r10), b@35:Register(%r8), $10(b@75):Register(%rax), b@35:Register(%rdi), b@57:Register(%rsi), b@73:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v8:Construct)
+# CHECK-NEXT: Double b@41 = Load(b@10, offset = -56, ReadsImmutable, v9:Increment)
+# CHECK-NEXT: Double b@78 = Add(b@18, b@41, v9:Increment)
+# CHECK-NEXT: Void b@79 = Upsilon(b@78, ^18, WritesLocalState)
+# CHECK-NEXT: Void b@80 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#7: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int64 b@53 = Load(b@10, offset = -120, ReadsImmutable, v8:Construct)
+# CHECK-NEXT: Int64 b@11 = Add(b@62, b@53, v8:Construct)
+# CHECK-NEXT: Void b@71 = Upsilon(b@11, ^73, WritesLocalState, v8:Construct)
+# CHECK-NEXT: Void b@72 = Jump(Terminal, v8:Construct)
+# CHECK-NEXT: Successors: #8
+# CHECK-NEXT: BB#4: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Int64 b@69 = Load(b@10, offset = -120, ReadsImmutable, v8:Construct)
+# CHECK-NEXT: Int64 b@14 = Add(b@46, b@69, v8:Construct)
+# CHECK-NEXT: Void b@55 = Upsilon(b@14, ^57, WritesLocalState, v8:Construct)
+# CHECK-NEXT: Void b@56 = Jump(Terminal, v8:Construct)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 393216
+# CHECK-NEXT: b@21: dereferenceableBytes = 8
+# CHECK-NEXT: b@35: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f0

@@ -61,6 +61,8 @@ The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel -
 
 If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
 
+With workers, `bun test` ignores a `process.exitCode` that a test file or a `--preload` script sets. See [Exit Codes](/test/runtime-behavior#exit-codes).
+
 ### When `--parallel` helps, and when it doesn't
 
 `--parallel` pays off when the suite is dominated by test execution — I/O waits, real computation, subprocesses, many files. It costs something too: every file re-evaluates its imports in a fresh global (see [`--isolate`](#--isolate)), and each worker is a separate process with its own JIT warm-up. For a suite of very fast files that all import the same large module graph, plain `bun test` (one process, one shared module registry) can be faster. Try both; Bun prints the numbers at the end of every run.

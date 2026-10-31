@@ -254,6 +254,40 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
 
+The test results decide the exit code. `bun test` ignores a `process.exitCode` that test code sets, so code under test can store an exit code and a test can read the code back:
+
+```ts title="cli.test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+// Code under test stores an exit code, as a CLI does for a usage error.
+function main(argv: string[]) {
+  if (argv.includes("--unknown")) process.exitCode = 1;
+}
+
+test("an unknown flag sets the exit code", () => {
+  main(["--unknown"]);
+  expect(process.exitCode).toBe(1);
+});
+```
+
+This run exits with `0`. Because `process.exitCode` is still `1` when the run ends, `bun test` prints a note after the summary:
+
+```txt
+note: process.exitCode is 1 at the end of the run. bun test ignores it: no test failed, so the exit code is 0. To fail the run, call reportError(err) or throw an error.
+```
+
+To silence the note, set `process.exitCode` back to `0`, for example in an `afterEach` hook. `bun test` prints the note only when one process runs all the files and then exits: a run with [`--parallel`](/test/parallel) workers prints no note, and neither does `--watch`.
+
+To fail a run on purpose:
+
+- Call `reportError(err)`. In a hook, `bun test` counts an error, no test fails, and the hooks that follow still run. In a test, that test fails.
+- Throw an error. In a test, that test fails. In a hook, `bun test` reports a failure. A throwing `afterAll` hook also stops the `afterAll` hooks that follow it in the same scope.
+
+`bun test` does not ignore a `process.exitCode` in two cases:
+
+- A [`--preload` script](/test/lifecycle#global-setup-and-teardown) sets the code while the script loads, or in a `beforeAll` or `afterAll` hook that the script registers. A passing run exits with that code, unless `--parallel` workers run the files or a test file sets `process.exitCode` to `0` afterwards. A preload's `beforeEach` and `afterEach` hooks count as test code.
+- A file of the run, or a preload, calls a `node:test` API: it registers a test, a suite or a hook, or uses `mock`. An import alone does not count. `process.exitCode` is then the exit code of a passing run, as in Node.js, unless `--parallel` workers run the files.
+
 ### Signal Handling
 
 The test runner handles common signals:

@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -70,6 +70,109 @@ describe.concurrent("bun test --isolate", () => {
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"]);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // The swap must end each file's process.stderr/stdout sinks (a fresh dup of
+  // the stdio fd per isolate global) or the dups and their epoll registrations
+  // accumulate. https://github.com/oven-sh/bun/issues/37968
+  test.skipIf(!isLinux)("with --isolate, stdio sinks do not leak a dup'd fd per file", async () => {
+    const countFixture = `
+      import { test } from "bun:test";
+      import { existsSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+      // Dups of stdout and stderr: [fd 1 count, fd 2 count].
+      function countDups() {
+        const targets = [readlinkSync("/proc/self/fd/1"), readlinkSync("/proc/self/fd/2")];
+        const counts = [0, 0];
+        for (const fd of readdirSync("/proc/self/fd")) {
+          try {
+            const link = readlinkSync("/proc/self/fd/" + fd);
+            for (let i = 0; i < 2; i++) if (link === targets[i]) counts[i]++;
+          } catch (error) {
+            // An fd can vanish between readdir and readlink.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        }
+        return counts;
+      }
+      test("count dups of stdout and stderr", () => {
+        process.stderr.write("");
+        process.stdout.write("");
+        // The first file records the baseline. The swap closes the previous
+        // file's dups on a work-pool thread, so later files poll until those
+        // closes land. A leaked dup never closes, so the poll then times out.
+        const baseline = existsSync("baseline.json") ? JSON.parse(readFileSync("baseline.json", "utf8")) : null;
+        const deadline = Date.now() + 5000;
+        let counts = countDups();
+        while (
+          baseline !== null &&
+          (counts[0] > baseline[0] || counts[1] > baseline[1]) &&
+          Date.now() < deadline
+        ) {
+          Bun.sleepSync(1);
+          counts = countDups();
+        }
+        if (baseline === null) writeFileSync("baseline.json", JSON.stringify(counts));
+        console.log("FDCOUNT:" + counts.join(","));
+      });
+    `;
+    const names = ["a", "b", "c", "d"].map(c => `${c}-stdio-fds.test.ts`);
+    using dir = tempDir("isolate-stdio-fds", Object.fromEntries(names.map(name => [name, countFixture])));
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      names.map(name => `./${name}`),
+    );
+    const counts = [...stdout.matchAll(/FDCOUNT:(\d+),(\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
+    expect(counts).toHaveLength(4);
+    expect(counts).toEqual(Array(4).fill(counts[0]));
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // The swap closes the file's leaked sockets after the sweep that stops its
+  // handles, and their close handlers still run. A write to process.stderr
+  // from one must reach the fd, so the stdio sinks end only once the realm
+  // is retired.
+  test("with --isolate, a socket close handler can still write to process.stderr at the swap", async () => {
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    using dir = tempDir("isolate-stdio-close-handler", {
+      "a-leaks-socket.test.ts": `
+        import { test, expect } from "bun:test";
+        test("leaves a socket open", async () => {
+          process.stderr.write("");
+          const sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: Number(process.env.SERVER_PORT),
+            socket: {
+              data() {},
+              close() {
+                process.stderr.write("CLOSE-HANDLER-WROTE\\n");
+              },
+            },
+          });
+          expect(sock.localPort).toBeGreaterThan(0);
+        });
+      `,
+      "b-next.test.ts": `
+        import { test, expect } from "bun:test";
+        test("next file", () => {
+          expect(1).toBe(1);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-leaks-socket.test.ts", "./b-next.test.ts"],
+      { ...bunEnv, SERVER_PORT: String(server.port) },
+    );
+    expect(stderr).toContain("CLOSE-HANDLER-WROTE");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
 

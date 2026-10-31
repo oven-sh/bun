@@ -214,6 +214,8 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// A libuv stream (`uv__read`): one `read(2)` per wakeup, and none once `on_read_chunk` answers false, a hangup included. The parent sets it before `start()`.
+        const ONE_READ_PER_WAKEUP      = 1 << 12;
     }
 }
 
@@ -733,6 +735,10 @@ impl PosixBufferedReader {
         }
     }
 
+    fn reads_once_per_wakeup(&self, file_type: FileType) -> bool {
+        file_type == FileType::Pipe || self.flags.contains(PosixFlags::ONE_READ_PER_WAKEUP)
+    }
+
     /// Reads into `scratch` until it is worth delivering; returns bytes filled and why it stopped (`None`: deliver and keep going).
     fn fill_scratch(
         &mut self,
@@ -741,11 +747,12 @@ impl PosixBufferedReader {
         scratch: &mut [u8],
     ) -> (usize, Option<Stop>) {
         let mut filled = 0;
+        let one_read = self.reads_once_per_wakeup(file_type);
         while scratch.len() - filled > 16 * 1024 && filled < scratch.len() / 2 {
             match self.read_once(file_type, fd, &mut scratch[filled..]) {
                 ReadOnce::Read(n, stop) => {
                     filled += n;
-                    if stop.is_some() || file_type == FileType::Pipe {
+                    if stop.is_some() || one_read {
                         return (filled, stop);
                     }
                 }
@@ -757,6 +764,7 @@ impl PosixBufferedReader {
 
     /// Reads into `_buffer` until it is worth delivering (streaming) or exhausted (buffering).
     fn fill_buffer(&mut self, file_type: FileType, fd: Fd, streaming: bool) -> Option<Stop> {
+        let one_read = self.reads_once_per_wakeup(file_type);
         loop {
             self._buffer.reserve(16 * 1024);
             // SAFETY: the syscall writes only initialized bytes into the prefix it reports and `commit_spare` exposes exactly that prefix.
@@ -768,9 +776,7 @@ impl PosixBufferedReader {
                 ReadOnce::Read(n, stop) => {
                     // SAFETY: `read_once` initialized `n` bytes of the spare capacity.
                     unsafe { bun_core::vec::commit_spare(&mut self._buffer, n) };
-                    if stop.is_some()
-                        || file_type == FileType::Pipe
-                        || (streaming && self._buffer.len() >= 128 * 1024)
+                    if stop.is_some() || one_read || (streaming && self._buffer.len() >= 128 * 1024)
                     {
                         return stop;
                     }
@@ -886,7 +892,18 @@ impl PosixBufferedReader {
                 }
                 return;
             }
-            if streaming && !keep_going && !received_hup {
+            // SAFETY: caller contract; borrow ends at `;`.
+            let one_read = unsafe { (*this).flags.contains(PosixFlags::ONE_READ_PER_WAKEUP) };
+            if streaming && !keep_going && (one_read || !received_hup) {
+                return;
+            }
+            if one_read {
+                // SAFETY: caller contract; the error dispatch may free the parent. A read request from inside the delivery has armed the poll already.
+                unsafe {
+                    if !(*this).has_pending_read() {
+                        Self::register_poll(this);
+                    }
+                }
                 return;
             }
             if file_type != FileType::Pipe {
@@ -1348,6 +1365,14 @@ impl WindowsBufferedReader {
         self.start_with_current_pipe()
     }
 
+    /// Makes `fd` the source and issues no read: `start_reading()` issues the first. A console is a tty of this reader's own, stdin too.
+    pub fn open(&mut self, fd: Fd) -> sys::Result<()> {
+        debug_assert!(self.source.is_none());
+        let source = Source::open_unshared(self.vtable.loop_().cast(), fd)?;
+        self.set_source(source);
+        sys::Result::Ok(())
+    }
+
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
@@ -1359,7 +1384,7 @@ impl WindowsBufferedReader {
         self.limit = ReadLimit(len);
     }
 
-    pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
+    pub fn set_tty_mode(&mut self, mode: uv::TtyMode) -> sys::Result<()> {
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error {
                 errno: sys::E::BADF as _,
@@ -1367,7 +1392,7 @@ impl WindowsBufferedReader {
                 ..Default::default()
             });
         };
-        source.set_raw_mode(value)
+        source.set_tty_mode(mode)
     }
 
     extern "C" fn on_stream_alloc(
@@ -1622,7 +1647,7 @@ impl WindowsBufferedReader {
         }
     }
 
-    fn start_reading(&mut self) -> sys::Result<()> {
+    pub fn start_reading(&mut self) -> sys::Result<()> {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)

@@ -3360,6 +3360,10 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     args.append(jsNumber(static_cast<int32_t>(fdType)));
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 
+    // A terminal's process.stdin is the realm's, whichever script is first to read it: its handle must not close with a Bun.ModuleGraph.
+    std::optional<Bun::ModuleGraphContextScope> realmContext;
+    if (bun_stdio_tty[STDIN_FILENO])
+        realmContext.emplace(*defaultGlobalObject(globalObject)->scriptExecutionContext());
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
         if (JSC::AOT::refusesToRun(getStdinStream))

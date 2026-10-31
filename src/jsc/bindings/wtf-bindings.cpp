@@ -52,7 +52,7 @@ extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
     saved_errno = errno;
 
     if (atomic_exchange(&orig_termios_spinlock, 1))
-        return -EBUSY; // UV_EBUSY, ttySetMode() is taking the snapshot
+        return -EBUSY; // UV_EBUSY, ttySetMode() or Bun__ttyClose() has the snapshot
 
     err = 0;
     if (orig_termios_fd != -1)
@@ -109,15 +109,10 @@ extern "C" void Bun__atexit(void (*func)(void));
 extern "C" volatile sig_atomic_t bun_stdio_modified[3];
 #endif
 
-extern "C" size_t Bun__ttyStateSize()
-{
-    return sizeof(BunTTYState);
-}
-
 #if !OS(WINDOWS)
 // Port of libuv's uv_tty_set_mode(), with `state` standing in for the
 // per-handle fields of uv_tty_t. The file statics above are only the
-// uv_tty_reset_mode() snapshot, which is process-wide in libuv too.
+// uv_tty_reset_mode() snapshot, which is process-wide in libuv too. Bun__ttyClose() writes it as well, for the handle that took it.
 // `action` is the tcsetattr() action: TCSADRAIN (libuv's choice) or TCSANOW.
 static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
 {
@@ -141,9 +136,11 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
             expected = 0;
         } while (!atomic_compare_exchange_strong(&orig_termios_spinlock, &expected, 1));
 
-        if (orig_termios_fd == -1) {
+        // In libuv every taker is a uv_tty_t: its own descriptor, which its close ends. A state without one would leave the snapshot on a number that it does not own.
+        if (orig_termios_fd == -1 && (state.flags & BunTTYState::OwnsDescriptor)) {
             orig_termios = state.orig_termios;
             orig_termios_fd = fd;
+            state.flags |= BunTTYState::HoldsResetSnapshot;
         }
 
         atomic_store(&orig_termios_spinlock, 0);
@@ -190,8 +187,9 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
     // Marked on every transition, including setRawMode(true)→(false), so
     // the signal-exit path (which runs only bun_restore_stdio, not the
     // atexit uv_tty_reset_mode hook) still restores cooked mode on Ctrl-C.
-    if (fd >= 0 && fd < 3) {
-        bun_stdio_modified[fd] = 1;
+    const int stdio = (state.flags & BunTTYState::OwnsDescriptor) ? state.caller_fd : fd;
+    if (stdio >= 0 && stdio < 3) {
+        bun_stdio_modified[stdio] = 1;
     }
 
     rc = uv__tcsetattr(fd, action, &tmp);
@@ -203,26 +201,46 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
 }
 #endif
 
-extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
+extern "C" int Bun__ttySetMode(int fd, int mode, BunTTYState* state, int drain)
 {
 #if !OS(WINDOWS)
-    // Copied in and out so callers can hand us an unaligned byte buffer: the
-    // JS streams keep theirs in a Uint8Array.
-    BunTTYState state;
-    memcpy(&state, rawState, sizeof(state));
     // TCSADRAIN matches libuv on real ttys. It must never be used on a PTY
     // master: draining waits on the slave's write lock, and a child blocked
     // in write() holds that lock until the master's owner (this caller)
     // reads the master, so the two deadlock. Those callers pass drain == 0.
-    int rc = ttySetMode(fd, mode, state, drain ? TCSADRAIN : TCSANOW);
-    memcpy(rawState, &state, sizeof(state));
-    return rc;
+    return ttySetMode(fd, mode, *state, drain ? TCSADRAIN : TCSANOW);
 #else
     UNUSED_PARAM(fd);
     UNUSED_PARAM(mode);
-    UNUSED_PARAM(rawState);
+    UNUSED_PARAM(state);
     UNUSED_PARAM(drain);
     return 0;
+#endif
+}
+
+// The termios part of libuv's uv__tty_close(): the handle that took the snapshot of the process writes it back and gives it up. https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/tty.c#L345-L373
+extern "C" void Bun__ttyClose(int fd, BunTTYState* state)
+{
+#if !OS(WINDOWS)
+    if (!(state->flags & BunTTYState::HoldsResetSnapshot))
+        return;
+
+    int expected;
+    do {
+        expected = 0;
+    } while (!atomic_compare_exchange_strong(&orig_termios_spinlock, &expected, 1));
+
+    // libuv's test is `fd == orig_termios_fd`. The flag says the same: the holder took the snapshot with this descriptor.
+    ASSERT(orig_termios_fd == fd);
+    uv__tcsetattr(fd, TCSANOW, &orig_termios);
+    orig_termios_fd = -1;
+
+    atomic_store(&orig_termios_spinlock, 0);
+
+    state->flags &= ~BunTTYState::HoldsResetSnapshot;
+#else
+    UNUSED_PARAM(fd);
+    UNUSED_PARAM(state);
 #endif
 }
 

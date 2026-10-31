@@ -1,5 +1,5 @@
 // Instances of the host's classes that have no public constructor: what a server, a connection, a child process or a handler is given.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { constants, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
 import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
@@ -138,6 +138,13 @@ const openRouter = () => {
 const openTerminal: Open = () => {
   const terminal = new Bun.Terminal({});
   return { value: terminal, close: () => terminal.close() };
+};
+
+// The handle of a tty.ReadStream, over the master of a new pty. The handle owns that descriptor: close() closes it.
+const openTTY: Open = realm => {
+  const TTY = bindingOf(realm, "native:Bindgen:tty_wrap.bind.ts:TTY");
+  const handle = new TTY(openSync("/dev/ptmx", constants.O_RDWR | constants.O_NOCTTY), {});
+  return { value: handle, close: () => handle.close() };
 };
 
 const openCronJob: Open = () => {
@@ -346,6 +353,7 @@ const openers: (Open & { className?: string })[] = [
   () => ({ value: new Bun.Archive({ "a.txt": "text" }), close: noop }),
   () => ({ value: new Bun.Image(Buffer.from(pixel, "base64")), close: noop }),
   openTerminal,
+  openTTY,
   openCronJob,
   () => ({ value: createHistogram(), close: noop }),
   openIntervalHistogram,

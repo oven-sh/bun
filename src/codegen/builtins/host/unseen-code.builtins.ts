@@ -104,6 +104,7 @@ const classesWithConstructor = [
   "%SocketAddress%",
   "%SourceMap%",
   "%Stats%",
+  "%TTY%",
   "%Terminal%",
   "%TextDecoder%",
   "%Timeout%",

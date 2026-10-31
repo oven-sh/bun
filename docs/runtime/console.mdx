@@ -31,7 +31,7 @@ The CLI flag takes precedence over the configuration file setting.
 
 ## Reading from stdin
 
-In Bun, the `console` object is also an `AsyncIterable` that reads `process.stdin` line by line.
+In Bun, the `console` object is also an `AsyncIterable` that reads lines from standard input.
 
 ```ts adder.ts icon="/icons/typescript.svg"
 for await (const line of console) {
@@ -65,3 +65,8 @@ Count: 10
 > 5
 Count: 15
 ```
+
+<Note>
+  On a terminal, `console` and `process.stdin` each read standard input through a reader of their own. Read standard
+  input through one of the two at a time.
+</Note>

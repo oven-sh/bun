@@ -54,7 +54,6 @@ public:
     IsoSubspace* m_subspaceForJSNextTickQueue { nullptr };
     IsoSubspace* m_subspaceForJSModuleGraph { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
-    IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
     IsoSubspace* m_subspaceForHandleScopeImpl { nullptr };
     IsoSubspace* m_subspaceForStrongRootBlock { nullptr };
     IsoSubspace* m_subspaceForNapiTypeTag { nullptr };

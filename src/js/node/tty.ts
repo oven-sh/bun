@@ -4,44 +4,22 @@
 // import it just to call `isatty`. In that case, `node:stream` is not needed.
 
 const {
-  setRawMode: ttySetMode,
-  isatty,
+  isatty: isTTY,
   getWindowSize: _getWindowSize,
-  rawModeStateSize,
 }: {
-  /** The errno, or 0. On Windows, for stdin: `(flag)`. */
-  setRawMode(fdOrFlag: number | boolean | null, flag?: boolean, state?: Uint8Array): number;
   isatty(fd: unknown): boolean;
   /** Fills `size` with [columns, rows]. */
   getWindowSize(fd: number | null, size: number[]): boolean;
-  rawModeStateSize: number;
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
-
-// libuv stores the mode and the saved termios on each uv_tty_t, so a stream
-// going back to cooked never disturbs another one on the same terminal. Keep
-// that state per ReadStream rather than per process.
-const kRawModeState = Symbol("rawModeState");
 
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
 
 declare global {
   namespace $Node {
-    interface TTYReadStream extends ReadStream {
-      isRaw: boolean;
-      isTTY: boolean;
-      /** On `process.stdin`, which is a native readable. */
-      $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
-      $start(): void;
-      [kRawModeState]?: Uint8Array;
-      ref(): this;
-      unref(): this;
-      setRawMode(flag: boolean): this;
-    }
-
     interface TTYWriteStream extends WriteStream {
       columns: number | undefined;
       rows: number | undefined;
@@ -58,105 +36,18 @@ declare global {
   }
 }
 
-function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
-  if (!(this instanceof ReadStream)) {
-    return new ReadStream(fd) as any;
-  }
-  fs.ReadStream.$apply(this, ["", { fd }]);
-  // Node's tty.ReadStream is a net.Socket over a libuv TTY handle, and libuv
-  // never closes descriptors 0-2 when that handle closes. Destroying the
-  // stream leaves them open; a higher fd is closed as usual.
-  if (fd != null && fd <= 2) this._destroy = keepStdioOpen;
-  this.isRaw = false;
-  // Only set isTTY to true if the fd is actually a TTY
-  this.isTTY = isatty(fd);
+const NumberIsInteger = Number.isInteger;
+const ReflectDefineProperty = Reflect.defineProperty;
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L46-L49: `fd` is not converted.
+function isatty(fd: unknown): boolean {
+  return NumberIsInteger(fd) && (fd as number) >= 0 && (fd as number) <= 2147483647 && isTTY(fd);
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
-
-Object.defineProperty(ReadStream, "prototype", {
-  get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
-
-    // Add ref/unref methods to make tty.ReadStream behave like Node.js
-    // where TTY streams have socket-like behavior
-    Prototype.ref = function (this: $Node.TTYReadStream) {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(true);
-      }
-      return this;
-    };
-
-    Prototype.unref = function (this: $Node.TTYReadStream) {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(false);
-      }
-      return this;
-    };
-
-    Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
-      flag = !!flag;
-
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
-      if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-            return this;
-          }
-        } else {
-          const handle = this.$bunNativePtr;
-          if (!handle) {
-            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-            return this;
-          }
-
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
-
-          const err = handle.setRawMode(flag);
-          if (err) {
-            this.emit("error", err);
-            return this;
-          }
-        }
-      } else {
-        const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-        const err = ttySetMode(this.fd, flag, state);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
-      }
-
-      this.isRaw = flag;
-
-      return this;
-    };
-
-    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
-
-    return Prototype;
-  },
-  enumerable: true,
-  configurable: true,
-});
 
 type Self = $Node.TTYWriteStream;
 function WriteStream(this: Self, fd: number): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd) as any;
+  if (fd >> 0 !== fd || fd < 0) throw $ERR_INVALID_FD(fd);
 
   // Answers its `this`: the prototype below is `fs.WriteStream.prototype` itself.
   const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false }) as unknown as Self;
@@ -261,8 +152,20 @@ Object.defineProperty(WriteStream, "prototype", {
   configurable: true,
 });
 
-function keepStdioOpen(this: $Node.TTYReadStream, err: Error | null, cb: (error?: Error | null) => void) {
-  cb(err);
+// An accessor, as the stream classes of node:fs: node:tty loads node:net when ReadStream is first read or assigned.
+function materializeReadStream<T>(value: T): T {
+  ReflectDefineProperty(tty_exports, "ReadStream", { value, writable: true, configurable: true });
+  return value;
 }
 
-export default { ReadStream, WriteStream, isatty };
+var tty_exports = {
+  get ReadStream() {
+    return materializeReadStream(require("internal/tty/read_stream").ReadStream);
+  },
+  set ReadStream(value) {
+    materializeReadStream(value);
+  },
+  WriteStream,
+  isatty,
+};
+export default tty_exports;

@@ -3925,6 +3925,41 @@ it("should not trim utf-8 start bytes at end of string", () => {
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });
 
+it("toString('utf8') replaces each ill-formed sequence in long text", () => {
+  // What https://encoding.spec.whatwg.org/#utf-8-decoder gives for each.
+  const illFormed = [
+    [[0xe0, 0x80, 0x80], "\ufffd\ufffd\ufffd"], // overlong
+    [[0xed, 0xa0, 0x80], "\ufffd\ufffd\ufffd"], // a surrogate
+    [[0xf4, 0x90, 0x80, 0x80], "\ufffd\ufffd\ufffd\ufffd"], // above U+10FFFF
+    [[0xe4, 0xb8], "\ufffd"], // ends early
+    [[0xf0, 0x9f, 0x98, 0x41], "\ufffdA"],
+    [[0xc3, 0x28], "\ufffd("],
+    [[0xff], "\ufffd"],
+    [[0x80], "\ufffd"],
+  ];
+  // One character of each encoded length, in more text than the SIMD decoder converts in one step.
+  for (const character of ["a", "é", "世", "😀"]) {
+    const width = Buffer.byteLength(character);
+    const count = Math.ceil(4500 / width);
+    const bytes = Buffer.alloc(count * width, character);
+    // Built as UTF-16, so that the UTF-8 decoder has no part in what it is compared with.
+    const text = n =>
+      Buffer.alloc(n * Buffer.byteLength(character, "utf16le"), character, "utf16le").toString("utf16le");
+    for (const [sequence, replaced] of illFormed) {
+      const input = Buffer.concat([bytes, Buffer.from(sequence), bytes]);
+      const expected = text(count) + replaced + text(count);
+      expect(input.toString("utf8") === expected, `[${sequence}] in ${character}`).toBe(true);
+      expect(input.utf8Slice() === expected, `utf8Slice, [${sequence}] in ${character}`).toBe(true);
+      expect(input.toString() === expected, `no encoding, [${sequence}] in ${character}`).toBe(true);
+    }
+    if (width > 1) {
+      // A range that starts and ends inside a character: each byte with no lead is replaced, and so is the cut tail.
+      const cut = "\ufffd".repeat(width - 1) + text(count - 2) + "\ufffd";
+      expect(bytes.toString("utf8", 1, bytes.length - 1) === cut, `a range inside ${character}`).toBe(true);
+    }
+  }
+});
+
 it("Buffer.from(BigInt64Array) throws instead of returning a zero-filled buffer", () => {
   // Copying BigInt elements into a Uint8Array is a TypeError (same as `new Uint8Array(2).set(new BigInt64Array(1))`).
   expect(() => Buffer.from(new BigInt64Array([1n]))).toThrow(TypeError);

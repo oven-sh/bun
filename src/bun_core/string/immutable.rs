@@ -73,8 +73,8 @@ pub use unicode_draft::{
     BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
-    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
-    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
+    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, incomplete_utf8_tail_len,
+    push_codepoint_wtf8, to_utf8_list_with_type_bun, u16_is_lead, u16_is_trail,
     utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
@@ -2551,10 +2551,6 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 
 /// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
 /// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
-///
-/// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
-/// (defined there) and `to_utf16_alloc` (defined here) share a single error
-/// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
 impl From<ToUTF16Error> for crate::CrateError {
     fn from(e: ToUTF16Error) -> Self {
@@ -2576,7 +2572,17 @@ pub fn to_utf16_alloc(
     fail_if_invalid: bool,
     sentinel: bool,
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-    let Some(_first) = first_non_ascii(bytes) else {
+    to_utf16_alloc_inline(bytes, fail_if_invalid, sentinel)
+}
+
+/// [`to_utf16_alloc`] inside its caller: `TextDecoder` decodes many inputs of a few bytes.
+#[inline(always)]
+pub fn to_utf16_alloc_inline(
+    bytes: &[u8],
+    fail_if_invalid: bool,
+    sentinel: bool,
+) -> Result<Option<Vec<u16>>, ToUTF16Error> {
+    let Some(first) = first_non_ascii(bytes) else {
         return Ok(None);
     };
 
@@ -2593,14 +2599,9 @@ pub fn to_utf16_alloc(
     // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
     // never reads from the output buffer and writes at most `out_length` code
     // units (the upper bound returned by `simdutf__utf16_length_from_utf8`), so passing
-    // uninitialised storage is sound. We only commit the length after success.
-    let res = unsafe {
-        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
-            bytes.as_ptr(),
-            bytes.len(),
-            out.as_mut_ptr(),
-        )
-    };
+    // uninitialised storage is sound.
+    let res =
+        unsafe { simdutf::convert::utf8::to::utf16::with_errors::le_raw(bytes, out.as_mut_ptr()) };
     if res.is_successful() && out_length > 0 {
         // SAFETY: on success simdutf has initialised exactly `out_length` u16s
         // at the start of `out`'s allocation, and `out_length <= capacity`.
@@ -2613,24 +2614,17 @@ pub fn to_utf16_alloc(
     if fail_if_invalid {
         return Err(ToUTF16Error::InvalidByteSequence);
     }
-    // Slow path: WTF-8 decode with replacement. `out` is still len 0 (we never
-    // committed the failed fast-path write); reuse its capacity.
-    out.try_reserve(bytes.len() + if sentinel { 1 } else { 0 })
-        .map_err(|_| ToUTF16Error::OutOfMemory)?;
-    let mut remaining = bytes;
-    while let Some(i) = first_non_ascii(remaining) {
-        let i = i as usize;
-        // Copy ASCII prefix as-is (one u16 per byte).
-        out.extend(remaining[..i].iter().map(|&b| u16::from(b)));
-        remaining = &remaining[i..];
-        // Decode one codepoint via `convert_utf8_bytes_into_utf16` so the
-        // number/position of U+FFFD emissions stays consistent: advance by
-        // `replacement.len.max(1)`, not 1.
-        let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
-        remaining = &remaining[(replacement.len as usize).max(1)..];
-        push_codepoint_utf16(&mut out, replacement.code_point);
-    }
-    out.extend(remaining.iter().map(|&b| u16::from(b)));
+    // SAFETY: the call above has just stopped at `res.count`, with the start
+    // of the empty `out` as its output, and `bytes[..first]` is ASCII.
+    unsafe {
+        unicode_draft::finish_utf16_with_replacement(
+            &mut out,
+            bytes,
+            first as usize,
+            res.count,
+            usize::from(sentinel),
+        )
+    }?;
     if sentinel {
         out.push(0);
     }
@@ -2675,9 +2669,8 @@ pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *
     )]
     // SAFETY: caller contract; simdutf writes at most `utf16_length_from_utf8(bytes) <= bytes.len()` units.
     let res = unsafe {
-        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
-            bytes.as_ptr(),
-            bytes.len(),
+        simdutf::convert::utf8::to::utf16::with_errors::le_raw(
+            bytes,
             dst.add(written).cast::<u16>(),
         )
     };

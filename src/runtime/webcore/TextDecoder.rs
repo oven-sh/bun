@@ -305,22 +305,23 @@ impl TextDecoder {
                     _ => (joined, true),
                 };
 
-                // Dispatch the runtime `fatal` bool to a const-generic parameter.
-                let maybe_decode_result = if self.fatal {
-                    strings::to_utf16_alloc_maybe_buffered::<true, FLUSH>(input)
+                // A sequence that the end of a `{stream: true}` chunk cuts is decoded with the next chunk.
+                let carried = if FLUSH {
+                    0
                 } else {
-                    strings::to_utf16_alloc_maybe_buffered::<false, FLUSH>(input)
+                    strings::incomplete_utf8_tail_len(input)
                 };
+                let (input, carried) = input.split_at(input.len() - carried);
 
-                let maybe_decode_result = match maybe_decode_result {
-                    Ok(v) => v,
-                    Err(err) => {
-                        if self.fatal && matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
-                            self.buffered = Buffered::default();
-                            return Err(self.invalid_data(heap));
-                        }
-
-                        debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
+                let string = match strings::to_utf16_alloc_inline(input, self.fatal, false) {
+                    Ok(Some(decoded)) => heap.create_utf16_string_from_vec(decoded)?,
+                    // All ASCII: copied as it is, so `input` may borrow. Experiment: using mimalloc directly is slightly slower
+                    Ok(None) => heap.try_create_latin1_string(input)?,
+                    Err(strings::ToUTF16Error::InvalidByteSequence) => {
+                        self.buffered = Buffered::default();
+                        return Err(self.invalid_data(heap));
+                    }
+                    Err(strings::ToUTF16Error::OutOfMemory) => {
                         return Err(if bun_core::String::utf16_transcode_too_long(input) {
                             heap.string_too_long()
                         } else {
@@ -329,21 +330,17 @@ impl TextDecoder {
                     }
                 };
 
-                let (string, pending) = match maybe_decode_result {
-                    Some((decoded, buf, len)) => (
-                        heap.create_utf16_string_from_vec(decoded)?,
-                        Buffered { buf, len },
-                    ),
-                    // All ASCII: copied as it is, so `input` may borrow. Experiment: using mimalloc directly is slightly slower
-                    None => (heap.try_create_latin1_string(input)?, Buffered::default()),
-                };
-
                 // "BOM seen" is only written by "serialize I/O queue", which a
                 // thrown fatal decode never reaches, so only commit it once the
                 // decode succeeded.
                 if set_bom_seen {
                     self.bom_seen = true;
                 }
+                let mut pending = Buffered::default();
+                for (to, &byte) in pending.buf.iter_mut().zip(carried) {
+                    *to = byte;
+                }
+                pending.len = carried.len() as u8;
                 self.buffered = pending;
                 Ok(string)
             }

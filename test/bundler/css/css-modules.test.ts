@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -672,6 +672,58 @@ test("a resolve error in CSS covers the whole url() and composes path", async ()
     position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
   );
   expect(ranges).toEqual([`url('/fonts/missing.woff2')`, `url("./missing.png")`, `'./missing.css'`]);
+});
+
+test("a resolve error in CSS starts at the url() token, after the white space and comments before it", async () => {
+  const files = {
+    // The url() follows another component of the value.
+    "after-color.css": ".a { background: #fff url(./a.png) no-repeat; }",
+    "next-line.css": ".a { mask: no-repeat\n    url(./a.png); }",
+    "after-comment.css": `.a { mask: no-repeat /* c */ url("./a.png"); }`,
+    "property-list.css": `@property --u { syntax: "<url>+"; inherits: false; initial-value: url(./a.png)   url(./b.png); }`,
+    "container-style.css": "@container style(background: #fff   url(./a.png)) { .a { color: red; } }",
+    // The url() follows the colon.
+    "after-colon.css": ".a { border-image: url(./a.png) 30; }",
+    "after-colon-line.css": ".a { border-image-source:\n  url(./a.png); }",
+    // The parser skips to the token before it reads these: after a comma, in a value kept as
+    // tokens, and in image-set().
+    "after-comma.css": ".a { background-image: url(./a.png),\n    url(./b.png); }",
+    "raw-tokens.css": ".a { list-style: square\n  url(./a.png); }",
+    "image-set.css": `.a { background-image: image-set(  "./a.png" 1x,\n   url(./b.png) 2x); }`,
+  };
+  using dir = tempDir("css-resolve-error-start", files);
+  const result = await Bun.build({
+    entrypoints: Object.keys(files).map(name => join(String(dir), name)),
+    throw: false,
+  });
+
+  // The line and the range of each error, by file. `column` is 1-based.
+  const ranges: Record<string, { line: number; text: string }[]> = {};
+  for (const { position } of result.logs) {
+    const { file, line, column, length, lineText } = position!;
+    (ranges[basename(file)] ??= []).push({ line, text: lineText.slice(column - 1, column - 1 + length) });
+  }
+  expect(ranges).toEqual({
+    "after-color.css": [{ line: 1, text: "url(./a.png)" }],
+    "next-line.css": [{ line: 2, text: "url(./a.png)" }],
+    "after-comment.css": [{ line: 1, text: `url("./a.png")` }],
+    "property-list.css": [
+      { line: 1, text: "url(./a.png)" },
+      { line: 1, text: "url(./b.png)" },
+    ],
+    "container-style.css": [{ line: 1, text: "url(./a.png)" }],
+    "after-colon.css": [{ line: 1, text: "url(./a.png)" }],
+    "after-colon-line.css": [{ line: 2, text: "url(./a.png)" }],
+    "after-comma.css": [
+      { line: 1, text: "url(./a.png)" },
+      { line: 2, text: "url(./b.png)" },
+    ],
+    "raw-tokens.css": [{ line: 2, text: "url(./a.png)" }],
+    "image-set.css": [
+      { line: 1, text: `"./a.png"` },
+      { line: 2, text: "url(./b.png)" },
+    ],
+  });
 });
 
 describe("bare :global", () => {

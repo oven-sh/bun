@@ -1,8 +1,9 @@
+import { CString, dlopen, ptr } from "bun:ffi";
 import { afterAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, nodeExe, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, WriteStream, isatty } from "node:tty";
 
@@ -1084,9 +1085,9 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       expect(code).toBe(0);
     });
 
-    // With no descriptor free at its first setRawMode(true), the handle sets the mode through the caller's
-    // descriptor and takes no snapshot of the process. Its close then puts back what the handle saw itself.
-    test.concurrent("destroy() of a raw stream that got no descriptor of its own", async () => {
+    // The handle has its descriptor from the start, so setRawMode(true) takes none: the mode is set, and put
+    // back at the close, with no descriptor free.
+    test.concurrent("setRawMode() and destroy() with no descriptor free", async () => {
       const modes: string[] = [];
       const sample = (terminal: Bun.Terminal) => {
         modes.push(modeOf(terminal));
@@ -1096,7 +1097,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         `
           const fs = require("node:fs");
           const step = marker => { fs.writeSync(1, marker + "\\n"); fs.readSync(0, Buffer.alloc(64)); };
-          // The handle has its reader before the descriptors run out.
+          // The handle has its descriptor before the descriptors run out.
           const stream = new (require("node:tty").ReadStream)(0);
           const held = [];
           let atTheLimit;
@@ -1734,6 +1735,411 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       length: 0,
     });
     expect(code).toBe(0);
+  });
+
+  // libuv finishes from the loop what a tty that it reopened does not take at once. The handle has a descriptor
+  // of its own for that, as a uv_tty_t has, and the caller's descriptor stays as the caller made it.
+  // The child gets a pty pair of the test's own: the master as fd 3, nonblocking as node-pty opens it, and the
+  // slave as fd 4, in raw mode so that what is written is what arrives.
+  describe("a write that the pty does not take whole", () => {
+    const size = 1 << 20;
+    const fill = "abcdefghijklmnopqrstuvwxyz0123456789";
+    const sha256 = createHash("sha256").update(Buffer.alloc(size, fill)).digest("hex");
+    const prelude = `
+      const tty = require("node:tty"), fs = require("node:fs"), crypto = require("node:crypto");
+      const say = record => fs.writeSync(1, JSON.stringify(record) + "\\n");
+      const size = ${size};
+      const bytes = Buffer.alloc(size, ${JSON.stringify(fill)});
+      const sha256 = ${JSON.stringify(sha256)};
+    `;
+
+    function openLibc() {
+      const arch = process.arch === "x64" ? "x86_64" : "aarch64";
+      let lastError: unknown;
+      for (const name of isMacOS ? ["libSystem.B.dylib"] : ["libc.so.6", `libc.musl-${arch}.so.1`]) {
+        try {
+          return dlopen(name, {
+            posix_openpt: { args: ["int"], returns: "int" },
+            grantpt: { args: ["int"], returns: "int" },
+            unlockpt: { args: ["int"], returns: "int" },
+            ptsname: { args: ["int"], returns: "ptr" },
+            tcgetattr: { args: ["int", "ptr"], returns: "int" },
+            cfmakeraw: { args: ["ptr"], returns: "void" },
+            tcsetattr: { args: ["int", "int", "ptr"], returns: "int" },
+          }).symbols;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError;
+    }
+    let libc: ReturnType<typeof openLibc> | undefined;
+
+    function openPair(slaveFlags: number) {
+      libc ??= openLibc();
+      const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK);
+      if (master < 0 || libc.grantpt(master) !== 0 || libc.unlockpt(master) !== 0) throw new Error("no pty");
+      const path = new CString(libc.ptsname(master)!).toString();
+      const first = openSync(path, constants.O_RDWR | constants.O_NOCTTY);
+      const termios = new Uint8Array(256);
+      if (libc.tcgetattr(first, ptr(termios)) !== 0) throw new Error("tcgetattr failed");
+      libc.cfmakeraw(ptr(termios));
+      if (libc.tcsetattr(first, 0 /* TCSANOW */, ptr(termios)) !== 0) throw new Error("tcsetattr failed");
+      const slave = slaveFlags === constants.O_RDWR ? first : openSync(path, slaveFlags | constants.O_NOCTTY);
+      if (slave !== first) closeSync(first);
+      return {
+        master,
+        slave,
+        // A stream of the test over the master has closed it already, as libuv closes a fd that it could not reopen.
+        [Symbol.dispose]() {
+          for (const fd of [master, slave]) {
+            try {
+              closeSync(fd);
+            } catch {}
+          }
+        },
+      };
+    }
+
+    // A child that waits in a write never ends by itself.
+    const children = new Set<Bun.Subprocess>();
+    afterAll(() => {
+      for (const child of children) child.kill("SIGKILL");
+    });
+
+    /** Runs `script` with the pair as fd 3 and fd 4. With `readEnd` the test reads that end, and says how much came and whether it is what was written. */
+    async function withPair(
+      script: string,
+      opts: { exe?: string; slaveFlags?: number; readEnd?: "master" | "slave" } = {},
+    ) {
+      using pair = openPair(opts.slaveFlags ?? constants.O_RDWR);
+      const arrived = Promise.withResolvers<{ got: number; sameBytes: boolean } | undefined>();
+      if (opts.readEnd) {
+        const reader = new ReadStream(pair[opts.readEnd]);
+        const hash = createHash("sha256");
+        let got = 0;
+        reader.on("error", arrived.reject);
+        reader.on("data", chunk => {
+          got += chunk.length;
+          hash.update(chunk);
+          if (got < size) return;
+          reader.destroy();
+          arrived.resolve({ got, sameBytes: hash.digest("hex") === sha256 });
+        });
+      } else {
+        arrived.resolve(undefined);
+      }
+      const child = Bun.spawn({
+        cmd: [opts.exe ?? bunExe(), "-e", prelude + script],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", pair.master, pair.slave],
+      });
+      children.add(child);
+      const [stdout, exitCode, read] = await Promise.all([child.stdout.text(), child.exited, arrived.promise]);
+      children.delete(child);
+      const records = stdout
+        .split("\n")
+        .filter(line => line !== "")
+        .map(line => JSON.parse(line));
+      return { records, exitCode, ...(read && { read }) };
+    }
+
+    const rows: [name: string, slaveFlags: number, script: string, records: object[]][] = [
+      ...(
+        [
+          ["a slave that the caller left blocking", constants.O_RDWR],
+          ["a slave that the caller made nonblocking", constants.O_RDWR | constants.O_NONBLOCK],
+        ] as const
+      ).map(
+        ([name, flags]) =>
+          [
+            `more than the pty holds goes out from the loop, to ${name}`,
+            flags,
+            `
+              const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+              const hash = crypto.createHash("sha256");
+              let got = 0, cb = "not yet", drained = false;
+              slave.on("drain", () => { drained = true; });
+              master.on("data", chunk => {
+                got += chunk.length;
+                hash.update(chunk);
+                if (got < size) return;
+                setImmediate(() => {
+                  say({ cb, drained, got, sameBytes: hash.digest("hex") === sha256, writableLength: slave.writableLength });
+                  slave.destroy();
+                  master.destroy();
+                });
+              });
+              const ret = slave.write(bytes, err => { cb = err ? err.code : null; });
+              say({ ret, writableLength: slave.writableLength, bytesWritten: slave.bytesWritten, cb });
+            `,
+            [
+              { ret: false, writableLength: size, bytesWritten: size, cb: "not yet" },
+              { cb: null, drained: true, got: size, sameBytes: true, writableLength: 0 },
+            ],
+          ] as [string, number, string, object[]],
+      ),
+      [
+        "the stream writes and says the size of the window after the caller has closed its descriptor",
+        constants.O_RDWR,
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let got = "";
+          master.on("data", chunk => {
+            got += chunk;
+            if (got.length < 5) return;
+            say({ got });
+            slave.destroy();
+            master.destroy();
+          });
+          slave.on("error", err => say({ error: err.code }));
+          fs.closeSync(4);
+          const windowSize = [];
+          say({ getWindowSize: slave._handle.getWindowSize(windowSize), windowSize });
+          slave.write("hello", err => say({ cb: err ? err.code : null }));
+        `,
+        [{ getWindowSize: 0, windowSize: [0, 0] }, { cb: null }, { got: "hello" }],
+      ],
+      [
+        "a descriptor that is open for reading alone refuses a write with EPIPE",
+        constants.O_RDONLY,
+        `
+          const slave = new tty.ReadStream(4);
+          slave.on("error", err => say({ error: err.code, syscall: err.syscall, errno: err.errno }));
+          slave.on("close", () => say({ closed: true }));
+          slave.write("hello", err => say({ cb: err ? err.code : null }));
+        `,
+        [{ cb: "EPIPE" }, { error: "EPIPE", syscall: "write", errno: -32 }, { closed: true }],
+      ],
+      [
+        "a descriptor that is open for writing alone takes a write and refuses a read with ENOTCONN",
+        constants.O_WRONLY,
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let got = "";
+          master.on("data", chunk => {
+            got += chunk;
+            if (got.length < 5) return;
+            say({ got });
+            slave.resume();
+          });
+          slave.on("error", err => say({ error: err.code, syscall: err.syscall }));
+          slave.on("close", () => {
+            say({ closed: true });
+            master.destroy();
+          });
+          slave.write("hello", err => say({ cb: err ? err.code : null }));
+        `,
+        [{ cb: null }, { got: "hello" }, { error: "ENOTCONN", syscall: "read" }, { closed: true }],
+      ],
+      [
+        "destroy() cancels the writes that wait, then the stream closes, and no 'error' is emitted",
+        constants.O_RDWR,
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const events = [];
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("close", hadError => {
+            events.push("close " + hadError);
+            say({ events });
+            master.destroy();
+          });
+          const ret = slave.write(bytes, err => events.push("first " + (err ? err.code + " " + err.syscall : null)));
+          slave.write("second", err => events.push("second " + (err ? err.code : null)));
+          slave.destroy();
+          say({ ret, destroyed: slave.destroyed, writableLength: slave.writableLength });
+        `,
+        [
+          { ret: false, destroyed: true, writableLength: size + 6 },
+          { events: ["first ECANCELED write", "second ECANCELED", "close false"] },
+        ],
+      ],
+      [
+        "a write that waits holds the loop after unref(), as a uv_write_t does",
+        constants.O_RDWR,
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let cb = "not yet";
+          master.on("data", () => {});
+          const ret = slave.write(bytes, err => { cb = err ? err.code : null; });
+          slave.unref();
+          master.unref();
+          process.on("exit", () => say({ ret, cb }));
+        `,
+        [{ ret: false, cb: null }],
+      ],
+      [
+        "setRawMode() does not wait for a write that waits",
+        constants.O_RDWR,
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let got = 0;
+          master.on("data", chunk => {
+            got += chunk.length;
+            if (got < size) return;
+            say({ got });
+            slave.destroy();
+            master.destroy();
+          });
+          const ret = slave.write(bytes, err => say({ cb: err ? err.code : null }));
+          slave.setRawMode(true);
+          say({ ret, isRaw: slave.isRaw, writableLength: slave.writableLength });
+        `,
+        [{ ret: false, isRaw: true, writableLength: size }, { cb: null }, { got: size }],
+      ],
+      [
+        "the callback of a write that went out from the loop runs in the async context of the write",
+        constants.O_RDWR,
+        `
+          const storage = new (require("node:async_hooks").AsyncLocalStorage)();
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let got = 0, store = "not yet";
+          master.on("data", chunk => {
+            got += chunk.length;
+            if (got < size) return;
+            setImmediate(() => {
+              say({ store });
+              slave.destroy();
+              master.destroy();
+            });
+          });
+          storage.run("of the write", () => {
+            slave.write(bytes, () => { store = storage.getStore(); });
+          });
+        `,
+        [{ store: "of the write" }],
+      ],
+      [
+        "a FIFO that does not block is finished from the loop too",
+        constants.O_RDWR,
+        `
+          const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/fifo-");
+          require("node:child_process").execFileSync("mkfifo", [dir + "/fifo"]);
+          const reader = fs.openSync(dir + "/fifo", fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const writer = fs.openSync(dir + "/fifo", fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          const input = new tty.ReadStream(reader), output = new tty.ReadStream(writer);
+          const hash = crypto.createHash("sha256");
+          let got = 0;
+          input.on("data", chunk => {
+            got += chunk.length;
+            hash.update(chunk);
+            if (got < size) return;
+            say({ got, sameBytes: hash.digest("hex") === sha256 });
+            output.destroy();
+            input.destroy();
+            fs.rmSync(dir, { recursive: true });
+          });
+          const ret = output.write(bytes, err => say({ cb: err ? err.code : null }));
+          say({ ret, writableLength: output.writableLength });
+        `,
+        [{ ret: false, writableLength: size }, { cb: null }, { got: size, sameBytes: true }],
+      ],
+    ];
+
+    describe.each(runtimes)("as in Node (%s)", (_runtime, exe) => {
+      test.skipIf(!exe).concurrent.each(rows)("%s", async (_name, slaveFlags, script, records) => {
+        expect(await withPair(script, { exe: exe!, slaveFlags })).toEqual({ records, exitCode: 0 });
+      });
+
+      // Node's tty.WriteStream asks for this: what it writes is out when write() returns.
+      test.skipIf(!exe).concurrent("after setBlocking(true) a write is complete when write() returns", async () => {
+        const script = `
+          const slave = new tty.ReadStream(4);
+          say({ setBlocking: slave._handle.setBlocking(true) });
+          slave.write(bytes, err => {
+            say({ cb: err ? err.code : null });
+            slave.destroy();
+          });
+          say({ writableLength: slave.writableLength });
+        `;
+        expect(await withPair(script, { exe: exe!, readEnd: "master" })).toEqual({
+          records: [{ setBlocking: 0 }, { writableLength: 0 }, { cb: null }],
+          exitCode: 0,
+          read: { got: size, sameBytes: true },
+        });
+      });
+
+      // libuv cannot reopen a master, and writes to it in place. So nothing of a write is lost to a destroy() behind it.
+      test.skipIf(!exe).concurrent("a pty master writes in place, and destroy() loses nothing", async () => {
+        const script = `
+          const master = new tty.ReadStream(3);
+          master.on("close", () => say({ closed: true }));
+          master.write(bytes, err => say({ cb: err ? err.code : null }));
+          master.destroy();
+          say({ destroyed: master.destroyed });
+        `;
+        expect(await withPair(script, { exe: exe!, readEnd: "slave" })).toEqual({
+          records: [{ destroyed: true }, { cb: null }, { closed: true }],
+          exitCode: 0,
+          read: { got: size, sameBytes: true },
+        });
+      });
+    });
+
+    // Node answers a request object for a write that waits, and reads its oncomplete. This handle answers undefined and
+    // takes the completion as an operand: oncomplete(status, context), with the handle as this.
+    test.concurrent("writeBuffer() answers a number or undefined, and completes in call order", async () => {
+      const script = `
+        const { TTY } = process.binding("tty_wrap");
+        const master = new tty.ReadStream(3);
+        const handle = new TTY(4, {});
+        const completed = [];
+        let got = 0, tail = "";
+        master.on("data", chunk => {
+          got += chunk.length;
+          tail = (tail + chunk).slice(-8);
+          if (got < size + 11) return;
+          say({ completed, tail });
+          handle.close();
+          master.destroy();
+        });
+        function oncomplete(status, context) {
+          completed.push([context, status, this === handle]);
+        }
+        const small = handle.writeBuffer(null, Buffer.from("small"), oncomplete, "small");
+        const big = handle.writeBuffer(null, bytes, oncomplete, "big");
+        const behind = handle.writeBuffer(null, Buffer.from("BEHIND"), oncomplete, "behind");
+        say({ small, big: String(big), behind: String(behind), bytesWritten: handle.bytesWritten });
+      `;
+      expect(await withPair(script)).toEqual({
+        records: [
+          { small: 0, big: "undefined", behind: "undefined", bytesWritten: size + 11 },
+          {
+            completed: [
+              ["big", 0, true],
+              ["behind", 0, true],
+            ],
+            tail: Buffer.alloc(size, fill).toString().slice(-2) + "BEHIND",
+          },
+        ],
+        exitCode: 0,
+      });
+    });
+
+    // The handle has one descriptor of its own, and one more for the poll of a write that waits. close() ends both,
+    // and the master too, which the handle owns as libuv owns a fd that it could not reopen.
+    test.concurrent("close() leaves no descriptor of the handle", async () => {
+      const script = `
+        const open = () => fs.readdirSync("/dev/fd").map(Number).filter(fd => {
+          try { return fs.fstatSync(fd) !== undefined; } catch { return false; }
+        });
+        const before = open();
+        const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+        slave.setRawMode(true);
+        master.on("data", () => {});
+        slave.write(bytes);
+        slave.on("close", () => master.destroy());
+        master.on("close", () => setImmediate(() => {
+          const after = open();
+          say({
+            closed: before.filter(fd => !after.includes(fd)),
+            left: after.filter(fd => !before.includes(fd) && tty.isatty(fd)),
+          });
+        }));
+        setImmediate(() => slave.destroy());
+      `;
+      expect(await withPair(script)).toEqual({ records: [{ closed: [3], left: [] }], exitCode: 0 });
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/33580: Node emits errnoException(err,

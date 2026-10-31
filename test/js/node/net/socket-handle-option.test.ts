@@ -272,6 +272,75 @@ test("a write goes to writeBuffer(null, data), and the number that it answers co
 });
 
 // Node hands a corked batch to the handle in one writev() call. Here it is one writeBuffer() call.
+// What the native handle does for a write that its descriptor does not take whole: it answers no number,
+// and calls oncomplete(status, context) from the loop once the rest is out, or cancelled, or failed.
+function handleThatFinishesLater() {
+  const later: ((status: number) => void)[] = [];
+  const handle = mockHandle({
+    writeBuffer(
+      req: unknown,
+      data: Uint8Array,
+      oncomplete: (this: unknown, status: number, context: unknown) => void,
+      context: unknown,
+    ) {
+      handle.written.push([req, Buffer.from(data).toString()]);
+      handle.bytesWritten += data.length;
+      later.push(status => oncomplete.call(handle, status, context));
+      return undefined;
+    },
+  });
+  return { handle, later };
+}
+
+test("a write that the handle finishes later completes when the handle says so", async () => {
+  const { handle, later } = handleThatFinishesLater();
+  const socket = new Socket({ handle, manualStart: true } as never);
+  const order: string[] = [];
+  const codeOf = (err?: Error | null) => (err ? (err as NodeJS.ErrnoException).code : null);
+  socket.write("one", err => order.push("one " + codeOf(err)));
+  socket.write("two", err => order.push("two " + codeOf(err)));
+  // The second write waits in the stream behind the first.
+  expect({ written: handle.written, writableLength: socket.writableLength, order }).toEqual({
+    written: [[null, "one"]],
+    writableLength: 6,
+    order: [],
+  });
+
+  later.shift()!(0);
+  expect({ written: handle.written, writableLength: socket.writableLength, order }).toEqual({
+    written: [
+      [null, "one"],
+      [null, "two"],
+    ],
+    writableLength: 3,
+    order: ["one null"],
+  });
+
+  // A negative status is the error of the write.
+  const failed = once(socket, "error");
+  later.shift()!(uvErrno("EIO"));
+  const [error] = await failed;
+  expect({ code: error.code, syscall: error.syscall, order }).toEqual({
+    code: "EIO",
+    syscall: "write",
+    order: ["one null", "two EIO"],
+  });
+});
+
+test("a write that the close of the handle cancels tells its callback and emits no 'error'", async () => {
+  const { handle, later } = handleThatFinishesLater();
+  const socket = new Socket({ handle, manualStart: true } as never);
+  const events: string[] = [];
+  socket.on("error", err => events.push("error " + (err as NodeJS.ErrnoException).code));
+  socket.write("one", err => events.push("callback " + (err as NodeJS.ErrnoException | undefined)?.code));
+  const closed = once(socket, "close");
+  socket.destroy();
+  // libuv tells a queued write UV_ECANCELED when its stream closes.
+  later.shift()!(uvErrno("ECANCELED"));
+  await closed;
+  expect(events).toEqual(["callback ECANCELED"]);
+});
+
 test("a corked batch is one write, and every callback of it runs", async () => {
   const handle = mockHandle();
   const socket = new Socket({ handle, manualStart: true } as never);

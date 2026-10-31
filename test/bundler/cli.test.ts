@@ -18,6 +18,33 @@ import path, { join } from "node:path";
       );
     });
 
+    test("a file's warnings are printed when one of its imports does not resolve", async () => {
+      using dir = tempDir("bun-build-warnings-with-resolve-error", {
+        "warn.js": `import "./does-not-exist.js";\nclass A { #m() {} f() { this.#m = 1; } }\nexport default A;\n`,
+        "warn.css": `@import "./does-not-exist.css";\n.b { @nest .c & { color: blue } }\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./warn.js", "./warn.css", "--outdir=out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The two files finish in no particular order.
+      const diagnostics = stderr.split(/\r?\n/).filter(line => /^(warn|error): /.test(line));
+      expect({ stdout, diagnostics: diagnostics.sort(), exitCode }).toEqual({
+        stdout: "",
+        diagnostics: [
+          'error: Could not resolve: "./does-not-exist.css"',
+          'error: Could not resolve: "./does-not-exist.js"',
+          "warn: The @nest rule is deprecated, use standard CSS nesting instead",
+          'warn: Writing to read-only method "#m" will throw',
+        ],
+        exitCode: 1,
+      });
+    });
+
     async function testCompile(outfile: string) {
       const { exited } = Bun.spawn({
         cmd: [

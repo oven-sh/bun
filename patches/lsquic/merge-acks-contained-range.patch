@@ -1,0 +1,16 @@
+--- a/src/liblsquic/lsquic_parse_gquic_common.c
++++ b/src/liblsquic/lsquic_parse_gquic_common.c
+@@ -680,7 +680,12 @@
+         }
+ 
+         if ((*p)->high + 1 >= out->low)
+-            out->low = (*p)->low;
++        {
++            /* bun: a range of one frame can lie inside a range of the other,
++             * as [15-12] does in [16-8].  Only a lower end extends `out'. */
++            if ((*p)->low < out->low)
++                out->low = (*p)->low;
++        }
+         else if (out + 1 < out_end)
+             *++out = **p;
+         else

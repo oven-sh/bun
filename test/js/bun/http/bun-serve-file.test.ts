@@ -1148,6 +1148,179 @@ test.concurrent("a download resumed with If-Range after the file changed gets th
   }).toEqual({ status: 200, contentRange: null, body: Buffer.alloc(400, "B").toString() });
 });
 
+// One GET per handler, each on a path of its own.
+async function answers(
+  handlers: Record<string, () => Response | Promise<Response>>,
+  serve: "fetch" | "routes" = "fetch",
+) {
+  const names = Object.keys(handlers);
+  const handle = (req: Request) => handlers[names[Number(new URL(req.url).pathname.slice(1))]]();
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    ...(serve === "routes" ? { routes: { "/*": handle } } : { fetch: handle }),
+  });
+  const result: Record<string, unknown> = {};
+  for (const [i, name] of names.entries()) {
+    const res = await fetch(new URL(`/${i}`, server.url));
+    result[name] = { status: res.status, contentRange: res.headers.get("content-range"), body: await res.text() };
+  }
+  return result;
+}
+
+// A fetch handler that returns `new Response(Bun.file(path).slice(a, b))` gets
+// 206 and a Content-Range, unless it gave a status of its own. The answer used
+// to depend on whether the Response had a header list. The first read of
+// `res.headers` allocates that list, and printing the Response reads it too:
+// the same Response went out as 200 with no Content-Range. So did a Response
+// with any header. With no list, a status of the handler went out as 206.
+describe.concurrent("a Bun.file() slice that a fetch handler returns", () => {
+  const partial = { status: 206, contentRange: "bytes 5-9/*", body: "56789" };
+  const every = (names: string[], answer: unknown) => Object.fromEntries(names.map(name => [name, answer]));
+
+  test("is a 206 with a Content-Range after the handler read or printed the Response", async () => {
+    using dir = tempDir("serve-slice-after-look", { "partial.txt": "0123456789ABCDEF" });
+    const slice = () => Bun.file(join(String(dir), "partial.txt")).slice(5, 10);
+
+    const responses: Record<string, () => Response> = {
+      "slice": () => new Response(slice()),
+      "slice.stream()": () => new Response(slice().stream()),
+      "slice, { headers: {} }": () => new Response(slice(), { headers: {} }),
+      "slice, { headers: new Headers() }": () => new Response(slice(), { headers: new Headers() }),
+      "slice, { status: 206 }": () => new Response(slice(), { status: 206 }),
+    };
+    const looks: Record<string, (res: Response) => unknown> = {
+      "no look": () => {},
+      "headers": res => res.headers,
+      "headers.get()": res => res.headers.get("content-type"),
+      "headers.has()": res => res.headers.has("x-custom"),
+      "[...headers]": res => [...res.headers],
+      "new Headers(headers)": res => new Headers(res.headers),
+      "Bun.inspect()": res => Bun.inspect(res),
+    };
+    const handlers: Record<string, () => Response> = {};
+    for (const [response, make] of Object.entries(responses)) {
+      for (const [look, at] of Object.entries(looks)) {
+        handlers[`${response}: ${look}`] = () => {
+          const res = make();
+          at(res);
+          return res;
+        };
+      }
+    }
+    expect(await answers(handlers)).toEqual(every(Object.keys(handlers), partial));
+
+    const read = () => {
+      const res = new Response(slice());
+      void res.headers;
+      return res;
+    };
+    const ways: Record<string, () => Response | Promise<Response>> = {
+      "an async handler": async () => read(),
+      "a handler that resolves later": async () => {
+        await Bun.file(join(String(dir), "partial.txt")).exists();
+        return read();
+      },
+    };
+    expect(await answers(ways)).toEqual(every(Object.keys(ways), partial));
+    expect(await answers({ "a route handler": read }, "routes")).toEqual({ "a route handler": partial });
+  });
+
+  // A Response that copies the headers of another one has a header list of its own.
+  test("is a 206 with a Content-Range when the Response copies headers that were only read", async () => {
+    using dir = tempDir("serve-slice-copied-look", { "partial.txt": "0123456789ABCDEF" });
+    const slice = () => Bun.file(join(String(dir), "partial.txt")).slice(5, 10);
+    const typed = () => new Blob(["typed"], { type: "x/y" });
+    const looked = <T extends Response | Request>(at: T) => {
+      void at.headers;
+      return at;
+    };
+
+    const copies: Record<string, () => Response> = {
+      "clone() of a Response: no look": () => new Response(slice()).clone(),
+      "clone() of a Response: headers": () => looked(new Response(slice())).clone(),
+      "slice, response: no look": () => new Response(slice(), new Response("text")),
+      "slice, response: headers": () => new Response(slice(), looked(new Response("text"))),
+      "slice, response with a typed Blob: no look": () => new Response(slice(), new Response(typed())),
+      "slice, response with a typed Blob: headers": () => new Response(slice(), looked(new Response(typed()))),
+      "slice, request with a typed Blob: no look": () =>
+        new Response(slice(), new Request("http://example.com/", { method: "POST", body: typed() }) as ResponseInit),
+      "slice, request with a typed Blob: headers": () =>
+        new Response(
+          slice(),
+          looked(new Request("http://example.com/", { method: "POST", body: typed() })) as ResponseInit,
+        ),
+    };
+    expect(await answers(copies)).toEqual(every(Object.keys(copies), partial));
+  });
+
+  // A CORS or cache header does not make the slice a whole resource.
+  test("is a 206 with a Content-Range when the handler also set a header", async () => {
+    using dir = tempDir("serve-slice-handler-header", { "partial.txt": "0123456789ABCDEF" });
+    const slice = () => Bun.file(join(String(dir), "partial.txt")).slice(5, 10);
+    const after = (write: (headers: Headers) => void) => () => {
+      const res = new Response(slice());
+      write(res.headers);
+      return res;
+    };
+
+    const withHeader: Record<string, () => Response> = {
+      "{ headers: { 'X-Custom': '1' } }": () => new Response(slice(), { headers: { "X-Custom": "1" } }),
+      "{ headers: { 'Content-Type': file.type } }": () =>
+        new Response(slice(), { headers: { "Content-Type": "text/plain;charset=utf-8" } }),
+      "{ headers: response.headers }": () => new Response(slice(), { headers: new Response(slice()).headers }),
+      "{ status: 206, headers: { 'X-Custom': '1' } }": () =>
+        new Response(slice(), { status: 206, headers: { "X-Custom": "1" } }),
+      "headers.set()": after(headers => headers.set("X-Custom", "1")),
+      "headers.append()": after(headers => headers.append("X-Custom", "1")),
+      "headers.delete()": after(headers => headers.delete("Content-Type")),
+    };
+    expect(await answers(withHeader)).toEqual(every(Object.keys(withHeader), partial));
+
+    // The handler's own Content-Range replaces the automatic one.
+    const ownRange = { ...partial, contentRange: "bytes 5-9/16" };
+    expect(
+      await answers({
+        "{ headers: { 'Content-Range': 'bytes 5-9/16' } }": () =>
+          new Response(slice(), { headers: { "Content-Range": "bytes 5-9/16" } }),
+        "headers.set('Content-Range', 'bytes 5-9/16')": after(headers => headers.set("Content-Range", "bytes 5-9/16")),
+      }),
+    ).toEqual({
+      "{ headers: { 'Content-Range': 'bytes 5-9/16' } }": ownRange,
+      "headers.set('Content-Range', 'bytes 5-9/16')": ownRange,
+    });
+  });
+
+  test("keeps a status other than 200 or 206 that the handler gave", async () => {
+    using dir = tempDir("serve-slice-handler-status", { "partial.txt": "0123456789ABCDEF" });
+    const slice = () => Bun.file(join(String(dir), "partial.txt")).slice(5, 10);
+
+    const handlers: Record<string, () => Response> = {};
+    const expected: Record<string, unknown> = {};
+    for (const status of [201, 404, 500]) {
+      const rows: Record<string, () => Response> = {
+        "no look": () => new Response(slice(), { status }),
+        "headers": () => {
+          const res = new Response(slice(), { status });
+          void res.headers;
+          return res;
+        },
+        "Bun.inspect()": () => {
+          const res = new Response(slice(), { status });
+          Bun.inspect(res);
+          return res;
+        },
+        "{ headers: { 'X-Custom': '1' } }": () => new Response(slice(), { status, headers: { "X-Custom": "1" } }),
+      };
+      for (const [row, make] of Object.entries(rows)) {
+        handlers[`${status}: ${row}`] = make;
+        expected[`${status}: ${row}`] = { status, contentRange: null, body: "56789" };
+      }
+    }
+    expect(await answers(handlers)).toEqual(expected);
+  });
+});
+
 // A body write that returns backpressure must pause the reader until the
 // socket drains. For a pollable fd (FIFO, character device, socket) the read
 // loop re-arms its poll after EAGAIN, so a reader that is not paused keeps

@@ -16,7 +16,6 @@ use crate::collections::IdMap;
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
 use crate::collections::sort_slice_by;
-use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::EvaluationOrder;
@@ -232,12 +231,10 @@ fn handle_rewrite(
     context.rewrites.push(BasicBlock {
         kind: source_block.kind,
         id: curr_block_id,
-        instructions: AstAlloc::vec_from_slice(
-            &source_block.instructions[context.instr_slice_idx..idx],
-        ),
+        instructions: source_block.instructions[context.instr_slice_idx..idx].to_vec(),
         preds,
         // Only the first rewrite should reuse source block phis
-        phis: AstAlloc::take(&mut source_block.phis),
+        phis: std::mem::take(&mut source_block.phis),
         terminal,
     });
 
@@ -307,10 +304,8 @@ pub(crate) fn build_reactive_scope_terminals_hir(
                 kind: block.kind,
                 preds: IndexSet::from([final_pred]),
                 terminal: block.terminal,
-                instructions: AstAlloc::vec_from_slice(
-                    &block.instructions[context.instr_slice_idx..],
-                ),
-                phis: AstAlloc::vec(),
+                instructions: block.instructions[context.instr_slice_idx..].to_vec(),
+                phis: Vec::new(),
             };
             let final_block_id = final_block.id;
             context.rewrites.push(final_block);

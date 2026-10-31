@@ -4176,6 +4176,103 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
+// The HIR of a function, and the tables of the passes, were in the arena of the parser, which frees nothing until the
+// bundle ends. Each component below kept about 200 KB of them after it was compiled. Now it keeps what its output takes.
+// Not on a debug or ASAN build. With `bun bd` this input takes 40 seconds, and the builds of a smaller one peak under
+// the 340 MB of the process that measures them, so the difference reads as 0.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler frees the working memory of a function when it is compiled",
+  async () => {
+    // Few components in a file, so that the set of the names of a file stays small.
+    const files = 160;
+    const perFile = 5;
+    const children = Array.from({ length: 20 }, (_, i) => `<li title={props.t${i}}>{props.c${i}}</li>`).join("");
+    const entries = Array.from({ length: files }, (_, f) => `f${f}.jsx`);
+    const sources = (head: string, component: (name: string) => string) =>
+      Object.fromEntries(
+        entries.map((entry, f) => [
+          entry,
+          head + Array.from({ length: perFile }, (_, c) => component(`C${f}_${c}`) + "\n").join(""),
+        ]),
+      );
+    using dir = tempDir(
+      "react-compiler-working-memory",
+      sources("", name => `export function ${name}(props) { return <ul>${children}</ul>; }`),
+    );
+    // A component that reads a ref while it renders is rejected, after most of the passes have run on it.
+    using rejectedDir = tempDir(
+      "react-compiler-working-memory-rejected",
+      sources(
+        `import { useRef } from "react";\n`,
+        name =>
+          `export function ${name}(props) { const r = useRef(null); return <ul title={r.current}>${children}</ul>; }`,
+      ),
+    );
+
+    const peakMB = async (cwd: string, flags: string[]) => {
+      const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "build", ...flags, "--target=browser", "--external=*", "--outdir=out", ...entries],
+        cwd,
+      });
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return maxRSS / 1024 / 1024;
+    };
+
+    // What the compiler adds to the peak of a build, and what the build writes for the first file.
+    const added = async (cwd: string) => {
+      const without = await peakMB(cwd, []);
+      const withCompiler = await peakMB(cwd, ["--react-compiler"]);
+      return { mb: withCompiler - without, output: await Bun.file(join(cwd, "out", "f0.js")).text() };
+    };
+    const [compiled, rejected] = await Promise.all([added(String(dir)), added(String(rejectedDir))]);
+
+    expect(compiled.output).toContain("react/compiler-runtime");
+    // 206 MB without the fix, 52 MB with it.
+    // Under 10 MB, both numbers are the peak of the process that measured the builds.
+    expect(compiled.mb).toBeGreaterThan(10);
+    expect(compiled.mb).toBeLessThan(120);
+
+    expect(rejected.output).not.toContain("react/compiler-runtime");
+    // 63 MB without the fix, 2 MB with it.
+    expect(rejected.mb).toBeLessThan(25);
+  },
+);
+
+// Three strings of the output are built in a buffer of the compiler and copied to the arena of the AST: the name of an
+// outlined function, a template string with characters outside Latin-1, and a numeric key.
+test("react-compiler keeps the strings that it builds for the output", async () => {
+  using dir = tempDir("react-compiler-output-strings", {
+    "entry.jsx": `
+      export function Outlined(props) {
+        return <ul>{props.items.map(item => <li>{item}</li>)}</ul>;
+      }
+      export function Template(props) {
+        const label = \`\u65e5\u672c \${props.name} \u2713\`;
+        return <b>{label}</b>;
+      }
+      export function NumericKey(props) {
+        const o = { 1.5: props.a, 2: props.b };
+        return <i>{o}</i>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+  });
+  const output = await result.outputs[0].text();
+  expect({
+    compiled: output.match(/\b_c\(\d+\)/g)?.length,
+    outlined: /props\.items\.map\(_temp\)/.test(output) && /^function _temp\(item\) \{$/m.test(output),
+    template: output.includes("`\u65e5\u672c ${props.name} \u2713`"),
+    numericKey: output.includes('"1.5": props.a'),
+  }).toEqual({ compiled: 3, outlined: true, template: true, numericKey: true });
+});
+
 // Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
 // EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
 // Not where the empty build takes 330 MB, which is more than either pattern does.

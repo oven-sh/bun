@@ -32,7 +32,7 @@ pub(crate) struct Compiler<'a> {
     flavor: Flavor,
     wanted: Categories,
     config: EnvironmentConfig,
-    /// Memory for the converted trees and the compiler.
+    /// Memory for the converted trees and for the strings that the compiler copies for its output. Its HIR is on the global heap.
     arena: bun_alloc::Arena,
 }
 

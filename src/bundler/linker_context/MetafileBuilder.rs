@@ -213,6 +213,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let sources = parse_graph.input_files.items_source();
     let loaders = parse_graph.input_files.items_loader();
     let import_records_list = parse_graph.ast.items_import_records();
+    let asset_keys = parse_graph
+        .input_files
+        .items_unique_key_for_additional_file();
 
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
@@ -286,8 +289,17 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             j.push_owned(buf.into_boxed_slice());
         }
         {
+            // `process_files_to_copy` emptied `source.contents` of a copied input.
+            let copied = c.copied_input_sizes.get(source_index as usize);
+            let copied = copied.copied().flatten();
+            debug_assert!(
+                copied.is_some() || asset_keys[source_index as usize].is_empty(),
+                "the copied input {} has no asset file",
+                BStr::new(path),
+            );
+            let bytes = copied.unwrap_or(source.contents.len());
             let mut buf: Vec<u8> = Vec::new();
-            write!(buf, ": {{\n      \"bytes\": {}", source.contents.len())?;
+            write!(buf, ": {{\n      \"bytes\": {}", bytes)?;
             j.push_owned(buf.into_boxed_slice());
         }
 

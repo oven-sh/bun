@@ -1251,18 +1251,18 @@ done:
   return error;
 }
 
-/* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and a client's
+/* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
  * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
  * which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
-  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
   int error = us_x509_store_ctx_blocked_key_error(ctx);
-  if (error == X509_V_OK && ssl && !SSL_is_server(ssl) && X509_STORE_CTX_get_error(ctx) == X509_V_OK) {
+  if (error == X509_V_OK && X509_STORE_CTX_get_error(ctx) == X509_V_OK) {
     error = us_x509_store_ctx_common_name_error(ctx);
   }
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
   int (*verify_callback)(int, X509_STORE_CTX *) = ssl ? SSL_get_verify_callback(ssl) : NULL;
   return verify_callback ? verify_callback(0, ctx) : 0;
 }

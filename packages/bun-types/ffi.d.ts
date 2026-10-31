@@ -13,13 +13,15 @@
  */
 declare module "bun:ffi" {
   enum FFIType {
+    /**
+     * 8-bit signed integer on every platform, also where C's plain `char` is
+     * unsigned (Linux on arm64)
+     */
     char = 0,
     /**
      * 8-bit signed integer
      *
      * Must be a value between -128 and 127
-     *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -37,8 +39,6 @@ declare module "bun:ffi" {
      * 8-bit signed integer
      *
      * Must be a value between -128 and 127
-     *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -58,8 +58,6 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 255
      *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
-     *
      * In C:
      * ```c
      * unsigned char
@@ -75,8 +73,6 @@ declare module "bun:ffi" {
      * 8-bit unsigned integer
      *
      * Must be a value between 0 and 255
-     *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -95,8 +91,6 @@ declare module "bun:ffi" {
      *
      * Must be a value between -32768 and 32767
      *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
-     *
      * In C:
      * ```c
      * int16_t
@@ -113,8 +107,6 @@ declare module "bun:ffi" {
      * 16-bit signed integer
      *
      * Must be a value between -32768 and 32767
-     *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -134,8 +126,6 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 65535, inclusive.
      *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
-     *
      * In C:
      * ```c
      * uint16_t
@@ -152,8 +142,6 @@ declare module "bun:ffi" {
      * 16-bit unsigned integer
      *
      * Must be a value between 0 and 65535, inclusive.
-     *
-     * When passing to an FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -255,7 +243,7 @@ declare module "bun:ffi" {
     /**
      * Boolean value
      *
-     * Must be `true` or `false`. `0` and `1` type coercion is not supported.
+     * An argument that is not `true` or `false` converts like `Boolean(value)`.
      *
      * In C, this corresponds to:
      * ```c

@@ -658,6 +658,11 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
+      {
+        file: inBindings("webcore/JSWorker.cpp"),
+        caller: "JSWorkerDOMConstructor::construct",
+        onBehalfOf: workerConstructors,
+      },
     ],
   }),
 ];

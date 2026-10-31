@@ -660,7 +660,7 @@ pub mod stdio {
     pub fn init() {
         // `bun_initialize_process` marks every inherited descriptor close-on-exec, as Bun's own are.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        if super::argv().any(compiles_in_place) {
+        if crate::util::startup_args_any(compiles_in_place) {
             bun_remember_inherited_file_descriptors();
         }
         bun_initialize_process();

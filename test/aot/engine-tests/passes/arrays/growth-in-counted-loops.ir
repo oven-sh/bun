@@ -213,8 +213,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: undefined|Array<never, proven, pristine[Storage, Names, Dense]> = GetSlotOrUndefined v0 key="current" receivers=[L0] level=Proven accessSite=14
 # CHECK-NEXT: v6: undefined|Array<never, proven, pristine[Storage, Names, Dense]> ~ Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=undefined|Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=15
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v8: Array = NewArray contents=anything capacity=v11 allocationSite=8
+# CHECK-NEXT: v8: Array = NewArray contents=anything allocationSite=8
 # CHECK-NEXT: v9: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutSlot v0, -, v9 key="current" receivers=[L0] level=Proven accessSite=16
 # CHECK-NEXT: Jump -> next b1()

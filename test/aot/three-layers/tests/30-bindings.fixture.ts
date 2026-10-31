@@ -1,0 +1,10 @@
+import { check } from "../src/show";
+import { setting, setSetting, lazyValue } from "../src/middle";
+import * as middle from "../src/middle";
+import data from "../src/data.json";
+import { early, readLate } from "../src/cycle-a";
+const F = "30";
+check(F, "a let of the app set through its function", () => { const a = setting; setSetting("changed"); const b = [setting, middle.setting, lazyValue.now]; setSetting("initial"); return [a, b, setting]; });
+check(F, "JSON modules", () => [data, data.list[1], Object.keys(data), (data as any).nested.deep, JSON.stringify(data) === JSON.stringify(require("../src/data.json"))]);
+check(F, "a cycle between two files of the app", () => [early, readLate()]);
+check(F, "namespace enumeration", () => [Object.keys(middle).sort(), Object.getOwnPropertyNames(middle).length, Reflect.ownKeys(middle).length, "setting" in middle, Object.entries(middle).filter(([, v]) => typeof v === "string"), JSON.stringify(middle).length > 2, { ...middle }.setting]);

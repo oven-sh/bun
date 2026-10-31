@@ -223,6 +223,7 @@ impl TextDecoder {
         )
     }
 
+    #[inline]
     fn decode_chunk<'a>(
         &mut self,
         heap: &JsHeap<'a>,
@@ -297,20 +298,11 @@ impl TextDecoder {
                 // https://encoding.spec.whatwg.org/#concept-td-serialize: suppress
                 // at most one LEADING U+FEFF per stream. A strict BOM prefix ("",
                 // EF, EF BB) is still ambiguous; `buffered` carries it to the next chunk.
-                const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
-                let set_bom_seen: bool;
-                let input: &[u8] = if self.ignore_bom || self.bom_seen {
-                    set_bom_seen = false;
-                    joined
-                } else if let Some(rest) = joined.strip_prefix(UTF8_BOM) {
-                    set_bom_seen = true;
-                    rest
-                } else if UTF8_BOM.starts_with(joined) {
-                    set_bom_seen = false;
-                    joined
-                } else {
-                    set_bom_seen = true;
-                    joined
+                let (input, set_bom_seen): (&[u8], bool) = match joined {
+                    _ if self.ignore_bom || self.bom_seen => (joined, false),
+                    [0xef, 0xbb, 0xbf, rest @ ..] => (rest, true),
+                    [] | [0xef] | [0xef, 0xbb] => (joined, false),
+                    _ => (joined, true),
                 };
 
                 // Dispatch the runtime `fatal` bool to a const-generic parameter.
@@ -462,6 +454,7 @@ impl TextDecoder {
         })
     }
 
+    #[inline]
     pub(crate) fn decode<'a>(
         &mut self,
         heap: &JsHeap<'a>,

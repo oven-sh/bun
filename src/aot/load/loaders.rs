@@ -5,7 +5,9 @@ use bun_sema::resolve::{CodeImportKind, ScriptKind};
 use crate::module_keys::loader_by_path_or;
 #[cfg(test)]
 pub(crate) use crate::module_keys::loader_name;
-pub(crate) use crate::module_keys::{loader_by_name, loader_named_by_path, parses_text_as_data};
+pub(crate) use crate::module_keys::{
+    loader_by_name, loader_by_query, loader_named_by_path, parses_text_as_data,
+};
 
 pub(crate) fn loader_by_path<E: AsRef<[u8]>>(
     table: &[(E, Loader)],
@@ -80,10 +82,31 @@ pub(crate) fn to_host_loader(loader: Loader, path: &[u8]) -> HostLoader {
     }
 }
 
+/// `bun run` keeps what a `type` attribute asks for apart from what an import without one gets, even if both read the file alike.
+pub(crate) fn to_host_loader_of_attribute(loader: Loader, path: &[u8]) -> HostLoader {
+    match script_kind_of(loader).is_some() {
+        true => to_host_loader(loader, path),
+        false => HostLoader(host_number(loader)),
+    }
+}
+
+const ASKED_FOR_BY_QUERY: u8 = 1 << 6;
+
+/// `bun run` keeps `./a.css?raw` apart from `./a.css?raw` with `{ type: "text" }` too.
+pub(crate) fn to_host_loader_of_query(loader: Loader) -> HostLoader {
+    HostLoader(ASKED_FOR_BY_QUERY | host_number(loader))
+}
+
+pub(crate) fn is_asked_for_by_query(loader: HostLoader) -> bool {
+    loader.0 & ASKED_FOR_BY_QUERY != 0
+}
+
 pub(crate) fn host_loader_kind(loader: HostLoader) -> Option<HostLoaderKind> {
     match loader {
         BY_NAME => Some(HostLoaderKind::ByName),
-        HostLoader(number) => loader_from_host_number(number).map(HostLoaderKind::Loader),
+        HostLoader(number) => {
+            loader_from_host_number(number & !ASKED_FOR_BY_QUERY).map(HostLoaderKind::Loader)
+        }
     }
 }
 
@@ -123,7 +146,27 @@ mod tests {
             let number = host_number(loader);
             assert_eq!(loader_from_host_number(number), Some(loader));
             assert_ne!(HostLoader(number), BY_NAME);
+            assert!(!is_asked_for_by_query(HostLoader(number)));
         }
+    }
+
+    #[test]
+    fn what_a_query_asks_for_is_apart_from_what_an_attribute_asks_for() {
+        for &loader in ALL_LOADERS {
+            let by_query = to_host_loader_of_query(loader);
+            assert!(is_asked_for_by_query(by_query));
+            assert_eq!(
+                host_loader_kind(by_query),
+                Some(HostLoaderKind::Loader(loader))
+            );
+            assert_ne!(
+                by_query,
+                to_host_loader_of_attribute(loader, b"/project/a.txt")
+            );
+            assert_ne!(by_query, to_host_loader(loader, b"/project/a.txt"));
+        }
+        assert!(!is_asked_for_by_query(BY_NAME));
+        assert_eq!(host_loader_kind(HostLoader(ASKED_FOR_BY_QUERY)), None);
     }
 
     #[test]

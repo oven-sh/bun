@@ -12,7 +12,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131111 function=f1
+runtimefunction id=WrittenListsArrayOfUndefined function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=3
     v1 = Builtin builtin=CompilerHelpersArrayOfUndefined
@@ -23,7 +23,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = ElemGet v2, v3
     Return v6
 }
-function f1 name="arrayOfUndefined" role=Library enclosingRuntimeFunction=131111 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="arrayOfUndefined" role=Library enclosingRuntimeFunction=WrittenListsArrayOfUndefined parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Undefined
     v2 = NewArray v1, v1, v1 contents=anything
     v3 = Integer integer=0

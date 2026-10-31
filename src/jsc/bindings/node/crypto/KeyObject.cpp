@@ -1436,6 +1436,8 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         auto* eBuf = decodeJwkString(globalObject, scope, eView, "key.e"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
+        MarkPopErrorOnReturn markPopError;
+
         RSAPointer rsa(RSA_new());
         Rsa rsaView(rsa.get());
 
@@ -1776,7 +1778,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
 
     auto res = EVPKeyPointer::TryParsePrivateKey(config, buf);
     if (res) {
-        return create(CryptoKeyType::Private, WTF::move(res.value));
+        return create(CryptoKeyType::Public, WTF::move(res.value));
     }
 
     if (res.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {

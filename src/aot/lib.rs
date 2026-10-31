@@ -1,3 +1,4 @@
+#![feature(optimize_attribute)]
 #![cfg_attr(test, feature(linkage))]
 
 #[cfg(test)]

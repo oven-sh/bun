@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow string concatenation with `__dirname` and `__filename`.
 pub struct NoPathConcat;
 
-const USE_PATH_FUNCTIONS: Message = Message::new(
+const USE_PATH_FUNCTIONS: &Message = &Message::new(
     "usePathFunctions",
     "Use path.join() or path.resolve() instead of + to create paths.",
 );

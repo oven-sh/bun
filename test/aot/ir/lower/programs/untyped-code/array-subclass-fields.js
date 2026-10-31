@@ -160,7 +160,7 @@ console.log(made.length, made[299].second, made[299][1], !counted() || visits ==
 // CHECK-NEXT: Throw v32
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|Array<never> flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} parameters=[{type=undefined|null|Array<never> flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|Array<never>, v2: undefined|null|string|symbol, v3: undefined|null|number|string|symbol|bigint|[[L_4]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

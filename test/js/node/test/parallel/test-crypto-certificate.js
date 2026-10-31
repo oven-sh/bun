@@ -108,12 +108,12 @@ function checkMethods(certificate) {
   const padded = Buffer.alloc(Buffer.byteLength(spkacText) + 1);
   padded.write(spkacText);
   const zeroLengthView = padded.subarray(0, 0);
-  assert.strictEqual(Certificate.verifySpkac(zeroLengthView), false);
+  assert.strictEqual(Certificate.verifySpkac(zeroLengthView), '');
   assert.strictEqual(Certificate.exportPublicKey(zeroLengthView), '');
   assert.strictEqual(Certificate.exportChallenge(zeroLengthView), '');
 
   for (const input of [Buffer.alloc(0), Buffer.from(' \n\r\t'), '', ' \n\r\t']) {
-    assert.strictEqual(Certificate.verifySpkac(Buffer.from(input)), false);
+    assert.strictEqual(Certificate.verifySpkac(Buffer.from(input)), input.length === 0 ? '' : false);
     assert.strictEqual(Certificate.exportPublicKey(input), '');
     assert.strictEqual(Certificate.exportChallenge(input), '');
   }

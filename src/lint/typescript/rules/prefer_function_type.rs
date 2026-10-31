@@ -6,11 +6,11 @@ use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 /// Enforce using function types instead of interfaces with call signatures.
 pub struct PreferFunctionType;
 
-const FUNCTION_TYPE_OVER_CALLABLE_TYPE: Message = Message::new(
+const FUNCTION_TYPE_OVER_CALLABLE_TYPE: &Message = &Message::new(
     "functionTypeOverCallableType",
     "{{ literalOrInterface }} only has a call signature, you should use a function type instead.",
 );
-const UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE: Message = Message::new(
+const UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE: &Message = &Message::new(
     "unexpectedThisOnFunctionOnlyInterface",
     "`this` refers to the function type '{{ interfaceName }}', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?",
 );

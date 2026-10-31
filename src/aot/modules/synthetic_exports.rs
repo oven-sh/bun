@@ -5,7 +5,7 @@ use super::imports::{FileImports, NamedMember, PendingBinding};
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
 use super::{BindInput, ModuleRef, compare_code_units, compare_modules};
-use crate::builtins::{BuiltinNames, ModuleExport, Platforms, find_module_export};
+use crate::builtins::{BuiltinNames, ModuleExport, Platforms, RuntimeModule, find_module_export};
 use crate::load::{SourceKind, Sources};
 use bun_sema::atom::Atom;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -32,16 +32,30 @@ impl SyntheticExports {
     }
 }
 
+/// What the test runner may store another value under: single names, and every name of a module that it mocks.
+#[derive(Copy, Clone)]
+pub(super) struct ReplacedNames<'a> {
+    pub names: &'a [SyntheticExportKey],
+    pub modules: &'a FxHashSet<ModuleRef>,
+    pub is_every_module: bool,
+}
+
 pub(super) fn number_synthetic_exports(
     input: &BindInput<'_, '_>,
     modules: &ModuleSet,
     tables: &ExportTables,
     imports: &[FileImports],
     commonjs: &CommonJsTexts,
+    replaced: ReplacedNames<'_>,
 ) -> SyntheticExports {
+    let mut found = collect_synthetic_export_keys(input, modules, tables, imports, commonjs);
+    for &key in replaced.names {
+        found.add(key, false);
+    }
     let SyntheticExportKeys {
         mut keys, required, ..
-    } = collect_synthetic_export_keys(input, modules, tables, imports, commonjs);
+    } = found;
+    let replaced_names: FxHashSet<SyntheticExportKey> = replaced.names.iter().copied().collect();
     let atoms = &input.files.atoms;
     keys.shared_sort_unstable_by(|a, b| {
         let compare_names = || compare_code_units(atoms.bytes(a.1), atoms.bytes(b.1));
@@ -59,6 +73,10 @@ pub(super) fn number_synthetic_exports(
             module,
             name,
             is_known_member: can_be_absent || known_members.has(modules, module, name),
+            is_replaceable: replaced_names.contains(&(module, name))
+                || (replaced.is_every_module
+                    && module != ModuleRef::Runtime(RuntimeModule::BunTest))
+                || replaced.modules.contains(&module),
         }
     };
     let ids = (0..).map(SyntheticExportId);

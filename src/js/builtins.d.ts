@@ -82,6 +82,8 @@ declare var $alwaysInline;
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
   $bunNativePtr: TODO | undefined;
+  /** On the stream of stdin, after `process.stdin.unref()`: a reader of it takes no ref on the event loop. */
+  $forceUnref?: boolean;
 }
 
 declare var ReadableStream: {

@@ -975,7 +975,7 @@ pub(crate) mod js_bundler {
                             global_this
                                 .bun_vm()
                                 .as_mut()
-                                .wait_for_promise(promise)
+                                .wait_for_promise(promise, jsc::WhenIdle::KeepWaiting)
                                 .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)

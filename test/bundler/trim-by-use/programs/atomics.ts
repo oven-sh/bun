@@ -13,5 +13,8 @@ console.log(
   Atomics.wait(shared, 0, 0, 1),
   Atomics.wait(shared, 0, 9, 1),
 );
+// The timeout of a waitAsync keeps no process alive, so an interval does while this waits for it.
+const whileItWaits = setInterval(() => {}, 1000);
 const later: any = (Atomics as any).waitAsync(shared, 0, 9, 5);
 console.log(later.async, await later.value);
+clearInterval(whileItWaits);

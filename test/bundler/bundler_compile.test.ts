@@ -76,6 +76,44 @@ describe("bundler", () => {
     },
     run: { stdout: "true true true" },
   });
+  // A top-level await that nothing can settle ends the executable like Node: a warning and exit code 13, once
+  // what keeps the event loop alive is done. https://github.com/oven-sh/bun/issues/14951
+  const unsettled =
+    /^Warning: Detected unsettled top-level await at file:\/\/\S+\/out:\d+\r?\nawait new Promise\(\(\) => \{\}\);\r?\n\^$/;
+  itBundled("compile/UnsettledTopLevelAwait", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        await new Promise(() => {});
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before", stderr: unsettled, exitCode: 13 },
+  });
+  itBundled("compile/UnsettledTopLevelAwaitBehindATimer", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        setTimeout(() => console.log("timer"), 50);
+        await new Promise(() => {});
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before\ntimer", stderr: unsettled, exitCode: 13 },
+  });
+  itBundled("compile/TopLevelAwaitThatATimerSettles", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        console.log("before");
+        await new Promise(resolve => setTimeout(resolve, 50));
+        console.log("after");
+      `,
+    },
+    run: { stdout: "before\nafter", stderr: "" },
+  });
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {

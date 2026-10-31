@@ -236,6 +236,8 @@ await new Promise(resolve =>
     resolve();
   }, 1),
 );
+// The timer of a timeout signal keeps no process alive, so an interval does while this waits for it.
+const whileTheSignalWaits = setInterval(() => {}, 1000);
 try {
   await new Promise((resolve, reject) => {
     const signal = AbortSignal.timeout(1);
@@ -244,4 +246,5 @@ try {
 } catch (exception) {
   console.log("timeout |", describe(exception));
 }
+clearInterval(whileTheSignalWaits);
 show("top level", () => 0 || reasonOfAbort());

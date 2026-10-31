@@ -282,22 +282,10 @@ impl Vm for ThreadVm {
             let mut returned = (state.handle.get().call(global, JSValue::UNDEFINED, &[kind]))
                 .map_err(|error| message_of(global, global.take_exception(error)))?;
             if let Some(promise) = returned.as_any_promise() {
-                // Like `wait_for_promise`, but gives up on a promise that nothing can settle anymore. Node.js exits in
-                // that case.
-                while promise.status() == jsc::js_promise::Status::Pending {
-                    vm.as_mut().event_loop_mut().tick();
-                    if promise.status() != jsc::js_promise::Status::Pending {
-                        break;
-                    }
-                    // An unhandled rejection is printed and counted, and the loop doesn't count as alive while that
-                    // count isn't 0.
-                    vm.as_mut().unhandled_error_counter = 0;
-                    if !vm.is_event_loop_alive() {
-                        return Err(
-                            b"A promise never settled, and nothing is left to wait for.".to_vec()
-                        );
-                    }
-                    vm.as_mut().auto_tick();
+                // Gives up on a promise that nothing can settle anymore. Node.js exits in that case.
+                if let Err(unsettled) = vm.as_mut().wait_for_promise(promise, jsc::WhenIdle::GiveUp)
+                {
+                    return Err(unsettled.to_string().into_bytes());
                 }
                 returned = promise.result(global.vm());
                 if promise.status() == jsc::js_promise::Status::Rejected {

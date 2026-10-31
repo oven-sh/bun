@@ -1977,7 +1977,12 @@ describe("Valkey: Recovering After fail()", () => {
           `
           const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 0, idleTimeout: 50, autoReconnect: false });
           const closed = Promise.withResolvers();
-          client.onclose = err => closed.resolve(err);
+          // An idle client does not keep the process alive, so a timer does until the connection has closed.
+          const untilClosed = setInterval(() => {}, 60_000);
+          client.onclose = err => {
+            clearInterval(untilClosed);
+            closed.resolve(err);
+          };
           await client.connect();
           await closed.promise;
           console.log("onclose");
@@ -1993,6 +1998,39 @@ describe("Valkey: Recovering After fail()", () => {
         stderr: "",
         exitCode: 0,
       });
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  // A connected client that is idle keeps nothing alive. A top-level await that only its close can
+  // settle has nothing left to wait for: a warning and exit code 13.
+  // An idle timeout of a minute: the close is not due while the program ends.
+  test("an idle client does not keep a top-level await alive", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 0, idleTimeout: 60_000, autoReconnect: false });
+          const closed = Promise.withResolvers();
+          client.onclose = err => closed.resolve(err);
+          await client.connect();
+          console.log("connected");
+          await closed.promise;
+          console.log("onclose");
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const { stdout, stderr, exitCode } = await exitOutcome(proc);
+      expect(stderr).toStartWith("Warning: Detected unsettled top-level await at ");
+      expect({ stdout, exitCode }).toEqual({ stdout: "connected\n", exitCode: 13 });
     } finally {
       fake.server.close();
     }

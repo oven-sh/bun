@@ -136,8 +136,6 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   let needsInternalReadRefresh = false;
-  // if true, while the stream is own()ed it will not
-  let forceUnref = false;
 
   function own() {
     // After EOF there is nothing left to read: no acquisition path ('readable'
@@ -145,7 +143,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    source.updateRef(forceUnref ? false : true);
+    source.updateRef(native.$forceUnref ? false : true);
     source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
@@ -204,13 +202,13 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function (this: StdinStream) {
-      forceUnref = false;
+      native.$forceUnref = false;
       own();
       return this;
     };
 
     stream.unref = function (this: StdinStream) {
-      forceUnref = true;
+      native.$forceUnref = true;
       source?.updateRef?.(false);
       return this;
     };

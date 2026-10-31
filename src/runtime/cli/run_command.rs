@@ -1576,17 +1576,11 @@ impl Run<'_> {
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
         match loaded {
             None => {}
-            Some(Ok(promise)) => {
-                // SAFETY: `promise` is a live GC cell returned by the module loader.
-                let promise = unsafe { &mut *promise };
+            Some(Ok(entry_promise)) => {
+                // SAFETY: `entry_promise` is a live GC cell returned by the module loader.
+                let promise = unsafe { &mut *entry_promise };
                 if promise.status() == PromiseStatus::Rejected {
-                    // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
-                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    // A CJS entry runs synchronously in Node, so its top-level
-                    // throw is an uncaughtException; only an ESM entry
-                    // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_is_commonjs();
-                    let handled = vm.uncaught_exception(global, result, is_rejection);
+                    let handled = vm.report_entry_rejection(entry_promise);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1660,50 +1654,62 @@ impl Run<'_> {
                 vm.auto_tick_active();
             }
 
-            if ctx.runtime_options.eval.eval_and_print {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                result.then2(
-                                    global,
-                                    JSValue::UNDEFINED,
-                                    crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
-                };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        global,
-                        &raw const to_print,
-                        1,
-                    );
-                }
+            // While the entry is suspended on a top-level await its result is the loader's own promise.
+            let mut print_result = ctx
+                .runtime_options
+                .eval
+                .eval_and_print
+                .then_some(print_entry_point_result);
+            if !entry_is_pending(vm)
+                && let Some(print) = print_result.take()
+            {
+                print(vm, global);
             }
 
             vm.on_before_exit();
+
+            // `load_entry_point` returns with the entry pending once nothing can settle its top-level await, and a 'beforeExit' listener had the last chance to.
+            if let Some(entry) = vm.pending_internal_promise() {
+                let promise = bun_jsc::JSInternalPromise::opaque_mut(entry);
+                // The last turn can have left a rejection for its listeners, and they can settle the entry or start work: the run goes on with that.
+                while promise.status() == PromiseStatus::Pending
+                    && (global.has_jobs_for_checkpoint() || vm.is_event_loop_alive())
+                {
+                    let mut loop_was_alive = false;
+                    loop {
+                        vm.tick();
+                        if vm.is_event_loop_alive() {
+                            vm.auto_tick_active();
+                            loop_was_alive = true;
+                        } else if !global.has_jobs_for_checkpoint() {
+                            break;
+                        }
+                    }
+                    // As in Node, 'beforeExit' comes again only behind work of the loop.
+                    if !loop_was_alive || vm.unhandled_error_counter != 0 {
+                        break;
+                    }
+                    vm.on_before_exit();
+                }
+                // A 'beforeExit' listener let the module finish: its result is there now.
+                if promise.status() == PromiseStatus::Fulfilled
+                    && let Some(print) = print_result.take()
+                {
+                    print(vm, global);
+                }
+                if promise.status() == PromiseStatus::Rejected
+                    && vm.pending_internal_promise_reported_at != vm.hot_reload_counter
+                {
+                    // The loader marked this promise handled, so nothing else reports the rejection.
+                    vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                    let handled = vm.report_entry_rejection(entry);
+                    promise.set_handled();
+                    if !handled {
+                        exit_with_unhandled_note(vm);
+                    }
+                }
+                vm.report_unsettled_entry(entry);
+            }
         }
 
         if log_has_msgs(vm) {
@@ -1738,6 +1744,58 @@ impl Run<'_> {
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
+}
+
+/// `--print`: writes what the entry point evaluated to, and waits for it first if that is a pending promise.
+fn print_entry_point_result(vm: &mut VirtualMachine, global: &JSGlobalObject) {
+    let to_print: JSValue = 'brk: {
+        let result = vm
+            .entry_point_result
+            .value
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
+        if let Some(promise) = result.as_any_promise() {
+            match promise.status() {
+                PromiseStatus::Pending => {
+                    result.then2(
+                        global,
+                        JSValue::UNDEFINED,
+                        crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
+                        crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
+                    );
+                    vm.tick();
+                    vm.auto_tick_active();
+                    while vm.is_event_loop_alive() {
+                        vm.tick();
+                        vm.auto_tick_active();
+                    }
+                    break 'brk result;
+                }
+                _ => break 'brk promise.result(vm.jsc_vm()),
+            }
+        }
+        result
+    };
+    // SAFETY: `vals[..1]` is the single stack `to_print`; null
+    // `ctype` routes to the VM's stdout/stderr default.
+    unsafe {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            ::core::ptr::null_mut(),
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            global,
+            &raw const to_print,
+            1,
+        );
+    }
+}
+
+/// The entry point's evaluation has not finished: it is suspended on a top-level await.
+#[inline]
+fn entry_is_pending(vm: &VirtualMachine) -> bool {
+    vm.pending_internal_promise().is_some_and(|entry| {
+        bun_jsc::JSInternalPromise::opaque_ref(entry).status() == PromiseStatus::Pending
+    })
 }
 
 #[inline]

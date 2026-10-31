@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
+import { rawRequest, requestWithUnusableHosts, unusableHosts, upgradeHeaders } from "../../../cli/inspect/raw-http";
 
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
@@ -298,6 +299,96 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.secondUrl).not.toBe(summary.firstUrl);
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
+});
+
+// GET /json/version, GET /json/list and the WebSocket upgrade answer a request
+// that has no Host header, or an empty one, as Node does (IsAllowedHost):
+// https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L642-L646
+// A Host that Bun.serve could not build request.url from is answered 400.
+test("inspector.open() answers a request without a Host header and refuses an unusable Host", async () => {
+  // The child prints the inspector URL and then waits. The end of this scope stops it.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+       inspector.open(0, "127.0.0.1", false);
+       console.log(inspector.url());
+       setInterval(() => {}, 1 << 30);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const decoder = new TextDecoder();
+  let url = "";
+  for await (const chunk of proc.stdout) {
+    url += decoder.decode(chunk);
+    if (url.includes("\n")) break;
+  }
+  url = url.trim();
+  expect(url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]{36}$/);
+
+  const { host, port, pathname } = new URL(url);
+  const address = { port: Number(port), host: "127.0.0.1" };
+  const version = {
+    status: "HTTP/1.1 200 OK",
+    body: { "Browser": expect.stringContaining("Bun/"), "Protocol-Version": "1.1" },
+  };
+  // Without a Host header, the target list names the address the server is bound to.
+  const list = {
+    status: "HTTP/1.1 200 OK",
+    body: [
+      expect.objectContaining({
+        webSocketDebuggerUrl: url,
+        devtoolsFrontendUrl: expect.stringContaining(`ws=${host}${pathname}`),
+      }),
+    ],
+  };
+  const switchingProtocols = { status: "HTTP/1.1 101 Switching Protocols", body: "" };
+  const badRequest = { status: "HTTP/1.1 400 Bad Request", body: "" };
+  const notFound = { status: "HTTP/1.1 404 Not Found", body: "" };
+  const methodNotAllowed = { status: "HTTP/1.1 405 Method Not Allowed", body: "" };
+
+  expect({
+    version: await rawRequest(address, "GET /json/version HTTP/1.0"),
+    list: await rawRequest(address, "GET /json/list HTTP/1.0"),
+    emptyHostList: await rawRequest(address, "GET /json/list HTTP/1.1", ["Host: ", "Connection: close"]),
+    post: await rawRequest(address, "POST /json/version HTTP/1.0", ["Content-Length: 0"]),
+    connectByName: await rawRequest(address, "CONNECT localhost:443 HTTP/1.0"),
+    doubleSlash: {
+      withoutHost: await rawRequest(address, "GET //x/json/list HTTP/1.0"),
+      withHost: await rawRequest(address, "GET //x/json/list HTTP/1.1", ["Host: 127.0.0.1", "Connection: close"]),
+    },
+    connect: {
+      withoutHost: await rawRequest(address, "CONNECT 1.example:443 HTTP/1.0"),
+      withHost: await rawRequest(address, "CONNECT 1.example:443 HTTP/1.1", ["Host: 127.0.0.1"]),
+    },
+  }).toEqual({
+    version,
+    list,
+    emptyHostList: list,
+    // Node answers 400 to every method but GET and to every path that it does not serve.
+    // Bun answers 405 and 404, with or without a Host header.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L555-L558
+    // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket_server.cc#L503-L507
+    post: methodNotAllowed,
+    // `localhost:443` parses as a URL with the scheme "localhost:", so this CONNECT reaches the method check.
+    connectByName: methodNotAllowed,
+    // A target that starts with "//" is a path.
+    doubleSlash: { withoutHost: notFound, withHost: notFound },
+    // `1.example:443` is not a path and not a URL: nothing joins it onto a placeholder Host.
+    connect: { withoutHost: badRequest, withHost: badRequest },
+  });
+
+  expect(await requestWithUnusableHosts(address, "/json/list", pathname)).toEqual(
+    Object.fromEntries(unusableHosts.map(host => [host, { get: badRequest, upgrade: badRequest }])),
+  );
+
+  expect(await rawRequest(address, `GET ${pathname} HTTP/1.1`, ["Host: ", ...upgradeHeaders])).toEqual(
+    switchingProtocols,
+  );
 });
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic

@@ -112,6 +112,11 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
+    /// `spin()` has started loading the entry module. Interrupts requested
+    /// before that wait in `pending_interrupts`, so a worker that never reaches
+    /// user code answers none. Both touched under the `vm_handle` lock.
+    entry_started: AtomicBool,
+    pending_interrupts: bun_threading::Guarded<Vec<*mut c_void>>,
 
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
@@ -299,6 +304,10 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
 impl Drop for WebWorker {
     fn drop(&mut self) {
         log!("[{}] destroy", self.execution_context_id);
+        for work in self.pending_interrupts.lock().drain(..) {
+            // SAFETY: `work` was handed over to `request_interrupt`.
+            unsafe { crate::vm_handle::Bun__VMInterrupts__drop(work) };
+        }
         debug_assert!(
             self.join_handle.with_mut(|h| h.is_none()),
             "worker thread was never joined"
@@ -576,6 +585,8 @@ impl WebWorker {
             is_shutting_down: AtomicBool::new(false),
             is_returning: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
+            entry_started: AtomicBool::new(false),
+            pending_interrupts: bun_threading::Guarded::new(Vec::new()),
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
@@ -928,6 +939,24 @@ impl WebWorker {
         }
     }
 
+    /// [`VmHandle::request_interrupt`] for the worker's VM; kept until its
+    /// entry module starts. Any thread that holds a ref (the proxy).
+    ///
+    /// # Safety
+    /// `work` is a heap `Bun::VMInterrupts::Work` the caller hands over.
+    #[unsafe(export_name = "WebWorker__requestInterrupt")]
+    pub(crate) unsafe extern "C" fn request_interrupt(this: *mut WebWorker, work: *mut c_void) {
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        let handle = this.vm_handle.lock();
+        match &*handle {
+            Some(handle) if this.entry_started.load(Ordering::Relaxed) => {
+                // SAFETY: fn contract.
+                unsafe { handle.request_interrupt(work) }
+            }
+            _ => this.pending_interrupts.lock().push(work),
+        }
+    }
+
     /// The parent is releasing this thread: drop the keep-alive on the parent's
     /// loop and forget it as a child. Parent thread.
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
@@ -1227,6 +1256,18 @@ impl WebWorker {
                 self.flush_logs(vm);
                 WebWorker__entrySettled(global);
                 return self.shutdown();
+            }
+        }
+
+        // User code from here on.
+        {
+            let handle = self.vm_handle.lock();
+            self.entry_started.store(true, Ordering::Relaxed);
+            let pending = core::mem::take(&mut *self.pending_interrupts.lock());
+            let handle = handle.as_ref().expect("published by start_vm");
+            for work in pending {
+                // SAFETY: `work` was handed over to `request_interrupt`.
+                unsafe { handle.request_interrupt(work) };
             }
         }
 

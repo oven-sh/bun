@@ -59,7 +59,15 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }
-            return total_sent > 0 ? total_sent : sent;
+            if (total_sent > 0) {
+                /* A later batch failed outright after earlier ones went out.
+                 * The caller gets the short count and meets this errno when it
+                 * resends from the failed datagram, but it only resends once
+                 * on_drain fires, so a short count must always re-arm writable. */
+                us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                return total_sent;
+            }
+            return sent;
         }
         total_sent += sent;
         if (sent < count) {

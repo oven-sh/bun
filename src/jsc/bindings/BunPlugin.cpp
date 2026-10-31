@@ -495,6 +495,8 @@ public:
     bool hasSetLoadedModuleAside { false };
     // Loaded as a generated ES module that imports the original (or the `__mocks__` file) and calls the factory when evaluated.
     bool importsOriginal { false };
+    // How the hoisted factory last failed.
+    bool readUninitializedVariable { false };
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSValue factory, JSC::JSString* specifier, JSC::JSString* writtenSpecifier, ModuleMockFunction);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -1235,12 +1237,13 @@ static JSC::JSPromise* thenWithContext(Zig::GlobalObject* globalObject, JSC::JSP
     return derived;
 }
 
-static void addHoistingNote(JSC::VM& vm, JSValue error)
+static bool addHoistingNote(JSC::VM& vm, JSValue error)
 {
     String message = messageOfUninitializedVariableError(vm, error);
     if (message.isNull())
-        return;
+        return false;
     uncheckedDowncast<JSC::ErrorInstance>(error)->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(message, "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted()."_s)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    return true;
 }
 
 __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
@@ -1327,8 +1330,7 @@ void JSModuleMock::didFail(Zig::GlobalObject* globalObject, JSValue error)
 {
     state = State::NotCalled;
     result.clear();
-    if (isHoisted())
-        addHoistingNote(globalObject->vm(), error);
+    readUninitializedVariable = isHoisted() && addHoistingNote(globalObject->vm(), error);
     didStopRunning(globalObject, this);
 }
 
@@ -3031,7 +3033,28 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool isCurrent = true;
     if (loaded.esmNamespace || loaded.commonJSModule) {
         pendingFactory = mock->run(globalObject, false);
+        // As in Vitest and Jest, a hoisted factory that reads a variable declared below the call waits for the first import.
+        if (scope.exception() && mock->readUninitializedVariable && scope.tryClearException()) [[unlikely]] {
+            if (previous && !previous->isFromPreload) {
+                unmockModule(globalObject, previous, specifier);
+                RETURN_IF_EXCEPTION(scope, {});
+                previous = nullptr;
+            }
+            loaded = findLoadedModule(globalObject, specifierString);
+            RETURN_IF_EXCEPTION(scope, {});
+            loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
+            loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);
+            mock->originalExports.clear();
+            mock->originalNamespace.clear();
+            mock->patchedNamespace.clear();
+            mock->originalExportsOfEvictedModule.clear();
+            mock->originalCommonJSExports.clear();
+            mock->patchOrder = 0;
+            bodyYetToRun = nullptr;
+        }
         RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (loaded.esmNamespace || loaded.commonJSModule) {
         isCurrent = isStillRegisteredModuleMock(globalObject, specifier, previous);
 
         // The factory may have evicted the module, or require()d it: `() => ({ ...require("./m"), extra })`.

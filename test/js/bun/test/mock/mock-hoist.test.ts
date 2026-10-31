@@ -948,6 +948,58 @@ describe.concurrent("errors", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.each(isolationFlags.flatMap(([flags]) => ["vi", "jest"].map(api => [api, flags] as const)))(
+    "a %s.mock() factory can read a later const though an earlier file or a preload loaded the module: %j",
+    async (api, flags) => {
+      const { stderr, exitCode } = await run(
+        {
+          "preload.ts": `
+            import { mock } from "bun:test";
+            import "node:os";
+            import "node:querystring";
+            mock.module("node:querystring", () => ({ escape: () => "preload" }));
+          `,
+          "1.test.ts": `
+            import { expect, test } from "bun:test";
+            import { existsSync } from "node:fs";
+            import { other } from "./other";
+            import { captured } from "./side";
+            test("loads them", () => expect([existsSync("/"), captured, other]).toEqual([true, "real", "other"]));
+          `,
+          "2.test.ts": `
+            import { expect, test, ${api} } from "bun:test";
+            const fn = ${api}.fn(() => "mock"), value = String("mock");
+            ${api}.mock("node:fs", () => ({ statSync: fn }));
+            ${api}.mock("node:os", async () => ({ hostname: fn }));
+            ${api}.mock("node:querystring", () => ({ escape: fn }));
+            ${api}.mock("./mod", () => ({ value }));
+            ${api}.mock("./other", () => ({ other: "first" }));
+            ${api}.mock("./other", () => ({ other: value }));
+            test("gets the mocks", async () => {
+              const [fs, os, querystring, side, other] = await Promise.all(
+                ["node:fs", "node:os", "node:querystring", "./side", "./other"].map(name => import(name)),
+              );
+              expect([fs.statSync("/"), os.hostname(), querystring.escape(""), side.captured, other.other]).toEqual(Array(5).fill("mock"));
+            });
+          `,
+          "3.test.ts": `
+            import { expect, test } from "bun:test";
+            import { existsSync } from "node:fs";
+            import { hostname } from "node:os";
+            import { escape } from "node:querystring";
+            import { other } from "./other";
+            import { captured } from "./side";
+            test("gets what was there before", () =>
+              expect([existsSync("/"), typeof hostname(), escape(""), captured, other]).toEqual([true, "string", "preload", "real", "other"]));
+          `,
+        },
+        ["--preload", "./preload.ts", ...flags, "1.test.ts", "2.test.ts", "3.test.ts"],
+      );
+      expect(stderr).toContain(" 3 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("an import statement in a CommonJS file is still rejected", async () => {
     const { stderr, exitCode } = await run({
       "hoist.test.ts": `

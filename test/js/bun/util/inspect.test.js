@@ -1317,7 +1317,7 @@ describe("Bun.inspect of an array", () => {
         cmd: [bunExe(), "test", "title.test.js"],
         env: { ...bunEnv, AGENT: "0" },
         cwd: String(dir),
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -1330,10 +1330,38 @@ describe("Bun.inspect of an array", () => {
 
     it("for the result of a Bun.SQL query, with its enumerable properties", async () => {
       await using sql = new SQL(":memory:");
-      const printed = Bun.inspect(await sql`select 1 as a`);
-      expect({ firstLine: printed.split("\n", 1)[0], count: printed.includes("count: 1,") }).toEqual({
-        firstLine: "SQLResultArray(1) [",
-        count: true,
+      expect(Bun.inspect(await sql`select 1 as a`)).toBe(
+        'SQLResultArray(1) [\n  {\n    a: 1,\n  }, count: 1, command: "SELECT", lastInsertRowid: null, affectedRows: 0\n]',
+      );
+    });
+
+    // The length is read before the name: a getter or a trap could change it.
+    it("and runs no getter and no Proxy trap to find the name", () => {
+      const ran = [];
+      class Named extends Array {}
+      Object.defineProperty(Named, "name", { get: () => ran.push("name") });
+      Object.defineProperty(Named, "displayName", { get: () => ran.push("displayName") });
+      Object.defineProperty(Named.prototype, Symbol.toStringTag, { get: () => ran.push("toStringTag") });
+      class Accessor extends Array {}
+      Object.defineProperty(Accessor.prototype, "constructor", { get: () => ran.push("constructor") });
+      const traps = ["get", "has", "getOwnPropertyDescriptor", "getPrototypeOf", "ownKeys"];
+      const trapped = name => [name, (...args) => (ran.push(`${name} ${String(args[1])}`), Reflect[name](...args))];
+      const proxied = Object.setPrototypeOf([1], new Proxy(Array.prototype, Object.fromEntries(traps.map(trapped))));
+      ran.length = 0;
+
+      expect({
+        named: Bun.inspect(Named.of(1)),
+        accessor: Bun.inspect(Accessor.of(1)),
+        proxied: Bun.inspect(proxied),
+        pastDepth: Bun.inspect({ a: proxied }, { depth: 0 }),
+        ran,
+      }).toEqual({
+        named: "Named(1) [ 1 ]",
+        accessor: "[ 1 ]",
+        proxied: "[ 1 ]",
+        pastDepth: "{\n  a: [Array ...],\n}",
+        // The lookup of a custom inspect function, before the array prints.
+        ran: ["get Symbol(nodejs.util.inspect.custom)", "get Symbol(nodejs.util.inspect.custom)"],
       });
     });
   });

@@ -48,7 +48,8 @@ pub(crate) fn infer_types(
         enable_treat_ref_like_identifiers_as_refs,
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
-        env.config.joined_functions_have_no_type,
+        env.config.joined_functions_are_refused,
+        env.enable_memoization(),
         env.stack(),
     );
     let generated = generate(func, env, &mut unifier);
@@ -56,6 +57,13 @@ pub(crate) fn infer_types(
         return Err(why);
     }
     generated?;
+    if unifier.has_a_joined_function {
+        return Err(CompilerDiagnostic::new(
+            ErrorCategory::Todo,
+            "Support a local that is one of several functions",
+            None,
+        ));
+    }
 
     let mut apply = Apply {
         resolved: IdBitSet::with_ids(env.types.len()),
@@ -327,6 +335,48 @@ fn type_equals(mut a: &Type, mut b: &Type) -> bool {
     }
 }
 
+/// Not in upstream, for `EnvironmentConfig::joined_functions_are_refused`: `type_equals` takes `operand` for `candidate`, and what the type of `candidate` says of a function is not so for `operand`.
+fn is_taken_for_another(mut operand: &Type, mut candidate: &Type, shapes: &ShapeRegistry) -> bool {
+    while let (
+        Type::Function {
+            shape_id: of,
+            return_type: returned_of,
+            is_constructor: is_constructor_of,
+        },
+        Type::Function {
+            shape_id: said,
+            return_type: returned_said,
+            is_constructor: is_constructor_said,
+        },
+    ) = (operand, candidate)
+    {
+        if is_constructor_of != is_constructor_said || !shapes.function_shape_holds_for(*said, *of)
+        {
+            return true;
+        }
+        (operand, candidate) = (returned_of, returned_said);
+    }
+    false
+}
+
+/// Not in upstream, for `EnvironmentConfig::joined_functions_are_refused`: the function returns a primitive and does nothing else, so it keeps to each signature.
+fn does_nothing(func: &HirFunction) -> bool {
+    let mut blocks = func.body.blocks.values();
+    let (Some(block), None) = (blocks.next(), blocks.next()) else {
+        return false;
+    };
+    let is_primitive = |id: &InstructionId| {
+        matches!(
+            func.instructions[id.0 as usize].value,
+            InstructionValue::Primitive { .. }
+        )
+    };
+    !func.generator
+        && !func.is_async
+        && matches!(block.terminal, Terminal::Return { .. })
+        && block.instructions.iter().all(is_primitive)
+}
+
 /// Only a name that is told from others: `get_name` is asked for nothing else.
 fn set_name(
     names: &mut IdMap<IdentifierId, StoreStr>,
@@ -479,6 +529,8 @@ fn generate(
         }
     }
 
+    // Not in upstream: nothing reads the type of what the outermost function returns, so its equation does not refuse.
+    unifier.joined_functions_are_refused = false;
     // Unify return types
     let returns_type = get_type(func.returns.identifier, &env.identifiers);
     if return_types.len() > 1 {
@@ -883,6 +935,11 @@ fn generate_instruction_types(
             // Get the inner function's return type
             let inner_func = &functions[func_id.0 as usize];
             let inner_return_type = get_type(inner_func.returns.identifier, identifiers);
+            // Not in upstream: `joined_functions_are_refused` does not compare a function expression that does nothing.
+            if unifier.functions_that_do_nothing_are_not_compared && does_nothing(inner_func) {
+                let returns = identifiers[inner_func.returns.identifier.0 as usize].type_;
+                unifier.returns_of_functions_that_do_nothing.push(returns);
+            }
             unifier.unify(
                 left,
                 Type::Function {
@@ -1084,7 +1141,18 @@ struct Unifier {
     resolved: RefCell<OfPhis<Option<Arc<[Type]>>>>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
-    joined_functions_have_no_type: bool,
+    /// Not in upstream: `EnvironmentConfig::joined_functions_are_refused`. The five fields after it are for that rule.
+    joined_functions_are_refused: bool,
+    /// `bind_variable_to` took a local for a function that it is not always.
+    has_a_joined_function: bool,
+    /// The operands of the phi whose equation `unify` is at.
+    at_equation: *const Type,
+    /// `try_resolve_type` took an operand out of a phi.
+    has_a_phi_that_lost_an_operand: bool,
+    /// There are memo blocks. The pass for the server takes a function that calls a setter for one that no render calls.
+    functions_that_do_nothing_are_not_compared: bool,
+    /// The type variable of what each function expression that does nothing returns.
+    returns_of_functions_that_do_nothing: Vec<TypeId>,
     custom_hook_type: Option<Type>,
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
@@ -1095,7 +1163,8 @@ impl Unifier {
         enable_treat_ref_like_identifiers_as_refs: bool,
         custom_hook_type: Option<Type>,
         enable_treat_set_identifiers_as_state_setters: bool,
-        joined_functions_have_no_type: bool,
+        joined_functions_are_refused: bool,
+        has_memo_blocks: bool,
         stack: bun_core::StackCheck,
     ) -> Self {
         Unifier {
@@ -1103,7 +1172,13 @@ impl Unifier {
             resolved: RefCell::default(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
-            joined_functions_have_no_type,
+            joined_functions_are_refused,
+            has_a_joined_function: false,
+            at_equation: std::ptr::null(),
+            has_a_phi_that_lost_an_operand: false,
+            functions_that_do_nothing_are_not_compared: joined_functions_are_refused
+                && has_memo_blocks,
+            returns_of_functions_that_do_nothing: Vec::new(),
             custom_hook_type,
             stack,
             is_out_of_stack: std::cell::Cell::new(false),
@@ -1139,7 +1214,14 @@ impl Unifier {
         t_b: Type,
         shapes: &ShapeRegistry,
     ) -> Result<(), CompilerDiagnostic> {
-        self.unify_impl(t_a, t_b, shapes)
+        // Not in upstream: `joined_functions_are_refused` asks whether a phi is at its own equation, where it has each operand.
+        let Type::Phi { operands } = &t_b else {
+            return self.unify_impl(t_a, t_b, shapes);
+        };
+        self.at_equation = operands.as_ptr();
+        let result = self.unify_impl(t_a, t_b, shapes);
+        self.at_equation = std::ptr::null();
+        result
     }
 
     /// `unify` with a `Type::Property`.
@@ -1327,10 +1409,18 @@ impl Unifier {
                     }
                 }
             }
-            if self.joined_functions_have_no_type
-                && matches!(candidate_type, Some(Type::Function { .. }))
+
+            // Not in upstream: `joined_functions_are_refused`.
+            if self.joined_functions_are_refused
+                && let Some(candidate @ Type::Function { .. }) = &candidate_type
+                && ((self.has_a_phi_that_lost_an_operand
+                    && !std::ptr::eq(operands.as_ptr(), self.at_equation))
+                    || operands.iter().any(|it| {
+                        !self.is_function_that_does_nothing(it)
+                            && is_taken_for_another(&self.get(it), candidate, shapes)
+                    }))
             {
-                candidate_type = None;
+                self.has_a_joined_function = true;
             }
 
             if let Some(candidate) = candidate_type {
@@ -1358,6 +1448,14 @@ impl Unifier {
         Ok(())
     }
 
+    /// Not in upstream: the type is that of a function expression that does nothing. A copy from `get` has no type variable for what is returned: it is none.
+    fn is_function_that_does_nothing(&self, operand: &Type) -> bool {
+        let Type::Function { return_type, .. } = self.get_outermost(operand) else {
+            return false;
+        };
+        matches!(**return_type, Type::TypeVar { id } if self.returns_of_functions_that_do_nothing.contains(&id))
+    }
+
     /// `done`: what this made of each phi. What phis share comes from `get`, so that no type variable in it is bound.
     fn try_resolve_type(
         &mut self,
@@ -1379,6 +1477,7 @@ impl Unifier {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
                             if id == v_id {
+                                self.has_a_phi_that_lost_an_operand = true;
                                 continue; // skip self-reference
                             }
                         }

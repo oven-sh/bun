@@ -228,7 +228,8 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
-  // As in both tools. To `bun build` such a local has no type: `EnvironmentConfig::joined_functions_have_no_type`.
+  // As in both tools. `EnvironmentConfig::joined_functions_are_refused` is for `bun build` only: with it, a function
+  // that the rule refuses has no report.
   test("a local that is one of two functions is the first of them, also where a loop assigns the second", async () => {
     const { diagnostics, exit } = await report(small.functions);
     expect(diagnostics).toEqual(expected.reports.functions.diagnostics);

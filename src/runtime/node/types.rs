@@ -1518,7 +1518,7 @@ impl VectorArrayBuffer {
 
 pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
     let mode_int: u32 = if value.is_number() {
-        validators::validate_uint32(ctx, value, format_args!("mode"), false)?
+        validators::validate_uint32(ctx, value, "mode", false)?
     } else {
         if value.is_undefined_or_null() {
             return Ok(None);
@@ -1558,12 +1558,7 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
         // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
         // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
         let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
-        validators::validate_uint32(
-            ctx,
-            JSValue::js_number_from_uint64(parsed),
-            format_args!("mode"),
-            false,
-        )?
+        validators::validate_uint32(ctx, JSValue::js_number_from_uint64(parsed), "mode", false)?
     };
 
     Ok(Some(mode_int as Mode))

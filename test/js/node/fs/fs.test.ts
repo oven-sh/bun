@@ -6389,10 +6389,185 @@ it("lchown succeeds on every platform", async () => {
   }
 });
 
-it("an id beyond 2 ** 32 is printed as in Node.js", () => {
-  expect(() => fs.fchownSync(0, 2 ** 53, 0)).toThrow(
-    RangeError(`The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received 9_007_199_254_740_992`),
-  );
+// The expected files are what Node.js v26.12.1 writes.
+describe("write() reads offset, length and position whatever the others are", () => {
+  const abcd = Buffer.from("abcd");
+  const cases: [offset: any, length: any, position: any, written: number, file: string][] = [
+    [0, null, 5, 4, "01234abcd9"],
+    [0, undefined, 5, 4, "01234abcd9"],
+    [0, "2", 5, 4, "01234abcd9"],
+    [0, 2n, 5, 4, "01234abcd9"],
+    [undefined, undefined, 5, 4, "01234abcd9"],
+    [undefined, 2, 5, 2, "01234ab789"],
+    [undefined, 2, undefined, 2, "ab23456789"],
+    [undefined, 0, undefined, 0, "0123456789"],
+    [1, null, 5, 3, "01234bcd89"],
+    [{ length: null, position: 5 }, undefined, undefined, 4, "01234abcd9"],
+    // `typeof null` is "object", so it stands for the options, and the rest is not read.
+    [null, 2, 5, 4, "abcd456789"],
+  ];
+
+  async function withFile(run: (fd: number) => unknown) {
+    using dir = tempDir("fs-write-slots", { "file.txt": "0123456789" });
+    const file = join(String(dir), "file.txt");
+    const fd = fs.openSync(file, "r+");
+    try {
+      return [await run(fd), fs.readFileSync(file, "latin1")];
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  it.each(cases)("writeSync(fd, buffer, %p, %p, %p)", async (offset, length, position, written, file) => {
+    expect(await withFile(fd => fs.writeSync(fd, abcd, offset, length, position))).toEqual([written, file]);
+  });
+
+  it.each(cases)("write(fd, buffer, %p, %p, %p, callback)", async (offset, length, position, written, file) => {
+    const write = (fd: number) => promisify(fs.write)(fd, abcd, offset, length, position);
+    expect(await withFile(async fd => (await write(fd)).bytesWritten)).toEqual([written, file]);
+  });
+
+  it.each(cases)("filehandle.write(buffer, %p, %p, %p)", async (offset, length, position, written, file) => {
+    using dir = tempDir("fs-write-slots", { "file.txt": "0123456789" });
+    await using handle = await fs.promises.open(join(String(dir), "file.txt"), "r+");
+    expect((await handle.write(abcd, offset, length, position)).bytesWritten).toBe(written);
+    expect(fs.readFileSync(join(String(dir), "file.txt"), "latin1")).toBe(file);
+  });
+
+  it("a null offset does not read the options from Object.prototype", async () => {
+    const polluted = Object.prototype as any;
+    const unpolluted = <T>(run: () => T) => {
+      polluted.position = 5;
+      try {
+        return run();
+      } finally {
+        delete polluted.position;
+      }
+    };
+    expect(await withFile(fd => unpolluted(() => fs.writeSync(fd, abcd, null)))).toEqual([4, "abcd456789"]);
+    const write = (fd: number) => unpolluted(() => promisify(fs.write)(fd, abcd, null as any));
+    expect(await withFile(async fd => (await write(fd)).bytesWritten)).toEqual([4, "abcd456789"]);
+    const read = Buffer.alloc(4);
+    await withFile(fd => unpolluted(() => fs.readSync(fd, read, null as any)));
+    expect(read.toString()).toBe("0123");
+  });
+
+  it("only write() takes a function for the offset, which is its callback", async () => {
+    const invalid = (received: string) =>
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "offset" argument must be of type number. Received ${received}`,
+      });
+    const callback: any = () => {};
+    using dir = tempDir("fs-write-slots", { "file.txt": "0123456789" });
+    await using handle = await fs.promises.open(join(String(dir), "file.txt"), "r+");
+    expect(await promisify(fs.write)(handle.fd, abcd)).toEqual({ bytesWritten: 4, buffer: abcd });
+    expect(() => fs.writeSync(handle.fd, abcd, callback)).toThrow(invalid("function callback"));
+    await expect(handle.write(abcd, callback, 2, 5)).rejects.toEqual(invalid("function callback"));
+    await expect(handle.write(abcd, 2n as any)).rejects.toEqual(invalid("type bigint (2n)"));
+  });
+});
+
+describe("ERR_OUT_OF_RANGE is worded as in Node.js", () => {
+  const outOfRange = (name: string, range: string, received: string) =>
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "${name}" is out of range. It must be ${range}. Received ${received}`,
+    });
+  const buffer = Buffer.alloc(4);
+
+  function withFile(run: (fd: number, file: string, dir: string) => void) {
+    using dir = tempDir("fs-out-of-range", { "file.txt": "hello", "empty": {} });
+    const file = join(String(dir), "file.txt");
+    const fd = fs.openSync(file, "r+");
+    try {
+      run(fd, file, String(dir));
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  it("a number beyond 2 ** 32", () => {
+    withFile((fd, file) => {
+      expect(() => fs.fchownSync(fd, 2 ** 53, 0)).toThrow(
+        outOfRange("uid", ">= -1 && <= 4294967295", "9_007_199_254_740_992"),
+      );
+      expect(() => fs.chmodSync(file, 2 ** 40)).toThrow(
+        outOfRange("mode", ">= 0 && <= 4294967295", "1_099_511_627_776"),
+      );
+      expect(() => fs.openSync(file, -(2 ** 40))).toThrow(
+        outOfRange("flags", ">= -2147483648 && <= 2147483647", "-1_099_511_627_776"),
+      );
+      expect(() => fs.writeSync(fd, buffer, 2 ** 40)).toThrow(outOfRange("offset", "<= 4", "1_099_511_627_776"));
+      // This one comes from C++ in Node.js, which does not group the digits.
+      expect(() => fs.closeSync(2 ** 40)).toThrow(outOfRange("fd", ">= 0 && <= 2147483647", "1099511627776"));
+    });
+  });
+
+  it("the length of write()", () => {
+    withFile(fd => {
+      expect(() => fs.writeSync(fd, buffer, 2, 3)).toThrow(outOfRange("length", "<= 2", "3"));
+      expect(() => fs.writeSync(fd, buffer, 0, 2 ** 40)).toThrow(outOfRange("length", "<= 4", "1_099_511_627_776"));
+      expect(() => fs.writeSync(fd, buffer, 0, -1)).toThrow(outOfRange("length", ">= 0", "-1"));
+      expect(() => fs.writeSync(fd, buffer, 0, -1.5)).toThrow(outOfRange("length", ">= 0", "-1.5"));
+      expect(() => fs.writeSync(fd, buffer, 0, 4294967297.5)).toThrow(outOfRange("length", "<= 4", "4294967297.5"));
+      expect(() => fs.writeSync(fd, buffer, 0, Infinity)).toThrow(outOfRange("length", "<= 4", "Infinity"));
+      expect(() => fs.writeSync(fd, buffer, 0, 1.5)).toThrow(outOfRange("length", "an integer", "1.5"));
+      expect(() => fs.writeSync(fd, buffer, 0, NaN)).toThrow(outOfRange("length", "an integer", "NaN"));
+    });
+  });
+
+  // Nothing reads or writes the buffer, so it stays untouched address space.
+  // A small host can still refuse to reserve the 2 GiB.
+  it.skipIf(os.totalmem() < 4 * 1024 ** 3)("the length of write() that is the rest of the buffer", async () => {
+    const big = new Uint8Array(2 ** 31);
+    const tooLong = outOfRange("length", ">= 0 && <= 2147483647", "2147483648");
+    using dir = tempDir("fs-out-of-range", { "file.txt": "hello" });
+    await using handle = await fs.promises.open(join(String(dir), "file.txt"), "r+");
+    for (const rest of [[], [0], [null], [{}], [0, undefined], [0, null, 0], [0, "x"]] as any[][]) {
+      expect(() => fs.writeSync(handle.fd, big, ...rest)).toThrow(tooLong);
+      await expect(promisify(fs.write)(handle.fd, big, ...rest)).rejects.toEqual(tooLong);
+      await expect(handle.write(big, ...rest)).rejects.toEqual(tooLong);
+    }
+    expect(fs.readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("hello");
+  });
+
+  it("a BigInt", () => {
+    withFile(fd => {
+      const range = ">= -1 && <= 9223372036854775806";
+      expect(() => fs.readSync(fd, buffer, 0, 1, -2n)).toThrow(outOfRange("position", range, "-2n"));
+      expect(() => fs.readSync(fd, buffer, 0, 1, 2n ** 63n)).toThrow(
+        outOfRange("position", range, "9_223_372_036_854_775_808n"),
+      );
+    });
+  });
+
+  it("the retryDelay of rm() is a signed 32-bit integer, and that of rmdir() is not", () => {
+    withFile((_, file, dir) => {
+      expect(() => fs.rmSync(file, { retryDelay: 2 ** 31 })).toThrow(
+        outOfRange("options.retryDelay", ">= 0 && <= 2147483647", "2147483648"),
+      );
+      expect(fs.existsSync(file)).toBe(true);
+      fs.rmSync(file, { retryDelay: 2 ** 31 - 1 });
+      expect(fs.existsSync(file)).toBe(false);
+      // Node.js reads neither option.
+      fs.rmdirSync(join(dir, "empty"), { retryDelay: -1, maxRetries: "x" as any });
+      expect(fs.existsSync(join(dir, "empty"))).toBe(false);
+    });
+  });
+
+  it("the len of ftruncate() is any safe integer", () => {
+    withFile(fd => {
+      expect(() => fs.ftruncateSync(fd, 2 ** 53)).toThrow(
+        outOfRange("len", ">= -9007199254740991 && <= 9007199254740991", "9_007_199_254_740_992"),
+      );
+      expect(fs.fstatSync(fd).size).toBe(5);
+      fs.ftruncateSync(fd, -(2 ** 52));
+      expect(fs.fstatSync(fd).size).toBe(0);
+    });
+  });
 });
 
 it("open flags verification", async () => {

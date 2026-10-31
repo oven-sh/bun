@@ -165,7 +165,7 @@ mod _impl {
                 pledged_src_size = u64::from(validators::validate_uint32(
                     global,
                     pledged_src_size_value,
-                    format_args!("pledgedSrcSize"),
+                    "pledgedSrcSize",
                     false,
                 )?);
             }

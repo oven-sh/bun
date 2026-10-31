@@ -266,6 +266,23 @@ describe("udpSocket()", () => {
     expect(() => udpSocket({ port })).toThrow('Expected "port" to be an integer between 0 and 65535');
   });
 
+  test("an invalid flags or fd is named as a property of the options", () => {
+    // @ts-expect-error
+    expect(() => udpSocket({ flags: "x" })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "options.flags" property must be of type number. Received type string ('x')`,
+      }),
+    );
+    // @ts-expect-error
+    expect(() => udpSocket({ fd: 1.5 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.fd" is out of range. It must be an integer. Received 1.5',
+      }),
+    );
+  });
+
   test.each([
     ["nodebuffer", "buffer"],
     ["uint16array", "uint16array"],

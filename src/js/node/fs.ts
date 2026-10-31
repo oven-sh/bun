@@ -270,7 +270,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
         if (!types.isArrayBufferView(buffer)) {
           // fs.read(fd, bufferOrParams, callback)
           params = buffer;
-          ({ buffer = Buffer.alloc(16384) } = params ?? {});
+          ({ buffer = Buffer.alloc(16384) } = params ?? kEmptyObject);
         }
         callback = offsetOrOptions;
       } else {
@@ -285,7 +285,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
           throw $ERR_INVALID_ARG_TYPE("options", "object", params);
         }
       }
-      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
+      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? kEmptyObject);
     }
     if (!callback) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
@@ -324,8 +324,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
           offset: offsetOrOptions = 0,
           length = buffer.byteLength - offsetOrOptions,
           position = null,
-        } = offsetOrOptions ?? {});
+        } = offsetOrOptions ?? kEmptyObject);
       }
+      if (typeof offsetOrOptions === "function") offsetOrOptions = 0;
 
       fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length, position);
       return;
@@ -518,7 +519,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
         }
       }
 
-      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
+      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? kEmptyObject);
     }
 
     return fs.readSync(fd, buffer, offset, length, position);
@@ -527,8 +528,8 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     try {
       if (types.isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
-        if (typeof offset === "object" && offset !== null) {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
+        if (typeof offset === "object") {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? kEmptyObject);
           return fs.writeSync(fd, buffer, offset, length, position);
         }
         return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);

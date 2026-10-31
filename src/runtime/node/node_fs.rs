@@ -3169,18 +3169,20 @@ pub(crate) mod args {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
-            // Node treats an explicit `undefined` len the same as a missing one: 0.
-            let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let len: u64 = if len_value.is_undefined() {
-                0
-            } else {
-                validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
-            };
             Ok(Truncate {
                 path,
-                len,
+                len: Self::len_from_js(ctx, arguments)?,
                 flags: 0,
             })
+        }
+
+        fn len_from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<u64> {
+            // Node treats an explicit `undefined` len the same as a missing one: 0.
+            let len = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+            if len.is_undefined() {
+                return Ok(0);
+            }
+            Ok(validators::validate_integer(ctx, len, "len", None, None)?.max(0) as u64)
         }
     }
 
@@ -3211,7 +3213,7 @@ pub(crate) mod args {
             )?;
             let position: Option<u64> = arguments
                 .next_eat()
-                .and_then(i52::offset_from_js)
+                .and_then(offset_from_js)
                 .and_then(|p| u64::try_from(p).ok());
             Ok(Self {
                 fd,
@@ -3225,7 +3227,7 @@ pub(crate) mod args {
 
     pub(crate) struct FTruncate {
         pub(crate) fd: FD,
-        pub(crate) len: Option<BlobSizeType>,
+        pub(crate) len: u64,
     }
     impl FTruncate {
         pub(crate) fn from_js(
@@ -3233,24 +3235,10 @@ pub(crate) mod args {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<FTruncate> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            // Node treats an explicit `undefined` len the same as a missing one: 0.
-            let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let len: BlobSizeType = if len_value.is_undefined() {
-                0
-            } else {
-                BlobSizeType::try_from(
-                    validators::validate_integer(
-                        ctx,
-                        len_value,
-                        "len",
-                        Some(i52::MIN),
-                        Some(BLOB_SIZE_MAX as i64),
-                    )?
-                    .max(0),
-                )
-                .expect("infallible: validated range")
-            };
-            Ok(FTruncate { fd, len: Some(len) })
+            Ok(FTruncate {
+                fd,
+                len: Truncate::len_from_js(ctx, arguments)?,
+            })
         }
     }
 
@@ -3784,13 +3772,13 @@ pub(crate) mod args {
         ) -> JsResult<Self> {
             Self::from_js_impl(ctx, arguments, false)
         }
-        /// `strict_booleans` selects node's `validateRmOptions` behavior (used by
-        /// `fs.rm`): a present-but-`undefined` `recursive`/`force` is a type
-        /// error. `fs.rmdir` treats `undefined` as absent.
+        /// `is_rm` selects node's `validateRmOptions`: a present-but-`undefined`
+        /// `recursive`/`force` is a type error, and `retryDelay` and `maxRetries` are
+        /// validated. `fs.rmdir` treats `undefined` as absent and reads neither of the two.
         fn from_js_impl(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
-            strict_booleans: bool,
+            is_rm: bool,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
@@ -3801,7 +3789,7 @@ pub(crate) mod args {
                 arguments.eat();
                 if val.is_object() {
                     let get_option = |name: &'static str| -> JsResult<Option<JSValue>> {
-                        if strict_booleans {
+                        if is_rm {
                             let key = bun_core::StringView::borrow_utf8(name.as_bytes());
                             val.get_own(ctx, &key)
                         } else {
@@ -3826,25 +3814,17 @@ pub(crate) mod args {
                             )));
                         }
                     }
-                    if let Some(delay) = get_option("retryDelay")? {
-                        retry_delay = c_uint::try_from(validators::validate_integer(
-                            ctx,
-                            delay,
-                            "options.retryDelay",
-                            Some(0),
-                            Some(c_uint::MAX as i64),
-                        )?)
-                        .expect("infallible: validated range");
-                    }
-                    if let Some(retries) = get_option("maxRetries")? {
-                        max_retries = u32::try_from(validators::validate_integer(
-                            ctx,
-                            retries,
-                            "options.maxRetries",
-                            Some(0),
-                            Some(u32::MAX as i64),
-                        )?)
-                        .expect("infallible: validated range");
+                    if is_rm {
+                        if let Some(delay) = get_option("retryDelay")? {
+                            let name = "options.retryDelay";
+                            retry_delay =
+                                validators::validate_int32(ctx, delay, name, Some(0), None)?
+                                    as c_uint;
+                        }
+                        if let Some(retries) = get_option("maxRetries")? {
+                            let name = "options.maxRetries";
+                            max_retries = validators::validate_uint32(ctx, retries, name, false)?;
+                        }
                     }
                 } else if !val.is_undefined() {
                     return Err(ctx.throw_invalid_arguments(format_args!(
@@ -4182,75 +4162,56 @@ pub(crate) mod args {
             };
             arguments.eat();
             'parse: {
-                let Some(mut current) = arguments.next() else {
-                    break 'parse;
-                };
                 match &args.buffer {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) | StringOrBuffer::PinnedBuffer(_) => {
-                        if current.is_undefined_or_null() || current.is_function() {
-                            break 'parse;
+                        // Node reads each of the three whatever the others are.
+                        let buf_len = args.buffer.slice().len() as u64;
+                        let offset_value = arguments.next_eat();
+                        if let Some(offset) = offset_value.filter(|v| !v.is_undefined_or_null()) {
+                            args.offset = u64::try_from(validators::validate_integer(
+                                ctx,
+                                offset,
+                                "offset",
+                                Some(0),
+                                Some(9007199254740991),
+                            )?)
+                            .expect("infallible: validated range");
                         }
-                        args.offset = u64::try_from(validators::validate_integer(
-                            ctx,
-                            current,
-                            "offset",
-                            Some(0),
-                            Some(9007199254740991),
-                        )?)
-                        .expect("infallible: validated range");
-                        arguments.eat();
-                        // Node bounds `offset` by the buffer whether or not a
-                        // `length` follows (`length` defaults to the rest).
-                        let buf_len = args.buffer.slice().len();
-                        let max_offset = buf_len as i64;
-                        if args.offset as i64 > max_offset {
-                            return Err(ctx.throw_range_error(
-                                args.offset as f64,
-                                bun_jsc::RangeErrorOptions {
-                                    field_name: b"offset",
-                                    max: max_offset,
-                                    ..Default::default()
-                                },
-                            ));
-                        }
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
+                        // validateOffsetLengthWrite(offset, length, buffer.byteLength);
+                        let out_of_range = |value: f64, name, expected: &str| {
+                            validators::throw_range_error_msg(ctx, value, name, expected.as_bytes())
                         };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
+                        if args.offset > buf_len {
+                            let expected = format!("<= {buf_len}");
+                            return Err(out_of_range(args.offset as f64, "offset", &expected));
                         }
-                        let length = current.to_int64();
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
-                            return Err(ctx.throw_range_error(
-                                length as f64,
-                                bun_jsc::RangeErrorOptions {
-                                    field_name: b"length",
-                                    min: 0,
-                                    max: max_len,
-                                    ..Default::default()
-                                },
-                            ));
+                        let rest = buf_len - args.offset;
+                        let length_value = arguments
+                            .next_eat()
+                            .filter(|v| v.is_number())
+                            .unwrap_or_else(|| JSValue::js_number(rest as f64));
+                        let length = length_value.as_number();
+                        if length > rest as f64 {
+                            return Err(out_of_range(length, "length", &format!("<= {rest}")));
                         }
-                        args.length = u64::try_from(length).expect("int cast");
-                        arguments.eat();
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
+                        if length < 0.0 {
+                            return Err(out_of_range(length, "length", ">= 0"));
                         }
-                        if let Some(position @ 0..) = i52::offset_from_js(current) {
+                        args.length =
+                            validators::validate_int32(ctx, length_value, "length", Some(0), None)?
+                                as u64;
+                        if let Some(position @ 0..) = arguments.next_eat().and_then(offset_from_js)
+                        {
                             args.position = Some(position);
                         }
-                        arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
-                        if let Some(position @ 0..) = i52::offset_from_js(current) {
+                        let Some(mut current) = arguments.next() else {
+                            break 'parse;
+                        };
+                        if let Some(position @ 0..) = offset_from_js(current) {
                             args.position = Some(position);
                         }
                         // Node consumes the position slot whatever its type
@@ -4478,11 +4439,10 @@ pub(crate) mod args {
                 {
                     let position_bytes = position.to_string(ctx)?.to_owned_slice();
                     return Err(ctx.throw_range_error(
-                        &position_bytes[..],
+                        bun_core::fmt::NodeBigInt(&position_bytes),
                         bun_jsc::RangeErrorOptions {
                             field_name: b"position",
-                            min: -1,
-                            max: max_position,
+                            msg: format!(">= -1 && <= {max_position}").as_bytes(),
                             ..Default::default()
                         },
                     ));
@@ -5961,7 +5921,7 @@ impl NodeFS {
     }
 
     pub(crate) fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
-        Syscall::ftruncate(args.fd, args.len.unwrap_or(0) as i64)
+        Syscall::ftruncate(args.fd, args.len as i64)
     }
 
     pub(crate) fn futimes(&mut self, args: &args::Futimes, _: Flavor) -> Maybe<ret::Futimes> {
@@ -10701,16 +10661,10 @@ impl NodeFSFunctionEnum {
     }
 }
 
-/// `i52` — 52-bit integer used for `ReadPosition` coercion bounds.
-#[allow(non_camel_case_types)]
-struct i52;
-impl i52 {
-    const MIN: i64 = -(1i64 << 51);
-    /// Node's `GetOffset`: only a safe JS integer selects positional I/O.
-    #[inline]
-    fn offset_from_js(v: JSValue) -> Option<i64> {
-        let n = v.get_number()?;
-        (n.is_finite() && n.trunc() == n && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64)
-            .then_some(n as i64)
-    }
+/// Node's `GetOffset`: only a safe JS integer selects positional I/O.
+#[inline]
+fn offset_from_js(v: JSValue) -> Option<i64> {
+    let n = v.get_number()?;
+    (n.is_finite() && n.trunc() == n && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64)
+        .then_some(n as i64)
 }

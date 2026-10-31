@@ -42,13 +42,8 @@ pub(crate) fn throw_err_invalid_arg_type(
     )
 }
 
-#[cold]
-fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
-    global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
-}
-
 #[inline]
-fn throw_range_error_msg(
+pub(crate) fn throw_range_error_msg(
     global_this: &JSGlobalObject,
     value: f64,
     name: &str,
@@ -73,19 +68,6 @@ pub(crate) fn validate_integer(
     min_value: Option<i64>,
     max_value: Option<i64>,
 ) -> JsResult<i64> {
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    if !value.is_integer() {
-        return Err(throw_range_error_msg(
-            global_this,
-            value.as_number(),
-            name,
-            b"an integer",
-        ));
-    }
-
     if let Some(min) = min_value {
         debug_assert!(
             min >= jsc::MIN_SAFE_INTEGER,
@@ -98,12 +80,50 @@ pub(crate) fn validate_integer(
             "max_value must be less than or equal to jsc::MAX_SAFE_INTEGER"
         );
     }
+    let min = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
+    let max = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
+    validate_integral(global_this, value, name, min, max).map(|num| num as i64)
+}
 
-    let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
-    let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
+pub(crate) fn validate_int32(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+    min_value: Option<i32>,
+    max_value: Option<i32>,
+) -> JsResult<i32> {
+    // The defaults for min and max correspond to the limits of 32-bit integers.
+    let min = min_value.unwrap_or(i32::MIN);
+    let max = max_value.unwrap_or(i32::MAX);
+    validate_integral(global_this, value, name, f64::from(min), f64::from(max))
+        .map(|num| num as i32)
+}
 
+pub(crate) fn validate_uint32(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+    greater_than_zero: bool,
+) -> JsResult<u32> {
+    let min = if greater_than_zero { 1.0 } else { 0.0 };
+    validate_integral(global_this, value, name, min, f64::from(u32::MAX)).map(|num| num as u32)
+}
+
+/// `Number.isInteger`, so -0 and integers beyond 2 ** 53 are integers, which the range then rejects.
+fn validate_integral(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+    min: f64,
+    max: f64,
+) -> JsResult<f64> {
+    if !value.is_number() {
+        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
+    }
     let num = value.as_number();
-
+    if !value.is_integer() {
+        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
+    }
     if num < min || num > max {
         let range = format!(">= {min} && <= {max}");
         return Err(throw_range_error_msg(
@@ -113,101 +133,7 @@ pub(crate) fn validate_integer(
             range.as_bytes(),
         ));
     }
-
-    Ok(num as i64)
-}
-
-pub(crate) fn validate_int32(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: impl fmt::Display + Copy,
-    min_value: Option<i32>,
-    max_value: Option<i32>,
-) -> JsResult<i32> {
-    let min = min_value.unwrap_or(i32::MIN);
-    let max = max_value.unwrap_or(i32::MAX);
-    // The defaults for min and max correspond to the limits of 32-bit integers.
-    if !value.is_number() {
-        return Err(throw_err_invalid_arg_type(
-            global_this,
-            name,
-            "number",
-            value,
-        ));
-    }
-    let num = value.as_number();
-    // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
-    // outside the int52 range are integers; the range check below rejects out-of-range.
-    if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                name,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
-    }
-    // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
-    if num < (min as f64) || num > (max as f64) {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name,
-                min,
-                max,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
-    }
-    Ok(num as i32)
-}
-
-pub(crate) fn validate_uint32(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: impl fmt::Display + Copy,
-    greater_than_zero: bool,
-) -> JsResult<u32> {
-    if !value.is_number() {
-        return Err(throw_err_invalid_arg_type(
-            global_this,
-            name,
-            "number",
-            value,
-        ));
-    }
-    let num = value.as_number();
-    if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                name,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
-    }
-    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
-    let max: f64 = f64::from(u32::MAX);
-    if num < min || num > max {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name,
-                min,
-                max,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
-    }
-    Ok(num as u32)
+    Ok(num)
 }
 
 pub(crate) fn validate_string(

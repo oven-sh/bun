@@ -340,6 +340,7 @@ fn random_int<'a>(
         ));
     }
 
+    let received = bun_core::fmt::NodeNumber(max);
     let min = min as i64;
     let max = max as i64;
 
@@ -349,7 +350,7 @@ fn random_int<'a>(
                 jsc::ErrorCode::OUT_OF_RANGE,
                 format_args!(
                     "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
-                    min, max
+                    min, received
                 ),
             )
             .throw());
@@ -472,7 +473,7 @@ fn assert_offset(
         // Node spells this range with "&&" (lib/internal/crypto/random.js assertOffset).
         let range = format!(">= 0 && <= {max_length}");
         return Err(global.throw_range_error(
-            offset,
+            bun_core::fmt::NodeNumber(offset),
             jsc::RangeErrorOptions {
                 field_name: b"offset",
                 msg: range.as_bytes(),
@@ -497,7 +498,7 @@ fn assert_size(
         // Node spells this range with "&&" (lib/internal/crypto/random.js assertSize).
         let range = format!(">= 0 && <= {MAX_POSSIBLE_LENGTH}");
         return Err(global.throw_range_error(
-            size,
+            bun_core::fmt::NodeNumber(size),
             jsc::RangeErrorOptions {
                 field_name: b"size",
                 msg: range.as_bytes(),
@@ -508,7 +509,7 @@ fn assert_size(
 
     if size + (offset as f64) > (length as f64) {
         return Err(global.throw_range_error(
-            size + (offset as f64),
+            bun_core::fmt::NodeNumber(size + (offset as f64)),
             jsc::RangeErrorOptions {
                 field_name: b"size + offset",
                 max: i64::try_from(length).expect("int cast"),

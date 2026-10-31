@@ -1,6 +1,6 @@
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, withoutAggressiveGC } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
 import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
@@ -98,6 +98,19 @@ test("structured clones are collected without an explicit GC", () => {
     } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
   });
   expect(created).toBeLessThan(2000);
+});
+
+// A message keeps the buckets alive until it is destroyed.
+test("the buckets are freed once a histogram and its structured clone are collected", () => {
+  const before = process.memoryUsage.rss();
+  // 700 MB in all. What ASAN has in quarantine is 400 MB of what is left.
+  for (let i = 0; i < 2000; i++) {
+    const histogram = perf.createHistogram();
+    for (const value of valuesInEveryChunk) histogram.record(value);
+    structuredClone(histogram);
+  }
+  Bun.gc(true);
+  expect((process.memoryUsage.rss() - before) / 1024 / 1024).toBeLessThan(isASAN ? 700 : 350);
 });
 
 test.each([

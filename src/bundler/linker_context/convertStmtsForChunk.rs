@@ -287,8 +287,6 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 );
-                                // Await an async init only where this file's own
-                                // wrapper is async (never in `__commonJS`).
                                 let value = if flag.is_async_or_has_async_dependency
                                     && wrap != WrapKind::Cjs
                                     && c.graph.meta.items_flags()[source_index as usize]

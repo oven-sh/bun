@@ -594,11 +594,13 @@ function triggerAsyncId() {
 }
 
 const executionAsyncResourceWarning = createWarning(
-  "async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time.",
+  "async_hooks.executionAsyncResource is not implemented in Bun. It returns the same plain object every time.",
 );
+// Node's topLevelResource (lib/internal/async_hooks.js). Callbacks get it too: Bun keeps no resource stack.
+let topLevelResource: object | undefined;
 function executionAsyncResource() {
   executionAsyncResourceWarning();
-  return process.stdin;
+  return (topLevelResource ??= {});
 }
 
 const asyncWrapProviders = {

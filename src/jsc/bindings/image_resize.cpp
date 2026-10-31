@@ -511,6 +511,71 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
 // Round n up to a multiple of a (a is a power of two).
 constexpr size_t alignUp(size_t n, size_t a) { return (n + a - 1) & ~(a - 1); }
 
+// RGBA16 passes for the linear-light resize path (`colorspace: "linear"`).
+// Same spans/weights as the u8 passes; pixels are u16 so the PMADDWD trick
+// (i16×i16) can't hold a 16-bit sample — accumulate in i64 instead, which is
+// exact: |Σ pixel·w| ≤ 65535 · 32767 · 256 taps ≈ 5.5e11, past i32 in the
+// clipped-weight worst case. Scalar loops; this path is opt-in and the
+// sRGB⇄linear conversions around it dominate anyway.
+constexpr int kFixShift16 = 14; // = kFixShift; mirrored like kFixOne above
+constexpr int64_t kFixRound16 = int64_t { 1 } << (kFixShift16 - 1);
+
+uint16_t clamp16(int64_t v)
+{
+    return static_cast<uint16_t>(v < 0 ? 0 : v > 65535 ? 65535
+                                                       : v);
+}
+
+void HorizPass16(const uint16_t* HWY_RESTRICT src, size_t src_w, size_t src_h,
+    uint16_t* HWY_RESTRICT dst, size_t dst_w,
+    const Span* HWY_RESTRICT spans, const int16_t* HWY_RESTRICT weights, size_t wstride)
+{
+    const size_t src_row = src_w * 4;
+    const size_t dst_row = dst_w * 4;
+    const uint16_t* srow = src;
+    uint16_t* drow = dst;
+    for (size_t y = 0; y < src_h; y++, srow += src_row, drow += dst_row) {
+        const int16_t* w = weights;
+        uint16_t* dp = drow;
+        for (size_t x = 0; x < dst_w; x++, w += wstride, dp += 4) {
+            const Span s = spans[x];
+            const uint16_t* sp = srow + static_cast<size_t>(s.start) * 4;
+            int64_t acc0 = kFixRound16, acc1 = kFixRound16, acc2 = kFixRound16, acc3 = kFixRound16;
+            for (int32_t k = 0; k < s.n; k++, sp += 4) {
+                const int64_t wk = w[k];
+                acc0 += wk * sp[0];
+                acc1 += wk * sp[1];
+                acc2 += wk * sp[2];
+                acc3 += wk * sp[3];
+            }
+            dp[0] = clamp16(acc0 >> kFixShift16);
+            dp[1] = clamp16(acc1 >> kFixShift16);
+            dp[2] = clamp16(acc2 >> kFixShift16);
+            dp[3] = clamp16(acc3 >> kFixShift16);
+        }
+    }
+}
+
+void VertPass16(const uint16_t* HWY_RESTRICT src, size_t dst_w,
+    uint16_t* HWY_RESTRICT dst, size_t dst_h,
+    const Span* HWY_RESTRICT spans, const int16_t* HWY_RESTRICT weights, size_t wstride)
+{
+    const size_t row = dst_w * 4;
+    uint16_t* drow = dst;
+    const int16_t* w = weights;
+    for (size_t y = 0; y < dst_h; y++, drow += row, w += wstride) {
+        const Span s = spans[y];
+        const uint16_t* col0 = src + static_cast<size_t>(s.start) * row;
+        for (size_t i = 0; i < row; i++) {
+            int64_t acc = kFixRound16;
+            const uint16_t* sp = col0 + i;
+            for (int32_t k = 0; k < s.n; k++, sp += row)
+                acc += static_cast<int64_t>(w[k]) * *sp;
+            drow[i] = clamp16(acc >> kFixShift16);
+        }
+    }
+}
+
 // Layout of the caller-provided scratch arena. The intermediate row buffer
 // (dst_w×src_h×4) dominates; the spans/weights tables are a few tens of KB
 // packed into its tail. Computed once so `_scratch_size` and the resize body
@@ -518,14 +583,16 @@ constexpr size_t alignUp(size_t n, size_t a) { return (n + a - 1) & ~(a - 1); }
 struct ScratchLayout {
     size_t wsx, wsy;
     size_t off_xs, off_ys, off_xw, off_yw, total;
-    ScratchLayout(size_t src_w, size_t src_h, size_t dst_w, size_t dst_h, int kind)
+    // `pixel_bytes` is 4 for the RGBA8 path and 8 for the RGBA16 (linear
+    // light) path — it only scales the intermediate row buffer.
+    ScratchLayout(size_t src_w, size_t src_h, size_t dst_w, size_t dst_h, int kind, size_t pixel_bytes)
     {
         const double xs = static_cast<double>(dst_w) / src_w;
         const double ys = static_cast<double>(dst_h) / src_h;
         // 256 mirrors buildWeights' support cap (see comment there).
         wsx = std::min<size_t>(256, static_cast<size_t>(std::ceil(radius(kind) / (xs < 1.0 ? xs : 1.0))) * 2 + 2);
         wsy = std::min<size_t>(256, static_cast<size_t>(std::ceil(radius(kind) / (ys < 1.0 ? ys : 1.0))) * 2 + 2);
-        const size_t tmp_sz = dst_w * src_h * 4;
+        const size_t tmp_sz = dst_w * src_h * pixel_bytes;
         off_xs = alignUp(tmp_sz, alignof(Span));
         off_ys = off_xs + sizeof(Span) * dst_w;
         off_xw = alignUp(off_ys + sizeof(Span) * dst_h, alignof(int16_t));
@@ -543,7 +610,7 @@ extern "C" {
 size_t bun_image_resize_scratch_size(int32_t src_w, int32_t src_h, int32_t dst_w, int32_t dst_h, int32_t filter_kind)
 {
     if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return 0;
-    return ScratchLayout(src_w, src_h, dst_w, dst_h, filter_kind).total;
+    return ScratchLayout(src_w, src_h, dst_w, dst_h, filter_kind, 4).total;
 }
 
 // Resize RGBA8. `scratch` must be at least `bun_image_resize_scratch_size(...)`
@@ -553,7 +620,7 @@ int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
     uint8_t* dst, int32_t dst_w, int32_t dst_h, int32_t filter_kind, uint8_t* scratch)
 {
     if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0 || !scratch) return -1;
-    const ScratchLayout L(src_w, src_h, dst_w, dst_h, filter_kind);
+    const ScratchLayout L(src_w, src_h, dst_w, dst_h, filter_kind, 4);
     auto* tmp = scratch;
     auto* xspans = reinterpret_cast<Span*>(scratch + L.off_xs);
     auto* yspans = reinterpret_cast<Span*>(scratch + L.off_ys);
@@ -565,6 +632,34 @@ int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
 
     BUN_HWY_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
     BUN_HWY_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, L.wsy);
+    return 0;
+}
+
+size_t bun_image_resize_scratch_size_rgba16(int32_t src_w, int32_t src_h, int32_t dst_w, int32_t dst_h, int32_t filter_kind)
+{
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return 0;
+    return ScratchLayout(src_w, src_h, dst_w, dst_h, filter_kind, 8).total;
+}
+
+// Resize RGBA16 (the linear-light path). Same contract as the rgba8 variant;
+// `scratch` must be at least `bun_image_resize_scratch_size_rgba16(...)` bytes
+// and aligned for uint16_t.
+int bun_image_resize_rgba16(const uint16_t* src, int32_t src_w, int32_t src_h,
+    uint16_t* dst, int32_t dst_w, int32_t dst_h, int32_t filter_kind, uint8_t* scratch)
+{
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0 || !scratch) return -1;
+    const ScratchLayout L(src_w, src_h, dst_w, dst_h, filter_kind, 8);
+    auto* tmp = reinterpret_cast<uint16_t*>(scratch);
+    auto* xspans = reinterpret_cast<Span*>(scratch + L.off_xs);
+    auto* yspans = reinterpret_cast<Span*>(scratch + L.off_ys);
+    auto* xw = reinterpret_cast<int16_t*>(scratch + L.off_xw);
+    auto* yw = reinterpret_cast<int16_t*>(scratch + L.off_yw);
+
+    buildWeights(filter_kind, src_w, dst_w, xspans, xw, static_cast<int32_t>(L.wsx));
+    buildWeights(filter_kind, src_h, dst_h, yspans, yw, static_cast<int32_t>(L.wsy));
+
+    HorizPass16(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
+    VertPass16(tmp, dst_w, dst, dst_h, yspans, yw, L.wsy);
     return 0;
 }
 

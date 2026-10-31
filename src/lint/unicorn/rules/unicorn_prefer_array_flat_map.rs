@@ -9,11 +9,11 @@ use bun_lint::rule::Plugin;
 /// Prefer a single `.flatMap()` over `.map().flat()` or `.filter().flatMap()`.
 pub struct PreferArrayFlatMap;
 
-const PREFER_ARRAY_FLAT_MAP: Message =
-    Message::new("", "`Array.flatMap` performs `Array.map` and `Array.flat` in one step.");
-const PREFER_SINGLE_FLAT_MAP: Message = Message::new("", "Prefer a single `.flatMap(…)` over `.filter(…).flatMap(…)`.");
-const REPLACE_FILTER_FLAT_MAP: Message =
-    Message::new("", "Replace `.filter(…).flatMap(…)` with a single `.flatMap(…)`.");
+const PREFER_ARRAY_FLAT_MAP: &Message =
+    &Message::new("", "`Array.flatMap` performs `Array.map` and `Array.flat` in one step.");
+const PREFER_SINGLE_FLAT_MAP: &Message = &Message::new("", "Prefer a single `.flatMap(…)` over `.filter(…).flatMap(…)`.");
+const REPLACE_FILTER_FLAT_MAP: &Message =
+    &Message::new("", "Replace `.filter(…).flatMap(…)` with a single `.flatMap(…)`.");
 
 /// `Children.map(..)`, `React.Children.map(..)`
 fn is_ignored_call_expression(call: Call) -> bool {

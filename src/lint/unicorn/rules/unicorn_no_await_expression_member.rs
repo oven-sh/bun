@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Disallows member access from `await` expressions.
 pub struct NoAwaitExpressionMember;
 
-const NO_AWAIT_EXPRESSION_MEMBER: Message = Message::new("", "Do not access a member directly from an await expression.");
+const NO_AWAIT_EXPRESSION_MEMBER: &Message = &Message::new("", "Do not access a member directly from an await expression.");
 
 impl Rule for NoAwaitExpressionMember {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-await-expression-member", Kind::Suggestion).fixable(Fixable::Code);

@@ -18,15 +18,130 @@ let aws: AwsClient | undefined;
 
 let logger = console.log;
 
+// Bun.inspect quotes and escapes a string: https://github.com/oven-sh/bun/issues/4826
+function formatValue(value: unknown): string {
+  return typeof value === "string" ? value : Bun.inspect(value);
+}
+
+function formatNumber(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+
+// node:util's rule for %s: an object with a built-in toString (an Error, a Date, a plain object) is inspected,
+// so an Error keeps its stack. An object with its own toString prints that.
+function hasBuiltInToString(value: object): boolean {
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const hasToString = typeof (value as any).toString === "function";
+  const hasToPrimitive = typeof (value as any)[Symbol.toPrimitive] === "function";
+  if (!hasToString && !hasToPrimitive) {
+    return true;
+  }
+  // The object in the prototype chain that owns toString or Symbol.toPrimitive.
+  let owner: object | null = value;
+  while (
+    owner !== null &&
+    !(hasToString && hasOwn.call(owner, "toString")) &&
+    !(hasToPrimitive && hasOwn.call(owner, Symbol.toPrimitive))
+  ) {
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (owner === null || owner === value) {
+    return false;
+  }
+  const constructor = Object.getOwnPropertyDescriptor(owner, "constructor")?.value;
+  return typeof constructor === "function" && (globalThis as any)[constructor.name] === constructor;
+}
+
+let circularMessage: string | undefined;
+
+// node:util's %j: a cycle prints as [Circular]. Any other throw (a BigInt) reaches the caller.
+function stringifyJSON(value: unknown): string {
+  try {
+    return String(JSON.stringify(value));
+  } catch (error) {
+    if (circularMessage === undefined) {
+      const cycle: any = {};
+      cycle.self = cycle;
+      try {
+        JSON.stringify(cycle);
+      } catch (circularError) {
+        circularMessage = (circularError as Error).message;
+      }
+    }
+    if (error instanceof TypeError && error.message === circularMessage) {
+      return "[Circular]";
+    }
+    throw error;
+  }
+}
+
+function formatSpecifier(specifier: string, value: any): string {
+  switch (specifier) {
+    case "%s":
+      if (typeof value === "number") {
+        return formatNumber(value);
+      }
+      if (typeof value === "bigint") {
+        return `${value}n`;
+      }
+      if (typeof value === "object" && value !== null && hasBuiltInToString(value)) {
+        return Bun.inspect(value);
+      }
+      return String(value);
+    case "%d":
+      if (typeof value === "bigint") {
+        return `${value}n`;
+      }
+      return typeof value === "symbol" ? "NaN" : formatNumber(Number(value));
+    case "%i":
+      if (typeof value === "bigint") {
+        return `${value}n`;
+      }
+      return typeof value === "symbol" ? "NaN" : formatNumber(parseInt(value));
+    case "%f":
+      return typeof value === "symbol" ? "NaN" : formatNumber(parseFloat(value));
+    case "%j":
+      return stringifyJSON(value);
+    case "%c":
+      return "";
+    default:
+      return Bun.inspect(value);
+  }
+}
+
+// Not util.format: node:util prints a Request, a Response and Headers without their state,
+// and its load would land in the first invocation that logs a format string.
+function formatArgs(args: any[]): string {
+  const first = args[0];
+  if (args.length === 1 || typeof first !== "string" || !first.includes("%")) {
+    return args.map(formatValue).join(" ");
+  }
+  let next = 1;
+  let message = first.replace(/%[sdifjoOc%]/g, specifier => {
+    if (specifier === "%%") {
+      return "%";
+    }
+    if (next === args.length) {
+      return specifier;
+    }
+    return formatSpecifier(specifier, args[next++]);
+  });
+  for (; next < args.length; next++) {
+    message += " " + formatValue(args[next]);
+  }
+  return message;
+}
+
 function log(level: string, ...args: any[]): void {
   if (!args.length) {
     return;
   }
-  const messages = args.map(arg => Bun.inspect(arg).replace(/\n/g, "\r"));
+  const message = formatArgs(args).replace(/\r?\n/g, "\r");
+  // Not one joined string: bun 1.1.22 and older write a lone string and its "\n" in two write(2) calls.
   if (requestId === undefined) {
-    logger(level, ...messages);
+    logger(level, message);
   } else {
-    logger(level, `RequestId: ${requestId}`, ...messages);
+    logger(level, `RequestId: ${requestId}`, message);
   }
 }
 
@@ -111,7 +226,7 @@ function formatError(error: unknown): LambdaError {
   }
   return {
     errorType: "Error",
-    errorMessage: Bun.inspect(error),
+    errorMessage: formatValue(error),
   };
 }
 

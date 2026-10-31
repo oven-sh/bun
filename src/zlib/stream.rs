@@ -62,6 +62,7 @@ impl ZStream {
         mem_level: c_int,
         strategy: c_int,
     ) -> ReturnCode {
+        debug_assert!(!self.has_state(), "zlib leaks a live state at init");
         // SAFETY: `ptr` is a live z_stream; version/size match the linked zlib.
         unsafe {
             crate::deflateInit2_(
@@ -79,6 +80,7 @@ impl ZStream {
 
     /// `inflateInit2_` against the linked zlib's version and struct size.
     pub fn inflate_init(&mut self, window_bits: c_int) -> ReturnCode {
+        debug_assert!(!self.has_state(), "zlib leaks a live state at init");
         // SAFETY: `ptr` is a live z_stream; version/size match the linked zlib.
         unsafe {
             crate::inflateInit2_(
@@ -113,6 +115,13 @@ impl ZStream {
     pub fn total_out(&self) -> uLong {
         // SAFETY: see `next_in`.
         unsafe { (*self.as_ptr()).total_out }
+    }
+
+    /// Whether an init left a zlib state that `deflateEnd`/`inflateEnd` has not freed.
+    #[inline]
+    pub fn has_state(&self) -> bool {
+        // SAFETY: see `next_in`.
+        !unsafe { (*self.as_ptr()).internal_state }.is_null()
     }
 
     #[inline]

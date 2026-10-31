@@ -136,6 +136,7 @@
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "UtilInspect.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
@@ -5553,6 +5554,22 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+// A boxed String, Number or Boolean. String.prototype, Number.prototype and Boolean.prototype are boxed values too.
+static ALWAYS_INLINE bool isBoxedStringNumberOrBoolean(JSC::JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    switch (value.asCell()->type()) {
+    case StringObjectType:
+    case DerivedStringObjectType:
+    case NumberObjectType:
+    case BooleanObjectType:
+        return true;
+    default:
+        return false;
+    }
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
@@ -5614,13 +5631,18 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     bool hasNoOwnProperty = structure->outOfLineSize() == 0 && structure->inlineSize() == 0;
 #endif
 
+    // These three prototypes show what a program put on them. The quick walk lists each method of a reified one.
+    const bool listsOwnEnumerableOnly = Bun::isStringNumberOrBooleanPrototype(object);
+    if (listsOwnEnumerableOnly)
+        fast = false;
+
     if (fast) {
         if (hasNoOwnProperty) {
             fast = false;
 
             JSValue proto = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            if (proto) {
+            if (proto && !isBoxedStringNumberOrBoolean(proto)) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canWalkQuickly(asObject(proto));
@@ -5728,7 +5750,7 @@ restart:
                 JSValue proto = prototypeObject.getPrototype(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
                 if (proto) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
+                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || isBoxedStringNumberOrBoolean(proto) || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
                         if ((structure = proto.structureOrNull())) {
                             prototypeObject = proto;
                             fast = canWalkQuickly(asObject(proto));
@@ -5750,11 +5772,11 @@ restart:
         auto* globalProxy = dynamicDowncast<JSGlobalProxy>(object);
         const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && (isBoxedStringNumberOrBoolean(iterating) || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)))) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, isOtherGlobal ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, (isOtherGlobal || listsOwnEnumerableOnly) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
             }
 
             RETURN_IF_EXCEPTION(scope, void());
@@ -5848,7 +5870,7 @@ restart:
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
                 break;
-            if (iterating == globalObject || isOtherGlobal)
+            if (iterating == globalObject || isOtherGlobal || listsOwnEnumerableOnly)
                 break;
             JSValue prototype = iterating->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );

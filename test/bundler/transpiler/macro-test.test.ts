@@ -12,6 +12,7 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
+  stringNumberAndBooleanPrototypes,
   symbolKeys,
 } from "./macro.ts" with { type: "macro" };
 
@@ -45,6 +46,11 @@ test("object with Symbol keys", () => {
   const value = symbolKeys();
   expect(value).toEqual({ v: 2 });
   expect(Reflect.ownKeys(value)).toEqual(["v"]);
+});
+
+// In JSC these prototypes are boxed values of "", 0 and false. They inline as the objects they are.
+test("String.prototype, Number.prototype and Boolean.prototype", () => {
+  expect(stringNumberAndBooleanPrototypes()).toEqual([{}, {}, {}]);
 });
 
 test("escaping", () => {

@@ -11,6 +11,7 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include "UtilInspect.h"
 
 namespace Bun {
 
@@ -71,6 +72,11 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__isStringNumberOrBooleanPrototype(JSC::EncodedJSValue encodedValue)
+{
+    return isStringNumberOrBooleanPrototype(JSValue::decode(encodedValue));
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

@@ -369,6 +369,34 @@ describe.concurrent("bundler", () => {
     stdout: "shared evaluated\nentry S 0\nlazy evaluated\nlazy:S 1 1\ntrue 2 2 true true\nlazy2(lazy:S) 3",
   });
 
+  // (5b) import() under a store of AsyncLocalStorage: the chunk that it loads, and the chunk that one imports, run in
+  // that store.
+  bindingCase("DynamicImportAsyncLocalStorage", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { storage } from "./storage";
+        const lazy = await storage.run("store of the import()", () => import("./lazy"));
+        console.log([lazy.seen, lazy.below, String(storage.getStore())].join(", "));
+      `,
+      "/storage.ts": /* js */ `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        export const storage = new AsyncLocalStorage<string>();
+      `,
+      "/lazy.ts": /* js */ `
+        import { below } from "./below";
+        import { storage } from "./storage";
+        export { below };
+        export const seen = storage.getStore();
+      `,
+      "/below.ts": /* js */ `
+        import { storage } from "./storage";
+        export const below = storage.getStore();
+      `,
+    },
+    entries: ["/entry.ts", "/below.ts"],
+    stdout: "store of the import(), store of the import(), undefined",
+  });
+
   // (6) top-level await in a dependency and in the entry; the sibling after the async dependency waits for it.
   bindingCase("TopLevelAwait", {
     files: {

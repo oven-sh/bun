@@ -119,7 +119,6 @@ impl Body {
     where
         F: bun_jsc::ConsoleFormatter,
     {
-        formatter.write_indent(writer)?;
         write!(
             writer,
             "{}",
@@ -137,8 +136,7 @@ impl Body {
         match self.value_mut() {
             Value::Blob(blob) => {
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-                writer.write_str("\n")?;
-                formatter.write_indent(writer)?;
+                formatter.write_break(writer)?;
                 blob.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
             }
             v @ (Value::InternalBlob(_) | Value::WTFStringImpl(_)) => {
@@ -151,15 +149,13 @@ impl Body {
                     _ => unreachable!(),
                 };
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-                writer.write_str("\n")?;
-                formatter.write_indent(writer)?;
+                formatter.write_break(writer)?;
                 blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size, writer)?;
             }
             Value::Locked(locked) => {
                 if let Some(stream) = locked.readable.get() {
                     formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-                    writer.write_str("\n")?;
-                    formatter.write_indent(writer)?;
+                    formatter.write_break(writer)?;
                     formatter
                         .print_as::<W, ENABLE_ANSI_COLORS>(
                             jsc::FormatAs::Object,

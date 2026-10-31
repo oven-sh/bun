@@ -363,3 +363,77 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// An inspect.custom hook prints a URL, a TransformStream and a PerformanceMark. A native printer prints a Request,
+// a Response and a File. Each used to lay the value out on several lines, which broke the box.
+describe("a cell prints on one line", () => {
+  const fill = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+  const oneRowTable = (cell: string) => {
+    const rule = fill("─", cell.length + 2);
+    return `┌───┬${rule}┐\n│   │ c${fill(" ", cell.length)}│\n├───┼${rule}┤\n│ 0 │ ${cell} │\n└───┴${rule}┘\n`;
+  };
+
+  // `make` runs in this process and, as source text, in a child process. It must not use a name from this file.
+  const cases: [kind: string, make: () => unknown, cell: string][] = [
+    [
+      "URL",
+      () => new URL("http://example.com/a?b=1"),
+      `URL { href: 'http://example.com/a?b=1', origin: 'http://example.com', protocol: 'http:', username: '', password: '', host: 'example.com', hostname: 'example.com', port: '', pathname: '/a', search: '?b=1', searchParams: URLSearchParams { 'b' => '1' }, hash: '' }`,
+    ],
+    [
+      "TransformStream",
+      () => new TransformStream(),
+      `TransformStream { readable: ReadableStream { locked: false, state: 'readable', supportsBYOB: false }, writable: WritableStream { locked: false, state: 'writable' }, backpressure: true }`,
+    ],
+    [
+      "performance.mark",
+      () => performance.mark("m", { startTime: 5 }),
+      `PerformanceMark { name: 'm', entryType: 'mark', startTime: 5, duration: 0, detail: null }`,
+    ],
+    [
+      "Request",
+      () => new Request("http://example.com/"),
+      `Request (0 KB) { method: "GET", url: "http://example.com/", headers: Headers {} }`,
+    ],
+    [
+      "Response",
+      () => new Response("x"),
+      `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers {}, redirected: false, bodyUsed: false, Blob (1 bytes) }`,
+    ],
+    ["File", () => new File(["x"], "f.txt", { lastModified: 1 }), `File (1 bytes) { name: "f.txt", lastModified: 1 }`],
+    [
+      "an array of 101 items",
+      () => Array.from({ length: 101 }, (_, i) => i),
+      `[ ${Array.from({ length: 100 }, (_, i) => i).join(", ")}, ... 1 more items ]`,
+    ],
+  ];
+
+  test.each(cases)("Bun.inspect.table: %s", (_, make, cell) => {
+    expect(Bun.inspect.table([{ c: make() }])).toBe(oneRowTable(cell));
+  });
+
+  test.each(cases)("Bun.inspect.table: %s as a Map value", (_, make, cell) => {
+    const rule = fill("─", cell.length + 2);
+    expect(Bun.inspect.table(new Map([["k", make()]]))).toBe(
+      `┌───┬─────┬${rule}┐\n│   │ Key │ Values${fill(" ", cell.length - 5)}│\n├───┼─────┼${rule}┤\n│ 0 │ k   │ ${cell} │\n└───┴─────┴${rule}┘\n`,
+    );
+  });
+
+  test.concurrent.each(cases)("console.table: %s", async (_, make, cell) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.table([{ c: (${make})() }]);`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: oneRowTable(cell), stderr: "", exitCode: 0 });
+  });
+
+  // `compact: false` turns single-line mode off. The table does not keep the box then.
+  test("Bun.inspect.table with compact: false prints a cell as the value prints alone", () => {
+    const request = new Request("http://example.com/");
+    expect(Bun.inspect.table([{ c: request }], { compact: false } as Bun.BunInspectOptions)).toContain(
+      Bun.inspect(request),
+    );
+  });
+});

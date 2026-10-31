@@ -159,6 +159,28 @@ for (const [name, inspect] of process.versions.bun
   });
 }
 
+if (process.versions.bun) {
+  // Where Bun's formatter prints on one line, it hands the hook the options that make util.inspect do the
+  // same, so a hook that forwards its options prints on one line too.
+  test("Bun.inspect calls inspect.custom with one-line options when it prints on one line", () => {
+    const seen = [];
+    const obj = {
+      [customSymbol](depth, options) {
+        seen.push({ keys: Object.keys(options), breakLength: options.breakLength, compact: options.compact });
+        return "x";
+      },
+    };
+    const asIs = { keys: ["stylize", "depth", "colors"], breakLength: undefined, compact: undefined };
+    const oneLine = { keys: [...asIs.keys, "breakLength", "compact"], breakLength: Infinity, compact: true };
+
+    Bun.inspect(obj);
+    Bun.inspect(obj, { compact: true });
+    Bun.inspect.table([{ c: obj }]);
+    Bun.inspect.table([{ c: obj }], { compact: false });
+    expect(seen).toEqual([asIs, oneLine, oneLine, asIs]);
+  });
+}
+
 describe("Web Streams [nodejs.util.inspect.custom]", () => {
   const inspect = util.inspect;
 

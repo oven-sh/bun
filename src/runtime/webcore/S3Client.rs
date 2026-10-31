@@ -122,8 +122,6 @@ where
     F: ConsoleFormatter,
     W: core::fmt::Write,
 {
-    writer.write_str("\n")?;
-
     {
         // `IndentScope` shadows the borrow and restores indent on `Drop`, so a
         // `?` early-return below still leaves the formatter at its original
@@ -139,7 +137,7 @@ where
             b"https://s3.<region>.amazonaws.com"
         };
 
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str(pfmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;
         bun_core::write_pretty!(
             writer,
@@ -148,14 +146,13 @@ where
             BStr::new(endpoint),
         )?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        writer.write_str("\n")?;
 
         let region: &[u8] = if !credentials.region.is_empty() {
             &credentials.region
         } else {
             <S3Credentials as S3CredentialsExt>::guess_region(&credentials.endpoint)
         };
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str(pfmt!("<r>region<d>:<r> \"", ENABLE_ANSI_COLORS))?;
         bun_core::write_pretty!(
             writer,
@@ -164,44 +161,37 @@ where
             BStr::new(region),
         )?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        writer.write_str("\n")?;
 
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
         if !credentials.access_key_id.is_empty() {
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str(pfmt!(
                 "<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-
-            writer.write_str("\n")?;
         }
 
         if !credentials.secret_access_key.is_empty() {
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str(pfmt!(
                 "<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-
-            writer.write_str("\n")?;
         }
 
         if !credentials.session_token.is_empty() {
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str(pfmt!(
                 "<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"",
                 ENABLE_ANSI_COLORS
             ))?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-
-            writer.write_str("\n")?;
         }
 
         if let Some(acl_value) = acl {
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;
             bun_core::write_pretty!(
                 writer,
@@ -210,11 +200,9 @@ where
                 BStr::new(acl_value.to_string()),
             )?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-
-            writer.write_str("\n")?;
         }
 
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str(pfmt!("<r>partSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter
             .print_as::<W, ENABLE_ANSI_COLORS>(
@@ -226,9 +214,7 @@ where
             .map_err(|_| core::fmt::Error)?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
-        writer.write_str("\n")?;
-
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str(pfmt!("<r>queueSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter
             .print_as::<W, ENABLE_ANSI_COLORS>(
@@ -239,9 +225,8 @@ where
             )
             .map_err(|_| core::fmt::Error)?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        writer.write_str("\n")?;
 
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter
             .print_as::<W, ENABLE_ANSI_COLORS>(
@@ -251,7 +236,6 @@ where
                 JSType::NumberObject,
             )
             .map_err(|_| core::fmt::Error)?;
-        writer.write_str("\n")?;
     }
 
     Ok(())
@@ -333,7 +317,7 @@ impl S3Client {
             formatter,
             writer,
         )?;
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str("}")?;
         formatter.reset_line();
         Ok(())

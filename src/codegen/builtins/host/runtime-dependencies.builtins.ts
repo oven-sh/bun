@@ -845,6 +845,9 @@ export default b.declarations(
       stylize: [b.nativeCell(stylizeWithColorCell), b.nativeCell(stylizeWithNoColorCell)],
       depth: b.f64,
       colors: b.bool,
+      // UtilInspect.cpp defines the two where the formatter prints on one line.
+      breakLength: b.f64.or(b.undefined),
+      compact: b.bool.or(b.undefined),
     },
   }),
   b.namedMemberCall(customInspect, [b.f64, b.nativeCell(inspectOptionsCell), b.nativeCell(inspectCell)]),

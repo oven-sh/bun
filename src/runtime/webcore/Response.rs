@@ -624,18 +624,18 @@ impl Response {
         let js_err = |_: JsError| core::fmt::Error;
 
         match self.body.get().known_len() {
-            Some(len) => writeln!(
+            Some(len) => write!(
                 writer,
                 "Response ({}) {{",
                 bun_core::fmt::size(len, Default::default())
             )?,
-            None => writeln!(writer, "Response {{")?,
+            None => write!(writer, "Response {{")?,
         }
 
         {
             let mut formatter = formatter.indented();
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             write!(
                 writer,
                 "{}",
@@ -650,9 +650,8 @@ impl Response {
                 )
                 .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             write!(
                 writer,
                 "{}",
@@ -661,9 +660,8 @@ impl Response {
             bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r><b>{}<r>", self.url.get())?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             write!(
                 writer,
                 "{}",
@@ -678,9 +676,8 @@ impl Response {
                 )
                 .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             write!(
                 writer,
                 "{}",
@@ -693,9 +690,8 @@ impl Response {
                 &self.init.get().status_text
             )?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             write!(
                 writer,
                 "{}",
@@ -714,9 +710,8 @@ impl Response {
                 )
                 .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             write!(
                 writer,
                 "{}",
@@ -731,16 +726,15 @@ impl Response {
                 )
                 .map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
-            writer.write_str("\n")?;
 
+            formatter.write_break(writer)?;
             formatter.reset_line();
             // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
             // `&mut self`; single-JS-thread invariant.
             unsafe { self.body.get_mut() }
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
-        writer.write_str("\n")?;
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str("}")?;
         formatter.reset_line();
         Ok(())

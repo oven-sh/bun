@@ -498,6 +498,21 @@ unsafe extern "C" {
     safe fn Bun__getParamsIfBunRequest(this_value: JSValue) -> JSValue;
 }
 
+/// The break before the body, which follows `headers` with no comma in the default text.
+fn write_body_break<F, W, const ENABLE_ANSI_COLORS: bool>(
+    formatter: &mut F,
+    writer: &mut W,
+) -> core::fmt::Result
+where
+    F: bun_jsc::ConsoleFormatter,
+    W: core::fmt::Write,
+{
+    if formatter.single_line() {
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+    }
+    formatter.write_break(writer)
+}
+
 impl Request {
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -522,20 +537,20 @@ impl Request {
             "BunRequest"
         };
         match self.body_value_mut().known_size() {
-            Some(size) => writeln!(
+            Some(size) => write!(
                 writer,
                 "{} ({}) {{",
                 class_label,
                 bun_fmt::size(size, Default::default())
             )?,
-            None => writeln!(writer, "{} {{", class_label)?,
+            None => write!(writer, "{} {{", class_label)?,
         }
         {
             // RAII guard restores indent on every exit incl. `?` error paths.
             // Shadows `formatter` for the block; auto-derefs to `&mut F`.
             let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str(
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref(),
             )?;
@@ -546,9 +561,8 @@ impl Request {
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
-            writer.write_str("\n")?;
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer
                 .write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> ").as_ref())?;
             self.ensure_url().map_err(|_| core::fmt::Error)?;
@@ -565,10 +579,9 @@ impl Request {
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
-            writer.write_str("\n")?;
 
             if params_object.is_cell() {
-                formatter.write_indent(writer)?;
+                formatter.write_break(writer)?;
                 writer.write_str(
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> ").as_ref(),
                 )?;
@@ -583,10 +596,9 @@ impl Request {
                 formatter
                     .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
-                writer.write_str("\n")?;
             }
 
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str(
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref(),
             )?;
@@ -605,13 +617,11 @@ impl Request {
 
             match self.body_value_mut() {
                 BodyValue::Blob(blob) => {
-                    writer.write_str("\n")?;
-                    formatter.write_indent(writer)?;
+                    write_body_break::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     blob.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                 }
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
-                    writer.write_str("\n")?;
-                    formatter.write_indent(writer)?;
+                    write_body_break::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     let size = self.body_value_mut().size();
                     if size == 0 {
                         let empty = Blob::init_empty(formatter.global_this());
@@ -626,8 +636,7 @@ impl Request {
                 }
                 BodyValue::Locked(_) => {
                     if let Some(stream) = self.get_body_readable_stream() {
-                        writer.write_str("\n")?;
-                        formatter.write_indent(writer)?;
+                        write_body_break::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                         formatter
                             .print_as::<_, ENABLE_ANSI_COLORS>(
                                 bun_jsc::FormatTag::Object,
@@ -641,8 +650,7 @@ impl Request {
                 _ => {}
             }
         }
-        writer.write_str("\n")?;
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         writer.write_str("}")?;
         Ok(())
     }

@@ -431,6 +431,9 @@ unsafe fn init_runtime_state(
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
+        // Build-only: the resolver leaves a matching import unresolved, and a VM loads what it returns.
+        args.external.clear();
+        args.packages = None;
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
         // alongside `timer`/`entry_point` on Worker teardown. The `Box`

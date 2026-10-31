@@ -1656,15 +1656,7 @@ impl JSValue {
         })
     }
 
-    /// [`call`](Self::call) for [`EventLoop::run_callback`](crate::event_loop::EventLoop::run_callback):
-    /// what the callee throws is reported as uncaught before this returns, while the async context
-    /// the callee was stored in ([`with_async_context_if_needed`](Self::with_async_context_if_needed))
-    /// is still current. The process's error handlers run on top of the async context that is
-    /// current where the error is reported, so they read the `AsyncLocalStorage` stores of the
-    /// callback that failed, as node's do.
-    ///
-    /// A callee that threw answers `undefined`. `Err` is an exception that is not the callee's
-    /// error: the VM's termination, or the `TypeError` for a callee that is not callable.
+    /// [`call`](Self::call) that reports what the callee throws before the callee's async context is put back. `Err` is the VM's termination, or a callee that is not callable.
     #[inline]
     #[track_caller]
     pub(crate) fn call_and_report_uncaught(

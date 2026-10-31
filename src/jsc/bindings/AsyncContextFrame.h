@@ -34,20 +34,10 @@ public:
     // Alias of call.
     static JSC::JSValue profiledCall(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);
 
-    // Whether this callback is not to be called: it was stored inside the context of a
-    // Bun.ModuleGraph that has since been disposed.
+    // The callback was stored inside a Bun.ModuleGraph that has since been disposed: it is not to be called.
     bool isOfStoppedModuleGraph(JSC::JSGlobalObject*) const;
 
-    // One call of a callback that native code stored with withAsyncContextIfNeeded() or
-    // withGraphContextIfNeeded(). Unwraps `callee` and makes the async context it was stored in
-    // current until the scope ends. Does nothing for a callee that was stored as it is.
-    //
-    // A caller that reports what the callback throws as uncaught (a timer, EventLoop::run_callback)
-    // reports BEFORE the scope ends. The process's error handlers run on top of the async context
-    // that is current where the error is reported (Bun::ErrorHandlerContextScope), so that order
-    // shows them the AsyncLocalStorage stores of the callback that failed, as node does. A caller
-    // that leaves the exception pending restores first: the script that catches it is in its own
-    // async context.
+    // Unwraps a stored callback and makes its async context current until the scope ends. A caller that reports the callback's throw as uncaught reports inside the scope (Bun::ErrorHandlerContextScope).
     class CallScope {
         WTF_MAKE_NONCOPYABLE(CallScope);
         WTF_FORBID_HEAP_ALLOCATION;

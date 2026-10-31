@@ -3347,8 +3347,7 @@ enum class ThrowOfCallee : bool {
 
 static JSC::EncodedJSValue callFromRust(ThrowOfCallee, JSC::JSGlobalObject*, JSC::EncodedJSValue object, JSC::EncodedJSValue thisObject, size_t argumentCount, const JSC::EncodedJSValue* arguments);
 
-// ThrowOfCallee::IsReported: the callee threw, and the caller gets undefined for it. The VM's termination is not an
-// error to report. It stays pending, and so does one that the report ends with.
+// ThrowOfCallee::IsReported: the callee answers undefined. The VM's termination is not reported and stays pending.
 static NEVER_INLINE JSC::EncodedJSValue reportThrowOfCallee(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     auto* exception = scope.exception();

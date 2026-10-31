@@ -677,8 +677,7 @@ impl StatWatcher {
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
-        // Reported here rather than returned: the watcher keeps running after a
-        // throwing listener (Node semantics), so the append below still runs.
+        // Reported, not returned: the watcher keeps running after a listener that throws (Node semantics).
         global_this.bun_vm().event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             js::listener_get_cached(js_this).unwrap(),

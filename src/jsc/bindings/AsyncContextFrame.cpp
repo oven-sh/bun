@@ -95,11 +95,7 @@ AsyncContextScope::~AsyncContextScope()
 // VirtualMachine::entered_context: makes `context` the one native code entered, and returns the one to put back.
 extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
 
-// For the test runner, which starts the next hook or test from inside the report of an uncaught error. The callback
-// that failed can still be current there: its async context (AsyncContextFrame::CallScope), and the context its
-// dispatcher entered, which is a stopped one once a hook disposes that Bun.ModuleGraph. These two make that step the
-// realm's, in no async context. `saved` holds the async context and the one a microtask checkpoint resets it to.
-// The entered context is returned.
+// The test runner starts its next step from inside a report, where the callback that failed is still current: that step runs as the realm, in no async context.
 extern "C" uint32_t AsyncContextFrame__leaveForTestStep(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue* saved)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

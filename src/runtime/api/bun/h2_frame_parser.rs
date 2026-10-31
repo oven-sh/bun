@@ -653,12 +653,7 @@ impl Handlers {
         data.contains(&JSValue::ZERO)
     }
 
-    /// `EventLoop::run_callback_with_result`, but for the order: the async context the handler
-    /// was stored in is put back before what the handler threw is reported. The handlers belong
-    /// to the session, and http2.ts runs a stream's listeners, a `ping()` callback and a
-    /// `settings()` callback beneath them. A report inside the call would show the process's
-    /// error handlers the stores that `connect()` or `listen()` was called in, not the ones of
-    /// the callback that failed.
+    /// `run_callback_with_result` that restores before it reports: the stored async context is the session's, not that of the stream, ping or `settings()` call whose callback threw.
     #[inline(never)]
     fn call_handler(&self, callback: JSValue, this_value: JSValue, data: &[JSValue]) -> JSValue {
         let global = self.global();

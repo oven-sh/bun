@@ -535,10 +535,7 @@ impl EventLoop {
         // SAFETY: `this` is the unique live `EventLoop` (a value field of the
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
         unsafe { (*this).enter() };
-        // A top-level call: what the callback throws is reported inside the call, while the async
-        // context of the callback is still current. An `Err` is what that leaves: the VM's termination
-        // (taken here), or the `TypeError` for a callback that is not callable. The caller reads the
-        // gate, not a pending exception, to know the VM has stopped.
+        // The call reports what the callback throws. An `Err` is the VM's termination (taken here) or a callback that is not callable.
         if let Err(err) = callback.call_and_report_uncaught(global_object, this_value, arguments) {
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }

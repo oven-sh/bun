@@ -574,9 +574,7 @@ pub(crate) mod on_unhandled_rejection {
         );
     }
 
-    /// While this is alive, the script that runs is the realm's and no async context is current.
-    /// The report of an uncaught error can come from inside the callback that threw, and
-    /// `BunTest::run` starts the next hook or test from it.
+    /// While this is alive, script runs as the realm, in no async context: `BunTest::run` starts the next step from inside the report of a callback that threw.
     struct OutsideOfCallback<'a> {
         global: &'a JSGlobalObject,
         /// On the stack, so that the collector sees them.

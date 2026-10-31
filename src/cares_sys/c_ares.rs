@@ -1655,9 +1655,7 @@ impl Error {
     // Deferred / toDeferred / toJSWithSyscall / toJSWithSyscallAndHostname
     // aliases deleted — live in bun_runtime::dns_jsc (extension trait).
 
-    /// The fold Node's `dnsException` applies to getaddrinfo(3) and
-    /// getnameinfo(3) statuses (`dns.lookup`, `dns.lookupService`). `resolve*`
-    /// and `reverse` report the c-ares status as is.
+    /// `dns.lookup` and `dns.lookupService` report these as `ENOTFOUND`, like Node.
     pub fn for_lookup(self) -> Error {
         match self {
             Error::ENODATA | Error::ENONAME | Error::EBADNAME => Error::ENOTFOUND,
@@ -1670,8 +1668,7 @@ impl Error {
         Self::get(rc).map(Error::for_lookup)
     }
 
-    /// A getaddrinfo(3) status (`UV_EAI_*` on Windows), folded by
-    /// [`Error::for_lookup`].
+    /// A getaddrinfo(3) status, folded by [`Error::for_lookup`].
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
@@ -1835,7 +1832,7 @@ impl Error {
         }
     }
 
-    /// The c-ares status as is. Lookup callers fold it with [`Error::for_lookup`].
+    /// The c-ares status as is.
     pub fn get(rc: i32) -> Option<Error> {
         if rc == 0 {
             return None;

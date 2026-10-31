@@ -1611,8 +1611,7 @@ unsafe fn resolve_entry_point_specifier_quietly<'s>(
     unsafe {
         let log_before = (*parent).transpiler.log;
         (*parent).transpiler.set_log(&raw mut log);
-        let path =
-            resolve_entry_point_specifier(parent, str, dot_slash, &mut ignored_message, &mut log);
+        let path = resolve_entry_point_specifier(parent, str, dot_slash, &mut ignored_message);
         (*parent).transpiler.set_log(log_before);
         path
     }

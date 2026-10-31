@@ -289,7 +289,7 @@ describe("node:test", () => {
 
   test("should enforce a hook-level signal and install t.assert.ok separately", async () => {
     const { exitCode, stderr } = await runTests(["20-hook-signal-and-assert-ok.js"]);
-    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("3 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

@@ -4,7 +4,7 @@
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
-//! calling a setter twice overwrites. The actual decode → transform → encode
+//! calling `resize` twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
@@ -56,6 +56,7 @@ use crate::generated_bindgen::image::js_Image as js;
 pub(crate) struct Image {
     source: JsCell<Source>,
     pipeline: Cell<Pipeline>,
+    format_options: FormatOptions,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
     max_pixels: u64,
@@ -79,6 +80,7 @@ impl Default for Image {
         Self {
             source: JsCell::new(Source::JsBuffer),
             pipeline: Cell::new(Pipeline::default()),
+            format_options: Default::default(),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
             last_width: Cell::new(-1),
@@ -87,6 +89,16 @@ impl Default for Image {
             pending_tasks: Cell::new(0),
         }
     }
+}
+
+/// The options each format setter has recorded. A format call starts from its own entry.
+#[derive(Default)]
+struct FormatOptions {
+    jpeg: Cell<codecs::EncodeOptions>,
+    png: Cell<codecs::EncodeOptions>,
+    webp: Cell<codecs::EncodeOptions>,
+    heic: Cell<codecs::EncodeOptions>,
+    avif: Cell<codecs::EncodeOptions>,
 }
 
 pub(crate) enum Source {
@@ -524,17 +536,11 @@ impl Image {
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
         fmt: codecs::Format,
+        recorded: &Cell<codecs::EncodeOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
         let options = options.to_js();
-        let mut enc: codecs::EncodeOptions =
-            self.pipeline
-                .get()
-                .output
-                .unwrap_or_else(|| codecs::EncodeOptions {
-                    format: fmt,
-                    ..Default::default()
-                });
+        let mut enc: codecs::EncodeOptions = recorded.get();
         enc.format = fmt;
         if options.is_object() {
             if let Some(q) = options.get(global, "quality")? {
@@ -565,6 +571,7 @@ impl Image {
                 enc.progressive = p.to_boolean();
             }
         }
+        recorded.set(enc);
         self.update_pipeline(|p| p.output = Some(enc));
         Ok(this_value)
     }
@@ -575,7 +582,13 @@ impl Image {
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        self.set_format(this_value, cx, options, codecs::Format::Jpeg)
+        self.set_format(
+            this_value,
+            cx,
+            options,
+            codecs::Format::Jpeg,
+            &self.format_options.jpeg,
+        )
     }
     pub(crate) fn png<'a>(
         &self,
@@ -583,7 +596,13 @@ impl Image {
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        self.set_format(this_value, cx, options, codecs::Format::Png)
+        self.set_format(
+            this_value,
+            cx,
+            options,
+            codecs::Format::Png,
+            &self.format_options.png,
+        )
     }
     pub(crate) fn webp<'a>(
         &self,
@@ -591,7 +610,13 @@ impl Image {
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        self.set_format(this_value, cx, options, codecs::Format::Webp)
+        self.set_format(
+            this_value,
+            cx,
+            options,
+            codecs::Format::Webp,
+            &self.format_options.webp,
+        )
     }
     pub(crate) fn heic<'a>(
         &self,
@@ -599,7 +624,13 @@ impl Image {
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        self.set_format(this_value, cx, options, codecs::Format::Heic)
+        self.set_format(
+            this_value,
+            cx,
+            options,
+            codecs::Format::Heic,
+            &self.format_options.heic,
+        )
     }
     pub(crate) fn avif<'a>(
         &self,
@@ -607,7 +638,13 @@ impl Image {
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        self.set_format(this_value, cx, options, codecs::Format::Avif)
+        self.set_format(
+            this_value,
+            cx,
+            options,
+            codecs::Format::Avif,
+            &self.format_options.avif,
+        )
     }
 }
 

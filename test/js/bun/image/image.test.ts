@@ -154,6 +154,23 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
   return { w, h, data: out };
 }
 
+// HEIC and AVIF encode only through the OS, and only on some macOS and Windows
+// machines. Probed once, so that a test which needs an encoder is skipped by
+// name where it is missing. Any other error counts as present: that test then
+// reports it.
+const osEncoder = { heic: false, avif: false };
+if (isMacOS || isWindows) {
+  for (const format of ["heic", "avif"] as const) {
+    osEncoder[format] = await new Bun.Image(cornersPng)
+      [format]()
+      .bytes()
+      .then(
+        () => true,
+        (e: any) => e?.code !== "ERR_IMAGE_FORMAT_UNSUPPORTED",
+      );
+  }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe("Bun.Image", () => {
@@ -1326,6 +1343,224 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0xff);
       expect(buf[1]).toBe(0xd8);
     });
+  });
+
+  // Each format keeps its own options, as in Sharp: an option stays for a
+  // later call of the same format and never reaches another format.
+  describe("format options", () => {
+    // Enough detail that every encode option below changes the output bytes.
+    const src = makePng(32, 24, (x, y) => [(x * 8) & 255, (y * 10) & 255, ((x ^ y) * 9) & 255, 255]);
+    // `any`: the tests index by format name and pass keys of other formats.
+    const image = (): any => new Bun.Image(src);
+    const bytes = async (img: Bun.Image) => Buffer.from(await img.bytes());
+    const same = async (got: Bun.Image, want: Bun.Image) => (await bytes(got)).equals(await bytes(want));
+    const formats = ["jpeg", "png", "webp", "heic", "avif"] as const;
+
+    // [format that encodes, an option that changes its output, the options of the encoding call]
+    const observable = [
+      ["jpeg", { quality: 10 }, undefined],
+      ["jpeg", { progressive: true }, undefined],
+      ["png", { compressionLevel: 0 }, undefined],
+      ["png", { palette: true }, undefined],
+      ["png", { colors: 4 }, { palette: true }],
+      ["png", { dither: true }, { palette: true, colors: 4 }],
+      ["webp", { quality: 10 }, undefined],
+      ["webp", { lossless: true }, undefined],
+    ] as const;
+
+    test.each(observable)("%s() does not take %j from a call for another format", async (target, option, own) => {
+      const fresh = await bytes(image()[target](own));
+      // Control: the option changes this format's output when its own call names it.
+      expect((await bytes(image()[target]({ ...own, ...option }))).equals(fresh)).toBe(false);
+      const tookItFrom: string[] = [];
+      for (const other of formats) {
+        if (other === target) continue;
+        if (!(await bytes(image()[other](option)[target](own))).equals(fresh)) tookItFrom.push(other);
+      }
+      expect(tookItFrom).toEqual([]);
+    });
+
+    test("a key of another format does not change the output structure", async () => {
+      const webp = await bytes(image().jpeg({ lossless: true }).webp());
+      const jpeg = await bytes(image().webp({ progressive: true }).jpeg());
+      const png = await bytes(image().jpeg({ palette: true, colors: 16 }).png());
+      // First start-of-frame marker: 0xc0 is baseline, 0xc2 is progressive.
+      let sof = 2;
+      while (jpeg[sof + 1] !== 0xc0 && jpeg[sof + 1] !== 0xc2) sof += 2 + jpeg.readUInt16BE(sof + 2);
+      expect({
+        webpChunk: webp.toString("latin1", 12, 16),
+        jpegStartOfFrame: jpeg[sof + 1],
+        pngColourType: png[25],
+      }).toEqual({
+        webpChunk: "VP8 ", // lossy; lossless is "VP8L"
+        jpegStartOfFrame: 0xc0,
+        pngColourType: 6, // RGBA; indexed is 3
+      });
+    });
+
+    test("a second format on the same image starts from its own defaults", async () => {
+      const img = image();
+      expect(await same(img.jpeg({ quality: 10 }), image().jpeg({ quality: 10 }))).toBe(true);
+      expect({
+        afterAnOutput: await same(img.webp(), image().webp()),
+        inOneChain: await same(image().jpeg({ quality: 10 }).webp(), image().webp()),
+        // An option that the call in between names stays with that call's format.
+        backToTheFirst: await same(
+          image().jpeg({ quality: 10 }).webp({ quality: 90 }).jpeg(),
+          image().jpeg({ quality: 10 }),
+        ),
+      }).toEqual({ afterAnOutput: true, inOneChain: true, backToTheFirst: true });
+    });
+
+    test("a fallback format after a rejected terminal starts from its own defaults", async () => {
+      const img = image();
+      // HEIC encode needs the OS codec: the terminal rejects where it is missing.
+      const rejection = await img
+        .heic({ quality: 10 })
+        .bytes()
+        .then(
+          () => null,
+          (e: any) => e.code,
+        );
+      expect([null, "ERR_IMAGE_FORMAT_UNSUPPORTED"]).toContain(rejection);
+      expect(await same(img.webp(), image().webp())).toBe(true);
+    });
+
+    test("every terminal encodes with the options of the selected format", async () => {
+      using dir = tempDir("image-format-options", {});
+      const readers: Record<string, (img: Bun.Image) => Promise<Uint8Array>> = {
+        bytes: img => img.bytes(),
+        buffer: img => img.buffer(),
+        toBuffer: img => img.toBuffer(),
+        blob: async img => (await img.blob()).bytes(),
+        toBase64: async img => Buffer.from(await img.toBase64(), "base64"),
+        dataurl: async img => Buffer.from((await img.dataurl()).slice("data:image/webp;base64,".length), "base64"),
+        write: async img => {
+          // No extension to infer from: the format setter decides.
+          const path = join(String(dir), "out");
+          await img.write(path);
+          return Bun.file(path).bytes();
+        },
+        Response: img => new Response(img).bytes(),
+        Request: img => new Request("http://x/", { method: "POST", body: img }).bytes(),
+      };
+      const fresh = await bytes(image().webp());
+      const usesWebpDefaults: Record<string, boolean> = {};
+      for (const [name, read] of Object.entries(readers)) {
+        usesWebpDefaults[name] = fresh.equals(Buffer.from(await read(image().jpeg({ quality: 10 }).webp())));
+      }
+      expect(usesWebpDefaults).toEqual({
+        bytes: true,
+        buffer: true,
+        toBuffer: true,
+        blob: true,
+        toBase64: true,
+        dataurl: true,
+        write: true,
+        Response: true,
+        Request: true,
+      });
+    });
+
+    test("a format keeps its own options for its later calls", async () => {
+      expect({
+        keep: await same(image().jpeg({ quality: 10 }).jpeg(), image().jpeg({ quality: 10 })),
+        merge: await same(
+          image().jpeg({ quality: 10 }).jpeg({ progressive: true }),
+          image().jpeg({ quality: 10, progressive: true }),
+        ),
+        replace: await same(image().jpeg({ quality: 10 }).jpeg({ quality: 90 }), image().jpeg({ quality: 90 })),
+        undefinedNamesNothing: await same(
+          image().jpeg({ quality: 10 }).jpeg({ quality: undefined }),
+          image().jpeg({ quality: 10 }),
+        ),
+        webp: await same(image().webp({ lossless: true }).webp({ quality: 50 }), image().webp({ lossless: true })),
+        png: await same(
+          image().png({ palette: true, colors: 4 }).png({ dither: true }),
+          image().png({ palette: true, colors: 4, dither: true }),
+        ),
+        acrossAnotherFormat: await same(image().jpeg({ quality: 10 }).webp().jpeg(), image().jpeg({ quality: 10 })),
+        // An explicit `false` is the way back: it is an option the call names.
+        progressiveOff: await same(image().jpeg({ progressive: true }).jpeg({ progressive: false }), image().jpeg()),
+        losslessOff: await same(image().webp({ lossless: true }).webp({ lossless: false }), image().webp()),
+        paletteOff: await same(image().png({ palette: true }).png({ palette: false }), image().png()),
+        ditherOff: await same(
+          image().png({ palette: true, colors: 4, dither: true }).png({ dither: false }),
+          image().png({ palette: true, colors: 4 }),
+        ),
+      }).toEqual({
+        keep: true,
+        merge: true,
+        replace: true,
+        undefinedNamesNothing: true,
+        webp: true,
+        png: true,
+        acrossAnotherFormat: true,
+        progressiveOff: true,
+        losslessOff: true,
+        paletteOff: true,
+        ditherOff: true,
+      });
+    });
+
+    test("an option getter that throws leaves every format as it was", async () => {
+      const img = image().webp({ quality: 10 });
+      expect(() =>
+        img.jpeg({
+          quality: 20,
+          get progressive() {
+            throw new Error("progressive getter");
+          },
+        }),
+      ).toThrow("progressive getter");
+      expect({
+        stillWebp: await same(img, image().webp({ quality: 10 })),
+        jpegUntouched: await same(img.jpeg(), image().jpeg()),
+      }).toEqual({ stillWebp: true, jpegUntouched: true });
+    });
+
+    test("a call for another format made from an option getter is not overwritten", async () => {
+      const img = image();
+      img.webp({
+        get quality() {
+          img.jpeg({ quality: 10, progressive: true });
+          return 50;
+        },
+      });
+      expect({
+        // The outer call returned last, so WebP is selected.
+        outer: await same(img, image().webp({ quality: 50 })),
+        nested: await same(img.jpeg(), image().jpeg({ quality: 10, progressive: true })),
+      }).toEqual({ outer: true, nested: true });
+    });
+
+    test("a terminal uses the format and options as they are when it is called", async () => {
+      using dir = tempDir("image-format-snapshot", { "src.png": Buffer.from(src) });
+      const want = await bytes(image().jpeg({ quality: 10 }));
+      for (const source of [src, Bun.file(join(String(dir), "src.png"))]) {
+        const img = new Bun.Image(source).jpeg({ quality: 10 });
+        const pending = img.bytes();
+        img.jpeg({ quality: 90 }).webp({ lossless: true });
+        expect(Buffer.from(await pending).equals(want)).toBe(true);
+      }
+    });
+
+    // Linux has no HEIC or AVIF encoder, so it cannot observe their options.
+    for (const [first, second] of [
+      ["heic", "avif"],
+      ["avif", "heic"],
+    ] as const) {
+      // macOS always has the HEIC encoder, so that case must run there.
+      test.skipIf(!osEncoder[second] && !(isMacOS && second === "heic"))(
+        `.${first}({ quality }) does not reach a later .${second}()`,
+        async () => {
+          const fresh = await bytes(image()[second]());
+          // Control: quality changes this encoder's output when its own call names it.
+          expect((await bytes(image()[second]({ quality: 10 }))).equals(fresh)).toBe(false);
+          expect((await bytes(image()[first]({ quality: 10 })[second]())).equals(fresh)).toBe(true);
+        },
+      );
+    }
   });
 });
 

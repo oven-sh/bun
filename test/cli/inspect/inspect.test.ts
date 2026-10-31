@@ -672,9 +672,7 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   webSocket.close();
 });
 
-// A debugger maps a position that it reads in the preview of an error. The `line` and `column` of a module link error
-// are where its statement is in the source as it was written, so the error has `originalLine` and `originalColumn` in
-// front of them, as an error whose position Bun mapped has: the preview ends before `sourceURL`.
+// A link error has `originalLine` and `originalColumn` ahead of `line`, so a debugger does not map its position again.
 test("a module link error is previewed and reported as an error whose position is already mapped", async () => {
   using dir = tempDir("inspect-link-error", {
     "dep.ts": `export const b = 1;\n`,

@@ -1,5 +1,4 @@
-//! Where the statement that a module link error is about is, in the source its module was written in. JavaScriptCore
-//! holds the transpiled text, so `Bun__locateModuleLinkError` (FormatStackTraceForJS.cpp) asks here.
+//! Finds the statement of a module link error in the source of its module, for `Bun__locateModuleLinkError`.
 
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{Loc, S};
@@ -9,8 +8,7 @@ use bun_resolver::fs::PathResolverExt as _;
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
 
-/// No more of a module than this is parsed for the statement: a failed link is not to build the syntax tree of
-/// megabytes of text.
+/// A failed link parses no more of a module than this for the statement.
 const SEARCH_LIMIT: usize = 1024 * 1024;
 
 /// `JSC::ModuleLinkErrorSite`: which statement of the importing module, and what the name that comes with it names.
@@ -33,12 +31,8 @@ impl Site {
     }
 }
 
-/// The 1-based line and column of the specifier that `name` names in the source of `importer_url`, whose module is
-/// static code. `site` is a `JSC::ModuleLinkErrorSite`. The column counts UTF-16 code units, as a stack frame's does.
-/// `None`: the module is not a file on disk that the module loader takes for JavaScript or TypeScript, there is no
-/// source to read, the text is already bundled, it does not parse as far as the statement, or no statement in its
-/// first `SEARCH_LIMIT` bytes has the name (the transpiler added the import).
-// What a removable-feature guard enters (`Bun__positionOfModuleLinkError`): the trimmable link expects a call there.
+/// The 1-based line and UTF-16 column of the specifier that `name` names in the source of `importer_url`.
+// A removable-feature guard enters here (`Bun__positionOfModuleLinkError`): the trimmable link expects a call.
 #[cold]
 #[inline(never)]
 pub fn position(
@@ -49,8 +43,7 @@ pub fn position(
 ) -> Option<(u32, u32)> {
     let site = Site::from_raw(site)?;
     let path = importer_url.to_utf8();
-    // Static code is the file on disk that its URL names only where a file on disk is static code. The static code of
-    // an executable is what the executable holds.
+    // The static code of an executable is what the executable holds, not the file on disk.
     if !VirtualMachine::is_file_on_disk_static(vm.standalone_module_graph.is_some(), path.slice()) {
         return None;
     }
@@ -104,13 +97,11 @@ pub fn position(
     ))
 }
 
-/// The search for the specifier, a statement at a time. It matches by name alone: the transpiler rewrites what a
-/// statement imports from (`fs` to `node:fs`).
+/// Matches by name alone: the transpiler rewrites what a statement imports from (`fs` to `node:fs`).
 struct Search<'a> {
     site: Site,
     name: &'a [u8],
-    /// What the imports so far bind, for an export clause under them: an import that is exported is reported at the
-    /// import, as V8 reports it.
+    /// What the imports so far bind: an import that is exported is reported at the import, as V8 reports it.
     imported: Vec<(Box<[u8]>, Loc)>,
     /// The local name that an export clause exports as `name`, for the import under the clause that binds it.
     exported_local: Option<Box<[u8]>>,

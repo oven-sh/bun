@@ -129,8 +129,7 @@ pub fn parse_only_text<R>(
     parser.parse_only(f).ok()
 }
 
-/// Runs `Parser::parse_only_until` on `source`, in an arena of its own. `TYPESCRIPT` is `options.ts`. `None`: `f`
-/// answered at no statement, or `source` does not parse as far as the statement it would answer at.
+/// `Parser::parse_only_until` on `source`, in an arena of its own.
 pub fn parse_only_source_until<const TYPESCRIPT: bool, R>(
     source: &bun_ast::Source<'_>,
     options: Options<'_>,
@@ -524,11 +523,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// `parse_only`, a module-scope statement at a time: `f` gets each one alone in `stmts` as soon as it is parsed.
-    /// Nothing is parsed after the statement that `f` answers at, nor in a text that is already bundled
-    /// (`features.dont_bundle_twice`). `is_prefix`: the source is the start of a longer text. What its end cuts short
-    /// is not a statement of that text, so `f` gets a statement only if the token after it does not reach that end.
-    /// `Ok(None)`: `f` answered at no statement. `Err`: the source does not parse as far as that.
+    /// `parse_only`, one module-scope statement at a time, until `f` answers. `is_prefix`: the source is cut short.
     #[cold]
     pub fn parse_only_until<const TYPESCRIPT: bool, R>(
         mut self,

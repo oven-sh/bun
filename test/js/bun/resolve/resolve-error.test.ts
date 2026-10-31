@@ -486,10 +486,7 @@ describe.concurrent("Bun.resolve() rejections are tracked", () => {
   });
 });
 
-// An import or a re-export of a name that the other module does not export fails when the importing module is linked.
-// None of that module's code is running then, so an error that no JavaScript is waiting for has no frame to say where
-// the statement is. It is given one: the file of the statement, at the line and column that the specifier has in the
-// file as it was written.
+// A module link error says where the statement is that does not link.
 // https://github.com/oven-sh/bun/issues/5582
 describe.concurrent("module link error", () => {
   // The transpiler emits none of these lines, so an import under them is on another line in the text that is linked.
@@ -533,8 +530,7 @@ describe.concurrent("module link error", () => {
   const message = `Export named 'a' not found in module '<dir>/dep.ts'.`;
   const notFound = `SyntaxError: ${message}`;
   const basic = { ...dep, "index.ts": importer(`import { a } from "./dep.ts";`, `console.log(a);`) };
-  // A barrel with an `export { name } from` that went stale, and a module of the cycle that takes the barrel as a
-  // namespace. The namespace leaves the name out, and the link of the barrel says which statement it is.
+  // A stale `export { name } from` in a barrel that a module of its cycle imports as a namespace.
   const barrel = {
     "bar.ts": `export const present = 1;\n`,
     "index.ts": [
@@ -606,9 +602,7 @@ describe.concurrent("module link error", () => {
       error: string[];
       args?: string[];
       env?: typeof bunEnv;
-      // What differs when a test file imports the module under `bun test --isolate`. "links": the record of the module
-      // says that it is TypeScript, where the name can be a type that the other module has. "bare": the text of a file
-      // that has no extension is read for an error only when the file is the entry point.
+      // Under `bun test --isolate`: "links" (a TypeScript record may name a type), "bare" (no text is read).
       underIsolate?: "links" | "bare";
     };
     const statements: Statement[] = [
@@ -956,8 +950,7 @@ describe.concurrent("module link error", () => {
       });
     });
 
-    // `bun test --isolate` makes the record of a module from what the transpiler knows of it. JavaScriptCore parses
-    // nothing. The text of `bun -e` is no module that a test file can import.
+    // `bun test --isolate` makes the record of a module from what the transpiler knows, not from JavaScriptCore's parser.
     it.each(statements.filter(({ args }) => args?.[0] !== "-e"))(
       "under bun test --isolate: $statement",
       async ({ files, error, args = ["./index.ts"], env = bunEnv, underIsolate }) => {
@@ -1030,8 +1023,7 @@ describe.concurrent("module link error", () => {
     });
   });
 
-  // With no frame left to read in the stack, the error is printed from its line and column. Line 7 of what the
-  // transpiler emits for this file is another statement, and these are not a position in that text.
+  // With no frame in the stack, the error is printed from `line` and `column`, which are not mapped again.
   it("an error whose stack was replaced is printed at the statement", async () => {
     const files = {
       ...dep,
@@ -1088,8 +1080,7 @@ describe.concurrent("module link error", () => {
     });
   });
 
-  // A module that does not link is linked again, as the text that was read the first time, when a module that was not
-  // loaded before imports it. The statement is looked for in the file as it is then, as far as the statement.
+  // A later link of the same module looks for the statement in the file as it is then.
   it("a link that fails again after the file changed has the place of the statement in the file as it is, or none", async () => {
     const at = (line: number, column: number) => ({
       stack: `${notFound}\n    at <dir>/index.ts:${line}:${column}`,
@@ -1151,14 +1142,12 @@ describe.concurrent("module link error", () => {
     });
   });
 
-  // No more than the first mebibyte of a module is parsed for the statement: a link that fails does not build the
-  // syntax tree of a bundle.
+  // Only the first mebibyte of a module is parsed for the statement.
   it("looks for the statement in the first mebibyte of the module", async () => {
     const limit = 1024 * 1024;
     const comment = (bytes: number) => `/*${Buffer.alloc(bytes - 4, "*").toString()}*/`;
     const statement = `import { a } from "./dep.ts";`;
-    // What the mebibyte cuts short is no statement of the module. Without the rest, `export { x }` would export the
-    // import in front of it.
+    // What the mebibyte cuts short is no statement: `export { x }` must not match the import above it.
     const imports = `import { x } from "./has-x.ts";\nconsole.log(x);\n`;
     const rest = `\nfrom "./lacks-x.ts";\n`;
     const files = {
@@ -1221,8 +1210,7 @@ describe.concurrent("module link error", () => {
     },
   );
 
-  // The statement is not looked for in these cases, and the error is what it was before any was: by design, the tests
-  // of this block also pass without the change that the tests above are for.
+  // Left as on main by design: the tests of this block also pass without the change.
   describe("is left as it is", () => {
     const modules: { module: string; args: string[]; files: Files; error: string; env?: typeof bunEnv }[] = [
       {
@@ -1274,8 +1262,7 @@ describe.concurrent("module link error", () => {
       });
     });
 
-    // The text of a node:vm module is not the text of the file that its identifier names, which has this import on
-    // line 7. The error has the frames of the link() that JavaScript called.
+    // The text of a node:vm module is not the file that its identifier names.
     it("when the module is a node:vm module", async () => {
       const files = {
         ...basic,

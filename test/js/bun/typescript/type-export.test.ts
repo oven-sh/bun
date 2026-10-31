@@ -183,8 +183,7 @@ describe("import not found", () => {
     });
 });
 
-// The build does not check a name of a builtin module: the link of the executable does. The error says this and no
-// more, because an executable does not look for the statement in the modules that it holds.
+// A builtin's names are checked when the executable links, which does not look for the statement.
 test.concurrent("a name that is not found when an executable links", async () => {
   await using dir = tempDir("type-export", { "entry.mjs": `export { platform, nope } from "os";\n` });
   const { stdout, stderr, exitCode } = await compileAndRun(String(dir), dir + "/entry.mjs");

@@ -718,9 +718,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
 
 static_assert(!static_cast<uint8_t>(JSC::ModuleLinkErrorSite::Import) && static_cast<uint8_t>(JSC::ModuleLinkErrorSite::IndirectExport) == 1, "bun_jsc::module_link_error::Site");
 
-// JavaScriptCore calls this with the error it is about to throw because a statement of `importer` does not link
-// (CyclicModuleRecord.h). No code of `importer` is running then, so an error that no JavaScript waits for has no
-// frame: it gets one here, at the statement, when the statement is found in the source of `importer`.
+// JavaScriptCore calls this before it throws a module link error (CyclicModuleRecord.h).
 extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::AbstractModuleRecord* importer, JSC::ErrorInstance* error, JSC::ModuleLinkErrorSite site, const JSC::Identifier& name)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -728,13 +726,11 @@ extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObj
 
     if (error->hasMaterializedErrorInfo())
         return;
-    // The link runs under JavaScript, such as a require() of an ES module: the error has those frames, and
-    // Error.prepareStackTrace is to see them.
+    // A link that runs under JavaScript, such as a require(), keeps its frames for Error.prepareStackTrace.
     if (auto* frames = error->stackTrace(); frames && !frames->isEmpty())
         return;
 
-    // Only a text that Bun read from where the program is stored is the text its URL names. That of a plugin, of a
-    // blob or of a node:vm module is not.
+    // Only static code is the text that its URL names: not the text of a plugin, a blob or a node:vm module.
     auto* jsModule = dynamicDowncast<JSC::JSModuleRecord>(importer);
     auto* provider = jsModule ? jsModule->sourceCode().provider() : nullptr;
     if (!provider || provider->provenance() != JSC::SourceProvenance::Static)
@@ -760,8 +756,7 @@ extern "C" void Bun__locateModuleLinkError(JSC::JSGlobalObject* lexicalGlobalObj
     if (stack.isNull()) [[unlikely]]
         return;
 
-    // As on an error whose position was mapped: these say that `line` and `column` are a position in the source as it
-    // was written, to what prints an error (ZigException.cpp) and, by being ahead of them, to a debugger's preview.
+    // As a mapped error has them, and ahead of `line` and `column`: the position is one in the source as written.
     const auto& names = builtinNames(vm);
     error->putDirect(vm, names.originalLinePublicName(), jsNumber(position.line), PropertyAttribute::DontEnum | 0);
     error->putDirect(vm, names.originalColumnPublicName(), jsNumber(position.column), PropertyAttribute::DontEnum | 0);

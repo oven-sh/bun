@@ -81,8 +81,7 @@ pub(crate) fn remap_stack_frame_positions(
     }
 }
 
-/// For `Bun__locateModuleLinkError` (FormatStackTraceForJS.cpp): [`bun_jsc::module_link_error::position`], which
-/// parses with the runtime transpiler's parser.
+/// [`bun_jsc::module_link_error::position`] for `Bun__locateModuleLinkError` (FormatStackTraceForJS.cpp).
 // HOST_EXPORT(Bun__positionOfModuleLinkError, c)
 pub(crate) fn position_of_module_link_error(
     vm: &mut VirtualMachine,

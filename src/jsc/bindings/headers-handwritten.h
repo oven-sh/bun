@@ -493,8 +493,7 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
-// `bun_jsc::module_link_error::position`. `site` is a JSC::ModuleLinkErrorSite. False: the statement is not to be found
-// in the source of the module.
+// `bun_jsc::module_link_error::position`. `site` is a JSC::ModuleLinkErrorSite.
 extern "C" bool Bun__positionOfModuleLinkError(void* bunVM, const BunString* importerURL, uint8_t site, const BunString* name, uint32_t* line, uint32_t* column);
 
 namespace Inspector {

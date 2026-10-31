@@ -6696,9 +6696,7 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
-    /// The text of the module at `source_url` as it was written, empty if there is none to read. An error's source
-    /// preview and the position of a module link error both read it here, so that a URL has one text.
-    /// Sets `must_reset_parser_arena_later` when the caller owes a `ModuleLoader::reset_arena`.
+    /// The text of the module at `source_url` as it was written, empty if there is none to read.
     pub(crate) fn original_source_text(
         &mut self,
         global: &JSGlobalObject,

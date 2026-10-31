@@ -811,6 +811,87 @@ devTest("css import before create project relative", {
   },
 });
 
+devTest("adding a link tag without href does not break css hot reloading", {
+  files: {
+    "styles.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await c.js`
+      const preload = document.createElement("link");
+      preload.rel = "preload";
+      preload.as = "image";
+      preload.setAttribute("imagesrcset", "/small.png 480w, /large.png 800w");
+      const stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      const { promise, resolve } = Promise.withResolvers();
+      new MutationObserver((_, observer) => {
+        observer.disconnect();
+        resolve();
+      }).observe(document.head, { childList: true });
+      document.head.append(preload, stylesheet);
+      await promise;
+    `;
+    await c.expectErrorOverlay([]);
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          color: blue;
+        }
+      `,
+    );
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+
+devTest("a style preload of a loaded stylesheet does not keep the old styles after hot reload", {
+  files: {
+    "styles.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await c.js`
+      const preload = document.createElement("link");
+      preload.rel = "preload";
+      preload.as = "style";
+      preload.href = document.querySelector("link[rel=stylesheet]").href;
+      const { promise, resolve } = Promise.withResolvers();
+      new MutationObserver((_, observer) => {
+        observer.disconnect();
+        resolve();
+      }).observe(document.head, { childList: true });
+      document.head.append(preload);
+      await promise;
+    `;
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          color: blue;
+        }
+      `,
+    );
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

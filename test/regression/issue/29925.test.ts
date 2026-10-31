@@ -11,9 +11,9 @@
 // HELLO response to be silently dropped, so `status` never transitioned
 // back to `.connected`.
 //
-// This file mirrors the docker-based coverage in
-// `test/js/valkey/reliability/recovery.test.ts` but spawns a local
-// `redis-server` so the gate runs it without docker.
+// `test/js/valkey/reliability/recovery.test.ts` covers the same client
+// state-machine transitions against an in-process RESP mock; this file
+// exercises them against a real `redis-server` binary.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, randomPort } from "harness";

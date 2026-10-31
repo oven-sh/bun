@@ -7,6 +7,19 @@ Bun.serve({
     "/:id/:test": req => {
       expectType(req.params).is<{ id: string; test: string }>();
     },
+    "/orgs/:orgId/repos/:repoId/settings": req => {
+      expectType(req.params).is<{ orgId: string; repoId: string }>();
+    },
+    // A ':' that does not start a segment is literal text, not a parameter.
+    "/files:batchGet/:id": req => {
+      expectType(req.params).is<{ id: string }>();
+    },
+    "/v1:beta/:name/x": req => {
+      expectType(req.params).is<{ name: string }>();
+    },
+    "/static/*": req => {
+      expectType(req.params).is<{}>();
+    },
   },
   fetch: () => new Response("hello"),
   websocket: {

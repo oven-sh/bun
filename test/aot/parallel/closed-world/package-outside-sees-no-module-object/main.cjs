@@ -7,7 +7,7 @@ inner.ask().then(lines => { for (const line of lines) console.log(line); console
 module.parent: nothing of the program (object)
 module.parent.parent: nothing of the program (undefined)
 module.parent.children: nothing of the program (object)
-module.parent.require: throws TypeError
+module.parent.require: throws Error
 module.children: nothing of the program (object)
 require.main: nothing of the program (undefined)
 process.mainModule: nothing of the program (undefined)
@@ -16,7 +16,7 @@ keys of require.cache: nothing of the program (object)
 for-in over require.cache: nothing of the program (object)
 values of require.cache: nothing of the program (object)
 Module._cache: nothing of the program (object)
-module.constructor._cache: nothing of the program (undefined)
+module.constructor._cache: nothing of the program (object)
 Module._load of a file of the program: nothing of the program (undefined)
 require of a file of the program: throws Error
 require of it in the executable: throws Error

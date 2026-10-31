@@ -989,10 +989,11 @@ const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_
 // An object made from Module.prototype gets an own property. Module.prototype keeps the accessor that every module object reads through.
 static bool putOnNonModuleReceiver(JSC::JSGlobalObject* globalObject, JSValue receiver, JSC::PropertyName propertyName, JSValue value)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     JSObject* object = receiver.getObject();
     if (!object || object->inherits<JSCommonJSModulePrototype>())
         return false;
-    return object->createDataProperty(globalObject, propertyName, value, false);
+    RELEASE_AND_RETURN(scope, object->createDataProperty(globalObject, propertyName, value, false));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

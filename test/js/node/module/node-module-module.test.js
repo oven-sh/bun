@@ -1479,4 +1479,280 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/5630
+  test("every module object is an instance of Module", async () => {
+    using dir = tempDir("module-class", {
+      "child.cjs": `exports.module = module;`,
+      "main.cjs": `
+        // Read before anything loads node:module.
+        const early = module.constructor;
+        const child = require("./child.cjs");
+        const Module = require("node:module");
+        class Sub extends Module {}
+        const made = new Module("made");
+        const sub = new Sub("sub");
+        const isModule = m =>
+          m instanceof Module && m.constructor === Module && Object.getPrototypeOf(m) === Module.prototype;
+        console.log(JSON.stringify({
+          early: early === Module,
+          initPaths: typeof early._initPaths,
+          prototypeConstructor: Module.prototype.constructor === Module,
+          module: isModule(module),
+          main: isModule(require.main),
+          cache: isModule(require.cache[require.resolve("./child.cjs")]),
+          child: isModule(child.module),
+          parent: isModule(child.module.parent),
+          children: module.children.length === 1 && module.children.every(isModule),
+          made: isModule(made),
+          madeRequire: typeof made.require,
+          sub: sub instanceof Sub && sub instanceof Module && sub.constructor === Sub && sub.id === "sub",
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      early: true,
+      initPaths: "function",
+      prototypeConstructor: true,
+      module: true,
+      main: true,
+      cache: true,
+      child: true,
+      parent: true,
+      children: true,
+      made: true,
+      madeRequire: "function",
+      sub: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a write through an accessor of Module.prototype stays with the object it is written to", async () => {
+    using dir = tempDir("module-prototype-receivers", {
+      "hooked.js": `module.exports = "original";`,
+      "main.cjs": `
+        "use strict";
+        const Module = require("node:module");
+        const path = require("node:path");
+        const prototypeRequire = Module.prototype.require;
+        const defaultCompile = Module.prototype._compile;
+
+        const made = new Module("made");
+        made.require = () => "made";
+        class Sub extends Module {}
+        Sub.prototype.require = () => "sub";
+        const plain = Object.create(Module.prototype);
+        plain.id = "plain";
+        plain.paths = ["plain"];
+        plain._compile = "plain";
+
+        const hook = function hook() {};
+        Module.prototype._compile = hook;
+        // The loader calls what is written to the module object.
+        const compiled = [];
+        const js = Module._extensions[".js"];
+        Module._extensions[".js"] = function (module, filename) {
+          const compile = module._compile;
+          module._compile = function (code, file) {
+            compiled.push(path.basename(file));
+            return compile.call(this, code.replace("original", "patched"), file);
+          };
+          return js(module, filename);
+        };
+
+        console.log(JSON.stringify({
+          made: made.require("node:os"),
+          sub: new Sub("sub").require("node:os"),
+          requireOfTheModule: typeof require("node:os").platform,
+          prototypeRequire: Module.prototype.require === prototypeRequire,
+          plain: [Object.keys(plain).sort(), plain.id, module.id],
+          prototypeCompile: Module.prototype._compile === hook,
+          compileOfTheModule: module._compile === defaultCompile,
+          hooked: [require("./hooked.js"), compiled],
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      made: "made",
+      sub: "sub",
+      requireOfTheModule: "function",
+      prototypeRequire: true,
+      plain: [["_compile", "id", "paths"], "plain", "."],
+      prototypeCompile: true,
+      compileOfTheModule: true,
+      hooked: ["patched", ["hooked.js"]],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/5630
+  describe("Module._initPaths()", () => {
+    const packages = {
+      "lib-start/pkg-start/index.js": `module.exports = "start";`,
+      "lib-a/pkg-a/index.js": `module.exports = "a";`,
+      "lib-a/pkg-both/index.js": `module.exports = "both, of lib-a";`,
+      "lib-b/pkg-b/index.js": `module.exports = "b";`,
+      "home/.node_modules/pkg-home/index.js": `module.exports = "home";`,
+      "app/package.json": JSON.stringify({ name: "app" }),
+      "app/node_modules/pkg-both/index.js": `module.exports = "both, of node_modules";`,
+    };
+    const run = async (dir, args) => {
+      const root = String(dir);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: {
+          ...bunEnv,
+          NODE_PATH: path.join(root, "lib-start"),
+          HOME: path.join(root, "home"),
+          USERPROFILE: path.join(root, "home"),
+        },
+        cwd: path.join(root, "app"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    test("require() searches the directories of the last call", async () => {
+      using dir = tempDir("module-init-paths", {
+        ...packages,
+        "app/main.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          const root = path.dirname(__dirname);
+          const lib = name => path.join(root, name);
+          const attempt = fn => { try { return fn(); } catch (error) { return error.code; } };
+          const importOf = name => import(name).then(namespace => namespace.default, error => error.code);
+          const below = paths => paths.filter(entry => entry.startsWith(root)).map(entry => path.relative(root, entry).replaceAll(path.sep, "/"));
+          (async () => {
+            const out = {};
+            // A write to process.env alone changes nothing.
+            process.env.NODE_PATH = lib("lib-a");
+            out.beforeTheCall = [attempt(() => require("pkg-a")), require("pkg-start")];
+
+            module.constructor._initPaths();
+            out.afterTheCall = {
+              require: require("pkg-a"),
+              moduleRequire: module.require("pkg-a"),
+              prototypeRequire: Module.prototype.require.call(module, "pkg-a"),
+              resolve: below([require.resolve("pkg-a")]),
+              resolveFilename: below([Module._resolveFilename("pkg-a", module)]),
+              createRequire: Module.createRequire(__filename)("pkg-a"),
+              directoryOfTheStart: attempt(() => require.resolve("pkg-start")),
+              nodeModulesFirst: require("pkg-both"),
+              home: require("pkg-home"),
+              imports: [await importOf("pkg-start"), await importOf("pkg-a")],
+              globalPaths: below(Module.globalPaths),
+              lookupPaths: below(Module._resolveLookupPaths("pkg-a", module)),
+              resolvePaths: below(require.resolve.paths("pkg-a")),
+              lookupPathsOfARelativeRequest: below(Module._resolveLookupPaths("./x", module)),
+            };
+
+            // The array is a copy.
+            Module.globalPaths.unshift(lib("lib-b"));
+            out.arrayChanged = attempt(() => require("pkg-b"));
+
+            process.env.NODE_PATH = [lib("lib-b"), lib("lib-a")].join(path.delimiter);
+            Module._initPaths();
+            out.secondCall = [require("pkg-b"), below([require.resolve("pkg-a")])];
+
+            delete process.env.NODE_PATH;
+            const { _initPaths } = Module;
+            _initPaths();
+            out.withoutNodePath = [attempt(() => require.resolve("pkg-b")), attempt(() => require.resolve("pkg-start")), below(Module.globalPaths)];
+            out.dot = attempt(() => require("."));
+            console.log(JSON.stringify(out));
+          })();
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["--no-install", "main.cjs"]);
+      expect(stderr).toBe("");
+      const listed = ["lib-a", "home/.node_modules", "home/.node_libraries"];
+      expect(JSON.parse(stdout)).toEqual({
+        beforeTheCall: ["MODULE_NOT_FOUND", "start"],
+        afterTheCall: {
+          require: "a",
+          moduleRequire: "a",
+          prototypeRequire: "a",
+          resolve: ["lib-a/pkg-a/index.js"],
+          resolveFilename: ["lib-a/pkg-a/index.js"],
+          createRequire: "a",
+          directoryOfTheStart: "MODULE_NOT_FOUND",
+          nodeModulesFirst: "both, of node_modules",
+          home: "home",
+          // Node never searches these directories for an import. Bun keeps those of the start for it.
+          imports: ["start", "ERR_MODULE_NOT_FOUND"],
+          globalPaths: listed,
+          lookupPaths: ["app/node_modules", "node_modules", ...listed],
+          resolvePaths: ["app/node_modules", "node_modules", ...listed],
+          lookupPathsOfARelativeRequest: ["app"],
+        },
+        arrayChanged: "MODULE_NOT_FOUND",
+        secondCall: ["b", ["lib-a/pkg-a/index.js"]],
+        withoutNodePath: ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", ["home/.node_modules", "home/.node_libraries"]],
+        dot: "MODULE_NOT_FOUND",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a require function of an ES module searches them too", async () => {
+      using dir = tempDir("module-init-paths-esm", {
+        ...packages,
+        "app/main.mjs": `
+          import Module, { createRequire } from "node:module";
+          import path from "node:path";
+          const require = createRequire(import.meta.url);
+          process.env.NODE_PATH = path.join(import.meta.dirname, "..", "lib-a");
+          Module._initPaths();
+          const imported = await import("pkg-a").then(namespace => namespace.default, error => error.code);
+          console.log(JSON.stringify([require("pkg-a"), import.meta.require("pkg-a"), imported]));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["--no-install", "main.mjs"]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["a", "a", "ERR_MODULE_NOT_FOUND"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("the directories of one test file do not reach the next under --isolate", async () => {
+      using dir = tempDir("module-init-paths-isolate", {
+        ...packages,
+        "app/1-lists.test.js": `
+          const path = require("node:path");
+          test("lists lib-a", () => {
+            process.env.NODE_PATH = path.join(__dirname, "..", "lib-a");
+            require("node:module")._initPaths();
+            expect(require("pkg-a")).toBe("a");
+          });
+        `,
+        "app/2-finds-nothing.test.js": `
+          test("finds nothing of lib-a", () => {
+            expect(() => require.resolve("pkg-a")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["test", "--isolate", "./1-lists.test.js", "./2-finds-nothing.test.js"]);
+      expect(stdout + stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

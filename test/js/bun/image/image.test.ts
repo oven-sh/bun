@@ -1160,6 +1160,98 @@ describe("Bun.Image", () => {
       expect(() => new Bun.Image(src).placeholder("hash" as any)).toThrow(/dataurl/);
     });
 
+    // ThumbHash stores the aspect ratio as the L count of the short side: 1 to 7, or 1 to 5 when the source has
+    // transparency. The render is 32px on the long side. Each size is what the reference decoder (npm `thumbhash`
+    // 0.1.1, `thumbHashToRGBA(rgbaToThumbHash(w, h, rgba))`) returns for the hashed pixels.
+    test.each([
+      // Opaque: count = round(7 * short / long).
+      [100, 100, false, 32, 32], // 7
+      [100, 50, false, 32, 18], // 4
+      [100, 36, false, 32, 14], // 3
+      [100, 35, false, 32, 9], // 2
+      [100, 22, false, 32, 9], // 2
+      [100, 21, false, 32, 5], // 1
+      [100, 1, false, 32, 5], // 1
+      [36, 100, false, 14, 32], // 3
+      [35, 100, false, 9, 32], // 2
+      [21, 100, false, 5, 32], // 1
+      // With transparency: count = round(5 * short / long).
+      [100, 100, true, 32, 32], // 5
+      [100, 50, true, 32, 19], // 3
+      [100, 49, true, 32, 13], // 2
+      [100, 30, true, 32, 13], // 2
+      [100, 29, true, 32, 6], // 1
+      [100, 1, true, 32, 6], // 1
+      [50, 100, true, 19, 32], // 3
+      [49, 100, true, 13, 32], // 2
+      [29, 100, true, 6, 32], // 1
+      // Over 100px: box-resized to 100x25, 13x100 and 100x33 before the hash.
+      [400, 100, false, 32, 9],
+      [120, 900, false, 5, 32],
+      [300, 100, true, 32, 13],
+    ])(".placeholder() size: %d x %d (transparency: %p) -> %d x %d", async (w, h, alpha, pw, ph) => {
+      const img = new Bun.Image(makePng(w, h, (x, y) => [x & 255, y & 255, 128, alpha && (x + y) % 4 === 0 ? 0 : 255]));
+      const meta = await new Bun.Image(await img.placeholder()).metadata();
+      expect({ png: [meta.width, meta.height], image: [img.width, img.height] }).toEqual({
+        png: [pw, ph],
+        image: [pw, ph],
+      });
+    });
+
+    // One source for each header class: a stored count of 1 to 7 (1 to 5 with transparency), wide and tall. The last
+    // column is the reference decoder's RGBA at 3x3 pixels of its render. A count of 1 or 2 keeps the L coefficients
+    // of a count of 3 on a grid of another shape. The other rows pass without the fix: they hold the layout that
+    // `decode` reads for each count. The sources are asymmetric, so no coefficient sits on a rounding tie where the
+    // reference's f64 and this encoder's f32 pick different nibbles.
+    test.each([
+      // Opaque, wide.
+      [68, 11, false, 32, 5, "001b4cff009c6dff23676bff3c0e35ff72a46cff8f6969ff491235ff7ea76dff936868ff"], // 1
+      [79, 26, false, 32, 9, "042b38ff489183ff2b4454ff453637ff839980ff59444dff624939ff909f7aff604a4eff"], // 2
+      [77, 29, false, 32, 14, "0f2d38ff44947eff314657ff4c3737ff7c9a7cff5e4351ff654c3aff85a175ff634953ff"], // 3
+      [74, 43, false, 32, 18, "182e26ff4c827cff444557ff595032ff8ea78fff6f545bff605c28ff8cab81ff6d5a58ff"], // 4
+      [72, 48, false, 32, 23, "243128ff528182ff504f60ff605533ff8da490ff745961ff686b2bff8fb288ff746363ff"], // 5
+      [93, 74, false, 32, 27, "45643cff7a7c83ff667f6dff698747ff828075ff88977bff77984dff716d60ff909184ff"], // 6
+      [97, 95, false, 32, 32, "4d6235ff828986ff7f907dff6f8045ff76766bff9a9b8cff84984fff6e6b5cff8c7f80ff"], // 7
+      // Opaque, tall.
+      [10, 83, false, 5, 32, "001611ff461c12ff4d2930ff1d3f08ff8a5319ff906137ff2e8800ff929c0aff91a827ff"], // 1
+      [26, 81, false, 9, 32, "301b0aff56416aff656a80ff515201ff70705fff7b9378ff5d8f00ff7fae60ff81c57dff"], // 2
+      [47, 97, false, 14, 32, "465729ff60866aff6e9c8bff637323ff849a6fff7a7e7eff76a229ff7e9563ff835c8dff"], // 3
+      [38, 73, false, 18, 32, "32000bff617386ff598d6bff5b4005ff83a97eff7fb06cff5a6500ff8fbc80ff7c8a6aff"], // 4
+      [68, 100, false, 23, 32, "33611fff797499ff776b7eff577d26ff8d8492ff7e736eff73a236ff777e76ff8e9e81ff"], // 5
+      [78, 85, false, 27, 32, "3f6027ff746f91ff5a5a63ff577926ff7f7b83ff6a6e5eff719732ff75786eff7c8c6cff"], // 6
+      [77, 82, false, 32, 32, "486d35ff747083ff5d5a5fff608138ff7f797aff6c6b5eff769d45ff73786aff788a6bff"], // 7
+      // With transparency, wide.
+      [63, 17, true, 32, 6, "525b713647956b74677b82b6745665556c9264868b747ccf7659635c709565938b707cd9"], // 1
+      [63, 22, true, 32, 13, "565c6d3f4b97687c68797cbd7455654e6e94668088707bc97658606274986999866a7be0"], // 2
+      [66, 39, true, 32, 19, "615f65626497748a69677ac471616267799d779a7a677dc7736a58777fa875a5756576b0"], // 3
+      [62, 55, true, 32, 26, "62645769689b708d746d79b1756459747e9d78ae7f6277b1706f4e8a7eac74b97968708c"], // 4
+      [69, 65, true, 32, 32, "576a457073907e926c656fa76a73486d889c86b67e6f777e6f8a3e8687ad78b77377645a"], // 5
+      // With transparency, tall.
+      [16, 93, true, 6, 32, "4d6b2f3c6e702a4e717b7362586c2d7a7b78307f7d858099589f12bc7fb524c87fca81df"], // 1
+      [28, 72, true, 13, 32, "67764a216c79684e6c8a756c717f435e7a88677f789a76a36e9433a07da661c879b974eb"], // 2
+      [55, 95, true, 19, 32, "606f41737c9b787d797c80966e7d44847f9c71b77773759a769f3da97fb1648c7e88725b"], // 3
+      [66, 78, true, 26, 32, "5c6a44758397868a706470a96c784b778fa189b6786c72896c8c43968cb480a16d776159"], // 4
+      [69, 70, true, 32, 32, "576a40737b94868f6b626fa968734474899a87b97b6c74796d8c3e9187ad7bb272796356"], // 5
+    ])(".placeholder() pixels: %d x %d (transparency: %p) -> %d x %d", async (w, h, alpha, pw, ph, at) => {
+      const src = makePng(w, h, (x, y) => [
+        (x * y) % 256,
+        (5 * x + 2 * y) % 256,
+        (x * x) % 256,
+        alpha ? (40 + 3 * x + 2 * y) % 256 : 255,
+      ]);
+      const got = decodePngRaw(await new Bun.Image(await new Bun.Image(src).placeholder()).png().bytes());
+      expect([got.w, got.h]).toEqual([pw, ph]);
+      const lattice = (n: number) => [0.1, 0.4, 0.75].map(f => Math.floor(n * f));
+      const sampled: number[] = [];
+      for (const y of lattice(ph)) {
+        for (const x of lattice(pw)) sampled.push(...got.data.subarray((y * pw + x) * 4, (y * pw + x) * 4 + 4));
+      }
+      // The last step truncates, so f32 against f64 can land one level apart. Snap those onto the expected
+      // value, so that a failure prints the channels that really differ.
+      const want = [...Buffer.from(at, "hex")];
+      expect(sampled.map((v, i) => (Math.abs(v - want[i]) <= 1 ? want[i] : v))).toEqual(want);
+    });
+
     test(".jpeg({progressive: true}) emits SOF2 (multi-scan)", async () => {
       const baseline = await new Bun.Image(gradientPng).jpeg({ quality: 80 }).bytes();
       const prog = await new Bun.Image(gradientPng).jpeg({ quality: 80, progressive: true }).bytes();

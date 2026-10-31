@@ -133,11 +133,16 @@ await img.write(Bun.s3.file("bucket/out.webp"));
 
 ## Placeholders
 
-`.placeholder()` returns a low-quality placeholder to inline in HTML before the real image loads. The placeholder is a [ThumbHash](https://evanw.github.io/thumbhash/)-rendered ≤32px blur as a `data:` URL. It is ~400–700 bytes and needs no client-side decoder:
+`.placeholder()` returns a low-quality placeholder to inline in HTML before the real image loads. The placeholder is a [ThumbHash](https://evanw.github.io/thumbhash/)-rendered ≤32px blur as a `data:` URL. It is ~400–700 bytes and needs no client-side decoder.
+
+The placeholder's aspect ratio is approximate, because ThumbHash stores the ratio in 3 bits. A 3:2 photo gets a 32×23 placeholder. The most elongated placeholder is 32×5, or 32×6 when the source has transparency. Give the `<img>` the source's shape with CSS `aspect-ratio`, so that the layout stays the same when the real image loads:
 
 ```ts
-const lqip = await Bun.file("hero.jpg").image().placeholder();
-// <img src={lqip} … /> — then swap to the real URL on load.
+const img = Bun.file("hero.jpg").image();
+const { width, height } = await img.metadata();
+const lqip = await img.placeholder();
+// <img src={lqip} style={{ aspectRatio: `${width} / ${height}` }} … />
+// Swap `src` to the real URL on load.
 ```
 
 For coarse-to-fine rendering of the image _itself_, encode a progressive JPEG:

@@ -133,6 +133,32 @@ describe("bundler files option", () => {
     expect(output).toContain("B:");
   });
 
+  test("in-memory file imported twice by one file", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: {
+        "/entry.js": `
+          import lib from "./lib.js";
+          import { named } from "./lib.js";
+          console.log(lib, named);
+        `,
+        "/lib.js": `
+          export default "default-value";
+          export const named = "named-value";
+        `,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain("default-value");
+    expect(output).toContain("named-value");
+    // The second statement is bundled too. It is not left as an import of a path that exists only in memory.
+    expect(output).not.toMatch(/^\s*import\b/m);
+  });
+
   test("in-memory file with nested imports", async () => {
     const result = await Bun.build({
       entrypoints: ["/entry.js"],

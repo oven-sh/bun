@@ -1409,6 +1409,99 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
 });
 
+const alphaBetaGammaBarrel = {
+  "node_modules/barrel-lib/package.json": JSON.stringify({
+    name: "barrel-lib",
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/barrel-lib/index.js": `
+    export { Alpha } from './alpha.js';
+    export { Beta } from './beta.js';
+    export { Gamma } from './gamma.js';
+  `,
+  "node_modules/barrel-lib/alpha.js": `export const Alpha = () => "ALPHA";`,
+  "node_modules/barrel-lib/beta.js": `export const Beta = () => "BETA";`,
+  "node_modules/barrel-lib/gamma.js": `export const Gamma = () => "GAMMA";`,
+};
+// Which submodules of the barrel are in the client bundle.
+async function barrelSubmodulesInBundle(dev: Dev) {
+  const bundle = await clientBundle(dev);
+  return ["ALPHA", "BETA", "GAMMA"].filter(name => bundle.includes(`"${name}"`));
+}
+
+// The same as #28886 for an import that an onResolve plugin declined. The resolver
+// then links the surviving record by index, and the record keeps its specifier.
+devTest("barrel optimization: two import statements from a barrel that a plugin declined", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./decline-plugin.ts"]
+    `,
+    "decline-plugin.ts": `
+      export default {
+        name: "decline",
+        setup(build) {
+          build.onResolve({ filter: /^barrel-lib$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { Beta } from 'barrel-lib';
+      console.log('got: ' + Alpha() + ' ' + Beta());
+    `,
+    ...alphaBetaGammaBarrel,
+  },
+  async test(dev) {
+    expect(await barrelSubmodulesInBundle(dev)).toEqual(["ALPHA", "BETA"]);
+  },
+});
+
+// An import that a plugin answers external is not a module. Here its path is the path
+// of the barrel, and it must not request Beta from the barrel through that text.
+// "./late.ts" is answered after the external answer, so index.ts is scanned for its
+// requests once more while the external record holds the barrel's path.
+devTest("barrel optimization: an external import with the path of the barrel requests nothing", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./barrel-path-plugin.ts"]
+    `,
+    "barrel-path-plugin.ts": `
+      import * as path from "path";
+      export default {
+        name: "barrel-path",
+        setup(build) {
+          const externalAnswered = Promise.withResolvers();
+          build.onResolve({ filter: /^external-beta$/ }, args => {
+            externalAnswered.resolve();
+            return { path: path.join(args.resolveDir, "node_modules/barrel-lib/index.js"), external: true };
+          });
+          build.onResolve({ filter: /^\\.\\/late\\.ts$/ }, async args => {
+            await externalAnswered.promise;
+            return { path: path.join(args.resolveDir, "late.ts") };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { Beta } from 'external-beta';
+      import { late } from './late.ts';
+      console.log('got: ' + Alpha() + ' ' + Beta() + ' ' + late);
+    `,
+    "late.ts": `export const late = "LATE";`,
+    ...alphaBetaGammaBarrel,
+  },
+  async test(dev) {
+    expect(await barrelSubmodulesInBundle(dev)).toEqual(["ALPHA"]);
+  },
+});
+
 // HMR lowering merges the statements of one import path into the first one. The
 // import record of each later statement is never resolved.
 const abBarrel = `export { a } from './a.js'; export { b } from './b.js';`;

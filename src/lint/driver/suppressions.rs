@@ -101,9 +101,14 @@ impl Suppressions {
     }
 
     /// `save`. The output matches `stringify(suppressions, { space: 2 })` from `json-stable-stringify`. See
-    /// [`fs::write_new`] for `cwd`.
+    /// [`fs::write_new`] for `cwd` and `stdout`.
     #[optimize(size)]
-    pub(crate) fn save(&mut self, cwd: &[u8], path: &[u8]) -> Result<(), Fatal> {
+    pub(crate) fn save(
+        &mut self,
+        cwd: &[u8],
+        path: &[u8],
+        stdout: bun_core::Fd,
+    ) -> Result<(), Fatal> {
         bun_lint::utils::sort::sort_by(&mut self.0, |a, b| a.0.cmp(&b.0));
         let mut out = b"{".to_vec();
         for (i, (file, rules)) in self.0.iter_mut().enumerate() {
@@ -119,7 +124,7 @@ impl Suppressions {
             out.extend_from_slice(if rules.is_empty() { b"}" } else { b"\n  }" });
         }
         out.extend_from_slice(if self.0.is_empty() { b"}" } else { b"\n}" });
-        fs::write_new(cwd, path, &out)
+        fs::write_new(cwd, path, &out, stdout)
             .map_err(|why| Fatal([b"Cannot write ", path, b": ", &why].concat()))
     }
 

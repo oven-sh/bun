@@ -67,8 +67,8 @@ import { $ } from "bun";
 
 const { stdout, stderr } = await $`echo "Hello!"`.quiet();
 
-console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
-console.log(stderr); // Buffer(0) []
+console.log(stdout); // <Buffer 48 65 6c 6c 6f 21 0a>
+console.log(stderr); // <Buffer >
 ```
 
 ---
@@ -452,7 +452,7 @@ import { $ } from "bun";
 
 const result = await $`echo "Hello World!"`.blob();
 
-console.log(result); // Blob(13) { size: 13, type: "text/plain" }
+console.log(result); // Blob (13 bytes)
 ```
 
 ---

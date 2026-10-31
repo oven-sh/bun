@@ -7,6 +7,7 @@ import {
   bunExe,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
+  isFreeBSD,
   isIPv6,
   isLinux,
   isMacOS,
@@ -947,11 +948,14 @@ describe.skipIf(isWindows)("a connected socket with datagrams queued ahead of an
 
   const datagrams = ["data 1", "data 2", "data 3"];
   const error = "error ECONNREFUSED";
-  // Linux reports a pending error before the queued datagrams. macOS and
-  // FreeBSD hand out the datagrams first, then the error, and clear it.
+  // Linux reports a pending error before the queued datagrams. macOS hands out
+  // the datagrams first, then the error, and clears it.
   const events = isLinux ? [error, ...datagrams] : [...datagrams, error];
 
-  test("gets the datagrams and the error", async () => {
+  // FreeBSD's kernel does what macOS does, but the batch there is libc's
+  // recvmmsg, which returns the count and drops that error: the socket gets
+  // the datagrams and never the error.
+  test.todoIf(isFreeBSD)("gets the datagrams and the error", async () => {
     expect(await run()).toEqual({ events, closed: false, exitCode: 0 });
   });
 

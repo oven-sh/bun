@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bun_core::ZStr;
+use bun_core::{ZBox, ZStr};
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, target_executable};
@@ -143,25 +143,45 @@ impl Trimming {
     }
 }
 
-pub(super) fn decide_trimming(
+fn find_settings_and_template(
     request: &mut CompileRequest<'_, '_>,
-    used: &UsedFeatures,
-) -> Result<Trimming, CompileFailure> {
-    let options = request.options;
-    let trim = &options.trim;
+) -> Result<(bun_trim::ExecutableSettings, ZBox), CompileFailure> {
     let executable = &mut request.executable;
     let mut settings = trim_settings_of(
         executable.flags,
         executable.exec_argv,
         executable.embeds_source_maps,
     );
-    add_build_option_requirements(options, &mut settings.exec_argv);
+    add_build_option_requirements(request.options, &mut settings.exec_argv);
     let template = target_executable(
         executable.target,
         executable.env,
         executable.executable_path,
     )
     .map_err(CompileFailure::Executable)?;
+    Ok((settings, template))
+}
+
+/// What the same command line leaves out of the executable without `--trim`.
+pub(super) fn plan_without_trim_flag(
+    request: &mut CompileRequest<'_, '_>,
+    used: &UsedFeatures,
+) -> Result<Option<TrimPlan>, CompileFailure> {
+    let trim = TrimRequest {
+        removes_unused: false,
+        ..request.options.trim.clone()
+    };
+    let (settings, template) = find_settings_and_template(request)?;
+    plan_trimming(used, &settings, &trim, &template)
+}
+
+pub(super) fn decide_trimming(
+    request: &mut CompileRequest<'_, '_>,
+    used: &UsedFeatures,
+) -> Result<Trimming, CompileFailure> {
+    let options = request.options;
+    let trim = &options.trim;
+    let (settings, template) = find_settings_and_template(request)?;
 
     let plan = match request.product {
         CompileProduct::Executable { .. } => plan_trimming(used, &settings, trim, &template)?,

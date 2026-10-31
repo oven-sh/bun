@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for the timers of Bun, which the jsc shell does not provide" }

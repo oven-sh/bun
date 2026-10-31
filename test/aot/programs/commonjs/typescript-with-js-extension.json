@@ -1,1 +1,0 @@
-{ "build": ["--loader", ".js:ts"], "reference": "compiled", "skipInShell": "the shell has no --loader" }

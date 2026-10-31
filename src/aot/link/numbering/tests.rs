@@ -190,7 +190,7 @@ fn define_variable(unit: &mut TestUnit, symbol: u32) -> Reference {
     let id = unit
         .fragment
         .declare_variable(test_variable_key(unit.file.0, symbol));
-    let definition = synthetic_export_variable(name, unit.module, ExportWriter::Loader);
+    let definition = synthetic_export_variable(name, unit.module, ExportWriter::Loader, true);
     unit.fragment.define_variable(id, definition);
     Reference::Variable(id)
 }

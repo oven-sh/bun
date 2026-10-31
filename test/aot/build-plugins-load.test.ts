@@ -12,6 +12,7 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => modules[args
 
 buildBothWays("compile/aot/what the plugins of Bun.build answer", {
   "loaders for code: js, jsx, ts, tsx": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck
 import { js } from "virtual:js"; import { jsx } from "virtual:jsx"; import { ts } from "virtual:ts"; import { tsx } from "virtual:tsx";
@@ -195,6 +196,7 @@ build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "ex
     ],
   },
   "relative imports from a module in a namespace": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck\nimport { value } from "virtual:top"; console.log(value);`,
       "beside.ts": `export const beside = "beside";`,

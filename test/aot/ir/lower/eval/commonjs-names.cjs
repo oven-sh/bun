@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}commonjs-names"
+// CHECK: module [[entry]] path="{{*}}commonjs-names.cjs"
 // CHECK: evalscope [[scope]] flags=[IsInFunction, AllowsNewTarget] bindings=
 // CHECK: {name="exports" depth=1 layout=[[environment]] field=[[exports]] operand=[[names]]}
 // CHECK: {name="require" depth=1 layout=[[environment]] field=[[require]] operand=[[names]]}

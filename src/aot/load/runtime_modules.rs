@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use bun_ast::Target;
-use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
+use bun_builtin_sources::{Archive, Manifest, PartSeenByEveryFile, VIRTUAL_ROOT};
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
@@ -35,6 +36,7 @@ pub(crate) enum RuntimeResolution {
 struct RuntimeFile {
     kind: RuntimeFileKind,
     comes_with_module: bool,
+    is_seen_only_by_name: bool,
     archive_name: Box<[u8]>,
     contents: Option<&'static [u8]>,
 }
@@ -48,6 +50,8 @@ pub(crate) struct RuntimeModules {
     answers_modules_of_own_tests: bool,
     aliases: Cfg,
     files: FxHashMap<Vec<u8>, RuntimeFile>,
+    /// In ascending order. The position of a path is the number of its file.
+    paths: Vec<Vec<u8>>,
     directories: FxHashMap<Vec<u8>, DirectoryEntries>,
     public_specifiers: Vec<(HostModuleId, &'static [u8])>,
 }
@@ -59,8 +63,11 @@ const DECLARATION_FILES: [&[u8]; 2] = [b"builtins.d.ts", b"private.d.ts"];
 impl RuntimeModules {
     pub(crate) fn new(archive: &'static Archive, omits_builtin_modules: bool) -> RuntimeModules {
         let files = collect_files(archive);
+        let mut paths: Vec<Vec<u8>> = files.keys().cloned().collect();
+        paths.shared_sort_unstable();
         RuntimeModules {
             archive,
+            paths,
             omits_builtin_modules,
             answers_modules_of_own_tests: runs_own_tests(),
             aliases: Cfg::default(),
@@ -87,6 +94,7 @@ impl RuntimeModules {
             if let Some(file) = self.files.get_mut(path) {
                 let text: &'static [u8] = text.clone().leak();
                 file.contents = Some(text);
+                file.is_seen_only_by_name = false;
             }
         }
         self
@@ -94,6 +102,24 @@ impl RuntimeModules {
 
     pub(crate) fn file_kind(&self, path: &[u8]) -> Option<RuntimeFileKind> {
         self.files.get(path).map(|file| file.kind)
+    }
+
+    pub(crate) fn file_count(&self) -> usize {
+        self.paths.len()
+    }
+
+    pub(crate) fn number_of(&self, path: &[u8]) -> Option<u32> {
+        let found = self.paths.binary_search_by(|it| (**it).cmp(path));
+        found.ok().map(|number| number as u32)
+    }
+
+    pub(crate) fn path_of(&self, number: u32) -> &[u8] {
+        &self.paths[number as usize]
+    }
+
+    /// Whether only the files that name the file at `path` see what it declares.
+    pub(crate) fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
+        (self.files.get(path)).is_some_and(|file| file.is_seen_only_by_name)
     }
 
     pub(crate) fn is_directory(&self, path: &[u8]) -> bool {
@@ -110,6 +136,39 @@ impl RuntimeModules {
             Some(contents) => Some(Cow::Borrowed(contents)),
             None => Archive::read(&file.archive_name).map(Cow::Owned),
         }
+    }
+
+    fn part_seen_by_every_file(&self, path: &[u8]) -> Option<&'static PartSeenByEveryFile> {
+        let file = self.files.get(path).filter(|it| it.contents.is_none())?;
+        let manifest = self.archive.manifest();
+        manifest.part_seen_by_every_file(&file.archive_name)
+    }
+
+    /// Whether a file that does not name the file at `path` sees only a part of it.
+    pub(crate) fn is_seen_in_part(&self, path: &[u8]) -> bool {
+        self.part_seen_by_every_file(path).is_some()
+    }
+
+    pub(crate) fn read_part_seen_by_every_file(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        let part = self.part_seen_by_every_file(path)?;
+        let mut text = self.read(path)?.into_owned();
+        let mut kept: Vec<(u32, u32)> = part.seen.iter().chain(&part.asked).copied().collect();
+        kept.push((text.len() as u32, 0));
+        kept.sort_unstable();
+        let mut blank_from = 0;
+        for (start, end) in kept {
+            leave_blank(&mut text[blank_from..start as usize]);
+            blank_from = end as usize;
+        }
+        Some(Cow::Owned(text))
+    }
+
+    pub(crate) fn is_seen_by_every_file(&self, path: &[u8], position: u32) -> bool {
+        let Some(part) = self.part_seen_by_every_file(path) else {
+            return true;
+        };
+        let after = part.seen.partition_point(|it| it.0 <= position);
+        after > 0 && position < part.seen[after - 1].1
     }
 
     pub(crate) fn resolve_module(
@@ -299,13 +358,40 @@ fn collect_public_specifiers(manifest: &Manifest) -> Vec<(HostModuleId, &'static
     specifiers
 }
 
+/// Every line stays as long as it is, so what follows stands where it stood.
+fn leave_blank(text: &mut [u8]) {
+    let mut rest = &mut *text;
+    while let Some(line_end) = strings::index_of_char_usize(rest, b'\n') {
+        rest[..line_end].fill(b' ');
+        rest = &mut rest[line_end + 1..];
+    }
+    rest.fill(b' ');
+    let (open, close) = (
+        strings::index_of(text, b"  "),
+        strings::last_index_of(text, b"  "),
+    );
+    if let (Some(open), Some(close)) = (open, close)
+        && open + 2 <= close
+    {
+        text[open..open + 2].copy_from_slice(b"/*");
+        text[close..close + 2].copy_from_slice(b"*/");
+    }
+}
+
 fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     let manifest = archive.manifest();
     let mut files = FxHashMap::default();
-    let mut add = |archive_name: &[u8], kind, contents| {
+    let mut add = |archive_name: &[u8], kind, contents: Option<&'static [u8]>| {
+        let is_code = match kind {
+            RuntimeFileKind::Module(_) | RuntimeFileKind::Functions => true,
+            RuntimeFileKind::Declarations | RuntimeFileKind::Configuration => false,
+        };
         let file = RuntimeFile {
             kind,
             comes_with_module: false,
+            is_seen_only_by_name: is_code
+                && contents.is_none()
+                && !manifest.declares_for_every_file(archive_name),
             archive_name: archive_name.into(),
             contents,
         };
@@ -337,6 +423,7 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
         let file = RuntimeFile {
             kind: RuntimeFileKind::Declarations,
             comes_with_module: true,
+            is_seen_only_by_name: false,
             archive_name: name.clone(),
             contents: None,
         };
@@ -436,6 +523,93 @@ mod tests {
             source_count += 1;
         }
         assert!(source_count > 0);
+    }
+
+    #[test]
+    fn a_file_that_waits_for_its_name_declares_nothing_for_other_files() {
+        use bun_sema::hir::ModuleName;
+        use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+        let runtime = runtime_modules();
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let waiting = runtime.files.iter().filter(|it| it.1.is_seen_only_by_name);
+        let mut count = 0;
+        for (path, _) in waiting {
+            let options = CompileParseOptions {
+                path,
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: true,
+                reads_jsdoc: false,
+                keeps_function_directives: false,
+            };
+            let text = runtime.read(path).unwrap();
+            let hir = parse_for_compile(session.arena(), &options, &text, &atoms);
+            let mut names = hir.modules.iter().map(|module| module.name);
+            let name = BStr::new(path);
+            assert!(names.all(|it| matches!(it, ModuleName::Ident(_))), "{name}");
+            count += 1;
+        }
+        assert!(count > 100);
+        let read_at_once = [RuntimeModule::NodeNet, RuntimeModule::NodeEvents];
+        for module in read_at_once {
+            assert!(!runtime.is_seen_only_by_name(runtime.module_path(module).unwrap()));
+        }
+        for path in runtime.declaration_paths() {
+            assert!(!runtime.is_seen_only_by_name(&path));
+        }
+    }
+
+    #[test]
+    fn the_part_that_every_file_sees_asks_and_declares_what_the_whole_file_does() {
+        use bun_sema::hir::ModuleName;
+        use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+        let runtime = runtime_modules();
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let (mut whole_length, mut seen_length) = (0, 0);
+        for path in runtime
+            .files
+            .keys()
+            .filter(|path| runtime.is_seen_in_part(path))
+        {
+            let options = CompileParseOptions {
+                path,
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: true,
+                reads_jsdoc: false,
+                keeps_function_directives: false,
+            };
+            let name = BStr::new(path);
+            let whole = runtime.read(path).unwrap();
+            let part = runtime.read_part_seen_by_every_file(path).unwrap();
+            assert_eq!(whole.len(), part.len(), "{name}");
+            let lines = |text: &[u8]| strings::count_char(text, b'\n');
+            assert_eq!(lines(&whole), lines(&part), "{name}");
+            let [whole, part] = [&whole, &part]
+                .map(|text| parse_for_compile(session.arena(), &options, text, &atoms));
+            assert!(!part.has_errors, "{name}");
+            let asked = |hir: &bun_sema::hir::File| -> Vec<_> {
+                let uses = hir.specifier_uses.iter();
+                uses.map(|it| (it.spec, it.pos, it.kind.is_dynamic()))
+                    .collect()
+            };
+            assert_eq!(asked(&whole), asked(&part), "{name}");
+            let declared = |hir: &bun_sema::hir::File| {
+                let names = hir.modules.iter().map(|module| module.name);
+                names
+                    .filter(|it| !matches!(it, ModuleName::Ident(_)))
+                    .count()
+            };
+            assert_eq!(declared(&whole), declared(&part), "{name}");
+            whole_length += whole.source_len as usize;
+            let kept = runtime.part_seen_by_every_file(path).unwrap();
+            let kept = kept.seen.iter().chain(&kept.asked);
+            seen_length += kept.map(|it| (it.1 - it.0) as usize).sum::<usize>();
+        }
+        assert!(whole_length > 1_000_000);
+        assert!(seen_length * 3 < whole_length);
     }
 
     #[test]

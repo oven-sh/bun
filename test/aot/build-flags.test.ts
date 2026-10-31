@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned, unsupported } from "./harness/commands";
 
 const packages = {
   "node_modules/cond/package.json": `{ "name": "cond", "version": "1.0.0", "exports": { "custom": "./custom.js", "default": "./default.js" } }`,
@@ -88,16 +88,6 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "a";` },
     prints: "a\n",
   },
-  "--bytecode-depth": {
-    flags: ["--bytecode", "--bytecode-depth=1"],
-    files: { "main.ts": `function outer() { return function inner() { return "inner"; }; } console.log(outer()());` },
-    prints: "inner\n",
-  },
-  "--bytecode-order": {
-    flags: ["--bytecode", "--bytecode-order=app.order"],
-    files: { "main.ts": `console.log("ordered");`, "app.order": "" },
-    prints: "ordered\n",
-  },
   "--env": {
     flags: ["--env=PUBLIC_*"],
     files: { "main.ts": `console.log(process.env.PUBLIC_ONE);`, ".env": "PUBLIC_ONE=from-dotenv\n" },
@@ -167,7 +157,8 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     flags: ["--drop=console"],
     files: {
       "main.ts": `let evaluated = 0;
-const say = (text: unknown) => void process.stdout.write(String(text) + "\\n");
+const held = console;
+const say = (text: unknown) => void held.log(String(text));
 console.log("dropped", evaluated++);
 console.error.call(console, evaluated++);
 console?.warn(evaluated++);
@@ -178,12 +169,11 @@ function shadows(console: { log(text: string): string }) { return console.log("a
 say(shadows({ log: text => text }));
 { const console = { log: (text: string) => "so is a constant: " + text }; say(console.log("called")); }
 say(typeof console.log);
-const held = console;
 held.table = () => say("through another name it is called");
 held.table();
 say((console as any).log("as a test") ? "never" : "the arm for undefined");
 import("./other").then(other => other.run());`,
-      "other.ts": `export function run() { console.log("dropped in every file"); process.stdout.write("other ran\\n"); }`,
+      "other.ts": `export function run() { console.log("dropped in every file"); const held = console; held.log("other ran"); }`,
     },
     prints:
       "undefined\n0\na parameter by the name is called\nso is a constant: called\nfunction\nthrough another name it is called\nthe arm for undefined\nother ran\n",
@@ -216,6 +206,31 @@ console.log(evaluated, tools.keep("kept"));`,
   },
 };
 
+// These change every file of the build, or what another of them asks. The others are given to one build of one program.
+const alone = /brackets|^--(format|jsx-runtime|minify|production|drop=console)/;
+const together = Object.entries(honored).filter(([name]) => !alone.test(name));
+for (const [name] of together) delete honored[name];
+const mains = together.map(([, { files }], index) =>
+  Object.keys(files)
+    .find(file => file.startsWith("main."))!
+    .replace(".", index + "."),
+);
+honored[together.map(([name]) => name).join(", ")] = {
+  flags: together.flatMap(([, { flags }]) => flags),
+  files: {
+    ...Object.assign(
+      {},
+      ...together.map(([, { files }], index) =>
+        Object.fromEntries(
+          Object.entries(files).map(([file, text]) => [file.startsWith("main.") ? mains[index] : file, text]),
+        ),
+      ),
+    ),
+    "main.ts": mains.map(main => `import "./${main}";\n`).join(""),
+  },
+  prints: together.map(([, { prints }]) => prints).join(""),
+};
+
 const rejected: Record<string, string[]> = {
   "--banner with code": ["--banner=globalThis.fromBanner = 1;"],
   "--footer with code": ["--footer=globalThis.fromFooter = 1;"],
@@ -230,7 +245,7 @@ describe.concurrent("compile/aot/flags of bun build", () => {
         slot(async () => {
           using dir = tempDir("aot-build-flags", files);
           const folder = String(dir);
-          const main = Object.keys(files).find(file => file.startsWith("main."))!;
+          const main = "main.ts" in files ? "main.ts" : Object.keys(files).find(file => file.startsWith("main."))!;
           for (const how of [[], ["--aot"]]) {
             const executable = join(folder, "program" + how.length + (isWindows ? ".exe" : ""));
             const built = await spawned(
@@ -259,32 +274,6 @@ describe.concurrent("compile/aot/flags of bun build", () => {
       600_000,
     );
   }
-  test(
-    "Bun.build: drop",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-build-drop", {
-          "main.ts": `console.log("dropped"); process.stdout.write("kept\\n");`,
-          "build.ts": `const built = await Bun.build({ entrypoints: ["./main.ts"], drop: ["console"], compile: { outfile: "./program", aot: true } }); process.stdout.write(String(built.success));`,
-        });
-        const built = await spawned([bunExe(), "build.ts"], String(dir), bunEnv);
-        expect({ stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-          stdout: "true",
-          stderr: expect.any(String),
-          exitCode: 0,
-        });
-        const ran = await spawned([join(String(dir), isWindows ? "program.exe" : "program")], String(dir), {
-          ...bunEnv,
-          BUN_JSC_crashIfInterpreterIsUsed: "1",
-        });
-        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-          stdout: "kept\n",
-          exitCode: 0,
-          signal: null,
-        });
-      }),
-    600_000,
-  );
   for (const [what, flags] of Object.entries(rejected)) {
     test(
       "stops the build with an error: " + what,

@@ -1,0 +1,820 @@
+# The keys of a namespace object are sorted by code unit.
+# @ts-nocheck
+# FORM: AsRead
+# RUN: lower-to-air size f28
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="t.ts" displayPath="t.ts" flags=[KeepsError, IsRequiredDuringLoad] body=f0 exports=[{name="0" variable=g0}, {name="bump" variable=g1}, {name="v0" variable=g2}, {name="v1" variable=g3}, {name="v10" variable=g4}, {name="v100" variable=g5}, {name="v101" variable=g6}, {name="v102" variable=g7}, {name="v103" variable=g8}, {name="v104" variable=g9}, {name="v105" variable=g10}, {name="v106" variable=g11}, {name="v107" variable=g12}, {name="v108" variable=g13}, {name="v109" variable=g14}, {name="v11" variable=g15}, {name="v110" variable=g16}, {name="v111" variable=g17}, {name="v112" variable=g18}, {name="v113" variable=g19}, {name="v114" variable=g20}, {name="v115" variable=g21}, {name="v116" variable=g22}, {name="v117" variable=g23}, {name="v118" variable=g24}, {name="v119" variable=g25}, {name="v12" variable=g26}, {name="v120" variable=g27}, {name="v121" variable=g28}, {name="v122" variable=g29}, {name="v123" variable=g30}, {name="v124" variable=g31}, {name="v125" variable=g32}, {name="v126" variable=g33}, {name="v127" variable=g34}, {name="v128" variable=g35}, {name="v129" variable=g36}, {name="v13" variable=g37}, {name="v14" variable=g38}, {name="v15" variable=g39}, {name="v16" variable=g40}, {name="v17" variable=g41}, {name="v18" variable=g42}, {name="v19" variable=g43}, {name="v2" variable=g44}, {name="v20" variable=g45}, {name="v21" variable=g46}, {name="v22" variable=g47}, {name="v23" variable=g48}, {name="v24" variable=g49}, {name="v25" variable=g50}, {name="v26" variable=g51}, {name="v27" variable=g52}, {name="v28" variable=g53}, {name="v29" variable=g54}, {name="v3" variable=g55}, {name="v30" variable=g56}, {name="v31" variable=g57}, {name="v32" variable=g58}, {name="v33" variable=g59}, {name="v34" variable=g60}, {name="v35" variable=g61}, {name="v36" variable=g62}, {name="v37" variable=g63}, {name="v38" variable=g64}, {name="v39" variable=g65}, {name="v4" variable=g66}, {name="v40" variable=g67}, {name="v41" variable=g68}, {name="v42" variable=g69}, {name="v43" variable=g70}, {name="v44" variable=g71}, {name="v45" variable=g72}, {name="v46" variable=g73}, {name="v47" variable=g74}, {name="v48" variable=g75}, {name="v49" variable=g76}, {name="v5" variable=g77}, {name="v50" variable=g78}, {name="v51" variable=g79}, {name="v52" variable=g80}, {name="v53" variable=g81}, {name="v54" variable=g82}, {name="v55" variable=g83}, {name="v56" variable=g84}, {name="v57" variable=g85}, {name="v58" variable=g86}, {name="v59" variable=g87}, {name="v6" variable=g88}, {name="v60" variable=g89}, {name="v61" variable=g90}, {name="v62" variable=g91}, {name="v63" variable=g92}, {name="v64" variable=g93}, {name="v65" variable=g94}, {name="v66" variable=g95}, {name="v67" variable=g96}, {name="v68" variable=g97}, {name="v69" variable=g98}, {name="v7" variable=g99}, {name="v70" variable=g100}, {name="v71" variable=g101}, {name="v72" variable=g102}, {name="v73" variable=g103}, {name="v74" variable=g104}, {name="v75" variable=g105}, {name="v76" variable=g106}, {name="v77" variable=g107}, {name="v78" variable=g108}, {name="v79" variable=g109}, {name="v8" variable=g110}, {name="v80" variable=g111}, {name="v81" variable=g112}, {name="v82" variable=g113}, {name="v83" variable=g114}, {name="v84" variable=g115}, {name="v85" variable=g116}, {name="v86" variable=g117}, {name="v87" variable=g118}, {name="v88" variable=g119}, {name="v89" variable=g120}, {name="v9" variable=g121}, {name="v90" variable=g122}, {name="v91" variable=g123}, {name="v92" variable=g124}, {name="v93" variable=g125}, {name="v94" variable=g126}, {name="v95" variable=g127}, {name="v96" variable=g128}, {name="v97" variable=g129}, {name="v98" variable=g130}, {name="v99" variable=g131}, {name="\u{1f600}" variable=g132}, {name="\u{fffd}" variable=g133}] namespaceLayout=L(m0)
+module m1 path="reader.cjs" displayPath="reader.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="main.ts" displayPath="main.ts" body=f25 requests=[{target=m1 completes=true isHoisted=true}, {target=m1 completes=true}] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
+module m5 path="/$bun/js/prelude/array-traversal.ts" displayPath="/$bun/js/prelude/array-traversal.ts" flags=[IsLibrary] namespaceLayout=L(m5)
+entry module=m2
+typesite w0 module=m0 position=4630 kind=Variable
+typesite w1 module=m0 position=11 kind=Variable
+typesite w2 module=m0 position=43 kind=Variable
+typesite w3 module=m0 position=331 kind=Variable
+typesite w4 module=m0 position=3391 kind=Variable
+typesite w5 module=m0 position=3427 kind=Variable
+typesite w6 module=m0 position=3463 kind=Variable
+typesite w7 module=m0 position=3499 kind=Variable
+typesite w8 module=m0 position=3535 kind=Variable
+typesite w9 module=m0 position=3571 kind=Variable
+typesite w10 module=m0 position=3607 kind=Variable
+typesite w11 module=m0 position=3643 kind=Variable
+typesite w12 module=m0 position=3679 kind=Variable
+typesite w13 module=m0 position=3715 kind=Variable
+typesite w14 module=m0 position=365 kind=Variable
+typesite w15 module=m0 position=3751 kind=Variable
+typesite w16 module=m0 position=3787 kind=Variable
+typesite w17 module=m0 position=3823 kind=Variable
+typesite w18 module=m0 position=3859 kind=Variable
+typesite w19 module=m0 position=3895 kind=Variable
+typesite w20 module=m0 position=3931 kind=Variable
+typesite w21 module=m0 position=3967 kind=Variable
+typesite w22 module=m0 position=4003 kind=Variable
+typesite w23 module=m0 position=4039 kind=Variable
+typesite w24 module=m0 position=4075 kind=Variable
+typesite w25 module=m0 position=399 kind=Variable
+typesite w26 module=m0 position=4111 kind=Variable
+typesite w27 module=m0 position=4147 kind=Variable
+typesite w28 module=m0 position=4183 kind=Variable
+typesite w29 module=m0 position=4219 kind=Variable
+typesite w30 module=m0 position=4255 kind=Variable
+typesite w31 module=m0 position=4291 kind=Variable
+typesite w32 module=m0 position=4327 kind=Variable
+typesite w33 module=m0 position=4363 kind=Variable
+typesite w34 module=m0 position=4399 kind=Variable
+typesite w35 module=m0 position=4435 kind=Variable
+typesite w36 module=m0 position=433 kind=Variable
+typesite w37 module=m0 position=467 kind=Variable
+typesite w38 module=m0 position=501 kind=Variable
+typesite w39 module=m0 position=535 kind=Variable
+typesite w40 module=m0 position=569 kind=Variable
+typesite w41 module=m0 position=603 kind=Variable
+typesite w42 module=m0 position=637 kind=Variable
+typesite w43 module=m0 position=75 kind=Variable
+typesite w44 module=m0 position=671 kind=Variable
+typesite w45 module=m0 position=705 kind=Variable
+typesite w46 module=m0 position=739 kind=Variable
+typesite w47 module=m0 position=773 kind=Variable
+typesite w48 module=m0 position=807 kind=Variable
+typesite w49 module=m0 position=841 kind=Variable
+typesite w50 module=m0 position=875 kind=Variable
+typesite w51 module=m0 position=909 kind=Variable
+typesite w52 module=m0 position=943 kind=Variable
+typesite w53 module=m0 position=977 kind=Variable
+typesite w54 module=m0 position=107 kind=Variable
+typesite w55 module=m0 position=1011 kind=Variable
+typesite w56 module=m0 position=1045 kind=Variable
+typesite w57 module=m0 position=1079 kind=Variable
+typesite w58 module=m0 position=1113 kind=Variable
+typesite w59 module=m0 position=1147 kind=Variable
+typesite w60 module=m0 position=1181 kind=Variable
+typesite w61 module=m0 position=1215 kind=Variable
+typesite w62 module=m0 position=1249 kind=Variable
+typesite w63 module=m0 position=1283 kind=Variable
+typesite w64 module=m0 position=1317 kind=Variable
+typesite w65 module=m0 position=139 kind=Variable
+typesite w66 module=m0 position=1351 kind=Variable
+typesite w67 module=m0 position=1385 kind=Variable
+typesite w68 module=m0 position=1419 kind=Variable
+typesite w69 module=m0 position=1453 kind=Variable
+typesite w70 module=m0 position=1487 kind=Variable
+typesite w71 module=m0 position=1521 kind=Variable
+typesite w72 module=m0 position=1555 kind=Variable
+typesite w73 module=m0 position=1589 kind=Variable
+typesite w74 module=m0 position=1623 kind=Variable
+typesite w75 module=m0 position=1657 kind=Variable
+typesite w76 module=m0 position=171 kind=Variable
+typesite w77 module=m0 position=1691 kind=Variable
+typesite w78 module=m0 position=1725 kind=Variable
+typesite w79 module=m0 position=1759 kind=Variable
+typesite w80 module=m0 position=1793 kind=Variable
+typesite w81 module=m0 position=1827 kind=Variable
+typesite w82 module=m0 position=1861 kind=Variable
+typesite w83 module=m0 position=1895 kind=Variable
+typesite w84 module=m0 position=1929 kind=Variable
+typesite w85 module=m0 position=1963 kind=Variable
+typesite w86 module=m0 position=1997 kind=Variable
+typesite w87 module=m0 position=203 kind=Variable
+typesite w88 module=m0 position=2031 kind=Variable
+typesite w89 module=m0 position=2065 kind=Variable
+typesite w90 module=m0 position=2099 kind=Variable
+typesite w91 module=m0 position=2133 kind=Variable
+typesite w92 module=m0 position=2167 kind=Variable
+typesite w93 module=m0 position=2201 kind=Variable
+typesite w94 module=m0 position=2235 kind=Variable
+typesite w95 module=m0 position=2269 kind=Variable
+typesite w96 module=m0 position=2303 kind=Variable
+typesite w97 module=m0 position=2337 kind=Variable
+typesite w98 module=m0 position=235 kind=Variable
+typesite w99 module=m0 position=2371 kind=Variable
+typesite w100 module=m0 position=2405 kind=Variable
+typesite w101 module=m0 position=2439 kind=Variable
+typesite w102 module=m0 position=2473 kind=Variable
+typesite w103 module=m0 position=2507 kind=Variable
+typesite w104 module=m0 position=2541 kind=Variable
+typesite w105 module=m0 position=2575 kind=Variable
+typesite w106 module=m0 position=2609 kind=Variable
+typesite w107 module=m0 position=2643 kind=Variable
+typesite w108 module=m0 position=2677 kind=Variable
+typesite w109 module=m0 position=267 kind=Variable
+typesite w110 module=m0 position=2711 kind=Variable
+typesite w111 module=m0 position=2745 kind=Variable
+typesite w112 module=m0 position=2779 kind=Variable
+typesite w113 module=m0 position=2813 kind=Variable
+typesite w114 module=m0 position=2847 kind=Variable
+typesite w115 module=m0 position=2881 kind=Variable
+typesite w116 module=m0 position=2915 kind=Variable
+typesite w117 module=m0 position=2949 kind=Variable
+typesite w118 module=m0 position=2983 kind=Variable
+typesite w119 module=m0 position=3017 kind=Variable
+typesite w120 module=m0 position=299 kind=Variable
+typesite w121 module=m0 position=3051 kind=Variable
+typesite w122 module=m0 position=3085 kind=Variable
+typesite w123 module=m0 position=3119 kind=Variable
+typesite w124 module=m0 position=3153 kind=Variable
+typesite w125 module=m0 position=3187 kind=Variable
+typesite w126 module=m0 position=3221 kind=Variable
+typesite w127 module=m0 position=3255 kind=Variable
+typesite w128 module=m0 position=3289 kind=Variable
+typesite w129 module=m0 position=3323 kind=Variable
+typesite w130 module=m0 position=3357 kind=Variable
+typesite w131 module=m0 position=4645 kind=Variable
+typesite w132 module=m0 position=4664 kind=Variable
+typesite w133 module=m0 position=24 kind=Element
+typesite w134 module=m0 position=56 kind=Element
+typesite w135 module=m0 position=88 kind=Element
+typesite w136 module=m0 position=120 kind=Element
+typesite w137 module=m0 position=152 kind=Element
+typesite w138 module=m0 position=184 kind=Element
+typesite w139 module=m0 position=216 kind=Element
+typesite w140 module=m0 position=248 kind=Element
+typesite w141 module=m0 position=280 kind=Element
+typesite w142 module=m0 position=312 kind=Element
+typesite w143 module=m0 position=345 kind=Element
+typesite w144 module=m0 position=379 kind=Element
+typesite w145 module=m0 position=413 kind=Element
+typesite w146 module=m0 position=447 kind=Element
+typesite w147 module=m0 position=481 kind=Element
+typesite w148 module=m0 position=515 kind=Element
+typesite w149 module=m0 position=549 kind=Element
+typesite w150 module=m0 position=583 kind=Element
+typesite w151 module=m0 position=617 kind=Element
+typesite w152 module=m0 position=651 kind=Element
+typesite w153 module=m0 position=685 kind=Element
+typesite w154 module=m0 position=719 kind=Element
+typesite w155 module=m0 position=753 kind=Element
+typesite w156 module=m0 position=787 kind=Element
+typesite w157 module=m0 position=821 kind=Element
+typesite w158 module=m0 position=855 kind=Element
+typesite w159 module=m0 position=889 kind=Element
+typesite w160 module=m0 position=923 kind=Element
+typesite w161 module=m0 position=957 kind=Element
+typesite w162 module=m0 position=991 kind=Element
+typesite w163 module=m0 position=1025 kind=Element
+typesite w164 module=m0 position=1059 kind=Element
+typesite w165 module=m0 position=1093 kind=Element
+typesite w166 module=m0 position=1127 kind=Element
+typesite w167 module=m0 position=1161 kind=Element
+typesite w168 module=m0 position=1195 kind=Element
+typesite w169 module=m0 position=1229 kind=Element
+typesite w170 module=m0 position=1263 kind=Element
+typesite w171 module=m0 position=1297 kind=Element
+typesite w172 module=m0 position=1331 kind=Element
+typesite w173 module=m0 position=1365 kind=Element
+typesite w174 module=m0 position=1399 kind=Element
+typesite w175 module=m0 position=1433 kind=Element
+typesite w176 module=m0 position=1467 kind=Element
+typesite w177 module=m0 position=1501 kind=Element
+typesite w178 module=m0 position=1535 kind=Element
+typesite w179 module=m0 position=1569 kind=Element
+typesite w180 module=m0 position=1603 kind=Element
+typesite w181 module=m0 position=1637 kind=Element
+typesite w182 module=m0 position=1671 kind=Element
+typesite w183 module=m0 position=1705 kind=Element
+typesite w184 module=m0 position=1739 kind=Element
+typesite w185 module=m0 position=1773 kind=Element
+typesite w186 module=m0 position=1807 kind=Element
+typesite w187 module=m0 position=1841 kind=Element
+typesite w188 module=m0 position=1875 kind=Element
+typesite w189 module=m0 position=1909 kind=Element
+typesite w190 module=m0 position=1943 kind=Element
+typesite w191 module=m0 position=1977 kind=Element
+typesite w192 module=m0 position=2011 kind=Element
+typesite w193 module=m0 position=2045 kind=Element
+typesite w194 module=m0 position=2079 kind=Element
+typesite w195 module=m0 position=2113 kind=Element
+typesite w196 module=m0 position=2147 kind=Element
+typesite w197 module=m0 position=2181 kind=Element
+typesite w198 module=m0 position=2215 kind=Element
+typesite w199 module=m0 position=2249 kind=Element
+typesite w200 module=m0 position=2283 kind=Element
+typesite w201 module=m0 position=2317 kind=Element
+typesite w202 module=m0 position=2351 kind=Element
+typesite w203 module=m0 position=2385 kind=Element
+typesite w204 module=m0 position=2419 kind=Element
+typesite w205 module=m0 position=2453 kind=Element
+typesite w206 module=m0 position=2487 kind=Element
+typesite w207 module=m0 position=2521 kind=Element
+typesite w208 module=m0 position=2555 kind=Element
+typesite w209 module=m0 position=2589 kind=Element
+typesite w210 module=m0 position=2623 kind=Element
+typesite w211 module=m0 position=2657 kind=Element
+typesite w212 module=m0 position=2691 kind=Element
+typesite w213 module=m0 position=2725 kind=Element
+typesite w214 module=m0 position=2759 kind=Element
+typesite w215 module=m0 position=2793 kind=Element
+typesite w216 module=m0 position=2827 kind=Element
+typesite w217 module=m0 position=2861 kind=Element
+typesite w218 module=m0 position=2895 kind=Element
+typesite w219 module=m0 position=2929 kind=Element
+typesite w220 module=m0 position=2963 kind=Element
+typesite w221 module=m0 position=2997 kind=Element
+typesite w222 module=m0 position=3031 kind=Element
+typesite w223 module=m0 position=3065 kind=Element
+typesite w224 module=m0 position=3099 kind=Element
+typesite w225 module=m0 position=3133 kind=Element
+typesite w226 module=m0 position=3167 kind=Element
+typesite w227 module=m0 position=3201 kind=Element
+typesite w228 module=m0 position=3235 kind=Element
+typesite w229 module=m0 position=3269 kind=Element
+typesite w230 module=m0 position=3303 kind=Element
+typesite w231 module=m0 position=3337 kind=Element
+typesite w232 module=m0 position=3371 kind=Element
+typesite w233 module=m0 position=3406 kind=Element
+typesite w234 module=m0 position=3442 kind=Element
+typesite w235 module=m0 position=3478 kind=Element
+typesite w236 module=m0 position=3514 kind=Element
+typesite w237 module=m0 position=3550 kind=Element
+typesite w238 module=m0 position=3586 kind=Element
+typesite w239 module=m0 position=3622 kind=Element
+typesite w240 module=m0 position=3658 kind=Element
+typesite w241 module=m0 position=3694 kind=Element
+typesite w242 module=m0 position=3730 kind=Element
+typesite w243 module=m0 position=3766 kind=Element
+typesite w244 module=m0 position=3802 kind=Element
+typesite w245 module=m0 position=3838 kind=Element
+typesite w246 module=m0 position=3874 kind=Element
+typesite w247 module=m0 position=3910 kind=Element
+typesite w248 module=m0 position=3946 kind=Element
+typesite w249 module=m0 position=3982 kind=Element
+typesite w250 module=m0 position=4018 kind=Element
+typesite w251 module=m0 position=4054 kind=Element
+typesite w252 module=m0 position=4090 kind=Element
+typesite w253 module=m0 position=4126 kind=Element
+typesite w254 module=m0 position=4162 kind=Element
+typesite w255 module=m0 position=4198 kind=Element
+typesite w256 module=m0 position=4234 kind=Element
+typesite w257 module=m0 position=4270 kind=Element
+typesite w258 module=m0 position=4306 kind=Element
+typesite w259 module=m0 position=4342 kind=Element
+typesite w260 module=m0 position=4378 kind=Element
+typesite w261 module=m0 position=4414 kind=Element
+typesite w262 module=m0 position=4450 kind=Element
+typesite w263 module=m4 position=4657 kind=Variable
+typesite w264 module=m4 position=4898 kind=Variable
+typesite w265 module=m4 position=4926 kind=Variable
+typesite w266 module=m4 position=5386 kind=Variable
+typesite w267 module=m4 position=5634 kind=Variable
+typesite w268 module=m5 position=743 kind=Parameter
+typesite w269 module=m5 position=761 kind=Parameter
+typesite w270 module=m5 position=720 kind=Result
+typesite w271 module=m5 position=980 kind=Parameter
+typesite w272 module=m5 position=996 kind=Parameter
+typesite w273 module=m5 position=1263 kind=Parameter
+typesite w274 module=m5 position=1279 kind=Parameter
+typesite w275 module=m5 position=1242 kind=Result
+typesite w276 module=m5 position=1819 kind=Result
+typesite w277 module=m5 position=1954 kind=Parameter
+typesite w278 module=m5 position=1968 kind=Parameter
+typesite w279 module=m5 position=1987 kind=Parameter
+typesite w280 module=m5 position=2007 kind=Parameter
+typesite w281 module=m5 position=1934 kind=Result
+typesite w282 module=m5 position=2138 kind=Parameter
+typesite w283 module=m5 position=2370 kind=Parameter
+typesite w284 module=m5 position=2390 kind=Parameter
+typesite w285 module=m5 position=2407 kind=Parameter
+typesite w286 module=m5 position=2434 kind=Parameter
+typesite w287 module=m5 position=2451 kind=Parameter
+typesite w288 module=m5 position=819 kind=Variable
+typesite w289 module=m5 position=1046 kind=Variable
+typesite w290 module=m5 position=1326 kind=Variable
+typesite w291 module=m5 position=1526 kind=Variable
+typesite w292 module=m5 position=1396 kind=PropertyRead
+typesite w293 module=m5 position=1544 kind=PropertyRead
+typesite w294 module=m5 position=1570 kind=Variable
+typesite w295 module=m5 position=1664 kind=PropertyRead
+typesite w296 module=m5 position=2513 kind=Variable
+typesite w297 module=m5 position=2534 kind=Variable
+typesite w298 module=m5 position=2558 kind=Variable
+typesite w299 module=m5 position=2580 kind=Variable
+typesite w300 module=m5 position=2603 kind=Variable
+typesite w301 module=m5 position=2627 kind=Variable
+typesite w302 module=m5 position=2650 kind=Variable
+typesite w303 module=m5 position=2671 kind=Variable
+typesite w304 module=m5 position=2693 kind=Variable
+typesite w305 module=m5 position=2714 kind=Variable
+typesite w306 module=m5 position=2740 kind=Variable
+typesite w307 module=m5 position=2761 kind=Variable
+typesite w308 module=m5 position=2785 kind=Variable
+typesite w309 module=m5 position=2807 kind=Variable
+typesite w310 module=m5 position=2829 kind=Variable
+typesite w311 module=m5 position=2857 kind=Variable
+typesite w312 module=m5 position=2886 kind=Variable
+typesite w313 module=m5 position=2914 kind=Variable
+typesite w314 module=m5 position=2949 kind=Variable
+typesite w315 module=m5 position=2980 kind=Variable
+typesite w316 module=m5 position=3015 kind=Variable
+typesite w317 module=m5 position=3073 kind=Variable
+typesite w318 module=m5 position=3133 kind=Variable
+typesite w319 module=m5 position=3191 kind=Variable
+typesite w320 module=m5 position=3292 kind=Variable
+typesite w321 module=m5 position=3509 kind=Variable
+typesite w322 module=m5 position=3573 kind=Variable
+typesite w323 module=m5 position=3645 kind=Variable
+typesite w324 module=m5 position=3714 kind=Variable
+typesite w325 module=m5 position=3737 kind=Variable
+typesite w326 module=m5 position=3761 kind=Variable
+typesite w327 module=m5 position=3784 kind=Variable
+typesite w328 module=m5 position=3832 kind=Variable
+typesite w329 module=m5 position=3900 kind=Variable
+typesite w330 module=m5 position=3917 kind=Variable
+typesite w331 module=m5 position=4489 kind=Variable
+typesite w332 module=m5 position=7097 kind=Variable
+typesite w333 module=m5 position=3487 kind=PropertyRead
+typesite w334 module=m5 position=3535 kind=CallResult
+typesite w335 module=m5 position=3609 kind=CallResult
+typesite w336 module=m5 position=4581 kind=Variable
+typesite w337 module=m5 position=5811 kind=Variable
+typesite w338 module=m5 position=6914 kind=Assertion
+typesite w339 module=m5 position=6938 kind=CallResult
+typesite w340 module=m5 position=6980 kind=CallResult
+typesite w341 module=m5 position=7575 kind=Assertion
+typesite w342 module=m5 position=7547 kind=CallResult
+data d0 root=Array{contents=number elements=[Number{}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}]} module=m0
+data d2 root=Array{contents=number elements=[Number{value=2}]} module=m0
+data d3 root=Array{contents=number elements=[Number{value=3}]} module=m0
+data d4 root=Array{contents=number elements=[Number{value=4}]} module=m0
+data d5 root=Array{contents=number elements=[Number{value=5}]} module=m0
+data d6 root=Array{contents=number elements=[Number{value=6}]} module=m0
+data d7 root=Array{contents=number elements=[Number{value=7}]} module=m0
+data d8 root=Array{contents=number elements=[Number{value=8}]} module=m0
+data d9 root=Array{contents=number elements=[Number{value=9}]} module=m0
+data d10 root=Array{contents=number elements=[Number{value=10}]} module=m0
+data d11 root=Array{contents=number elements=[Number{value=11}]} module=m0
+data d12 root=Array{contents=number elements=[Number{value=12}]} module=m0
+data d13 root=Array{contents=number elements=[Number{value=13}]} module=m0
+data d14 root=Array{contents=number elements=[Number{value=14}]} module=m0
+data d15 root=Array{contents=number elements=[Number{value=15}]} module=m0
+data d16 root=Array{contents=number elements=[Number{value=16}]} module=m0
+data d17 root=Array{contents=number elements=[Number{value=17}]} module=m0
+data d18 root=Array{contents=number elements=[Number{value=18}]} module=m0
+data d19 root=Array{contents=number elements=[Number{value=19}]} module=m0
+data d20 root=Array{contents=number elements=[Number{value=20}]} module=m0
+data d21 root=Array{contents=number elements=[Number{value=21}]} module=m0
+data d22 root=Array{contents=number elements=[Number{value=22}]} module=m0
+data d23 root=Array{contents=number elements=[Number{value=23}]} module=m0
+data d24 root=Array{contents=number elements=[Number{value=24}]} module=m0
+data d25 root=Array{contents=number elements=[Number{value=25}]} module=m0
+data d26 root=Array{contents=number elements=[Number{value=26}]} module=m0
+data d27 root=Array{contents=number elements=[Number{value=27}]} module=m0
+data d28 root=Array{contents=number elements=[Number{value=28}]} module=m0
+data d29 root=Array{contents=number elements=[Number{value=29}]} module=m0
+data d30 root=Array{contents=number elements=[Number{value=30}]} module=m0
+data d31 root=Array{contents=number elements=[Number{value=31}]} module=m0
+data d32 root=Array{contents=number elements=[Number{value=32}]} module=m0
+data d33 root=Array{contents=number elements=[Number{value=33}]} module=m0
+data d34 root=Array{contents=number elements=[Number{value=34}]} module=m0
+data d35 root=Array{contents=number elements=[Number{value=35}]} module=m0
+data d36 root=Array{contents=number elements=[Number{value=36}]} module=m0
+data d37 root=Array{contents=number elements=[Number{value=37}]} module=m0
+data d38 root=Array{contents=number elements=[Number{value=38}]} module=m0
+data d39 root=Array{contents=number elements=[Number{value=39}]} module=m0
+data d40 root=Array{contents=number elements=[Number{value=40}]} module=m0
+data d41 root=Array{contents=number elements=[Number{value=41}]} module=m0
+data d42 root=Array{contents=number elements=[Number{value=42}]} module=m0
+data d43 root=Array{contents=number elements=[Number{value=43}]} module=m0
+data d44 root=Array{contents=number elements=[Number{value=44}]} module=m0
+data d45 root=Array{contents=number elements=[Number{value=45}]} module=m0
+data d46 root=Array{contents=number elements=[Number{value=46}]} module=m0
+data d47 root=Array{contents=number elements=[Number{value=47}]} module=m0
+data d48 root=Array{contents=number elements=[Number{value=48}]} module=m0
+data d49 root=Array{contents=number elements=[Number{value=49}]} module=m0
+data d50 root=Array{contents=number elements=[Number{value=50}]} module=m0
+data d51 root=Array{contents=number elements=[Number{value=51}]} module=m0
+data d52 root=Array{contents=number elements=[Number{value=52}]} module=m0
+data d53 root=Array{contents=number elements=[Number{value=53}]} module=m0
+data d54 root=Array{contents=number elements=[Number{value=54}]} module=m0
+data d55 root=Array{contents=number elements=[Number{value=55}]} module=m0
+data d56 root=Array{contents=number elements=[Number{value=56}]} module=m0
+data d57 root=Array{contents=number elements=[Number{value=57}]} module=m0
+data d58 root=Array{contents=number elements=[Number{value=58}]} module=m0
+data d59 root=Array{contents=number elements=[Number{value=59}]} module=m0
+data d60 root=Array{contents=number elements=[Number{value=60}]} module=m0
+data d61 root=Array{contents=number elements=[Number{value=61}]} module=m0
+data d62 root=Array{contents=number elements=[Number{value=62}]} module=m0
+data d63 root=Array{contents=number elements=[Number{value=63}]} module=m0
+data d64 root=Array{contents=number elements=[Number{value=64}]} module=m0
+data d65 root=Array{contents=number elements=[Number{value=65}]} module=m0
+data d66 root=Array{contents=number elements=[Number{value=66}]} module=m0
+data d67 root=Array{contents=number elements=[Number{value=67}]} module=m0
+data d68 root=Array{contents=number elements=[Number{value=68}]} module=m0
+data d69 root=Array{contents=number elements=[Number{value=69}]} module=m0
+data d70 root=Array{contents=number elements=[Number{value=70}]} module=m0
+data d71 root=Array{contents=number elements=[Number{value=71}]} module=m0
+data d72 root=Array{contents=number elements=[Number{value=72}]} module=m0
+data d73 root=Array{contents=number elements=[Number{value=73}]} module=m0
+data d74 root=Array{contents=number elements=[Number{value=74}]} module=m0
+data d75 root=Array{contents=number elements=[Number{value=75}]} module=m0
+data d76 root=Array{contents=number elements=[Number{value=76}]} module=m0
+data d77 root=Array{contents=number elements=[Number{value=77}]} module=m0
+data d78 root=Array{contents=number elements=[Number{value=78}]} module=m0
+data d79 root=Array{contents=number elements=[Number{value=79}]} module=m0
+data d80 root=Array{contents=number elements=[Number{value=80}]} module=m0
+data d81 root=Array{contents=number elements=[Number{value=81}]} module=m0
+data d82 root=Array{contents=number elements=[Number{value=82}]} module=m0
+data d83 root=Array{contents=number elements=[Number{value=83}]} module=m0
+data d84 root=Array{contents=number elements=[Number{value=84}]} module=m0
+data d85 root=Array{contents=number elements=[Number{value=85}]} module=m0
+data d86 root=Array{contents=number elements=[Number{value=86}]} module=m0
+data d87 root=Array{contents=number elements=[Number{value=87}]} module=m0
+data d88 root=Array{contents=number elements=[Number{value=88}]} module=m0
+data d89 root=Array{contents=number elements=[Number{value=89}]} module=m0
+data d90 root=Array{contents=number elements=[Number{value=90}]} module=m0
+data d91 root=Array{contents=number elements=[Number{value=91}]} module=m0
+data d92 root=Array{contents=number elements=[Number{value=92}]} module=m0
+data d93 root=Array{contents=number elements=[Number{value=93}]} module=m0
+data d94 root=Array{contents=number elements=[Number{value=94}]} module=m0
+data d95 root=Array{contents=number elements=[Number{value=95}]} module=m0
+data d96 root=Array{contents=number elements=[Number{value=96}]} module=m0
+data d97 root=Array{contents=number elements=[Number{value=97}]} module=m0
+data d98 root=Array{contents=number elements=[Number{value=98}]} module=m0
+data d99 root=Array{contents=number elements=[Number{value=99}]} module=m0
+data d100 root=Array{contents=number elements=[Number{value=100}]} module=m0
+data d101 root=Array{contents=number elements=[Number{value=101}]} module=m0
+data d102 root=Array{contents=number elements=[Number{value=102}]} module=m0
+data d103 root=Array{contents=number elements=[Number{value=103}]} module=m0
+data d104 root=Array{contents=number elements=[Number{value=104}]} module=m0
+data d105 root=Array{contents=number elements=[Number{value=105}]} module=m0
+data d106 root=Array{contents=number elements=[Number{value=106}]} module=m0
+data d107 root=Array{contents=number elements=[Number{value=107}]} module=m0
+data d108 root=Array{contents=number elements=[Number{value=108}]} module=m0
+data d109 root=Array{contents=number elements=[Number{value=109}]} module=m0
+data d110 root=Array{contents=number elements=[Number{value=110}]} module=m0
+data d111 root=Array{contents=number elements=[Number{value=111}]} module=m0
+data d112 root=Array{contents=number elements=[Number{value=112}]} module=m0
+data d113 root=Array{contents=number elements=[Number{value=113}]} module=m0
+data d114 root=Array{contents=number elements=[Number{value=114}]} module=m0
+data d115 root=Array{contents=number elements=[Number{value=115}]} module=m0
+data d116 root=Array{contents=number elements=[Number{value=116}]} module=m0
+data d117 root=Array{contents=number elements=[Number{value=117}]} module=m0
+data d118 root=Array{contents=number elements=[Number{value=118}]} module=m0
+data d119 root=Array{contents=number elements=[Number{value=119}]} module=m0
+data d120 root=Array{contents=number elements=[Number{value=120}]} module=m0
+data d121 root=Array{contents=number elements=[Number{value=121}]} module=m0
+data d122 root=Array{contents=number elements=[Number{value=122}]} module=m0
+data d123 root=Array{contents=number elements=[Number{value=123}]} module=m0
+data d124 root=Array{contents=number elements=[Number{value=124}]} module=m0
+data d125 root=Array{contents=number elements=[Number{value=125}]} module=m0
+data d126 root=Array{contents=number elements=[Number{value=126}]} module=m0
+data d127 root=Array{contents=number elements=[Number{value=127}]} module=m0
+data d128 root=Array{contents=number elements=[Number{value=128}]} module=m0
+data d129 root=Array{contents=number elements=[Number{value=129}]} module=m0
+variable g0 name="zero" module=m0 declared={type=undefined|null|absent|"zero" site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="bump" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g2 name="v0" module=m0 declared={type=number|absent site=w1}
+variable g3 name="v1" module=m0 declared={type=number|absent site=w2} flags=[IsImmutable]
+variable g4 name="v10" module=m0 declared={type=number|absent site=w3} flags=[IsImmutable]
+variable g5 name="v100" module=m0 declared={type=number|absent site=w4} flags=[IsImmutable]
+variable g6 name="v101" module=m0 declared={type=number|absent site=w5} flags=[IsImmutable]
+variable g7 name="v102" module=m0 declared={type=number|absent site=w6} flags=[IsImmutable]
+variable g8 name="v103" module=m0 declared={type=number|absent site=w7} flags=[IsImmutable]
+variable g9 name="v104" module=m0 declared={type=number|absent site=w8}
+variable g10 name="v105" module=m0 declared={type=number|absent site=w9} flags=[IsImmutable]
+variable g11 name="v106" module=m0 declared={type=number|absent site=w10} flags=[IsImmutable]
+variable g12 name="v107" module=m0 declared={type=number|absent site=w11} flags=[IsImmutable]
+variable g13 name="v108" module=m0 declared={type=number|absent site=w12} flags=[IsImmutable]
+variable g14 name="v109" module=m0 declared={type=number|absent site=w13} flags=[IsImmutable]
+variable g15 name="v11" module=m0 declared={type=number|absent site=w14} flags=[IsImmutable]
+variable g16 name="v110" module=m0 declared={type=number|absent site=w15} flags=[IsImmutable]
+variable g17 name="v111" module=m0 declared={type=number|absent site=w16} flags=[IsImmutable]
+variable g18 name="v112" module=m0 declared={type=number|absent site=w17} flags=[IsImmutable]
+variable g19 name="v113" module=m0 declared={type=number|absent site=w18} flags=[IsImmutable]
+variable g20 name="v114" module=m0 declared={type=number|absent site=w19} flags=[IsImmutable]
+variable g21 name="v115" module=m0 declared={type=number|absent site=w20} flags=[IsImmutable]
+variable g22 name="v116" module=m0 declared={type=number|absent site=w21} flags=[IsImmutable]
+variable g23 name="v117" module=m0 declared={type=number|absent site=w22}
+variable g24 name="v118" module=m0 declared={type=number|absent site=w23} flags=[IsImmutable]
+variable g25 name="v119" module=m0 declared={type=number|absent site=w24} flags=[IsImmutable]
+variable g26 name="v12" module=m0 declared={type=number|absent site=w25} flags=[IsImmutable]
+variable g27 name="v120" module=m0 declared={type=number|absent site=w26} flags=[IsImmutable]
+variable g28 name="v121" module=m0 declared={type=number|absent site=w27} flags=[IsImmutable]
+variable g29 name="v122" module=m0 declared={type=number|absent site=w28} flags=[IsImmutable]
+variable g30 name="v123" module=m0 declared={type=number|absent site=w29} flags=[IsImmutable]
+variable g31 name="v124" module=m0 declared={type=number|absent site=w30} flags=[IsImmutable]
+variable g32 name="v125" module=m0 declared={type=number|absent site=w31} flags=[IsImmutable]
+variable g33 name="v126" module=m0 declared={type=number|absent site=w32} flags=[IsImmutable]
+variable g34 name="v127" module=m0 declared={type=number|absent site=w33} flags=[IsImmutable]
+variable g35 name="v128" module=m0 declared={type=number|absent site=w34} flags=[IsImmutable]
+variable g36 name="v129" module=m0 declared={type=number|absent site=w35} flags=[IsImmutable]
+variable g37 name="v13" module=m0 declared={type=number|absent site=w36}
+variable g38 name="v14" module=m0 declared={type=number|absent site=w37} flags=[IsImmutable]
+variable g39 name="v15" module=m0 declared={type=number|absent site=w38} flags=[IsImmutable]
+variable g40 name="v16" module=m0 declared={type=number|absent site=w39} flags=[IsImmutable]
+variable g41 name="v17" module=m0 declared={type=number|absent site=w40} flags=[IsImmutable]
+variable g42 name="v18" module=m0 declared={type=number|absent site=w41} flags=[IsImmutable]
+variable g43 name="v19" module=m0 declared={type=number|absent site=w42} flags=[IsImmutable]
+variable g44 name="v2" module=m0 declared={type=number|absent site=w43} flags=[IsImmutable]
+variable g45 name="v20" module=m0 declared={type=number|absent site=w44} flags=[IsImmutable]
+variable g46 name="v21" module=m0 declared={type=number|absent site=w45} flags=[IsImmutable]
+variable g47 name="v22" module=m0 declared={type=number|absent site=w46} flags=[IsImmutable]
+variable g48 name="v23" module=m0 declared={type=number|absent site=w47} flags=[IsImmutable]
+variable g49 name="v24" module=m0 declared={type=number|absent site=w48} flags=[IsImmutable]
+variable g50 name="v25" module=m0 declared={type=number|absent site=w49} flags=[IsImmutable]
+variable g51 name="v26" module=m0 declared={type=number|absent site=w50}
+variable g52 name="v27" module=m0 declared={type=number|absent site=w51} flags=[IsImmutable]
+variable g53 name="v28" module=m0 declared={type=number|absent site=w52} flags=[IsImmutable]
+variable g54 name="v29" module=m0 declared={type=number|absent site=w53} flags=[IsImmutable]
+variable g55 name="v3" module=m0 declared={type=number|absent site=w54} flags=[IsImmutable]
+variable g56 name="v30" module=m0 declared={type=number|absent site=w55} flags=[IsImmutable]
+variable g57 name="v31" module=m0 declared={type=number|absent site=w56} flags=[IsImmutable]
+variable g58 name="v32" module=m0 declared={type=number|absent site=w57} flags=[IsImmutable]
+variable g59 name="v33" module=m0 declared={type=number|absent site=w58} flags=[IsImmutable]
+variable g60 name="v34" module=m0 declared={type=number|absent site=w59} flags=[IsImmutable]
+variable g61 name="v35" module=m0 declared={type=number|absent site=w60} flags=[IsImmutable]
+variable g62 name="v36" module=m0 declared={type=number|absent site=w61} flags=[IsImmutable]
+variable g63 name="v37" module=m0 declared={type=number|absent site=w62} flags=[IsImmutable]
+variable g64 name="v38" module=m0 declared={type=number|absent site=w63} flags=[IsImmutable]
+variable g65 name="v39" module=m0 declared={type=number|absent site=w64}
+variable g66 name="v4" module=m0 declared={type=number|absent site=w65} flags=[IsImmutable]
+variable g67 name="v40" module=m0 declared={type=number|absent site=w66} flags=[IsImmutable]
+variable g68 name="v41" module=m0 declared={type=number|absent site=w67} flags=[IsImmutable]
+variable g69 name="v42" module=m0 declared={type=number|absent site=w68} flags=[IsImmutable]
+variable g70 name="v43" module=m0 declared={type=number|absent site=w69} flags=[IsImmutable]
+variable g71 name="v44" module=m0 declared={type=number|absent site=w70} flags=[IsImmutable]
+variable g72 name="v45" module=m0 declared={type=number|absent site=w71} flags=[IsImmutable]
+variable g73 name="v46" module=m0 declared={type=number|absent site=w72} flags=[IsImmutable]
+variable g74 name="v47" module=m0 declared={type=number|absent site=w73} flags=[IsImmutable]
+variable g75 name="v48" module=m0 declared={type=number|absent site=w74} flags=[IsImmutable]
+variable g76 name="v49" module=m0 declared={type=number|absent site=w75} flags=[IsImmutable]
+variable g77 name="v5" module=m0 declared={type=number|absent site=w76} flags=[IsImmutable]
+variable g78 name="v50" module=m0 declared={type=number|absent site=w77} flags=[IsImmutable]
+variable g79 name="v51" module=m0 declared={type=number|absent site=w78} flags=[IsImmutable]
+variable g80 name="v52" module=m0 declared={type=number|absent site=w79}
+variable g81 name="v53" module=m0 declared={type=number|absent site=w80} flags=[IsImmutable]
+variable g82 name="v54" module=m0 declared={type=number|absent site=w81} flags=[IsImmutable]
+variable g83 name="v55" module=m0 declared={type=number|absent site=w82} flags=[IsImmutable]
+variable g84 name="v56" module=m0 declared={type=number|absent site=w83} flags=[IsImmutable]
+variable g85 name="v57" module=m0 declared={type=number|absent site=w84} flags=[IsImmutable]
+variable g86 name="v58" module=m0 declared={type=number|absent site=w85} flags=[IsImmutable]
+variable g87 name="v59" module=m0 declared={type=number|absent site=w86} flags=[IsImmutable]
+variable g88 name="v6" module=m0 declared={type=number|absent site=w87} flags=[IsImmutable]
+variable g89 name="v60" module=m0 declared={type=number|absent site=w88} flags=[IsImmutable]
+variable g90 name="v61" module=m0 declared={type=number|absent site=w89} flags=[IsImmutable]
+variable g91 name="v62" module=m0 declared={type=number|absent site=w90} flags=[IsImmutable]
+variable g92 name="v63" module=m0 declared={type=number|absent site=w91} flags=[IsImmutable]
+variable g93 name="v64" module=m0 declared={type=number|absent site=w92} flags=[IsImmutable]
+variable g94 name="v65" module=m0 declared={type=number|absent site=w93}
+variable g95 name="v66" module=m0 declared={type=number|absent site=w94} flags=[IsImmutable]
+variable g96 name="v67" module=m0 declared={type=number|absent site=w95} flags=[IsImmutable]
+variable g97 name="v68" module=m0 declared={type=number|absent site=w96} flags=[IsImmutable]
+variable g98 name="v69" module=m0 declared={type=number|absent site=w97} flags=[IsImmutable]
+variable g99 name="v7" module=m0 declared={type=number|absent site=w98} flags=[IsImmutable]
+variable g100 name="v70" module=m0 declared={type=number|absent site=w99} flags=[IsImmutable]
+variable g101 name="v71" module=m0 declared={type=number|absent site=w100} flags=[IsImmutable]
+variable g102 name="v72" module=m0 declared={type=number|absent site=w101} flags=[IsImmutable]
+variable g103 name="v73" module=m0 declared={type=number|absent site=w102} flags=[IsImmutable]
+variable g104 name="v74" module=m0 declared={type=number|absent site=w103} flags=[IsImmutable]
+variable g105 name="v75" module=m0 declared={type=number|absent site=w104} flags=[IsImmutable]
+variable g106 name="v76" module=m0 declared={type=number|absent site=w105} flags=[IsImmutable]
+variable g107 name="v77" module=m0 declared={type=number|absent site=w106} flags=[IsImmutable]
+variable g108 name="v78" module=m0 declared={type=number|absent site=w107}
+variable g109 name="v79" module=m0 declared={type=number|absent site=w108} flags=[IsImmutable]
+variable g110 name="v8" module=m0 declared={type=number|absent site=w109} flags=[IsImmutable]
+variable g111 name="v80" module=m0 declared={type=number|absent site=w110} flags=[IsImmutable]
+variable g112 name="v81" module=m0 declared={type=number|absent site=w111} flags=[IsImmutable]
+variable g113 name="v82" module=m0 declared={type=number|absent site=w112} flags=[IsImmutable]
+variable g114 name="v83" module=m0 declared={type=number|absent site=w113} flags=[IsImmutable]
+variable g115 name="v84" module=m0 declared={type=number|absent site=w114} flags=[IsImmutable]
+variable g116 name="v85" module=m0 declared={type=number|absent site=w115} flags=[IsImmutable]
+variable g117 name="v86" module=m0 declared={type=number|absent site=w116} flags=[IsImmutable]
+variable g118 name="v87" module=m0 declared={type=number|absent site=w117} flags=[IsImmutable]
+variable g119 name="v88" module=m0 declared={type=number|absent site=w118} flags=[IsImmutable]
+variable g120 name="v89" module=m0 declared={type=number|absent site=w119} flags=[IsImmutable]
+variable g121 name="v9" module=m0 declared={type=number|absent site=w120} flags=[IsImmutable]
+variable g122 name="v90" module=m0 declared={type=number|absent site=w121} flags=[IsImmutable]
+variable g123 name="v91" module=m0 declared={type=number|absent site=w122}
+variable g124 name="v92" module=m0 declared={type=number|absent site=w123} flags=[IsImmutable]
+variable g125 name="v93" module=m0 declared={type=number|absent site=w124} flags=[IsImmutable]
+variable g126 name="v94" module=m0 declared={type=number|absent site=w125} flags=[IsImmutable]
+variable g127 name="v95" module=m0 declared={type=number|absent site=w126} flags=[IsImmutable]
+variable g128 name="v96" module=m0 declared={type=number|absent site=w127} flags=[IsImmutable]
+variable g129 name="v97" module=m0 declared={type=number|absent site=w128} flags=[IsImmutable]
+variable g130 name="v98" module=m0 declared={type=number|absent site=w129} flags=[IsImmutable]
+variable g131 name="v99" module=m0 declared={type=number|absent site=w130} flags=[IsImmutable]
+variable g132 name="astral" module=m0 declared={type=undefined|null|absent|"astral" site=w131 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g133 name="high" module=m0 declared={type=undefined|null|absent|"high" site=w132 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g134 name="storeInNewArray" module=m5 declared={type=f31 flags=[IsFromCompiler]} initialization=Function function=f31 flags=[IsImmutable]
+variable g135 name="clampToLength" module=m5 declared={type=f30 flags=[IsFromCompiler]} initialization=Function function=f30 flags=[IsImmutable]
+variable g136 name="joinedText" module=m5 declared={type=f33 flags=[IsFromCompiler]} initialization=Function function=f33 flags=[IsImmutable]
+variable g137 name="appendParts" module=m5 declared={type=f32 flags=[IsFromCompiler]} initialization=Function function=f32 flags=[IsImmutable]
+variable g138 name="finishReduce" module=m5 declared={type=f35 flags=[IsFromCompiler]} initialization=Function function=f35 flags=[IsImmutable]
+variable g139 name="finishJoin" module=m5 declared={type=f34 flags=[IsFromCompiler]} initialization=Function function=f34 flags=[IsImmutable]
+variable g140 name="look" module=m1 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d129
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    v3 = Convert v2 declared={type=number site=w262} illTypedCause=ContainerWriterUnseen
+    PutModuleVariable v3 variable=g36
+    v5 = Undefined
+    Return v5
+}
+function f1 name="bump" module=m0 position=4460 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g140
+    v2 = Undefined
+    Return v2
+}
+function f3 module=m1 position=29 thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    RecordRequire module=m0 referrer=m1
+    v1 = ModuleNamespace module=m0
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = NewClosure v2 function=f4
+    v4 = Convert v3 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v5 = String string="keys "
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectKeys
+    v8 = Call v7, v6, v2 calleeName="Object.keys"
+    v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v10 = PropGet v9 key="length"
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = Add v5, v11
+    v13 = String string=" first "
+    v14 = Add v12, v13
+    v15 = Builtin builtin=Object
+    v16 = Builtin builtin=ObjectKeys
+    v17 = Call v16, v15, v2 calleeName="Object.keys"
+    v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v19 = PropGet v18 key="slice"
+    v20 = Convert v19 declared={type=undefined|null|function flags=[IsExpected]}
+    v21 = Integer
+    v22 = Integer integer=4
+    v23 = Call v20, v18, v21, v22 calleeKey="slice" calleeName="slice"
+    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v25 = PropGet v24 key="join"
+    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]}
+    v27 = Call v26, v24 calleeKey="join" calleeName="join"
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
+    v29 = Add v14, v28
+    v30 = String string=" last "
+    v31 = Add v29, v30
+    v32 = Builtin builtin=Object
+    v33 = Builtin builtin=ObjectKeys
+    v34 = Call v33, v32, v2 calleeName="Object.keys"
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v36 = PropGet v35 key="slice"
+    v37 = Convert v36 declared={type=undefined|null|function flags=[IsExpected]}
+    v38 = Integer integer=-3
+    v39 = Call v37, v35, v38 calleeKey="slice" calleeName="slice"
+    v40 = Convert v39 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v41 = PropGet v40 key="join"
+    v42 = Convert v41 declared={type=undefined|null|function flags=[IsExpected]}
+    v43 = Call v42, v40 calleeKey="join" calleeName="join"
+    v44 = Convert v43 declared={type=undefined|null|string flags=[IsExpected]}
+    v45 = Add v31, v44
+    v46 = String string="wrong: ["
+    v47 = Call v4 calleeName="wrong"
+    v48 = Convert v47 declared={type=undefined|null|string flags=[IsExpected]}
+    v49 = Add v46, v48
+    v50 = String string="]"
+    v51 = Add v49, v50
+    v52 = NewArray v45, v51 contents=undefined|null|string
+    v53 = Convert v52 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v54 = Builtin builtin=Object
+    v55 = Builtin builtin=ObjectKeys
+    v56 = Call v55, v54, v2 calleeName="Object.keys"
+    v57 = Convert v56 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v58 = PropGet v57 key="filter"
+    v59 = Convert v58 declared={type=undefined|null|function flags=[IsExpected]}
+    v60 = NewClosure function=f5
+    v61 = Call v59, v57, v60 calleeKey="filter" calleeName="filter"
+    v62 = Call v4 calleeName="wrong"
+    Return v53
+}
+function f4 name="wrong" module=m1 position=87 kind=Arrow captures=[{type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m1 position=476 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m1 position=506 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m1 position=649 kind=Arrow length=1 captures=[{type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m1 position=115 kind=Arrow length=1 captures=[{type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f10 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f12 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
+function f13 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f14 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f21 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f22 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g140
+    v1 = Convert v0 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v2 = Call v1 calleeName="look"
+    v3 = Undefined
+    Return v3
+}
+function f26 module=m2 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 name="next" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f28 name="filter" module=m4 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Undefined
+    v4 = ToObject v0 message="Array.prototype.filter requires that |this| not be null or undefined"
+    v5 = PropGet v4 key="length"
+    v6 = ToLength v5
+    v7 = Convert v6 declared={type=undefined|number site=w263}
+    v8 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = Integer
+    v10 = Convert v9 declared={type=number flags=[IsFromCompiler, IsClaim]}
+    v11 = ArraySpeciesCreate v10, v4
+    v12 = Integer
+    v13 = Convert v12 declared={type=undefined|number site=w264}
+    v14 = Integer
+    v15 = Convert v14 declared={type=undefined|number site=w265}
+    Jump -> next b1(v13, v15, v3)
+  b1(v16: undefined|number, v17: undefined|number, v18):
+    LoopHint
+    v20 = Convert v17 declared={type=number} illTypedCause=Assertion
+    v21 = Convert v7 declared={type=number} illTypedCause=Assertion
+    v22 = Convert v20 declared={type=number} illTypedCause=Assertion
+    v23 = ElemHas v4, v22
+    v24 = ToBoolean v23
+    Branch v24 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v25):
+    v26 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    v27 = ElemGet v4, v26
+    v28 = Convert v8 declared={type=undefined|null|function} illTypedCause=Assertion
+    v29 = Convert v26 declared={type=number} illTypedCause=Assertion
+    v30 = Call v28, v2, v27, v29, v4
+    v31 = Convert v16 declared={type=number} illTypedCause=Assertion
+    v32 = Convert v11 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    ElemDefine v32, v31, v27
+    v34 = Increment v31
+    v35 = Convert v34 declared={type=undefined|number site=w264}
+    Jump -> next b4(v29, v35, v27)
+  b3(v36):
+    Jump -> next b4(v22, v16, v18)
+  b4(v37: undefined|number, v38: undefined|number, v39):
+    v40 = Increment v37
+    v41 = Convert v40 declared={type=undefined|number site=w265}
+    Jump -> next b1(v38, v41, v39)
+}
+function f29 name="map" module=m4 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f30 name="clampToLength" module=m5 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w268}, {type=number site=w269}] results=[{type=number site=w270}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f31 name="storeInNewArray" module=m5 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w271 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w272}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f32 name="appendParts" module=m5 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w273 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w274}, {type=anything}] results=[{type=number site=w275}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f33 name="joinedText" module=m5 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w276 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f34 name="finishJoin" module=m5 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w277 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w278 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w279}, {type=number site=w280}] results=[{type=undefined|null|string site=w281 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: number, v3: number):
+    LoopHint
+    v5 = Convert v0 declared={type=undefined|null|string site=w281 flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+function f35 name="finishReduce" module=m5 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w282}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f36 name="traverseArray" module=m5 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w283 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w284}, {type=undefined|number site=w285}, {type=number site=w286}, {type=undefined|null|Array site=w287 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=32 function=f28
+runtimefunction id=64 function=f29
+runtimefunction id=68 function=f27
+runtimefunction id=131091 function=f36 visibility=Private
+# -- generated: filter
+# CHECK-LABEL: function {{*}}name="filter"
+# CHECK: role=Library
+# CHECK-NEXT: instructions: 100, patchpoints: 9, rare instructions: 86, polls: 1
+# CHECK-NEXT: end of function f28
+# CHECK-LABEL: function {{*}}name="filter"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: instructions: 3, patchpoints: 1
+# CHECK-NEXT: end of function f42
+# CHECK-LABEL: function {{*}}name="filter"
+# CHECK: role=CalleeVersion
+# CHECK-NEXT: instructions: 100, patchpoints: 9, rare instructions: 86, polls: 1
+# CHECK-NEXT: end of function f45

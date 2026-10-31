@@ -33,21 +33,17 @@ use bun_sourcemap_jsc::code_coverage;
 const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Returns true if files were actually run via the worker pool, false if it
-/// fell back to the sequential path (≤1 effective worker). The caller uses
+/// left them to the caller to run sequentially (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
 pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
-    // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    // Kept as a raw pointer; dereferenced at each use site to sidestep borrowck
-    // around the self-referential Coordinator/Worker graph.
-    let vm_ptr = vm;
     // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *(*vm_ptr).transpiler.env };
+    let env = unsafe { &mut *vm.transpiler.env };
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -55,8 +51,6 @@ pub(crate) fn run_as_coordinator(
         // tests can rely on the var whenever --parallel is passed.
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
-        // SAFETY: see vm_ptr note above.
-        TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
     }
 
@@ -135,25 +129,14 @@ pub(crate) fn run_as_coordinator(
             reached_ready: false,
             startup_failures: 0,
         });
-        let w: *mut Worker = workers.last_mut().unwrap();
-        // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
-        unsafe {
-            (*w).out.worker = w;
-            (*w).err.worker = w;
-        }
     }
 
     let mut coord = Coordinator {
-        // SAFETY: see vm_ptr note above.
-        vm: unsafe { &*vm_ptr },
-        // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: unsafe {
-            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
-        },
+        vm,
+        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
         reporter,
         files: sorted,
         costs,
-        // SAFETY: FileSystem singleton is initialized before any test runner code runs.
         cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
@@ -211,9 +194,8 @@ pub(crate) fn run_as_coordinator(
     }
 
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
-    // SAFETY: see vm_ptr note above.
-    unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
 
     aggregate::replay_test_records(&mut coord);
@@ -484,6 +466,8 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
+    /// Reused across all worker → coordinator emits.
+    frame: Frame,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
     pub(crate) pending_idx: Option<u32>,
@@ -493,8 +477,11 @@ pub(crate) struct WorkerCommands {
 }
 
 impl WorkerCommands {
-    pub(crate) fn send(&mut self, frame_bytes: &[u8]) {
-        self.channel.send(frame_bytes);
+    /// Sends one frame of `kind`; `fill` writes its payload.
+    fn emit(&mut self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
+        self.frame.begin(kind);
+        fill(&mut self.frame);
+        self.channel.send(self.frame.finish());
     }
 }
 
@@ -521,14 +508,11 @@ impl ChannelOwner for WorkerCommands {
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
-    vm: *mut VirtualMachine,
     cmds: WorkerCommands,
 }
 
 impl<'a> WorkerLoop<'a> {
-    fn begin(&mut self) {
-        // SAFETY: vm pointer is valid for the worker's lifetime.
-        let vm = unsafe { &mut *self.vm };
+    fn begin(&mut self, vm: &mut VirtualMachine) {
         if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
@@ -557,10 +541,7 @@ impl<'a> WorkerLoop<'a> {
             }
         }
 
-        // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-        let wf = unsafe { &mut *WORKER_FRAME.get() };
-        wf.begin(frame::Kind::Ready);
-        self.cmds.send(wf.finish());
+        self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
@@ -576,9 +557,7 @@ impl<'a> WorkerLoop<'a> {
             self.cmds.pending_idx = None;
 
             self.reporter.worker_ipc_file_idx = Some(idx);
-            wf.begin(frame::Kind::FileStart);
-            wf.u32(idx);
-            self.cmds.send(wf.finish());
+            self.cmds.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
@@ -614,92 +593,79 @@ impl<'a> WorkerLoop<'a> {
                 .saturating_sub(started_ns);
 
             let after = *self.reporter.summary();
-            wf.begin(frame::Kind::FileDone);
-            for v in [
-                idx,
-                after.pass - before.pass,
-                after.fail - before.fail,
-                after.skip - before.skip,
-                after.todo - before.todo,
-                after.expectations - before.expectations,
-                after.skipped_because_label - before.skipped_because_label,
-                after.files - before.files,
-                self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
-            ] {
-                wf.u32(v);
-            }
-            wf.u64(elapsed_ns);
-            self.cmds.send(wf.finish());
+            self.cmds.emit(frame::Kind::FileDone, |wf| {
+                for v in [
+                    idx,
+                    after.pass - before.pass,
+                    after.fail - before.fail,
+                    after.skip - before.skip,
+                    after.todo - before.todo,
+                    after.expectations - before.expectations,
+                    after.skipped_because_label - before.skipped_because_label,
+                    after.files - before.files,
+                    self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
+                ] {
+                    wf.u32(v);
+                }
+                wf.u64(elapsed_ns);
+            });
         }
     }
 }
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
 /// run each file with isolation, stream per-test events back. Never returns.
-///
-/// # Safety
-/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
-/// for the entire duration of the call (i.e. for the rest of the process, since
-/// this never returns).
-// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
-// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
-// would alias. The `# Safety` contract above documents the caller's obligation.
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &mut VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
-    // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
-    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    vm.test_isolation_enabled = ctx.test_options.isolate;
+    vm.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
     // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm_ref.event_loop()).ensure_waker() };
-    vm_ref.arena = Some(NonNull::from(&mut arena));
+    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let mut wloop = WorkerLoop {
         reporter,
-        vm,
         cmds: WorkerCommands {
             channel: Channel::default(),
+            frame: Frame::default(),
             pending_idx: None,
             pending_path: Vec::new(),
             done: false,
         },
     };
-    vm_ref.run_with_api_lock(|| wloop.begin());
+    vm.run_with_api_lock_mut(|vm| wloop.begin(vm));
 
-    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
+    worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    vm_ref.run_with_api_lock(|| {
+    vm.run_with_api_lock(|| {
         while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
             // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm_ref.event_loop()).tick() };
+            unsafe { (*vm.event_loop()).tick() };
             if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
                 break;
             }
             // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm_ref.event_loop()).auto_tick() };
+            unsafe { (*vm.event_loop()).auto_tick() };
         }
     });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm_ref.exit_handler.exit_code = 0;
-    vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
-    vm_ref.exit_handler.requested = test_command::exit_is_requested();
-    vm_ref.run_with_api_lock(|| {
-        // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
-        unsafe {
-            (*vm).on_exit();
-            (*vm).global_exit()
-        }
+    vm.exit_handler.exit_code = 0;
+    vm.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm.exit_handler.requested = test_command::exit_is_requested();
+    vm.run_with_api_lock_mut(|vm| {
+        vm.on_exit();
+        vm.global_exit()
     });
     {
         Global::exit(0);
@@ -714,36 +680,28 @@ fn worker_flush_aggregates(
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
-    if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-        let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
-        let _ = runner.snapshots.write_snapshot_file();
-    }
+    let runner = &mut reporter.jest;
+    let _ = runner
+        .snapshots
+        .write_inline_snapshots(&runner.files)
+        .unwrap_or(false);
+    let _ = runner.snapshots.write_snapshot_file();
 
-    // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-    let wf = unsafe { &mut *WORKER_FRAME.get() };
-
-    wf.begin(frame::Kind::RepeatBufs);
-    wf.str(reporter.failures_to_repeat_buf.as_slice());
-    wf.str(reporter.skips_to_repeat_buf.as_slice());
-    wf.str(reporter.todos_to_repeat_buf.as_slice());
-    cmds.send(wf.finish());
+    cmds.emit(frame::Kind::RepeatBufs, |wf| {
+        wf.str(reporter.failures_to_repeat_buf.as_slice());
+        wf.str(reporter.skips_to_repeat_buf.as_slice());
+        wf.str(reporter.todos_to_repeat_buf.as_slice());
+    });
 
     if ctx.test_options.coverage.enabled {
         let mut encoded: Vec<u8> = Vec::new();
         CommandLineReporter::for_each_coverage_report(vm, &ctx.test_options.coverage, |report| {
             encoded.clear();
             code_coverage::wire::encode(&report, &mut encoded);
-            wf.begin(frame::Kind::CoverageFile);
-            wf.str(&encoded);
-            cmds.send(wf.finish());
+            cmds.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
         });
     }
 }
-
-/// Reused across all worker → coordinator emits.
-// PORTING.md §Global mutable state: only accessed from the single worker
-// thread after run_as_worker begins → RacyCell.
-static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::DEFAULT);
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
@@ -769,15 +727,13 @@ pub(crate) fn worker_emit_test_done(
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };
-    // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
-    let wf = unsafe { &mut *WORKER_FRAME.get() };
-    wf.begin(frame::Kind::TestDone);
-    wf.u32(file_idx);
-    wf.str(formatted_line);
-    if let Some(test) = test {
-        encode_test_case(wf, test);
-    }
-    cmds.send(wf.finish());
+    cmds.emit(frame::Kind::TestDone, |wf| {
+        wf.u32(file_idx);
+        wf.str(formatted_line);
+        if let Some(test) = test {
+            encode_test_case(wf, test);
+        }
+    });
 }
 
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {

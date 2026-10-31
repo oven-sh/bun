@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { unsupported } from "./run-programs";
+import { unsupported } from "./harness/commands";
 
 async function run(cmd: string[], cwd: string) {
   await using child = Bun.spawn({

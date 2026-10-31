@@ -160,7 +160,10 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
                 None => return value,
             }
         } else {
-            Type::builtin(builtin)
+            match Type::value_of_builtin(builtin) {
+                Some(expected) => expected,
+                None => return value,
+            }
         };
         let expected = self.file.fragment.types.intern(expected);
         self.expect_type(value, expected)

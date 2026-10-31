@@ -1,0 +1,826 @@
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="globals-that-only-a-browser-has.ts" displayPath="globals-that-only-a-browser-has.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/IteratorOperations.ts" displayPath="/$bun/js/engine/IteratorOperations.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m4)
+module m5 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
+module m6 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
+module m7 path="/$bun/js/prelude/written-lists.ts" displayPath="/$bun/js/prelude/written-lists.ts" flags=[IsLibrary] namespaceLayout=L(m7)
+entry module=m0
+typesite w0 module=m0 kind=Result
+typesite w1 module=m0 position=864 kind=Result
+typesite w2 module=m0 position=991 kind=Parameter
+typesite w3 module=m0 position=974 kind=Result
+typesite w4 module=m0 position=1109 kind=Parameter
+typesite w5 module=m0 position=1092 kind=Result
+typesite w6 module=m0 position=1205 kind=Result
+typesite w7 module=m0 position=1260 kind=Result
+typesite w8 module=m0 position=2707 kind=Variable
+typesite w9 module=m0 position=2720 kind=Variable
+typesite w10 module=m0 position=637 kind=Parameter
+typesite w11 module=m0 position=652 kind=Parameter
+typesite w12 module=m0 position=1333 kind=Result
+typesite w13 module=m0 position=1508 kind=Result
+typesite w14 module=m0 position=1549 kind=Result
+typesite w15 module=m0 position=1603 kind=Result
+typesite w16 module=m0 position=1661 kind=Result
+typesite w17 module=m0 position=1696 kind=Result
+typesite w18 module=m0 position=1748 kind=Result
+typesite w19 module=m0 position=1910 kind=Result
+typesite w20 module=m0 position=2032 kind=Result
+typesite w21 module=m0 position=2150 kind=Result
+typesite w22 module=m0 position=2213 kind=Result
+typesite w23 module=m0 position=2342 kind=Result
+typesite w24 module=m0 position=2414 kind=Result
+typesite w25 module=m0 position=2484 kind=Result
+typesite w26 module=m0 position=2587 kind=Result
+typesite w27 module=m0 position=2653 kind=Result
+typesite w28 module=m0 position=2743 kind=Variable
+typesite w29 module=m0 position=2776 kind=CallResult
+typesite w30 module=m0 position=2789 kind=CallResult
+typesite w31 module=m0 position=2813 kind=CallResult
+typesite w32 module=m0 position=2849 kind=CallResult
+typesite w33 module=m0 position=2957 kind=Result
+typesite w34 module=m0 position=93 kind=CallResult
+typesite w35 module=m0 position=123 kind=CallResult
+typesite w36 module=m0 position=191 kind=CallResult
+typesite w37 module=m0 position=270 kind=PropertyRead
+typesite w38 module=m0 position=288 kind=CallResult
+typesite w39 module=m0 position=322 kind=Variable
+typesite w40 module=m0 position=357 kind=Variable
+typesite w41 module=m0 position=368 kind=PropertyRead
+typesite w42 module=m0 position=411 kind=CallResult
+typesite w43 module=m0 position=387 kind=CallResult
+typesite w44 module=m0 position=454 kind=CallResult
+typesite w45 module=m0 position=552 kind=CallResult
+typesite w46 module=m0 position=605 kind=CallResult
+typesite w47 module=m0 position=719 kind=CallResult
+typesite w48 module=m0 position=816 kind=PropertyRead
+typesite w49 module=m0 position=1514 kind=CallResult
+typesite w50 module=m0 position=1555 kind=CallResult
+typesite w51 module=m0 position=1610 kind=CallResult
+typesite w52 module=m0 position=1624 kind=CallResult
+typesite w53 module=m0 position=1667 kind=CallResult
+typesite w54 module=m0 position=1702 kind=CallResult
+typesite w55 module=m0 position=1916 kind=CallResult
+typesite w56 module=m0 position=2079 kind=Field
+typesite w57 module=m0 position=2110 kind=CallResult
+typesite w58 module=m0 position=2594 kind=Field
+layout L0 kind=Instance name="Card" module=m0 position=2048 constructor=f29 fields=[{key="size" declared={type=number site=w56} flags=[IsRequired]}] supertypes=[L1] flags=[HasHeritage] ownFieldCount=1
+layout L1 name="HTMLElement" fields=[{key="ATTRIBUTE_NODE" declared={type=2} flags=[IsNeverWritten]}, {key="CDATA_SECTION_NODE" declared={type=4} flags=[IsNeverWritten]}, {key="COMMENT_NODE" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_FRAGMENT_NODE" declared={type=11} flags=[IsNeverWritten]}, {key="DOCUMENT_NODE" declared={type=9} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINED_BY" declared={type=16} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINS" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_DISCONNECTED" declared={type=1} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_FOLLOWING" declared={type=4} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC" declared={type=32} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_PRECEDING" declared={type=2} flags=[IsNeverWritten]}, {key="DOCUMENT_TYPE_NODE" declared={type=10} flags=[IsNeverWritten]}, {key="ELEMENT_NODE" declared={type=1} flags=[IsNeverWritten]}, {key="ENTITY_NODE" declared={type=6} flags=[IsNeverWritten]}, {key="ENTITY_REFERENCE_NODE" declared={type=5} flags=[IsNeverWritten]}, {key="NOTATION_NODE" declared={type=12} flags=[IsNeverWritten]}, {key="PROCESSING_INSTRUCTION_NODE" declared={type=7} flags=[IsNeverWritten]}, {key="TEXT_NODE" declared={type=3} flags=[IsNeverWritten]}, {key="accessKey" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="accessKeyLabel" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="after" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="animate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="append" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="appendChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ariaActiveDescendantElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ariaAtomic" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaAutoComplete" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBrailleLabel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBrailleRoleDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBusy" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaChecked" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColCount" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColIndex" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColIndexText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColSpan" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaControlsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaCurrent" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDescribedByElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDetailsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDisabled" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaErrorMessageElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaExpanded" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaFlowToElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaHasPopup" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaHidden" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaInvalid" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaKeyShortcuts" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLabel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLabelledByElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLevel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLive" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaModal" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaMultiLine" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaMultiSelectable" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaOrientation" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaOwnsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPlaceholder" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPosInSet" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPressed" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaReadOnly" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRelevant" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRequired" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRoleDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowCount" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowIndex" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowIndexText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowSpan" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSelected" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSetSize" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSort" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueMax" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueMin" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueNow" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="assignedSlot" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="attachInternals" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="attachShadow" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="attributeStyleMap" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="attributes" declared={type=undefined|null|L17 flags=[IsExpected]} flags=[IsRequired]}, {key="autocapitalize" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="autocorrect" declared={type=boolean} flags=[IsNeverWritten]}, {key="autofocus" declared={type=boolean} flags=[IsNeverWritten]}, {key="baseURI" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="before" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="blur" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="checkVisibility" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="childElementCount" declared={type=number} flags=[IsNeverWritten]}, {key="childNodes" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="children" declared={type=undefined|null|L17 flags=[IsExpected]} flags=[IsRequired]}, {key="classList" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="className" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="click" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="clientHeight" declared={type=number} flags=[IsNeverWritten]}, {key="clientLeft" declared={type=number} flags=[IsNeverWritten]}, {key="clientTop" declared={type=number} flags=[IsNeverWritten]}, {key="clientWidth" declared={type=number} flags=[IsNeverWritten]}, {key="cloneNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="closest" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="compareDocumentPosition" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="computedStyleMap" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="contains" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="contentEditable" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="currentCSSZoom" declared={type=number} flags=[IsNeverWritten]}, {key="customElementRegistry" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="dataset" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="dir" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="dispatchEvent" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="draggable" declared={type=boolean} flags=[IsNeverWritten]}, {key="enterKeyHint" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="firstChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="firstElementChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="focus" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAnimations" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttributeNames" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttributeNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttributeNodeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getBoundingClientRect" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getClientRects" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getElementsByClassName" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getElementsByTagName" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getElementsByTagNameNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getHTML" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getRootNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="hasAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasAttributes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasChildNodes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasPointerCapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hidden" declared={type=undefined|null|boolean|"until-found" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="hidePopover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="id" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="inert" declared={type=boolean} flags=[IsNeverWritten]}, {key="innerHTML" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="innerText" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="inputMode" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="insertAdjacentElement" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertAdjacentHTML" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertAdjacentText" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isConnected" declared={type=boolean} flags=[IsNeverWritten]}, {key="isContentEditable" declared={type=boolean} flags=[IsNeverWritten]}, {key="isDefaultNamespace" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isEqualNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isSameNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lang" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="lastChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="lastElementChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="localName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="lookupNamespaceURI" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lookupPrefix" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="matches" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="moveBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="namespaceURI" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="nextElementSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nextSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nodeName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="nodeType" declared={type=number} flags=[IsNeverWritten]}, {key="nodeValue" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="nonce" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="normalize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="offsetHeight" declared={type=number} flags=[IsNeverWritten]}, {key="offsetLeft" declared={type=number} flags=[IsNeverWritten]}, {key="offsetParent" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="offsetTop" declared={type=number} flags=[IsNeverWritten]}, {key="offsetWidth" declared={type=number} flags=[IsNeverWritten]}, {key="onabort" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="onanimationcancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onanimationend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onanimationiteration" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onanimationstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onauxclick" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onbeforeinput" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onbeforematch" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onbeforetoggle" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onblur" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncanplay" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncanplaythrough" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onclick" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onclose" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="oncommand" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncontextlost" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncontextmenu" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncontextrestored" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncopy" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncuechange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncut" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondblclick" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondrag" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragenter" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragleave" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondrop" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondurationchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onemptied" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onended" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onerror" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="onfocus" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onformdata" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onfullscreenchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onfullscreenerror" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ongotpointercapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oninput" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oninvalid" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onkeydown" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onkeypress" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onkeyup" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onload" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onloadeddata" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onloadedmetadata" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onloadstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onlostpointercapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmousedown" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseenter" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseleave" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmousemove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseout" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseup" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpaste" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpause" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onplay" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onplaying" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointercancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerdown" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerenter" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerleave" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointermove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerout" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerrawupdate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerup" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onprogress" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onratechange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onreset" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onresize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onscroll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onscrollend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onsecuritypolicyviolation" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onseeked" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onseeking" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onselect" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onselectionchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onselectstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onslotchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onstalled" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onsubmit" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onsuspend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontimeupdate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontoggle" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchcancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchmove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitioncancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitionend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitionrun" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitionstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onvolumechange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwaiting" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkitanimationend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkitanimationiteration" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkitanimationstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkittransitionend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwheel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="outerHTML" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="outerText" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="ownerDocument" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentNode" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="part" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="popover" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="prefix" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="prepend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="previousElementSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="previousSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="querySelector" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="querySelectorAll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="releasePointerCapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="remove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="removeAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="removeAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeAttributeNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="replaceChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="replaceChildren" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="replaceWith" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="requestFullscreen" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="requestPointerLock" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="role" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="scroll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollBy" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollHeight" declared={type=number} flags=[IsNeverWritten]}, {key="scrollIntoView" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollLeft" declared={type=number} flags=[IsNeverWritten]}, {key="scrollTo" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollTop" declared={type=number} flags=[IsNeverWritten]}, {key="scrollWidth" declared={type=number} flags=[IsNeverWritten]}, {key="setAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="setAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setAttributeNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setAttributeNodeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setHTMLUnsafe" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setPointerCapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="shadowRoot" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="showPopover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="slot" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="spellcheck" declared={type=boolean} flags=[IsNeverWritten]}, {key="style" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsRequired]}, {key="tabIndex" declared={type=number} flags=[IsNeverWritten]}, {key="tagName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="textContent" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="title" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="toggleAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="togglePopover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="translate" declared={type=boolean} flags=[IsNeverWritten]}, {key="webkitMatchesSelector" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="writingSuggestions" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}] supertypes=[L2, L11, L12, L13, L14] flags=[IsNeverAllocated] declaredOrder=[18, 19, 81, 82, 107, 109, 132, 135, 137, 148, 164, 165, 166, 167, 168, 273, 278, 315, 320, 323, 325, 77, 93, 133, 313, 322, 20, 291, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 297, 22, 114, 21, 85, 286, 294, 80, 91, 92, 94, 95, 96, 97, 104, 105, 134, 136, 151, 156, 206, 207, 272, 274, 277, 279, 300, 302, 304, 305, 312, 314, 318, 78, 87, 99, 101, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 127, 128, 129, 131, 139, 140, 141, 154, 285, 287, 288, 289, 295, 296, 298, 299, 301, 303, 306, 307, 308, 309, 310, 311, 321, 324, 319, 79, 316, 103, 110, 138, 144, 108, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 83, 106, 162, 317, 86, 113, 84, 89, 111, 143, 149, 158, 159, 160, 161, 275, 276, 282, 24, 98, 100, 102, 126, 130, 142, 145, 146, 147, 152, 153, 163, 290, 292, 12, 0, 17, 1, 14, 13, 16, 2, 4, 11, 3, 15, 7, 10, 8, 6, 5, 9, 157, 281, 88, 90, 112, 150, 23, 155, 280, 283, 284, 293, 76] ownFieldCount=326 flow={allocation=NeverAllocated}
+layout L2 name="Element" fields=[{key="ATTRIBUTE_NODE" declared={type=2} flags=[IsNeverWritten]}, {key="CDATA_SECTION_NODE" declared={type=4} flags=[IsNeverWritten]}, {key="COMMENT_NODE" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_FRAGMENT_NODE" declared={type=11} flags=[IsNeverWritten]}, {key="DOCUMENT_NODE" declared={type=9} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINED_BY" declared={type=16} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINS" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_DISCONNECTED" declared={type=1} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_FOLLOWING" declared={type=4} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC" declared={type=32} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_PRECEDING" declared={type=2} flags=[IsNeverWritten]}, {key="DOCUMENT_TYPE_NODE" declared={type=10} flags=[IsNeverWritten]}, {key="ELEMENT_NODE" declared={type=1} flags=[IsNeverWritten]}, {key="ENTITY_NODE" declared={type=6} flags=[IsNeverWritten]}, {key="ENTITY_REFERENCE_NODE" declared={type=5} flags=[IsNeverWritten]}, {key="NOTATION_NODE" declared={type=12} flags=[IsNeverWritten]}, {key="PROCESSING_INSTRUCTION_NODE" declared={type=7} flags=[IsNeverWritten]}, {key="TEXT_NODE" declared={type=3} flags=[IsNeverWritten]}, {key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="after" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="animate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="append" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="appendChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ariaActiveDescendantElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ariaAtomic" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaAutoComplete" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBrailleLabel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBrailleRoleDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBusy" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaChecked" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColCount" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColIndex" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColIndexText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColSpan" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaControlsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaCurrent" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDescribedByElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDetailsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDisabled" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaErrorMessageElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaExpanded" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaFlowToElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaHasPopup" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaHidden" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaInvalid" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaKeyShortcuts" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLabel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLabelledByElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLevel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLive" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaModal" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaMultiLine" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaMultiSelectable" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaOrientation" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaOwnsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPlaceholder" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPosInSet" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPressed" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaReadOnly" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRelevant" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRequired" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRoleDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowCount" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowIndex" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowIndexText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowSpan" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSelected" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSetSize" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSort" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueMax" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueMin" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueNow" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="assignedSlot" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="attachShadow" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="attributes" declared={type=undefined|null|L17 flags=[IsExpected]} flags=[IsRequired]}, {key="baseURI" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="before" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="checkVisibility" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="childElementCount" declared={type=number} flags=[IsNeverWritten]}, {key="childNodes" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="children" declared={type=undefined|null|L17 flags=[IsExpected]} flags=[IsRequired]}, {key="classList" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="className" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="clientHeight" declared={type=number} flags=[IsNeverWritten]}, {key="clientLeft" declared={type=number} flags=[IsNeverWritten]}, {key="clientTop" declared={type=number} flags=[IsNeverWritten]}, {key="clientWidth" declared={type=number} flags=[IsNeverWritten]}, {key="cloneNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="closest" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="compareDocumentPosition" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="computedStyleMap" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="contains" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="currentCSSZoom" declared={type=number} flags=[IsNeverWritten]}, {key="customElementRegistry" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="dispatchEvent" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="firstChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="firstElementChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="getAnimations" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttributeNames" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttributeNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAttributeNodeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getBoundingClientRect" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getClientRects" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getElementsByClassName" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getElementsByTagName" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getElementsByTagNameNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getHTML" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getRootNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="hasAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasAttributes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasChildNodes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasPointerCapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="id" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="innerHTML" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="insertAdjacentElement" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertAdjacentHTML" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertAdjacentText" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isConnected" declared={type=boolean} flags=[IsNeverWritten]}, {key="isDefaultNamespace" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isEqualNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isSameNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lastChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="lastElementChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="localName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="lookupNamespaceURI" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lookupPrefix" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="matches" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="moveBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="namespaceURI" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="nextElementSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nextSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nodeName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="nodeType" declared={type=number} flags=[IsNeverWritten]}, {key="nodeValue" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="normalize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="onfullscreenchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onfullscreenerror" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="outerHTML" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="ownerDocument" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentNode" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="part" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="prefix" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="prepend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="previousElementSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="previousSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="querySelector" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="querySelectorAll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="releasePointerCapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="remove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="removeAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="removeAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeAttributeNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="replaceChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="replaceChildren" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="replaceWith" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="requestFullscreen" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="requestPointerLock" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="role" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="scroll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollBy" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollHeight" declared={type=number} flags=[IsNeverWritten]}, {key="scrollIntoView" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollLeft" declared={type=number} flags=[IsNeverWritten]}, {key="scrollTo" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="scrollTop" declared={type=number} flags=[IsNeverWritten]}, {key="scrollWidth" declared={type=number} flags=[IsNeverWritten]}, {key="setAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="setAttributeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setAttributeNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setAttributeNodeNS" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setHTMLUnsafe" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setPointerCapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="shadowRoot" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="slot" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="tagName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="textContent" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="toggleAttribute" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="webkitMatchesSelector" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] supertypes=[L3, L5, L6, L7, L8, L9, L10] flags=[IsNeverAllocated] declaredOrder=[76, 83, 84, 85, 86, 87, 88, 94, 95, 117, 118, 129, 134, 141, 142, 143, 144, 147, 148, 169, 171, 173, 174, 181, 182, 183, 75, 79, 90, 92, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 112, 113, 114, 116, 119, 120, 121, 132, 154, 156, 157, 158, 164, 165, 167, 168, 170, 172, 175, 176, 177, 178, 179, 180, 185, 186, 184, 18, 160, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 166, 20, 99, 19, 78, 155, 163, 96, 77, 81, 97, 123, 127, 136, 137, 138, 139, 145, 146, 151, 22, 89, 91, 93, 111, 115, 122, 124, 125, 126, 130, 131, 140, 159, 161, 12, 0, 17, 1, 14, 13, 16, 2, 4, 11, 3, 15, 7, 10, 8, 6, 5, 9, 135, 150, 80, 82, 98, 128, 21, 133, 149, 152, 153, 162, 74] ownFieldCount=187 flow={allocation=NeverAllocated}
+layout L3 name="Node" fields=[{key="ATTRIBUTE_NODE" declared={type=2} flags=[IsNeverWritten]}, {key="CDATA_SECTION_NODE" declared={type=4} flags=[IsNeverWritten]}, {key="COMMENT_NODE" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_FRAGMENT_NODE" declared={type=11} flags=[IsNeverWritten]}, {key="DOCUMENT_NODE" declared={type=9} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINED_BY" declared={type=16} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINS" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_DISCONNECTED" declared={type=1} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_FOLLOWING" declared={type=4} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC" declared={type=32} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_PRECEDING" declared={type=2} flags=[IsNeverWritten]}, {key="DOCUMENT_TYPE_NODE" declared={type=10} flags=[IsNeverWritten]}, {key="ELEMENT_NODE" declared={type=1} flags=[IsNeverWritten]}, {key="ENTITY_NODE" declared={type=6} flags=[IsNeverWritten]}, {key="ENTITY_REFERENCE_NODE" declared={type=5} flags=[IsNeverWritten]}, {key="NOTATION_NODE" declared={type=12} flags=[IsNeverWritten]}, {key="PROCESSING_INSTRUCTION_NODE" declared={type=7} flags=[IsNeverWritten]}, {key="TEXT_NODE" declared={type=3} flags=[IsNeverWritten]}, {key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="appendChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="baseURI" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="childNodes" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="cloneNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="compareDocumentPosition" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="contains" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="dispatchEvent" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="firstChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="getRootNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasChildNodes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isConnected" declared={type=boolean} flags=[IsNeverWritten]}, {key="isDefaultNamespace" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isEqualNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isSameNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lastChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="lookupNamespaceURI" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lookupPrefix" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="nextSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nodeName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="nodeType" declared={type=number} flags=[IsNeverWritten]}, {key="nodeValue" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="normalize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="ownerDocument" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentNode" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="previousSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="removeChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="replaceChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="textContent" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}] supertypes=[L4] flags=[IsNeverAllocated] declaredOrder=[20, 21, 26, 30, 34, 37, 38, 39, 40, 42, 43, 44, 45, 49, 19, 22, 23, 24, 27, 28, 29, 31, 32, 33, 35, 36, 41, 46, 48, 12, 0, 17, 1, 14, 13, 16, 2, 4, 11, 3, 15, 7, 10, 8, 6, 5, 9, 18, 25, 47] ownFieldCount=50 flow={allocation=NeverAllocated}
+layout L4 name="EventTarget" fields=[{key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="dispatchEvent" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] flags=[IsNeverAllocated] ownFieldCount=3 flow={allocation=NeverAllocated}
+layout L5 name="ARIAMixin" fields=[{key="ariaActiveDescendantElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ariaAtomic" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaAutoComplete" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBrailleLabel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBrailleRoleDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaBusy" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaChecked" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColCount" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColIndex" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColIndexText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaColSpan" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaControlsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaCurrent" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDescribedByElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDetailsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaDisabled" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaErrorMessageElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaExpanded" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaFlowToElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaHasPopup" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaHidden" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaInvalid" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaKeyShortcuts" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLabel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLabelledByElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLevel" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaLive" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaModal" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaMultiLine" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaMultiSelectable" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaOrientation" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaOwnsElements" declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPlaceholder" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPosInSet" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaPressed" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaReadOnly" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRelevant" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRequired" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRoleDescription" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowCount" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowIndex" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowIndexText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaRowSpan" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSelected" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSetSize" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaSort" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueMax" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueMin" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueNow" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="ariaValueText" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="role" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=52 flow={allocation=NeverAllocated}
+layout L6 name="Animatable" fields=[{key="animate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getAnimations" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L7 name="ChildNode" fields=[{key="ATTRIBUTE_NODE" declared={type=2} flags=[IsNeverWritten]}, {key="CDATA_SECTION_NODE" declared={type=4} flags=[IsNeverWritten]}, {key="COMMENT_NODE" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_FRAGMENT_NODE" declared={type=11} flags=[IsNeverWritten]}, {key="DOCUMENT_NODE" declared={type=9} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINED_BY" declared={type=16} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINS" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_DISCONNECTED" declared={type=1} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_FOLLOWING" declared={type=4} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC" declared={type=32} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_PRECEDING" declared={type=2} flags=[IsNeverWritten]}, {key="DOCUMENT_TYPE_NODE" declared={type=10} flags=[IsNeverWritten]}, {key="ELEMENT_NODE" declared={type=1} flags=[IsNeverWritten]}, {key="ENTITY_NODE" declared={type=6} flags=[IsNeverWritten]}, {key="ENTITY_REFERENCE_NODE" declared={type=5} flags=[IsNeverWritten]}, {key="NOTATION_NODE" declared={type=12} flags=[IsNeverWritten]}, {key="PROCESSING_INSTRUCTION_NODE" declared={type=7} flags=[IsNeverWritten]}, {key="TEXT_NODE" declared={type=3} flags=[IsNeverWritten]}, {key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="after" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="appendChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="baseURI" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="before" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="childNodes" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="cloneNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="compareDocumentPosition" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="contains" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="dispatchEvent" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="firstChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="getRootNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasChildNodes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isConnected" declared={type=boolean} flags=[IsNeverWritten]}, {key="isDefaultNamespace" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isEqualNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isSameNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lastChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="lookupNamespaceURI" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lookupPrefix" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="nextSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nodeName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="nodeType" declared={type=number} flags=[IsNeverWritten]}, {key="nodeValue" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="normalize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="ownerDocument" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentNode" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="previousSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="remove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="removeChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="replaceChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="replaceWith" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="textContent" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}] supertypes=[L3] flags=[IsNeverAllocated] declaredOrder=[19, 22, 48, 52, 18, 27, 50, 21, 23, 28, 32, 36, 39, 40, 41, 42, 44, 45, 46, 47, 53, 20, 24, 25, 26, 29, 30, 31, 33, 34, 35, 37, 38, 43, 49, 51, 12, 0, 17, 1, 14, 13, 16, 2, 4, 11, 3, 15, 7, 10, 8, 6, 5, 9] ownFieldCount=54 flow={allocation=NeverAllocated}
+layout L8 name="NonDocumentTypeChildNode" fields=[{key="nextElementSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="previousElementSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L9 name="ParentNode" fields=[{key="ATTRIBUTE_NODE" declared={type=2} flags=[IsNeverWritten]}, {key="CDATA_SECTION_NODE" declared={type=4} flags=[IsNeverWritten]}, {key="COMMENT_NODE" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_FRAGMENT_NODE" declared={type=11} flags=[IsNeverWritten]}, {key="DOCUMENT_NODE" declared={type=9} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINED_BY" declared={type=16} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_CONTAINS" declared={type=8} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_DISCONNECTED" declared={type=1} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_FOLLOWING" declared={type=4} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC" declared={type=32} flags=[IsNeverWritten]}, {key="DOCUMENT_POSITION_PRECEDING" declared={type=2} flags=[IsNeverWritten]}, {key="DOCUMENT_TYPE_NODE" declared={type=10} flags=[IsNeverWritten]}, {key="ELEMENT_NODE" declared={type=1} flags=[IsNeverWritten]}, {key="ENTITY_NODE" declared={type=6} flags=[IsNeverWritten]}, {key="ENTITY_REFERENCE_NODE" declared={type=5} flags=[IsNeverWritten]}, {key="NOTATION_NODE" declared={type=12} flags=[IsNeverWritten]}, {key="PROCESSING_INSTRUCTION_NODE" declared={type=7} flags=[IsNeverWritten]}, {key="TEXT_NODE" declared={type=3} flags=[IsNeverWritten]}, {key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="append" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="appendChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="baseURI" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="childElementCount" declared={type=number} flags=[IsNeverWritten]}, {key="childNodes" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="children" declared={type=undefined|null|L17 flags=[IsExpected]} flags=[IsRequired]}, {key="cloneNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="compareDocumentPosition" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="contains" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="dispatchEvent" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="firstChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="firstElementChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="getRootNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="hasChildNodes" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="insertBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isConnected" declared={type=boolean} flags=[IsNeverWritten]}, {key="isDefaultNamespace" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isEqualNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isSameNode" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lastChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="lastElementChild" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="lookupNamespaceURI" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="lookupPrefix" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="moveBefore" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="nextSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="nodeName" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="nodeType" declared={type=number} flags=[IsNeverWritten]}, {key="nodeValue" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}, {key="normalize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="ownerDocument" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentElement" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="parentNode" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="prepend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="previousSibling" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsNeverWritten]}, {key="querySelector" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="querySelectorAll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="replaceChild" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="replaceChildren" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="textContent" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsNeverWritten]}] supertypes=[L3] flags=[IsNeverAllocated] declaredOrder=[22, 24, 30, 39, 19, 42, 51, 53, 54, 58, 18, 28, 56, 21, 23, 29, 34, 38, 43, 44, 45, 46, 48, 49, 50, 52, 59, 20, 25, 26, 27, 31, 32, 33, 35, 36, 37, 40, 41, 47, 55, 57, 12, 0, 17, 1, 14, 13, 16, 2, 4, 11, 3, 15, 7, 10, 8, 6, 5, 9] ownFieldCount=60 flow={allocation=NeverAllocated}
+layout L10 name="Slottable" fields=[{key="assignedSlot" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+layout L11 name="ElementCSSInlineStyle" fields=[{key="attributeStyleMap" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="style" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsRequired]}] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L12 name="ElementContentEditable" fields=[{key="contentEditable" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="enterKeyHint" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="inputMode" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="isContentEditable" declared={type=boolean} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=4 flow={allocation=NeverAllocated}
+layout L13 name="GlobalEventHandlers" fields=[{key="addEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="onabort" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="onanimationcancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onanimationend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onanimationiteration" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onanimationstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onauxclick" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onbeforeinput" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onbeforematch" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onbeforetoggle" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onblur" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncanplay" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncanplaythrough" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onclick" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onclose" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="oncommand" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncontextlost" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncontextmenu" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncontextrestored" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncopy" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncuechange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oncut" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondblclick" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondrag" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragenter" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragleave" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondragstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondrop" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ondurationchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onemptied" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onended" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onerror" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}, {key="onfocus" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onformdata" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ongotpointercapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oninput" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="oninvalid" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onkeydown" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onkeypress" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onkeyup" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onload" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onloadeddata" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onloadedmetadata" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onloadstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onlostpointercapture" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmousedown" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseenter" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseleave" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmousemove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseout" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onmouseup" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpaste" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpause" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onplay" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onplaying" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointercancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerdown" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerenter" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerleave" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointermove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerout" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerover" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerrawupdate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onpointerup" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onprogress" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onratechange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onreset" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onresize" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onscroll" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onscrollend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onsecuritypolicyviolation" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onseeked" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onseeking" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onselect" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onselectionchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onselectstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onslotchange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onstalled" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onsubmit" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onsuspend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontimeupdate" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontoggle" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchcancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchmove" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontouchstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitioncancel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitionend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitionrun" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="ontransitionstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onvolumechange" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwaiting" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkitanimationend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkitanimationiteration" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkitanimationstart" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwebkittransitionend" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="onwheel" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsNeverWritten]}, {key="removeEventListener" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] flags=[IsNeverAllocated] declaredOrder=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 0, 102] ownFieldCount=103 flow={allocation=NeverAllocated}
+layout L14 name="HTMLOrSVGElement" fields=[{key="autofocus" declared={type=boolean} flags=[IsNeverWritten]}, {key="blur" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="dataset" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsNeverWritten]}, {key="focus" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="nonce" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}, {key="tabIndex" declared={type=number} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] declaredOrder=[0, 2, 4, 5, 1, 3] ownFieldCount=6 flow={allocation=NeverAllocated}
+layout L15 module=m0 position=2157
+layout L16 module=m4 position=6451 fields=[{key="done" declared={type=undefined|boolean flags=[IsExpected]}}, {key="value" declared={type=anything}}] ownFieldCount=2
+layout L17 module=m7 position=1590 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|string} module=m0
+data d1 root=Object{layout=L15} module=m0
+variable g0 name="text" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="inBrowser" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="titleOr" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="widthOr" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="title" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="width" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="sum" module=m0 declared={type=number|absent site=w8}
+variable g7 name="failures" module=m0 declared={type=number|absent site=w9}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f7
+    v1 = Convert v0 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="a class extended"
+    v3 = NewClosure function=f19
+    v4 = Call v1, -, v2, v3 calleeName="show"
+    v5 = String string="instanceof"
+    v6 = NewClosure function=f20
+    v7 = Call v1, -, v5, v6 calleeName="show"
+    v8 = String string="a store to the number"
+    v9 = NewClosure function=f26
+    v10 = Call v1, -, v8, v9 calleeName="show"
+    v11 = Integer
+    v12 = Convert v11 declared={type=number site=w28}
+    Jump -> next b1(v12)
+  b1(v13: number):
+    LoopHint
+    v15 = GetModuleVariable variable=g3
+    v16 = Integer integer=1
+    v17 = Call v15, -, v16 calleeName="widthOr"
+    v18 = GetModuleVariable variable=g2
+    v19 = String string="ab"
+    v20 = Call v18, -, v19 calleeName="titleOr"
+    v21 = GetModuleVariable variable=g1
+    v22 = Call v21 calleeName="inBrowser"
+    v23 = Convert v22 declared={type=boolean site=w31}
+    v24 = Integer integer=100
+    Jump -> next b2()
+  b2() handler=b4():
+    Jump -> next b3()
+  b3():
+    Jump -> next b6()
+  b4() role=CatchHandler:
+    v25 = CatchValue
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="ReferenceError" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(ReferenceError) flags=[IsExpected]}
+    v29 = InstanceOf v25, v28 writtenExpression="error instanceof ReferenceError"
+    Jump -> next b5(v29)
+  b5(v30):
+    Jump -> next b6()
+  b6():
+    v31 = Increment v13
+    v32 = Convert v31 declared={type=number site=w28}
+    Jump -> next b1(v32)
+}
+function f1 name="text" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Builtin builtin=ArrayIsArray
+    v3 = Call v2, v1, v0 calleeName="Array.isArray"
+    v4 = Convert v3 declared={type=boolean site=w38} illTypedCause=DeclarationWithoutBody
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0)
+  b1(v6):
+    v7 = Data data=d0
+    v8 = Convert v7 declared={type=undefined|null|Array<undefined|null|string> site=w39 flags=[OmitsNull, OmitsUndefined]}
+    v9 = Integer
+    v10 = Convert v9 declared={type=number site=w40}
+    Jump -> next b2(v10)
+  b2(v11: number):
+    LoopHint
+    v13 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    v14 = Convert v0 declared={type=undefined|null|Array} illTypedCause=Assertion
+    v15 = PropGet v14 key="length"
+    v16 = Convert v15 declared={type=number site=w41} illTypedCause=Assertion
+    v17 = Less v13, v16
+    Branch v17 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v18):
+    v19 = PropGet v8 key="push"
+    v20 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    v21 = ElemHas v14, v20
+    v22 = GetModuleVariable variable=g0
+    v23 = ElemGet v14, v20
+    v24 = Call v22, -, v23 calleeName="text"
+    v25 = Convert v24 declared={type=undefined|null|string site=w42 flags=[OmitsNull, OmitsUndefined]}
+    v26 = Call v19, v8, v25 calleeKey="push" calleeName="parts.push"
+    v27 = Increment v20
+    v28 = Convert v27 declared={type=number site=w40}
+    Jump -> next b2(v28)
+  b4(v29):
+    v30 = String string="["
+    v31 = PropGet v8 key="join"
+    v32 = String string=", "
+    v33 = Call v31, v8, v32 calleeKey="join" calleeName="parts.join"
+    v34 = Convert v33 declared={type=undefined|null|string site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v35 = Add v30, v34
+    v36 = String string="]"
+    v37 = Add v35, v36
+    v38 = Convert v37 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}
+    Return v38
+  b5(v39):
+    v40 = TypeTest v0 testedType=null|object
+    v41 = Convert v0 declared={type=undefined|null|object} illTypedCause=Assertion
+    v42 = String string="object "
+    v43 = Builtin builtin=JSON
+    v44 = PropGet v43 key="stringify"
+    v45 = Convert v44 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v46 = Convert v41 declared={type=undefined|null|object} illTypedCause=Assertion
+    v47 = Call v45, v43, v46 calleeKey="stringify" calleeName="JSON.stringify"
+    v48 = Convert v47 declared={type=undefined|null|string site=w45 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v49 = Add v42, v48
+    v50 = Convert v49 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}
+    Return v50
+}
+function f2 name="inBrowser" module=m0 position=864 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="titleOr" module=m0 position=974 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="document" [isFreeName, isForTypeOf]
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b3(v0)
+  b2(v5):
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="document" [isFreeName]
+    v8 = PropGet v7 key="title"
+    Jump -> next b3(v8)
+  b3(v9):
+    v10 = Convert v9 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}
+    Return v10
+}
+function f4 name="widthOr" module=m0 position=1092 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="innerWidth" [isFreeName, isForTypeOf]
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="innerWidth" [isFreeName]
+    Jump -> next b3(v6)
+  b2(v7):
+    Jump -> next b3(v0)
+  b3(v8):
+    v9 = Convert v8 declared={type=number site=w5}
+    Return v9
+}
+function f5 name="title" module=m0 position=1205 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="width" module=m0 position=1260 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="show" module=m0 position=623 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1 calleeName="run"
+    v4 = Call v2, -, v3 calleeName="text"
+    Jump -> next b2()
+  b2():
+    Jump -> next b5()
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="console" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]}
+    v9 = PropGet v8 key="log"
+    v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="Error" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Error) flags=[IsExpected]}
+    v14 = InstanceOf v5, v13 writtenExpression="error instanceof Error"
+    Jump -> next b4(v14)
+  b4(v15):
+    v16 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected]}
+    v17 = PropGet v16 key="constructor"
+    v18 = Convert v17 declared={type=undefined|null|function site=w48} illTypedCause=Assertion
+    v19 = PropGet v18 key="name"
+    v20 = Convert v19 declared={type=undefined|null|string site=w48} illTypedCause=Assertion
+    Jump -> next b5()
+  b5():
+    v21 = Undefined
+    Return v21
+}
+function f8 module=m0 position=1333 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> site=w12 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1508 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w13}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=1549 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=1603 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w15 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=1661 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1696 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w17}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=1748 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w18}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=1788 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m0 position=1852 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=1910 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w19}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 position=1978 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 module=m0 position=2032 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w20}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="HTMLElement" [isFreeName]
+    v2 = ResolveHeritage v1
+    v3 = NewClosure function=f29
+    v4 = NewClass v3, v1, v2 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Convert v5 declared={type=f29 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Construct v6 calleeName="Card"
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w57 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v9 = PropGet v8 key="size"
+    v10 = Convert v9 declared={type=number site=w20}
+    Return v10
+}
+function f20 module=m0 position=2150 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w21}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="HTMLElement" [isFreeName]
+    v3 = InstanceOf v0, v2
+    v4 = Convert v3 declared={type=boolean site=w21}
+    Return v4
+}
+function f21 module=m0 position=2213 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> site=w22 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 module=m0 position=2342 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w23 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 module=m0 position=2414 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w24 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 module=m0 position=2484 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<boolean> site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="globalThis" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v3 = PropHas v2 key="document"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="globalThis" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v7 = PropHas v6 key="window"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="globalThis" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v11 = PropHas v10 key="innerWidth"
+    v12 = NewArray v3, v7, v11 contents=anything
+    v13 = Convert v12 declared={type=undefined|null|Array<boolean> site=w25 flags=[OmitsNull, OmitsUndefined]}
+    Return v13
+}
+function f25 module=m0 position=2587 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w26 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 module=m0 position=2653 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w27 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=5
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="innerWidth" [isFreeName]
+    v3 = String string="stored"
+    v4 = Convert v3 declared={type=undefined|null|string site=w27 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f27 module=m0 position=2957 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f52] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 module=m0 position=1938 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f29 name="Card" module=m0 position=2048 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L0
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f30
+    Return v5
+}
+function f30 module=m0 position=2048 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f297]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f49 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f50 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f51 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f52 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
+function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f55 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f57 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f58 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f59 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f61 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f62 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f63 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f64 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f65 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f66 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f67 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f68 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f69 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f70 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f71 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f72 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f73 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f74 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f75 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f76 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f77 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f78 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f79 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f80 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f81 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f82 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f83 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f84 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f85 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f86 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f87 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f88 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f89 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f90 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f91 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f92 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f93 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f94 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f95 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f96 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f97 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f98 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f99 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f100 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f101 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f102 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f103 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f104 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f105 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f106 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f107 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f108 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f109 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f110 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f111 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f112 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f113 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f114 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f115 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f116 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f117 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f118 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f119 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f120 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f121 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f122 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f123 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f124 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f125 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f126 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f127 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f128 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f129 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f130 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f131 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f132 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f133 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f134 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f135 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f136 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f137 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f138 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f139 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f140 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f141 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f142 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f143 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f144 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f145 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f146 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f147 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f148 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f149 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f150 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f151 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f152 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f153 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f154 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f155 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f156 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f157 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f158 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f159 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f160 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f161 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f162 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f163 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f164 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f165 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f166 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f167 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f168 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f169 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f170 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f171 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f172 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f173 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f174 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f175 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f176 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f177 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f178 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f179 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f180 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f181 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f182 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f183 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f184 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f185 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f186 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f187 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f188 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f189 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f190 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f191 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f192 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f193 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f194 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f195 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f196 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f197 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f198 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f199 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f200 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f201 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f202 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f203 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f204 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f205 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f206 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f207 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f208 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f209 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f210 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f211 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f212 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f213 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f214 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f215 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f216 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f217 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f218 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f219 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f220 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f221 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f222 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f223 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f224 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f225 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f226 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f227 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f228 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f229 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f230 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f231 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f232 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f233 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f234 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f235 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f236 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f237 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f238 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f239 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f240 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f241 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f242 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f243 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f244 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f245 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f246 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f247 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f248 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f249 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f250 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f251 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f252 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f253 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f254 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f255 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f256 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f257 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f258 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f259 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f260 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f261 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f262 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f263 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f264 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f265 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f266 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f267 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f268 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f269 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f270 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f271 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f272 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f273 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f274 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f275 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f276 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f277 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f278 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f279 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f280 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f281 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f282 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f283 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f284 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f285 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f286 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f287 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f288 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f289 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f290 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f291 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f292 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f293 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f294 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f295 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f296 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f297 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f298 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f299 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f300 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f301 name="return" module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=85 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f302 name="throw" module=m2 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=91 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f303 name="iteratorGenericClose" module=m3 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=131072 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f304 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=70 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f305 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=86 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=6 last=6
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v3 = GetInternalField v2
+    v4 = IsGeneratorSuspendedAtStart v3
+    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v6 = GetInternalField v5 index=1
+    v7 = NewClosure function=f303
+    v8 = Call v7, -, v6
+    v9 = Undefined
+    v10 = Boolean boolean=true
+    v11 = Convert v10 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v12 = CreateIteratorResult v9, v11
+    Return v12
+}
+function f306 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f307 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=68 function=f299
+runtimefunction id=69 function=f300 visibility=Private
+runtimefunction id=70 function=f304 visibility=Private
+runtimefunction id=71 function=f306
+runtimefunction id=85 function=f301 visibility=Private
+runtimefunction id=86 function=f305
+runtimefunction id=87 function=f307
+runtimefunction id=91 function=f302 visibility=Private
+runtimefunction id=131072 function=f303 visibility=Private
+# -- generated: f0 titleOr widthOr f19 f20 Card return show
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f19 = NewClosure function=f19 allocationSite=1 storage=Frame
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f318 accessSite=0
+# CHECK-NEXT: v2: f20 = NewClosure function=f20 allocationSite=2 storage=Frame
+# CHECK-NEXT: v3: undefined = CallDirect v2 function=f318 accessSite=1
+# CHECK-NEXT: v4: f26 = NewClosure function=f26 allocationSite=3 storage=Frame
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f318 accessSite=2
+# CHECK-NEXT: v6: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=21 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v9: undefined|int = AssumeType v8 provenType=undefined|int
+# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=number
+# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=22 [seesScriptBindings]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: boolean = Call v6 calleeName="inBrowser" accessSite=5 callees=[f2]
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="titleOr"
+# CHECK: module=m0 position=974 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="widthOr"
+# CHECK: module=m0 position=1092 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1 site=w4}] results=[{type=number site=w5 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 1):
+# CHECK-NEXT: v1: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=21 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v2: undefined|int = AssumeType v1 provenType=undefined|int
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=number
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2(v0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=22 [seesScriptBindings]
+# CHECK-NEXT: v5: undefined|int = AssumeType v4 provenType=undefined|int
+# CHECK-NEXT: v6: undefined|int ~ int = Expect v5 expectedType=number
+# CHECK-NEXT: Jump -> next b2(v6)
+# CHECK-NEXT: b2(v7: undefined|int ~ int):
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m0 position=623 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=f19|f20|f26 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function f19 module=
+# CHECK: m0 position=2032 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w20 flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v1: anything = PropGet v0 key="HTMLElement" accessSite=30 [isFreeName]
+# CHECK-NEXT: v2: null|object = ResolveHeritage v1
+# CHECK-NEXT: v3: f29 = NewClosure function=f29 allocationSite=5
+# CHECK-NEXT: v4: f29 = NewClass v3, v1, v2 layout=L0
+# CHECK-NEXT: v5: f29 = FinishClass v4 layout=L0
+# CHECK-NEXT: v6: Array = NewArray contents=anything
+# CHECK-NEXT: v7: object = CallDirect v5, v5, v6 function=f29 accessSite=31 [isConstruction]
+# CHECK-NEXT: v8: object ~ L0 = Expect v7 expectedType=undefined|null|L0
+# CHECK-NEXT: v9: object ~ L0 = RequireObjectCoercible v8 name="size"
+# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=L0
+# CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v11: L0):
+# CHECK-NEXT: v12: boolean = IsSlotFilled v11 key="size" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v13: guard):
+# CHECK-NEXT: v14: number = GetSlot v11, v13 key="size" receivers=[L0] level=Expected accessSite=32 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v15: anything ~ number = PropGet v9 key="size" accessSite=32
+# CHECK-NEXT: Jump -> next b4(v15)
+# CHECK-NEXT: b4(v16: anything ~ number):
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: }
+# CHECK-LABEL: function f20 module=
+# CHECK: m0 position=2150 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w21}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: object = NewDictionary
+# CHECK-NEXT: v4: Object = AssumeType v0 provenType=Object
+# CHECK-NEXT: v1: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v2: anything = PropGet v1 key="HTMLElement" accessSite=33 [isFreeName]
+# CHECK-NEXT: v3: boolean = InstanceOf v4, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Card"
+# CHECK: module=m0 position=2048 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] constructedClass=L0 inlineFrames=[{}, {callee=f30 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
+# CHECK-NEXT: v3: null|object = GetSuperBase v0
+# CHECK-NEXT: v4: object ~ L0 = SuperConstructList v3, v1, v2 layout=L0 accessSite=41
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="return"
+# CHECK: module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=85 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+# CHECK-LABEL: function {{*}}name="return"
+# CHECK: module=m5 position=326 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=86 thisType={type=IteratorHelper flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f319 layout=L(IteratorResult)} {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f319
+# CHECK-NEXT: v2: undefined = ResultAt v1
+# CHECK-NEXT: v3: true = ResultAt v1 index=1
+# CHECK-NEXT: v4: L(IteratorResult) = NewObject -, v2, v3 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="return"
+# CHECK: module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+# CHECK-LABEL: function {{*}}name="return"
+# CHECK: module=m5 position=326 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=86 captures=[{type=f305}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f305} creator=Entrypoint{target=f305 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f305, v1: anything):
+# CHECK-NEXT: v2: L(IteratorResult) = CallDirect v1 function=f305
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m0 position=623 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=f19|f20|f26}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f7}
+# CHECK-LABEL: function {{*}}name="Card"
+# CHECK: module=m0 position=2048 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f29}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f29} creator=Entrypoint{target=f29 takesNewTarget=true} inlineFrames=[{}, {callee=f29 callPosition=2048 isTailCall=true module=m0}, {callee=f30 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK-NEXT: b0(v0: f29, v1: anything):
+# CHECK-NEXT: v2: anything = GetArgument
+# CHECK-NEXT: v3: null|object = GetSuperBase v0
+# CHECK-NEXT: v4: object ~ L0 = ConstructSuperForwardVarargs v3, v2 layout=L0 firstArgument=1 accessSite=41
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m0 position=623 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f19|f20|f26}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f7} inlineFrames=[{}, {callee=f26 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v1: f19|f20|f26):
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f19
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1() handler=b6():
+# CHECK-NEXT: v3: anything ~ number = CallDirect function=f19 accessSite=23
+# CHECK-NEXT: Jump -> next b5(v3)
+# CHECK-NEXT: b2(v4: f20|f26):
+# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=f20
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3() handler=b6():
+# CHECK-NEXT: v6: boolean = CallDirect function=f20 accessSite=23
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK-NEXT: b4() handler=b6():
+# CHECK-NEXT: v7: 5 = Integer integer=5
+# CHECK-NEXT: SetGlobalBinding v7 key="innerWidth" level=Expected accessSite=40 [seesScriptBindings]
+# CHECK-NEXT: v9: "stored" = String string="stored"
+# CHECK-NEXT: Jump -> next b5(v9)
+# CHECK-NEXT: b5(v10: anything ~ boolean|number|"stored") handler=b6():
+# CHECK-NEXT: v11: string = CallDirect v10 function=f1 accessSite=24
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6() role=CatchHandler:
+# CHECK-NEXT: v12: anything = CatchValue
+# CHECK-NEXT: v13: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v14: boolean = HasInPrototypeChain v12, v13
+# CHECK-NEXT: v15: anything ~ undefined|null|Error = Upcast v12 castType=anything
+# CHECK-NEXT: v16: anything = PropGet v15 key="constructor" accessSite=28
+# CHECK-NEXT: v17: anything ~ undefined|null|function = Expect v16 expectedType=undefined|null|function
+# CHECK-NEXT: v18: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v17 name="name"
+# CHECK-NEXT: v19: anything = PropGet v18 key="name" accessSite=29
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: Return v20
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="return"
+# CHECK: module=m5 position=326 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=86 thisType={type=IteratorHelper flags=[IsExpected]} results=[{type=undefined}, {type=true}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f305 parameterMap=[{original=0}]} creator=ResultWorker{origin=f305} {
+# CHECK-NEXT: b0(v0: anything ~ IteratorHelper):
+# CHECK-NEXT: v1: object ~ IteratorHelper = AssumeType v0 provenType=object [isWordOfFrontEnd]
+# CHECK-NEXT: v2: anything = GetInternalField v1 index=1
+# CHECK-NEXT: v3: f303 = NewClosure function=f303 allocationSite=7 storage=Frame
+# CHECK-NEXT: v4: anything = Call v3, -, v2 accessSite=43 callees=[f303]
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: true = Boolean boolean=true
+# CHECK-NEXT: v7: undefined = Results v5, v6
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }

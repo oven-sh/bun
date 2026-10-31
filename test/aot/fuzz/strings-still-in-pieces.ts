@@ -505,14 +505,16 @@ const joints: [string, string][] = [
 ];
 
 export type Point = { text: string; maker: string; use: string; around: string; home: string; size: number; rounds: number };
+/** What another family adds to the makers, the uses and what stands around them, and the declarations that these need. */
+export type More = { prelude: string; makers: typeof makers; uses: Use[]; arounds: typeof arounds };
 export const dimensions = { texts: textKinds.map(kind => kind.name), makers: Object.keys(makers), uses: uses.map(([name]) => name), arounds: Object.keys(arounds), homes: Object.keys(homes) };
 
 /** One use of one text, as functions whose names end in `id`, and the statement that runs them. */
-function sceneOf(id: number, point: Point): { text: string; call: string } {
+function sceneOf(id: number, point: Point, more?: More): { text: string; call: string } {
   const kind = textKinds.find(each => each.name === point.text)!;
   const makerName = point.maker;
-  const [, use, longest = 1 << 24] = uses.find(([name]) => name === point.use)!;
-  const around = arounds[point.around];
+  const [, use, longest = 1 << 24] = [...uses, ...(more?.uses ?? [])].find(([name]) => name === point.use)!;
+  const around = arounds[point.around] ?? more!.arounds[point.around];
   const home = homes[point.home];
   const size = kind.filler ? Math.min(point.size, longest) : 0;
   const fillers = size ? Math.ceil(size / kind.filler!.length / 16) : 0;
@@ -520,7 +522,7 @@ function sceneOf(id: number, point: Point): { text: string; call: string } {
   const at = kind.fillerAt ?? 1;
   const text = `const pieces${id}: string[] = JSON.parse(${JSON.stringify(JSON.stringify(kind.pieces))});
 ${fillers ? `{\n  const filler = flatTwin(${JSON.stringify(kind.filler)}.repeat(${fillers}));\n  pieces${id}.splice(${at}, 0, ...Array.from({ length: 16 }, () => filler));\n}\n` : ""}function make${id}(p: string[]): string {
-  ${makers[makerName]}
+  ${makers[makerName] ?? more!.makers[makerName]}
 }
 ${around.isAsync ? "async " : ""}function use${id}(text: string, round: number, holder: Holder): ${around.isAsync ? "Promise<string>" : "string"} {
   ${home.before}
@@ -542,9 +544,9 @@ ${around.isAsync ? "async " : ""}function scene${id}(): ${around.isAsync ? "Prom
 const ending = `console.log("wrong: " + [...wrong].sort().join(" ~ "));\nconsole.log("digest: " + digest);`;
 
 /** A program of exactly these points, for a walk through the whole table. */
-export function programOf(points: Point[]): string {
-  const scenes = points.map((point, at) => sceneOf(at + 1, point));
-  return [prelude, ...scenes.map(scene => scene.text), scenes.map(scene => scene.call).join("\n"), ending].join("\n");
+export function programOf(points: Point[], more?: More): string {
+  const scenes = points.map((point, at) => sceneOf(at + 1, point, more));
+  return [prelude, more?.prelude ?? "", ...scenes.map(scene => scene.text), scenes.map(scene => scene.call).join("\n"), ending].join("\n");
 }
 
 export function generate(random: Random): string {

@@ -1,1 +1,0 @@
-{ "skipInShell": "reads error.stack in the form Bun gives it" }

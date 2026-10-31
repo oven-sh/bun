@@ -348,6 +348,9 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
       [0xff, 0xbf, 0xbf],
     ];
     const plain = [0xe4, 0xb8, 0xad];
+    // The runner of CI has a collection follow every expect(), and this test compares 1,449 times.
+    const fromBytes: unknown[] = [];
+    const fromText: unknown[] = [];
     for (const tail of ['"\n', '",1]          \n', '"                 \n']) {
       for (let count = 1; count <= 6; count++) {
         for (let place = 0; place < count; place++) {
@@ -356,11 +359,13 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
             for (let i = 0; i < count; i++) inner.push(...(i === place ? sequence : plain));
             const open = tail.startsWith('",') ? [0x5b, 0x22] : [0x22];
             const bytes = new Uint8Array([...open, ...inner, ...encoder.encode(tail)]);
-            expect(Bun.JSONL.parse(bytes)).toEqual(Bun.JSONL.parse(decode(bytes)));
+            fromBytes.push([hex(bytes), Bun.JSONL.parse(bytes)]);
+            fromText.push([hex(bytes), Bun.JSONL.parse(decode(bytes))]);
           }
         }
       }
     }
+    expect(fromBytes).toEqual(fromText);
   });
 
   test("`read` counts three bytes for each U+FFFD that stands for an invalid sequence", () => {

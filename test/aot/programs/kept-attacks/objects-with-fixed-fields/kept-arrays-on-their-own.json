@@ -1,5 +1,0 @@
-{
-  "skipInVariant": {
-    "validated": "a validating executable needs longer for it than a run may take: it is a loop over millions of objects, and every access is checked"
-  }
-}

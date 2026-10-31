@@ -538,8 +538,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let (at, code) = match &word[..] {
             b"" => return self.expected(T::Semicolon),
             b"const" | b"let" | b"var" => ((pos, end), 1440),
-            // "If a declared node failed to parse, it would have emitted a diagnostic already."
-            b"declare" => return,
+            b"declare" => return self.missing_semicolon_after_declare(),
             b"interface" => invalid_name(T::OpenBrace, 1438, 2427),
             b"is" => ((pos, self.pos()), 1228),
             b"module" | b"namespace" => invalid_name(T::OpenBrace, 1437, 2819),
@@ -561,6 +560,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.error(code, at, &[&value]);
             }
             None => self.error(code, at, &[]),
+        }
+    }
+
+    /// `parseErrorForMissingSemicolonAfter`: "If a declared node failed to parse, it would have emitted a diagnostic
+    /// already." What follows the name may be no declaration at all, and then `bun run` reports it. It takes a decorated
+    /// class for a declaration.
+    pub(crate) fn missing_semicolon_after_declare(&mut self) {
+        if self.options.compiles && !self.is_ecmascript && self.token() != T::At {
+            self.flag_early_error(1005, (self.pos(), 0), &[T::Semicolon.text()]);
         }
     }
 

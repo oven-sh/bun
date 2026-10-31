@@ -686,6 +686,13 @@ const TOP_LEVEL_AWAITS: &[(&str, bool, bool)] = &[
     ("class A { [await 0]() {} }", true, true),
     ("if (false) await 0;", true, false),
     ("false && (await 0);", true, false),
+    ("try { throw 0; await 0; } catch {}", true, false),
+    ("block: { break block; await 0; }", true, false),
+    (
+        "do { continue; for await (const x of y); } while (false);",
+        true,
+        false,
+    ),
     ("async function f() { await 0; }", false, false),
     ("const f = async () => { await 0; };", false, false),
     ("1;", false, false),
@@ -1336,6 +1343,17 @@ fn macro_results_change_format() {
         assert_eq!(third.module_format, CommonJs);
         assert!(!hir[g].is_strict);
     });
+}
+
+#[test]
+fn top_level_await_that_nothing_reaches_makes_an_es_module() {
+    for &(text, has_await, _) in TOP_LEVEL_AWAITS {
+        let text = format!(r#"require("x"); {text}"#);
+        analyzed("a.js", &text, |s| {
+            let format = if has_await { Esm } else { CommonJs };
+            assert_eq!(s.analysis.module_format, format, "{text}");
+        });
+    }
 }
 
 #[test]

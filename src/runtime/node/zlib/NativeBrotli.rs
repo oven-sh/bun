@@ -45,8 +45,7 @@ impl Default for Context {
             avail_in: 0,
             avail_out: 0,
             flush: Op::process,
-            // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
-            last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
+            last_result: LastResult { e: 0 },
             error: c::BrotliDecoderErrorCode2::NO_ERROR,
             dictionary: Vec::new(),
             prepared_dictionary: None,

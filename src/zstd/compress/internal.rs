@@ -1314,13 +1314,55 @@ impl<'a> TreeInput<'a> {
         )
     }
 
-    /// [`Near::compare`] wherever the match is, for what [`Near::compare_chunks`] leaves.
+    /// Whether a match at `match_index` is in the current segment once it is `len` long.
+    #[inline(always)]
+    fn is_current(&self, match_index: u32, len: u32) -> bool {
+        u64::from(match_index) + u64::from(len) >= u64::from(self.dict_limit)
+    }
+
+    /// [`Near::compare_chunks`] for the next 16 bytes alone, if the match has them in the older segment.
+    #[inline(always)]
+    fn compare_older(
+        &self,
+        ip: u32,
+        match_index: u32,
+        from: u32,
+    ) -> core::result::Result<Common, u32> {
+        if self.is_current(match_index, from) {
+            return Err(from);
+        }
+        let older = self.dict.buf.get(..self.dict.pos_of(self.dict_limit));
+        let match_pos = self.dict.pos_of(match_index + from);
+        let (Some(bytes), Some(match_bytes)) = (
+            self.near.chunk16(ip.wrapping_add(from)),
+            older.and_then(|older| older.get(match_pos..)?.first_chunk()),
+        ) else {
+            return Err(from);
+        };
+        let differ = differences(bytes, match_bytes);
+        if differ == 0 {
+            return Err(from + 16);
+        }
+        let len = from + differ.trailing_zeros();
+        Ok(Common::within(len, match_bytes, bytes))
+    }
+
+    /// [`Near::compare`] wherever the match is, for what [`Near::compare_chunks`] leaves. Small, for a cheap call.
     #[cold]
     #[inline(never)]
     fn compare_rest(self, ip: u32, match_index: u32, from: u32) -> Result<Common> {
+        match self.compare_older(ip, match_index, from) {
+            Ok(common) => Ok(common),
+            Err(from) => self.compare_to_the_end(ip, match_index, from),
+        }
+    }
+
+    /// [`Self::compare_rest`], however long the match is.
+    #[inline(never)]
+    fn compare_to_the_end(&self, ip: u32, match_index: u32, from: u32) -> Result<Common> {
         // A position of the older segment, as one of the current segment, only makes sense with a length that brings
         // it there.
-        if u64::from(match_index) + u64::from(from) >= u64::from(self.dict_limit) {
+        if self.is_current(match_index, from) {
             let match_pos = match_index.wrapping_sub(self.dict_limit);
             return Ok(self.near.compare(ip, match_pos, from));
         }
@@ -2694,6 +2736,129 @@ mod tests {
                         told.then_some((len, Some(match_byte < byte))),
                         "{len} {from}"
                     );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `older`, whose first `dict_limit - low` bytes are the older segment, and then the first `end` bytes of `current`.
+    fn two_segments<'a>(
+        older: &'a [u8],
+        low: u32,
+        current: &'a [u8],
+        dict_limit: u32,
+        end: u32,
+    ) -> Result<TreeInput<'a>> {
+        let base_of = |index: u32| 0usize.wrapping_sub(index as usize);
+        let (buf, base) = (current, base_of(dict_limit));
+        let prefix = Prefix { buf, base };
+        let (buf, base) = (older, base_of(low));
+        TreeInput::new(prefix, Prefix { buf, base }, dict_limit, end as usize)
+    }
+
+    #[test]
+    fn the_next_16_bytes_of_a_match_in_the_older_segment_are_compared_at_once() -> Result<()> {
+        const LOW: u32 = 100;
+        const OLDER: u32 = 56;
+        const DICT_LIMIT: u32 = LOW + OLDER;
+        const IP: u32 = 3;
+        let input = two_segments(&[0; OLDER as usize], LOW, &[0; 64], DICT_LIMIT, 64)?;
+        // Not in the older segment, or only up to `from`, also where the sums wrap around.
+        for (index, from) in [
+            (DICT_LIMIT, 0),
+            (DICT_LIMIT - 2, 2),
+            (LOW + 5, u32::MAX - 1),
+        ] {
+            let common = input.compare_older(IP, index, from);
+            assert!(common.is_err_and(|known| known == from));
+        }
+        for len in [0, 1, 8, 15, 16, 17] {
+            for (byte, match_byte) in [(1, 2), (0x80, 0x7F)] {
+                for start in [0, OLDER - len - 16, OLDER - len - 15, OLDER - len - 1] {
+                    // What follows the difference is in the other order, and the buffer goes on after the segment.
+                    let mut older = vec![byte; OLDER as usize + 32];
+                    older
+                        .sub_mut(start as usize..(start + len) as usize)?
+                        .fill(9);
+                    *older.at_mut((start + len) as usize)? = match_byte;
+                    let mut current = vec![match_byte; 64];
+                    current.sub_mut(IP as usize..(IP + len) as usize)?.fill(9);
+                    *current.at_mut((IP + len) as usize)? = byte;
+                    let whole = (len, Some(match_byte < byte));
+                    // The input ends after the difference, or later.
+                    for end in [IP + len + 1, 64] {
+                        let input = two_segments(&older, LOW, &current, DICT_LIMIT, end)?;
+                        for from in [0, len / 2, len] {
+                            let expected = if start + from + 16 > OLDER || IP + from + 16 > end {
+                                Err(from)
+                            } else if len < from + 16 {
+                                Ok(whole)
+                            } else {
+                                Err(from + 16)
+                            };
+                            let common = input.compare_older(IP, LOW + start, from);
+                            assert_eq!(
+                                common.map(|common| (common.len, common.match_is_smaller)),
+                                expected,
+                                "{len} {start} {end} {from}"
+                            );
+                            for common in [
+                                input.compare_rest(IP, LOW + start, from)?,
+                                input.compare_to_the_end(IP, LOW + start, from)?,
+                            ] {
+                                assert_eq!((common.len, common.match_is_smaller), whole);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_match_that_leaves_the_older_segment_goes_on_in_the_current_one() -> Result<()> {
+        const LOW: u32 = 100;
+        const OLDER: u32 = 40;
+        const DICT_LIMIT: u32 = LOW + OLDER;
+        const IP: u32 = 60;
+        const END: u32 = IP + 56;
+        for in_older in [1, 16, 17, 33] {
+            let lens = [0, 1, 15, 16, 17].map(|more| in_older + more);
+            for len in [&[0, in_older - 1, END - IP - 1, END - IP], &lens[..]].concat() {
+                for match_is_smaller in [false, true] {
+                    // The buffer goes on after the segment, with what no match goes on with.
+                    let mut older: Vec<u8> = (1..=OLDER as u8).collect();
+                    older.extend_from_slice(&[0xEE; 32]);
+                    let mut current: Vec<u8> = (0..END as u8).map(|pos| 100 + pos).collect();
+                    let window = [older.sub(..OLDER as usize)?, &current].concat();
+                    let matched = window.sub((OLDER - in_older) as usize..)?;
+                    current
+                        .sub_mut(IP as usize..(IP + len) as usize)?
+                        .copy_from_slice(matched.sub(..len as usize)?);
+                    if let Some(byte) = current.get_mut((IP + len) as usize) {
+                        let match_byte = matched.at(len as usize)?;
+                        *byte = if match_is_smaller {
+                            match_byte + 1
+                        } else {
+                            match_byte - 1
+                        };
+                    }
+                    let input = two_segments(&older, LOW, &current, DICT_LIMIT, END)?;
+                    let match_index = DICT_LIMIT - in_older;
+                    for from in [0, len / 2, len] {
+                        let match_pos = match_index.wrapping_sub(DICT_LIMIT);
+                        let common = match input.near.compare_chunks::<true>(IP, match_pos, from) {
+                            Ok(common) => common,
+                            Err(from) => input.compare_rest(IP, match_index, from)?,
+                        };
+                        assert_eq!(
+                            (common.len, common.match_is_smaller),
+                            (len, (IP + len < END).then_some(match_is_smaller)),
+                            "{in_older} {len} {from}"
+                        );
+                    }
                 }
             }
         }

@@ -1564,6 +1564,48 @@ describe("the output is that of zstd 1.5.7", () => {
     `);
   });
 
+  it("where the binary trees lead to what is before the current segment of the window", () => {
+    // Fields on both sides of 0x80, so that which record comes first depends on how bytes are compared.
+    const fields = (size: number, count: number) => {
+      const records = counted(size, count);
+      for (let i = 0, x = 5; i < records.length; i += 37) {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        if (x & 3) records[i] = 0x78 + (x >>> 28);
+      }
+      return records;
+    };
+    const short = fields(100, 800);
+    const long = fields(1_000, 80);
+    const window = (level_: number, windowLog: number) => ({ ...level(level_), [c.ZSTD_c_windowLog]: windowLog });
+    const cases: [Buffer, zlib.ZstdOptions][] = [];
+    // After a dictionary.
+    for (const data of [short, long]) {
+      const dictionary = data.subarray(0, 30_000);
+      for (const n of [11, 13, 16]) cases.push([data.subarray(30_000, 80_000), { params: level(n), dictionary }]);
+    }
+    // In a buffer that is written to from its start again.
+    cases.push(
+      [short, { params: window(11, 14) }],
+      [short, { params: window(13, 14) }],
+      [long, { params: window(16, 15) }],
+    );
+    expect(cases.map(([data, options]) => digest(zlib.zstdCompressSync(data, options)))).toMatchInlineSnapshot(`
+      [
+        "3714 c51791f02b5ce6e2",
+        "3821 722f4103ea02c85",
+        "2886 7b33aadb1b4c6928",
+        "3000 f11a3c6cbaee134b",
+        "3238 8a4a2b286c782c0d",
+        "2254 d22a01e8a758fe5b",
+        "6664 47c6eea66da02b71",
+        "6845 9bca37c99d215a5d",
+        "3911 a4190024e0f41380",
+      ]
+    `);
+  });
+
   it("where the kind of data changes within a block, for rows of 64 entries", () => {
     let x = 11;
     const next = () => {

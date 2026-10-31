@@ -62,7 +62,7 @@ declare function $findsDeclaredMember(object: object, name: string): boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
-/** Assign to this directly above a function declaration (like a decorator) to override the function's display name. */
+/** Assign to this directly above a function declaration (like a decorator) to override the function's `name`, which defaults to the export's name. `""` means no name. */
 declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;

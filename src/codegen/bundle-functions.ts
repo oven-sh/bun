@@ -371,6 +371,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       throw new Error(`Errors in ${basename}.ts:\n${errors.map(x => x[1]).join("\n")}`);
     }
 
+    const executableName = fn.directives.getter ? `get ${fn.name}` : (fn.directives.overriddenName ?? fn.name);
     bundledFunctions.push({
       name: fn.name,
       directives: fn.directives,
@@ -384,11 +385,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       // Not known yet.
       sourceOffset: 0,
 
-      overriddenName: fn.directives.getter
-        ? `"get ${fn.name}"_s`
-        : fn.directives.overriddenName
-          ? `"${fn.directives.overriddenName}"_s`
-          : "ASCIILiteral()",
+      overriddenName: executableName ? `"${executableName}"_s` : "ASCIILiteral()",
     });
   }
 
@@ -456,7 +453,7 @@ export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: B
 
   function privateName(name) {
     additionalPrivateNames.add(name);
-    return "builtinNames." + name + "PrivateName()";
+    return name + "PrivateName()";
   }
 
   const ids = builtinFunctionIds(SRC_DIR);
@@ -530,17 +527,12 @@ JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
     return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
-  for (const { basename, internal, functions } of files) {
+  for (const { basename, functions } of files) {
     bundledCPP += `
 #pragma mark ${basename}
 
-${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::SourceProvider> sourceProvider, BunBuiltinNames &builtinNames)
-    : m_vm(vm)`;
-
-    if (internal) {
-      bundledCPP += `, ${functions.map(fn => `m_${fn.name}PrivateName(${privateName(fn.name)})`).join(",\n   ")}`;
-    }
-    bundledCPP += `, ${functions.map(fn => initializeSourceCodeFn(fn, basename)).join(",\n   ")} {}
+${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
+    : m_vm(vm), ${functions.map(fn => initializeSourceCodeFn(fn, basename)).join(",\n   ")} {}
 `;
   }
 
@@ -553,22 +545,9 @@ RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
 `;
 
   bundledCPP += `
-JSBuiltinFunctions::JSBuiltinFunctions(JSC::VM& vm, RefPtr<JSC::SourceProvider> provider, BunBuiltinNames& builtinNames) : m_vm(vm),
-  ${files.map(({ basename }) => `m_${low(basename)}Builtins(vm, provider, builtinNames)`).join(", ")}
+JSBuiltinFunctions::JSBuiltinFunctions(JSC::VM& vm, RefPtr<JSC::SourceProvider> provider) : m_vm(vm),
+  ${files.map(({ basename }) => `m_${low(basename)}Builtins(vm, provider)`).join(", ")}
 {}
-
-void JSBuiltinFunctions::exportNames() {
-`;
-
-  for (const { basename, internal } of files) {
-    if (internal) {
-      bundledCPP += `     m_${low(basename)}Builtins.exportNames();\n`;
-    }
-  }
-
-  bundledCPP += `
-}
-
 `;
 
   bundledCPP += `
@@ -627,14 +606,11 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         Zig::GlobalObject::GlobalPropertyInfo staticGlobals[] = {
     `;
 
-  for (const { basename, internal } of files) {
+  for (const { basename, internal, functions } of files) {
     if (internal) {
-      bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
-        Zig::GlobalObject::GlobalPropertyInfo( \\
-            clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(basename)}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
-        WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
-      #undef DECLARE_GLOBAL_STATIC
-      `;
+      for (const fn of functions) {
+        bundledCPP += `        Zig::GlobalObject::GlobalPropertyInfo(clientData.builtinNames().${privateName(fn.name)}, ${low(basename)}().m_${fn.name}Function.get(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),\n`;
+      }
     }
   }
 
@@ -694,9 +670,11 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       bundledHeader += `    macro(${name}, ${fn.name}, ${fn.overriddenName}, s_${name}Length) \\\n`;
     }
     bundledHeader += "\n";
-    bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(macro) \\\n`;
-    for (const fn of functions) {
-      bundledHeader += `    macro(${fn.name}) \\\n`;
+    if (internal) {
+      bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(macro) \\\n`;
+      for (const fn of functions) {
+        bundledHeader += `    macro(${fn.name}) \\\n`;
+      }
     }
     bundledHeader += `
     #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
@@ -707,7 +685,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
     class ${basename}BuiltinsWrapper : private JSC::WeakHandleOwner {
     public:
-        explicit ${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::SourceProvider> sourceProvider, BunBuiltinNames &builtinNames);
+        explicit ${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::SourceProvider> sourceProvider);
 
     #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \\
         JSC::UnlinkedFunctionExecutable* name##Executable(); \\
@@ -715,14 +693,8 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
     #undef EXPOSE_BUILTIN_EXECUTABLES
 
-        WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-        void exportNames();
-
     private:
         [[maybe_unused]] JSC::VM& m_vm;
-
-        WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
     #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \\
         JSC::SourceCode m_##name##Source;\\
@@ -736,7 +708,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     inline JSC::UnlinkedFunctionExecutable* ${basename}BuiltinsWrapper::name##Executable() \\
     {\\
         if (!m_##name##Executable) {\\
-            JSC::Identifier executableName = functionName##PublicName();\\
+            JSC::Identifier executableName;\\
             if (overriddenName)\\
                 executableName = JSC::Identifier::fromString(m_vm, overriddenName);\\
             m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, s_##name##Metadata, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute), this, &m_##name##Executable);\\
@@ -745,13 +717,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     }
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
     #undef DEFINE_BUILTIN_EXECUTABLES
-
-    inline void ${basename}BuiltinsWrapper::exportNames()
-    {
-    #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-        WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-    #undef EXPORT_FUNCTION_NAME
-    }
     `;
 
     if (internal) {
@@ -795,8 +760,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
   bundledHeader += `class JSBuiltinFunctions {
         WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSBuiltinFunctions);
     public:
-        explicit JSBuiltinFunctions(JSC::VM& vm, RefPtr<JSC::SourceProvider> provider, BunBuiltinNames &builtinNames);
-        void exportNames();
+        explicit JSBuiltinFunctions(JSC::VM& vm, RefPtr<JSC::SourceProvider> provider);
 
     `;
 

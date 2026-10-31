@@ -6,11 +6,21 @@ import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wra
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
-  test("builtinModules exists", () => {
+  // test/internal/source-lints/builtin-module-tables.test.ts checks the table behind builtinModules against the
+  // table behind isBuiltin(), so this only checks what the array looks like at runtime.
+  test("builtinModules holds requireable builtins and lists prefix-only modules with their prefix, as Node does", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
-    // not a requireable public module.
-    expect(builtinModules).toHaveLength(76);
+    expect(builtinModules).toContain("node:test");
+    expect(builtinModules).not.toContain("test");
+    // "bun:wrap" is internal transpiler plumbing, not a requireable public module.
+    expect(builtinModules).not.toContain("bun:wrap");
+    expect(builtinModules.filter(name => !isBuiltin(name))).toEqual([]);
+    expect(builtinModules.filter((name, index) => builtinModules.indexOf(name) !== index)).toEqual([]);
+    // A prefixed entry is listed that way because it is requireable only with its prefix.
+    for (const name of builtinModules.filter(name => name.startsWith("node:"))) {
+      expect(isBuiltin(name.slice("node:".length))).toBe(false);
+      expect(process.getBuiltinModule(name)).toBe(require(name));
+    }
   });
 
   test("isBuiltin() works", () => {
@@ -57,7 +67,7 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ missing: [], builtinModules: 76, globalPaths: true }),
+      stdout: JSON.stringify({ missing: [], builtinModules: builtinModules.length, globalPaths: true }),
       stderr: "",
       exitCode: 0,
     });

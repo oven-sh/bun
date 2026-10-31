@@ -60,7 +60,7 @@ fn access(
             KnowledgeLevel::Proven => AccessCost::Free,
         },
         has_other_roots: 0,
-        reserved: 0,
+        other_origins: 0,
         heat: 0.0,
     }
 }

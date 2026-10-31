@@ -2,6 +2,7 @@
 
 #include "JSDOMWrapper.h"
 #include "JavaScriptCore/WasmStreamingCompiler.h"
+#include <JavaScriptCore/JSPromise.h>
 
 #if ENABLE(WEBASSEMBLY)
 
@@ -23,11 +24,16 @@ public:
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
+
+    // The promise that compileStreaming() or instantiateStreaming() returned: the target of the compiler's DeferredWorkTimer ticket.
+    JSC::JSPromise* promise() const { return m_promise.get(); }
+    void setPromise(JSC::VM& vm, JSC::JSPromise* promise) { m_promise.set(vm, this, promise); }
 
     // static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -43,6 +49,9 @@ protected:
     JSWasmStreamingCompiler(JSC::Structure*, JSDOMGlobalObject&, Ref<JSC::Wasm::StreamingCompiler>&&);
 
     void finishCreation(JSC::VM&);
+
+private:
+    JSC::WriteBarrier<JSC::JSPromise> m_promise;
 };
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, JSC::Wasm::StreamingCompiler&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::Wasm::StreamingCompiler* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

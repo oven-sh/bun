@@ -1,8 +1,10 @@
 #include "config.h"
 #include "JSWasmStreamingCompiler.h"
 
+#include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "JSCTaskScheduler.h"
 #include "JSDOMBinding.h"
 #include "JSDOMOperation.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -158,6 +160,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes, (JSG
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_finalizeBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
 {
+    // The compiler has every byte, so its ticket (WorkType::AtSomePoint: no event loop ref) is now certain to be scheduled.
+    if (auto* promise = castedThis->promise())
+        Bun::JSCTaskScheduler::refEventLoopForPendingWork(WebCore::clientData(JSC::getVM(lexicalGlobalObject)), promise);
     castedThis->wrapped().finalize(lexicalGlobalObject);
     return encodedJSUndefined();
 }
@@ -195,6 +200,17 @@ GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSWasmStreamingCompiler, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWasmStreamingCompiler, m_subspaceForWasmStreamingCompiler));
 }
+
+template<typename Visitor>
+void JSWasmStreamingCompiler::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWasmStreamingCompiler>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_promise);
+}
+
+DEFINE_VISIT_CHILDREN(JSWasmStreamingCompiler);
 
 void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {

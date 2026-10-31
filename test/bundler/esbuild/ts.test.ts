@@ -2356,7 +2356,7 @@ describe("bundler", () => {
 					X25 = (321),
 
 					// a dotted name (e.g. x.y.z) that references a const variable with a constant expression initializer and no type annotation,
-					/* (we don't implement this one) */
+					/* (the name of a const that is declared with a number folds, see ts/EnumConstInitializers below. Other consts and dotted names do not.) */
 
 					// a dotted name that references an enum member with an enum literal type, or
 					X26 = X0,
@@ -2513,6 +2513,109 @@ describe("bundler", () => {
         '"4132879497321892437432187943789312894378237491578123414321431"',
       ]);
     },
+  });
+  itBundled("ts/EnumConstInitializers", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Status, Second, Offset } from "./enums";
+        const x = 2;
+        console.log(JSON.stringify([Status.Created, Status.After, Second.E + Second.F, Offset.Back ** x, x ** Offset.Back]));
+      `,
+      "/enums.ts": /* ts */ `
+        const base = 100;
+        const multiplier = 5;
+        const back = -5;
+        export enum Status { Ok = base, Created, Gone = base * 2, After }
+        const enum First { A = 1, B = 2, C = 3 }
+        export const enum Second { D = First.A * multiplier, E = First.B * multiplier, F = First.C * multiplier }
+        export enum Offset { Back = back, Next }
+        console.log(JSON.stringify([Status, Offset]));
+      `,
+    },
+    run: {
+      stdout: `
+        [{"100":"Ok","101":"Created","200":"Gone","201":"After","Ok":100,"Created":101,"Gone":200,"After":201},{"Back":-5,"-5":"Back","Next":-4,"-4":"Next"}]
+        [101,201,25,25,0.03125]
+      `,
+    },
+    onAfterBundle(api) {
+      // The member values are known when the file is parsed, so the other module gets them inlined.
+      api
+        .expectFile("/out.js")
+        .toContain(
+          "[101 /* Created */, 201 /* After */, 10 /* E */ + 15 /* F */, (-5) /* Back */ ** x, x ** -5 /* Back */]",
+        );
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/19581, the file of the report: `bun build --minify 1.ts`
+  for (const backend of ["api", "cli"] as const) {
+    itBundled("ts/EnumConstInitializersMinify/" + backend, {
+      files: {
+        "/entry.ts": /* ts */ `
+          const enum First {
+              A = 1,
+              B = 2,
+              C = 3
+          }
+
+          const multiplier = 5
+
+          const enum Second {
+              D = First.A * multiplier,
+              E = First.B * multiplier,
+              F = First.C * multiplier
+          }
+
+          console.log(Second.E + Second.F)
+        `,
+      },
+      backend,
+      minifySyntax: true,
+      minifyWhitespace: true,
+      minifyIdentifiers: true,
+      run: { stdout: "25" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toBe("console.log(25);\n");
+      },
+    });
+  }
+  itBundled("ts/EnumCrossModuleInliningExponentiationLHS", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from './enums'
+        // A negative inlined value on the left of ** must be parenthesized:
+        // "-5 ** 2" is a SyntaxError.
+        console.log(E.Neg ** 2, E['Neg'] ** 2, E.Pos ** 2, 2 ** E.Neg)
+        // The operand of a prefix unary needs no extra parentheses.
+        console.log(-E.Neg, ~E.Neg, 2 ** E.Pos)
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E { Neg = -5, Pos = 5 }
+      `,
+    },
+    minifySyntax: false,
+    run: { stdout: "25 25 25 0.03125\n5 4 32" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("(-5) /* Neg */ ** 2");
+      expect(out).toContain("- -5 /* Neg */");
+      expect(out).not.toContain("-(-5)");
+      expect(out).not.toContain("(5)");
+    },
+  });
+  itBundled("ts/EnumCrossModuleInliningExponentiationLHSMinify", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from './enums'
+        console.log(E.Neg ** 2, E['Neg'] ** 2, E.Pos ** 2, 2 ** E.Neg)
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E { Neg = -5, Pos = 5 }
+      `,
+    },
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: { stdout: "25 25 25 0.03125" },
   });
   itBundled("ts/EnumUseBeforeDeclare", {
     files: {

@@ -1779,7 +1779,8 @@ pub(crate) mod __gated_printer {
                 }
                 // "**" can't contain certain unary expressions
                 Op::Code::BinPow => {
-                    match &e.left.data {
+                    // An inlined enum member prints as its value, which can be a negative number.
+                    match e.left.unwrap_inlined().data {
                         ExprData::EUnary(left) => {
                             if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
                             {
@@ -1788,6 +1789,12 @@ pub(crate) mod __gated_printer {
                         }
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
+                        }
+                        ExprData::EDot(_) | ExprData::EIndex(_) => {
+                            // The printer can put the value of an enum member of another file here.
+                            if self.options.ts_enums.is_some() {
+                                v.left_level = Level::Call;
+                            }
                         }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"

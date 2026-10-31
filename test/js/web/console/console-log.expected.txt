@@ -22,6 +22,7 @@ Symbol(Symbol Description)
 [Boolean: true]
 {}
 {} {}
+String {}
 {} 1
 [ 123, 456, 789 ]
 {

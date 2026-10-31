@@ -5554,6 +5554,22 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+// A boxed String, Number or Boolean. String.prototype, Number.prototype and Boolean.prototype are boxed values too.
+static ALWAYS_INLINE bool isBoxedStringNumberOrBoolean(JSC::JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    switch (value.asCell()->type()) {
+    case StringObjectType:
+    case DerivedStringObjectType:
+    case NumberObjectType:
+    case BooleanObjectType:
+        return true;
+    default:
+        return false;
+    }
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
@@ -5626,7 +5642,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
 
             JSValue proto = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            if (proto) {
+            if (proto && !isBoxedStringNumberOrBoolean(proto)) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canWalkQuickly(asObject(proto));
@@ -5734,7 +5750,7 @@ restart:
                 JSValue proto = prototypeObject.getPrototype(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
                 if (proto) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
+                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || isBoxedStringNumberOrBoolean(proto) || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
                         if ((structure = proto.structureOrNull())) {
                             prototypeObject = proto;
                             fast = canWalkQuickly(asObject(proto));
@@ -5756,7 +5772,7 @@ restart:
         auto* globalProxy = dynamicDowncast<JSGlobalProxy>(object);
         const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && (isBoxedStringNumberOrBoolean(iterating) || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)))) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {

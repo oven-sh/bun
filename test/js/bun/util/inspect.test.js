@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { openSync } from "fs";
 import { join } from "path";
 import util from "util";
 import { runInNewContext } from "vm";
@@ -1582,16 +1583,49 @@ describe("String.prototype, Number.prototype and Boolean.prototype", () => {
     class N extends Number {}
     const headers = new Headers();
     headers.toJSON = () => new N(3);
-    expect(Bun.inspect(expect.objectContaining(new Number(1)))).toStartWith("ObjectContaining Number {");
-    expect(Bun.inspect(expect.objectContaining(new Id("ab")))).toStartWith(
-      'ObjectContaining Id {\n  "0": "a",\n  "1": "b",\n  length: 2,',
+    expect(Bun.inspect(expect.objectContaining(new Number(1)))).toBe("ObjectContaining Number {}");
+    expect(Bun.inspect(expect.objectContaining(new Id("ab")))).toBe(
+      'ObjectContaining Id {\n  "0": "a",\n  "1": "b",\n  length: 2,\n}',
     );
-    expect(Bun.inspect(headers)).toStartWith("Headers N {");
+    expect(Bun.inspect(headers)).toBe("Headers N {}");
+  });
+
+  it("an object that inherits from one does not list its methods", () => {
+    expect(prototypes.map(prototype => Bun.inspect(Object.create(prototype)))).toEqual([
+      "String {}",
+      "Number {}",
+      "Boolean {}",
+    ]);
+    expect(Bun.inspect(Object.assign(Object.create(String.prototype), { x: 1 }))).toBe("String {\n  x: 1,\n}");
+    // An accessor takes the object off the quick property walk.
+    expect(Bun.inspect(Object.create(String.prototype, { x: { get: () => 1, enumerable: true } }))).toBe(
+      "String {\n  x: [Getter],\n}",
+    );
+    // A boxed value is not a prototype to list either.
+    expect(Bun.inspect(Object.create(new String("a")))).toBe("String {}");
+    expect(Bun.inspect(Object.create(new Number(1)))).toBe("Number {}");
+
+    class S extends String {}
+    expect(Bun.inspect(S.prototype)).toBe("S {}");
+    expect(Bun.inspect(Object.create(S.prototype))).toBe("S {}");
+  });
+
+  it("an error message that prints such an object stays short", () => {
+    expect(() => openSync(import.meta.path, Object.create(String.prototype))).toThrow(
+      "The argument 'flags' is invalid. Received String {}",
+    );
   });
 
   it("those of another realm print the same", () => {
-    const realm = runInNewContext("({ s: String.prototype, n: Number.prototype, b: Boolean.prototype })");
-    expect([realm.s, realm.n, realm.b].map(value => Bun.inspect(value))).toEqual(["{}", "{}", "{}"]);
+    const realm = runInNewContext(
+      "({ s: String.prototype, n: Number.prototype, b: Boolean.prototype, heir: Object.create(String.prototype) })",
+    );
+    expect([realm.s, realm.n, realm.b, realm.heir].map(value => Bun.inspect(value))).toEqual([
+      "{}",
+      "{}",
+      "{}",
+      "String {}",
+    ]);
   });
 
   it.concurrent("print what a program puts on them, and no built-in member", async () => {
@@ -1602,13 +1636,13 @@ describe("String.prototype, Number.prototype and Boolean.prototype", () => {
       Number.prototype.a = 2;
       Object.defineProperty(Boolean.prototype, "hidden", { value: 1 });
       Object.setPrototypeOf(Boolean.prototype, { inherited: 1 });
-      console.log(Number.prototype, Boolean.prototype);
+      console.log(Number.prototype, Boolean.prototype, Object.create(Number.prototype));
       // Not sorted: the walk that sorts also lists the built-in methods.
       console.log(Bun.inspect(Number.prototype, { sorted: true }));
       console.log("calls:", calls);
     `;
     expect(await run(script)).toEqual({
-      stdout: "{\n  b: 1,\n  a: 2,\n} {}\n{\n  b: 1,\n  a: 2,\n}\ncalls: 0\n",
+      stdout: "{\n  b: 1,\n  a: 2,\n} {} Number {}\n{\n  b: 1,\n  a: 2,\n}\ncalls: 0\n",
       stderr: "",
       exitCode: 0,
     });
@@ -1623,10 +1657,11 @@ describe("String.prototype, Number.prototype and Boolean.prototype", () => {
       Object.entries(Number.prototype);
       Object.entries(Boolean.prototype);
       console.log(hasNonReifiedStatic(Number.prototype), hasNonReifiedStatic(Boolean.prototype));
-      console.log(Number.prototype, Boolean.prototype);
+      console.log(Number.prototype, Boolean.prototype, Object.create(Boolean.prototype));
+      console.log(Object.assign(Object.create(Boolean.prototype), { own: 1 }));
     `;
     expect(await run(script)).toEqual({
-      stdout: "false false\n{\n  added: 1,\n} {}\n",
+      stdout: "false false\n{\n  added: 1,\n} {} Boolean {}\nBoolean {\n  own: 1,\n}\n",
       stderr: "",
       exitCode: 0,
     });

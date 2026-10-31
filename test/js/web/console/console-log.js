@@ -20,6 +20,7 @@ console.log(new Number(5));
 console.log(new Boolean(true));
 console.log(String.prototype);
 console.log(Number.prototype, Boolean.prototype);
+console.log(Object.create(String.prototype));
 console.log(String.prototype, 1);
 console.log([123, 456, 789]);
 console.log({ name: "foo" });

@@ -128,8 +128,9 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return {};
 
         if (headerName != HTTPHeaderName::SetCookie) {
+            // A name that indexOf() did not find is new. set() would look for it a second time.
             if (!headers.setIndex(index, *valueToSet))
-                headers.set(headerName, *valueToSet);
+                headers.commonHeaders().append(HTTPHeaderMap::CommonHeader { headerName, *valueToSet });
         } else if (!headers.tryAddSetCookie(normalizedValue)) [[unlikely]] {
             return Exception { OutOfMemoryError };
         }
@@ -149,8 +150,9 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (!canWriteResult.releaseReturnValue())
         return {};
 
+    // A name that indexOf() did not find is new. set() would look for it a second time.
     if (!headers.setIndex(index, *valueToSet))
-        headers.set(name, *valueToSet);
+        headers.uncommonHeaders().append(HTTPHeaderMap::UncommonHeader { name, *valueToSet });
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);

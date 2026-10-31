@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -2194,6 +2194,177 @@ describe("Bun.serve HTTP/3 request validation", () => {
       lenientNoCert: "200 served",
       lenientUnverifiable: "200 served",
     });
+  });
+});
+
+// ls-qpack records every encoded field in a history that it reads only to fill
+// the dynamic table. It grows that history 4 elements at a time with a full
+// copy: the first header block of N fields on a connection costs N^2 / 8
+// copies, and a later block finds the history already grown. Bun.serve encodes
+// with a table capacity of 0, where nothing reads the history, and lsquic is
+// patched to record none at that capacity.
+//
+// `set-cookie` is the one name that a Headers object keeps as separate fields.
+// An empty value is in the QPACK static table, and the history skips those.
+describe("Bun.serve HTTP/3 response header blocks of many fields", () => {
+  // Bun.stdin and not process.stdin: node's streams take a debug build half a second to load.
+  const STOP_SERVER_AT_STDIN_END = `
+    (async () => {
+      for await (const _ of Bun.stdin.stream()) {}
+      server.stop(true);
+      process.exit(0);
+    })();
+  `;
+
+  test("the first block of a connection takes the CPU time of the next one", async () => {
+    // Half the fields for a debug build, where a copy of the history takes 6 times longer.
+    const fields = isDebug ? 16_000 : 32_000;
+    await withCustomServer(
+      `
+      const headers = new Headers();
+      for (let i = 0; i < ${fields}; i++) headers.append("set-cookie", "a");
+      const server = Bun.serve({
+        port: 0,
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        routes: {
+          // A static route, so that a request costs little more than the encoding of its response.
+          "/block": new Response("ok", { headers }),
+          "/cpu": () => {
+            const { user, system } = process.cpuUsage();
+            return new Response(String(user + system));
+          },
+        },
+      });
+      console.error("PORT=" + server.port);
+      ${STOP_SERVER_AT_STDIN_END}
+      `,
+      async port => {
+        let first = Infinity;
+        let second = Infinity;
+        // The best of two connections, so that a busy machine does not decide the result.
+        for (let connection = 0; connection < 2; connection++) {
+          await using endpoint = new QuicEndpoint();
+          const client = await connect(`127.0.0.1:${port}`, {
+            endpoint,
+            servername: "localhost",
+            verifyPeer: "manual",
+            transportParams: { maxIdleTimeout: 5 },
+            onerror() {},
+          } as SessionOptions);
+          client.closed.catch(() => {});
+          await client.opened;
+          const get = async (path: string) => {
+            let status = "";
+            const stream = await client.createBidirectionalStream({
+              headers: requestHeaders(path),
+              onheaders(received) {
+                status = received[":status"] as string;
+              },
+            });
+            stream.closed.catch(() => {});
+            let body = "";
+            for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+              for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+            }
+            return `${status} ${body}`;
+          };
+          const cpu = async () => Number((await get("/cpu")).slice("200 ".length));
+
+          const start = await cpu();
+          const firstBlock = await get("/block");
+          const between = await cpu();
+          const secondBlock = await get("/block");
+          const end = await cpu();
+          // A field takes 3 bytes: the static index of its name, the length of its value, the value.
+          expect({ firstBlock, secondBlock, allFieldsSent: client.stats.bytesReceived > 2 * 3 * fields }).toEqual({
+            firstBlock: "200 ok",
+            secondBlock: "200 ok",
+            allFieldsSent: true,
+          });
+          first = Math.min(first, between - start);
+          second = Math.min(second, end - between);
+          if (!client.destroyed) client.close().catch(() => {});
+        }
+        // In microseconds. The two are about equal when the cost is linear in the fields. A
+        // history that grows makes the first 15 times the second, or more. A coarse clock can
+        // report 0 for the second, so it counts as 10 ms at least.
+        expect(first).toBeLessThan(5 * Math.max(second, 10_000));
+      },
+    );
+  });
+
+  test("every field arrives", async () => {
+    const cookies = Array.from({ length: 2_000 }, (_, i) => `c${i}=v`);
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch() {
+        const headers = new Headers();
+        for (const cookie of cookies) headers.append("set-cookie", cookie);
+        return new Response("ok", { headers });
+      },
+    });
+    const res = await fetchH3(server.port!, "/");
+    // Not toEqual(cookies): a mismatch would print the values.
+    expect({ status: res.status, intact: Bun.deepEquals(res.headers.getSetCookie(), cookies) }).toEqual({
+      status: 200,
+      intact: true,
+    });
+  });
+
+  // Exact, from the debug log of lsquic, which only a debug build writes: ls-qpack logs how
+  // many fields of a block it recorded, and every change of the history's size.
+  test.skipIf(!isDebug)("the encoder records no field in its history", async () => {
+    const fields = 400;
+    using dir = tempDir("serve-http3-qpack-history", {
+      "server.mjs": `
+        const headers = new Headers();
+        for (let i = 0; i < ${fields}; i++) headers.append("set-cookie", "c" + i + "=v");
+        const server = Bun.serve({
+          port: 0,
+          tls: ${JSON.stringify(tls)},
+          http3: true,
+          fetch: () => new Response("ok", { headers }),
+        });
+        console.log(server.port);
+        ${STOP_SERVER_AT_STDIN_END}
+      `,
+    });
+    const log = join(String(dir), "lsquic.log");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_DEBUG_lsquic: "1" },
+      stdout: "pipe",
+      // A file takes every line. lsquic's logger does not write a line again that a pipe refused.
+      stderr: Bun.file(log),
+      stdin: "pipe",
+    });
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += new TextDecoder().decode(chunk);
+      if (stdout.includes("\n")) break;
+    }
+    const port = Number(stdout);
+    expect(port).toBeGreaterThan(0);
+
+    // Two responses on one connection: the server has the client's SETTINGS, and with them
+    // an encoder that has a history, for the second one at the latest.
+    await (await fetchH3(port, "/")).text();
+    const second = await fetchH3(port, "/");
+    await second.text();
+    proc.stdin.end();
+    await proc.exited;
+
+    const lines = await Bun.file(log).text();
+    const recorded = new Set([...lines.matchAll(/qpack-enc: header count actual: (\d+);/g)].map(match => match[1]));
+    expect({
+      received: second.headers.getSetCookie().length,
+      recorded: [...recorded],
+      resizes: lines.match(/qpack-enc: history size change/g)?.length ?? 0,
+    }).toEqual({ received: fields, recorded: ["0"], resizes: 0 });
   });
 });
 

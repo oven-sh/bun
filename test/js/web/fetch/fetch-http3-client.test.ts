@@ -934,6 +934,52 @@ test("strips leading and trailing whitespace from a response field value", async
   }
 });
 
+// fetch's QPACK encoder has a dynamic table. Bun.serve's and node:quic's have
+// none, and lsquic is patched to keep no history of sent fields for those.
+// ls-qpack inserts a field into the table only when that history has it, so an
+// encoder that lost its history would send every repeat as a literal again.
+test("sends a repeated request field as a reference to the QPACK dynamic table", async () => {
+  const sessions: any[] = [];
+  const origin = await listen(
+    async (session: any) => {
+      sessions.push(session);
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "204" }, { terminal: true });
+      },
+    },
+  );
+  try {
+    // The bytes of the QUIC packets that the origin received.
+    const received = () => sessions.reduce((bytes, session) => bytes + Number(session.stats.bytesReceived), 0);
+    // An entry takes 141 bytes of the table: 32, the name and the value. ls-qpack stops
+    // inserting from a block once that block filled half of the 4,096 bytes.
+    const headers = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [
+        `x-field-${i}`,
+        Buffer.alloc(100, `${i}abcdefghijklmnopqrstuvwxyz`).toString(),
+      ]),
+    );
+    const cost: number[] = [];
+    for (let request = 0; request < 6; request++) {
+      const before = received();
+      const res = await fetch(`https://127.0.0.1:${origin.address!.port}/`, { ...h3, headers });
+      await res.arrayBuffer();
+      cost.push(received() - before);
+    }
+    // The 12 fields take more than 1,000 bytes as literals, and 2 bytes each as references.
+    expect(Math.min(...cost.slice(3))).toBeLessThan(300);
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
+});
+
 test("a response header set over the size limit fails that request and no other on the connection", async () => {
   const held = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();

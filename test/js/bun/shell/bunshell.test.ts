@@ -1152,6 +1152,29 @@ booga"
         .runAsTest("a literal * before quoted parentheses isn't an extglob group");
     });
 
+    // Windows: a symlink needs a privilege there, and `far\\..` is `a`, the parent of the link.
+    test.skipIf(isWindows)("`..` after a symlink to a folder is the parent of that folder", async () => {
+      using dir = tempDir("bunshell-symlink-dotdot", {
+        "a/real/x.ts": "x",
+        "a/f.ts": "f",
+        "other/o.ts": "o",
+        "other/deep/d.ts": "d",
+      });
+      symlinkSync("real", join(String(dir), "a", "lnkdir"));
+      symlinkSync(join("..", "other", "deep"), join(String(dir), "a", "far"));
+      // `cat` opens each word, so a word that the file system reads as another path fails here.
+      const { stdout, stderr, exitCode } =
+        await $`echo a/lnkdir/../*.ts a/far/../*.ts && cat a/lnkdir/../*.ts a/far/../*.ts`
+          .cwd(String(dir))
+          .nothrow()
+          .quiet();
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: "a/lnkdir/../f.ts a/far/../o.ts\nfo",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("glob on a nonexistent absolute directory does not crash the process", async () => {
       const missing = join(tmpdirSync(), "does-not-exist").replaceAll("\\", "/");
       const script = `

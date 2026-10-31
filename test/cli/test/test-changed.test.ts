@@ -171,6 +171,43 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--seed and --shard start from the affected files in path order", async () => {
+    const affected = ["f01", "f02", "f03", "f04", "f05"];
+    const importsShared = (name: string) =>
+      `import { test } from "bun:test";\nimport "./shared";\ntest("${name}", () => { console.log("RAN ${name}"); });\n`;
+    using dir = tempDir("test-changed-order", {
+      "package.json": JSON.stringify({ name: "order", type: "module" }),
+      "shared.ts": `export const v = 1;\n`,
+      ...Object.fromEntries(affected.map(name => [`${name}.test.ts`, importsShared(name)])),
+      "unaffected.test.ts": `import { test } from "bun:test";\ntest("unaffected", () => { console.log("RAN unaffected"); });\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    const files = [...affected, "unaffected"].map(name => `./${name}.test.ts`);
+    const ran = async (extra: string[]) => {
+      const { stdout, stderr, exitCode } = await runTestChanged(String(dir), extra);
+      expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+      return stdout
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("RAN "))
+        .map(line => line.slice(4));
+    };
+    const [forward, reversed, shard1, shard2] = await Promise.all([
+      ran(["--seed=3", ...files]),
+      ran(["--seed=3", ...files.toReversed()]),
+      ran(["--shard=1/2", ...files.toReversed()]),
+      ran(["--shard=2/2", ...files.toReversed()]),
+    ]);
+    const seed3 = ["f05", "f02", "f04", "f03", "f01"];
+    expect({ forward, reversed, shard1, shard2 }).toEqual({
+      forward: seed3,
+      reversed: seed3,
+      shard1: ["f01", "f03", "f05"],
+      shard2: ["f02", "f04"],
+    });
+  });
+
   test("staged changes are picked up", async () => {
     using dir = tempDir("test-changed-staged", fixture);
     initRepo(String(dir));

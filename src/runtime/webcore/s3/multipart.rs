@@ -91,6 +91,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use std::borrow::Cow;
 use std::io::Write as _;
 use std::rc::Rc;
 
@@ -381,7 +382,7 @@ impl UploadPart {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
                 proxy_url: ctx.proxy_url(),
-                body: data.as_deref().map_or(&[][..], Vec::as_slice),
+                body: Cow::Borrowed(data.as_deref().map_or(&[][..], Vec::as_slice)),
                 search_params: Some(search_params),
                 request_payer: ctx.request_payer,
                 ..Default::default()
@@ -462,7 +463,7 @@ impl MultiPartUpload {
                             path: &self_.path,
                             method: bun_http::Method::PUT,
                             proxy_url: self_.proxy_url(),
-                            body: self_.buffered.get().slice(),
+                            body: Cow::Borrowed(self_.buffered.get().slice()),
                             content_type: self_.content_type.as_deref(),
                             content_disposition: self_.content_disposition.as_deref(),
                             content_encoding: self_.content_encoding.as_deref(),
@@ -883,7 +884,7 @@ impl MultiPartUpload {
                 path: &self.path,
                 method: bun_http::Method::POST,
                 proxy_url: self.proxy_url(),
-                body: self.multipart_upload_list.get().as_slice(),
+                body: Cow::Borrowed(self.multipart_upload_list.get().as_slice()),
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
                 ..Default::default()
@@ -916,7 +917,7 @@ impl MultiPartUpload {
                 path: &self.path,
                 method: bun_http::Method::DELETE,
                 proxy_url: self.proxy_url(),
-                body: b"",
+                body: Cow::Borrowed(b""),
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
                 ..Default::default()
@@ -943,7 +944,7 @@ impl MultiPartUpload {
                     path: &self.path,
                     method: bun_http::Method::POST,
                     proxy_url: self.proxy_url(),
-                    body: b"",
+                    body: Cow::Borrowed(b""),
                     search_params: Some(b"?uploads="),
                     content_type: self.content_type.as_deref(),
                     content_disposition: self.content_disposition.as_deref(),
@@ -1069,7 +1070,7 @@ impl MultiPartUpload {
                     path: &self.path,
                     method: bun_http::Method::PUT,
                     proxy_url: self.proxy_url(),
-                    body: self.buffered.get().slice(),
+                    body: Cow::Borrowed(self.buffered.get().slice()),
                     content_type: self.content_type.as_deref(),
                     content_disposition: self.content_disposition.as_deref(),
                     content_encoding: self.content_encoding.as_deref(),

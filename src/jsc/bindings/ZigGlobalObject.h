@@ -178,6 +178,8 @@ public:
         ASSERT(!Thread::mayBeGCThread());
         return *m_constructors;
     }
+    // The only writer of constructors(): getDOMConstructor() hands it each constructor that it has made.
+    JSC::JSObject* setDOMConstructor(WebCore::DOMConstructorID, JSC::JSObject*);
 
     WebCore::DOMWrapperWorld& world() { return m_world.get(); }
 
@@ -189,8 +191,6 @@ public:
     // The context that owns what the running script opens: that of the Bun.ModuleGraph whose
     // context it runs in, else this global's own.
     WebCore::ScriptExecutionContext* currentScriptExecutionContext();
-
-    WebCore::DOMConstructors& constructors() { return *m_constructors; }
 
     Lock& gcLock() WTF_RETURNS_LOCK(m_gcLock) { return m_gcLock; }
 

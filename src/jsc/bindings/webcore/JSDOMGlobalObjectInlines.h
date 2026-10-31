@@ -31,17 +31,21 @@
 
 namespace WebCore {
 
+// Runs once for a class and a global object. It is out of line so that the test in front of it, which every read of `instance.constructor` runs, stays as short as it is.
+template<class ConstructorClass, DOMConstructorID constructorID>
+NEVER_INLINE JSC::JSObject* createDOMConstructor(JSC::VM& vm, Zig::GlobalObject& globalObject)
+{
+    JSC::JSObject* constructor = ConstructorClass::create(vm, ConstructorClass::createStructure(vm, globalObject, ConstructorClass::prototypeForStructure(vm, globalObject)), globalObject);
+    return globalObject.setDOMConstructor(constructorID, constructor);
+}
+
 template<class ConstructorClass, DOMConstructorID constructorID>
 inline JSC::JSObject* getDOMConstructor(JSC::VM& vm, const Zig::GlobalObject& globalObject)
 {
     // No locking is necessary unless we need to add a new constructor to Zig::GlobalObject::constructors().
     if (JSC::JSObject* constructor = globalObject.constructors().array()[static_cast<unsigned>(constructorID)].get())
         return constructor;
-    JSC::JSObject* constructor = ConstructorClass::create(vm, ConstructorClass::createStructure(vm, const_cast<Zig::GlobalObject&>(globalObject), ConstructorClass::prototypeForStructure(vm, globalObject)), const_cast<Zig::GlobalObject&>(globalObject));
-    ASSERT(!globalObject.constructors().array()[static_cast<unsigned>(constructorID)].get());
-    Zig::GlobalObject& mutableGlobalObject = const_cast<Zig::GlobalObject&>(globalObject);
-    mutableGlobalObject.constructors().array()[static_cast<unsigned>(constructorID)].set(vm, &globalObject, constructor);
-    return constructor;
+    return createDOMConstructor<ConstructorClass, constructorID>(vm, const_cast<Zig::GlobalObject&>(globalObject));
 }
 
 } // namespace WebCore

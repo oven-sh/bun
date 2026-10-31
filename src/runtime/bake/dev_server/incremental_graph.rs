@@ -1224,14 +1224,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             };
             for holder in holders {
                 let held_back = self.reaches_unrepaired_failure(server_graph, holder, &gates);
-                // Handed to the bundler, and no stylesheet of the bundle has its key: it was not entered.
                 let key = &self.bundled_files.keys()[holder.get() as usize];
-                let not_entered = joined.contains(&ClientFileIndex::init(holder.get()))
+                let asked = joined.contains(&ClientFileIndex::init(holder.get()));
+                // Handed to the bundler, and no stylesheet of the bundle has its key: it was not entered.
+                let not_entered = asked
                     && !css.iter().zip(sources).any(|(css, source)| {
                         css.is_some() && source.path.key_for_incremental_graph() == &**key
                     });
-                // The join found no importer to bundle again for a root that the bundler cannot enter.
-                let no_way_in = !self.css_root_can_enter(server_graph, holder, &gates);
+                // A root that the bundler cannot enter is handed over only when an importer of it can be bundled.
+                let no_way_in = !asked && !bun_paths::is_absolute(key);
                 debug_assert!(
                     held_back || printed(holder) || not_entered || no_way_in,
                     "{} lost its failure in a bundle that did not print the css root {}",

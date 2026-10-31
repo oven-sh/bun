@@ -1322,6 +1322,89 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("an HTTP/1 response that has finished but not drained is not idle: the sweep spares it and stop() waits for it", async () => {
+    // The handler has ended a streamed body, so no request is pending. The
+    // client does not read, so the server still holds bytes of the body, and a
+    // close at this point drops them.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const megabyte = Buffer.alloc(1024 * 1024, "x");
+          const ended = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            fetch: () =>
+              new Response(
+                new ReadableStream({
+                  type: "direct",
+                  pull(controller) {
+                    // write() returns a Promise once the socket has refused bytes.
+                    let backedUp = false;
+                    let megabytes = 0;
+                    while (!backedUp && megabytes++ < 512) backedUp = controller.write(megabyte) instanceof Promise;
+                    const endParked = controller.end() instanceof Promise;
+                    ended.resolve({ sent: megabytes * megabyte.length, backedUp, endParked });
+                  },
+                }),
+              ),
+          });
+          const c = net.connect(server.port, "127.0.0.1");
+          const chunks = [];
+          let orderlyEnd = false;
+          c.on("data", d => chunks.push(d));
+          c.on("end", () => (orderlyEnd = true));
+          c.on("error", () => {});
+          const closed = new Promise(resolve => c.on("close", resolve));
+          c.pause();
+          c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          const { sent, backedUp, endParked } = await ended.promise;
+          const pendingBeforeStop = server.pendingRequests;
+          const closedBySweep = server.closeIdleConnections();
+          let resolved = false;
+          const stopped = server.stop().then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          c.resume();
+          await closed;
+          await stopped;
+          const raw = Buffer.concat(chunks);
+          const body = raw.subarray(raw.indexOf("\\r\\n\\r\\n") + 4);
+          console.log(JSON.stringify({
+            backedUp,
+            endParked,
+            pendingBeforeStop,
+            closedBySweep,
+            resolvedEarly,
+            wholeBody: body.length > sent && body.subarray(-5).toString() === "0\\r\\n\\r\\n",
+            orderlyEnd,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: {
+        backedUp: true,
+        endParked: false,
+        pendingBeforeStop: 0,
+        closedBySweep: 0,
+        resolvedEarly: false,
+        wholeBody: true,
+        orderlyEnd: true,
+      },
+      exitCode: 0,
+    });
+  });
+
   test("websocket-only server: a second stop() returns the still-pending promise", async () => {
     // After upgrade() the filter fires -1, so a websocket-only server has
     // active_connection_count == 0 and only the has_active_web_sockets() term

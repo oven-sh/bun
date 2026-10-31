@@ -341,6 +341,18 @@ test.concurrent.skipIf(!isLinux).each([
     `,
   ]),
   [
+    "while the report of a rejection from a tick of that listener waits",
+    `
+      const { writeFileSync } = require("node:fs");
+      process.on("unhandledRejection", error => {
+        if (error.message === "second") return writeFileSync("../ran", "");
+        process.nextTick(() => Promise.reject(new Error("second")));
+        writeFileSync("../queued", "");
+      });
+      setTimeout(() => Promise.reject(new Error("late")), 0);
+    `,
+  ],
+  [
     "after a failed run between the batches of a MessageChannel",
     `
       const { writeFileSync } = require("node:fs");

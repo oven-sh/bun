@@ -1392,9 +1392,10 @@ impl EventLoop {
         // An earlier poll can have taken the wakeup of work that is already here.
         self.tick_concurrent();
         let _ = self.promote_yield_tasks();
+        // Report, run what the listeners queued, then report what that rejected.
         let _ = self.global_ref().handle_rejected_promises();
-        // A listener that ran has had no checkpoint for what it queued.
         let _ = self.drain_microtasks();
+        let _ = self.global_ref().handle_rejected_promises();
 
         #[cfg(unix)]
         {

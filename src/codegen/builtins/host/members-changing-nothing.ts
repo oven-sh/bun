@@ -169,6 +169,13 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [0],
     refused: [],
   },
+  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepEqual": {
+    functions: 1,
+    sets: 360,
+    returned: 360,
+    taken: [0, 1],
+    refused: [],
+  },
   "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": {
     functions: 1,
     sets: 1065,

@@ -136,6 +136,7 @@
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "UtilInspect.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
@@ -5614,6 +5615,11 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     bool hasNoOwnProperty = structure->outOfLineSize() == 0 && structure->inlineSize() == 0;
 #endif
 
+    // These three prototypes show what a program put on them. The quick walk lists each method of a reified one.
+    const bool listsOwnEnumerableOnly = Bun::isStringNumberOrBooleanPrototype(object);
+    if (listsOwnEnumerableOnly)
+        fast = false;
+
     if (fast) {
         if (hasNoOwnProperty) {
             fast = false;
@@ -5754,7 +5760,7 @@ restart:
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, isOtherGlobal ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, (isOtherGlobal || listsOwnEnumerableOnly) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
             }
 
             RETURN_IF_EXCEPTION(scope, void());
@@ -5848,7 +5854,7 @@ restart:
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
                 break;
-            if (iterating == globalObject || isOtherGlobal)
+            if (iterating == globalObject || isOtherGlobal || listsOwnEnumerableOnly)
                 break;
             JSValue prototype = iterating->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );

@@ -547,6 +547,7 @@ impl JSType {
     /// ```
     pub const StringObject: JSType = JSType(100);
 
+    /// `String.prototype` of any realm, and nothing else. An instance of a subclass is a `StringObject`.
     pub const DerivedStringObject: JSType = JSType(101);
 
     pub const Event: JSType = JSType(0b11101111);

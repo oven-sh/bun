@@ -27,3 +27,7 @@ export async function ireturnapromise() {
 export function symbolKeys() {
   return { v: 2, [Symbol.for("s")]: 1, [Symbol("d")]: 3, [Symbol()]: 4 };
 }
+
+export function stringNumberAndBooleanPrototypes() {
+  return [String.prototype, Number.prototype, Boolean.prototype];
+}

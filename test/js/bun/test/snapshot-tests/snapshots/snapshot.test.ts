@@ -939,6 +939,51 @@ test("error inline snapshots", () => {
   }).toThrowErrorMatchingInlineSnapshot(`"😊"`);
 });
 
+// The snapshot printer has a property walk of its own. console.log prints the three prototypes as `{}` (#8627).
+test("String.prototype, Number.prototype, Boolean.prototype and boxed values", () => {
+  class N extends Number {}
+  const withKeys = (value: object) =>
+    Object.defineProperty(Object.assign(value, { b: 1, a: 2 }), "hidden", { value: 3 });
+  expect(String.prototype).toMatchInlineSnapshot(`String {}`);
+  expect(Number.prototype).toMatchInlineSnapshot(`
+    Number {
+      "toExponential": [Function: toExponential],
+      "toFixed": [Function: toFixed],
+      "toLocaleString": [Function: toLocaleString],
+      "toPrecision": [Function: toPrecision],
+      "toString": [Function: toString],
+      "valueOf": [Function: valueOf],
+    }
+  `);
+  expect(Boolean.prototype).toMatchInlineSnapshot(`
+    Boolean {
+      "toString": [Function: toString],
+      "valueOf": [Function: valueOf],
+    }
+  `);
+  expect(withKeys(new Number(1))).toMatchInlineSnapshot(`
+    Number {
+      "a": 2,
+      "b": 1,
+      "hidden": 3,
+    }
+  `);
+  expect(withKeys(new Boolean(true))).toMatchInlineSnapshot(`
+    Boolean {
+      "a": 2,
+      "b": 1,
+      "hidden": 3,
+    }
+  `);
+  expect(withKeys(new N(1))).toMatchInlineSnapshot(`
+    N {
+      "a": 2,
+      "b": 1,
+      "hidden": 3,
+    }
+  `);
+});
+
 test("snapshot numbering", () => {
   function fails() {
     throw new Error("snap");

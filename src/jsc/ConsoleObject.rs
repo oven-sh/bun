@@ -2203,13 +2203,22 @@ pub mod formatter {
             use jsc::JSType as T;
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
+                // JSC makes these three prototypes boxed values (#8627). `cell` selects string colouring.
+                T::DerivedStringObject | T::NumberObject | T::BooleanObject
+                    if crate::cpp::Bun__isStringNumberOrBooleanPrototype(value) =>
+                {
+                    return Ok(TagResult {
+                        tag: TagPayload::Object,
+                        cell: T::Object,
+                    });
+                }
                 T::NumberObject => TagPayload::Double,
                 T::DerivedArray
                 | T::Array
                 | T::DirectArguments
                 | T::ScopedArguments
                 | T::ClonedArguments => TagPayload::Array,
-                T::DerivedStringObject | T::String | T::StringObject => TagPayload::String,
+                T::String | T::StringObject => TagPayload::String,
                 T::RegExpObject => TagPayload::String,
                 T::Symbol => TagPayload::Symbol,
                 T::BooleanObject => TagPayload::Boolean,
@@ -3166,6 +3175,10 @@ pub mod formatter {
     ) -> JsResult<Option<bun_core::String>> {
         let name_str = value.get_class_name(global_this)?;
         if !name_str.eq_ascii(b"Object") {
+            // Node prints `String.prototype`, `Number.prototype` and `Boolean.prototype` as `{}`.
+            if crate::cpp::Bun__isStringNumberOrBooleanPrototype(value) {
+                return Ok(None);
+            }
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
@@ -5366,7 +5379,8 @@ pub mod formatter {
                 i: 0,
             };
 
-            if ordered_properties {
+            // Only the other walk leaves out the built-in methods of `String.prototype` and its two siblings.
+            if ordered_properties && !crate::cpp::Bun__isStringNumberOrBooleanPrototype(value) {
                 value.for_each_property_ordered(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),

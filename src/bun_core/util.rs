@@ -4093,7 +4093,7 @@ pub enum GetcwdError {
     NameTooLong,
 }
 
-/// The working directory. Windows keeps a `\\?\` prefix from a start in, or a chdir into, `\\?\C:\dir`. Unlike `uv_cwd`, this drops it.
+/// The working directory, in the spelling of [`without_verbatim_prefix_w`]. Windows keeps a `\\?\` prefix from a start in, or a chdir into, `\\?\C:\dir`, and `uv_cwd` gives that prefix back.
 #[cfg(windows)]
 pub fn getcwd_w(buf: &mut [u16]) -> Result<&mut [u16], GetcwdError> {
     unsafe extern "system" {

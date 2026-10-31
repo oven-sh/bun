@@ -488,7 +488,7 @@ mod _impl {
         }
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
-        // Unlike uv_cwd(), it drops the `\\?\` prefix of a Windows working directory (`bun_core::getcwd_w`).
+        // Unlike uv_cwd(), it gives `\\?\C:\dir` as `C:\dir` and `\\?\UNC\server\share` as `\\server\share` (`bun_core::getcwd_w`).
         let mut buf = bun_paths::path_buffer_pool::get();
         match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => {

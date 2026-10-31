@@ -4,7 +4,19 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  nodeExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
@@ -576,6 +588,32 @@ describe.skipIf(!isWindows)("a working directory spelled with the \\\\?\\ prefix
       out: { os: spell(unc), cwd: unc },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // Node.js gives the working directory as the OS gives it. Bun differs on purpose.
+  it.concurrent.skipIf(!nodeExe())("Node.js keeps the prefix in process.cwd() and path.resolve()", async () => {
+    using dir = tempDir("process-cwd-verbatim-node", {});
+    const root = String(dir);
+    const print = `console.log(JSON.stringify({ cwd: process.cwd(), pathResolve: require("node:path").resolve() }));`;
+    async function read(exe) {
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", print],
+        env: bunEnv,
+        cwd: "\\\\?\\" + root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: parse(stdout), stderr, exitCode };
+    }
+    expect({ node: await read(nodeExe()), bun: await read(bunExe()) }).toEqual({
+      node: {
+        out: { cwd: "\\\\?\\" + root, pathResolve: "\\\\?\\" + root },
+        stderr: expect.any(String),
+        exitCode: 0,
+      },
+      bun: { out: { cwd: root, pathResolve: root }, stderr: "", exitCode: 0 },
     });
   });
 });

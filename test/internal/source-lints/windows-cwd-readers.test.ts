@@ -12,7 +12,7 @@ import path from "node:path";
 // Read the working directory with `bun_core::getcwd` or `bun_sys::getcwd`.
 test("the Windows working directory has one reader", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
-  const call = /(?<!\bfn\s+)\bGetCurrentDirectoryW\s*\(/;
+  const call = /(?<!\bfn\s+)\bGetCurrentDirectoryW\s*\(/g;
 
   const known = new Map([
     // `getcwd_w`.
@@ -31,7 +31,8 @@ test("the Windows working directory has one reader", async () => {
     scanned++;
     const source = readFileSync(path.join(repoRoot, file), "utf8");
     if (!source.includes("GetCurrentDirectoryW")) continue;
-    const count = source.split("\n").filter(line => !/^\s*\/\//.test(line) && call.test(line)).length;
+    const code = source.split("\n").filter(line => !/^\s*\/\//.test(line));
+    const count = code.join("\n").match(call)?.length ?? 0;
     if (count > 0) found.set(file, count);
   }
   // Guard against repoRoot resolving wrong, which would make the lint pass vacuously.

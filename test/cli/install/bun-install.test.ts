@@ -9718,7 +9718,8 @@ describe.concurrent("bun-install", () => {
   // https://github.com/oven-sh/bun/issues/11953
   //
   // Windows keeps a `\\?\` prefix in the working directory of a process that starts in a directory spelled with one.
-  // Rust's `fs::canonicalize` gives that spelling, and a Rust program then starts `bun install` in it.
+  // Rust's `fs::canonicalize` gives that spelling, and `Command::current_dir` of Rust before 1.88 starts `bun install`
+  // in it.
   describe.skipIf(!isWindows)("project in a directory spelled with the \\\\?\\ prefix", () => {
     it.each(["hoisted", "isolated"] as const)("bun install with the %s linker", async linker => {
       await withContext({ linker }, async ctx => {

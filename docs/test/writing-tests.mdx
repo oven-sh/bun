@@ -48,7 +48,16 @@ test("2 * 2", async () => {
 });
 ```
 
-Alternatively, use the `done` callback to signal completion. If your test function takes a `done` parameter, you must call it or the test hangs.
+A test can also return a promise, or any other object with a `then()` method. `bun test` waits for the returned value to settle, the same way `await` does. A returned `Bun.$` command or SQL query runs, and the test fails if the value rejects.
+
+```ts title="shell.test.ts" icon="/icons/typescript.svg"
+import { $ } from "bun";
+import { test } from "bun:test";
+
+test("the command exits with 0", () => $`echo hello`.quiet());
+```
+
+Alternatively, use the `done` callback to signal completion. If your test function takes a `done` parameter, you must call it or the test hangs. With a `done` parameter, `bun test` ignores a returned object that is not a promise: it does not call its `then()`.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
 import { expect, test } from "bun:test";

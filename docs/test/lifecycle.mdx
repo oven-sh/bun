@@ -237,6 +237,26 @@ test("async test", async () => {
 });
 ```
 
+A hook can also return a promise, or any other object with a `then()` method. `bun test` waits for it the same way it does for a [test](/test/writing-tests#async-tests).
+
+An arrow function without braces returns the value of its expression, and `bun test` waits for that value. If a hook only stores a lazy value such as a command, a query or a request, use braces so that the hook does not run it:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { $ } from "bun";
+import { beforeEach, expect, test } from "bun:test";
+
+let command: ReturnType<typeof $>;
+
+beforeEach(() => {
+  // With braces, the hook stores the command and does not run it.
+  command = $`echo hello`.quiet();
+});
+
+test("runs the stored command", async () => {
+  expect((await command).text()).toBe("hello\n");
+});
+```
+
 ## Nested Hooks
 
 You can nest hooks. They run in the following order:

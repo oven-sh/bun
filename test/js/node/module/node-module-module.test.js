@@ -1395,6 +1395,8 @@ console.log("survived", require("./late.js"));`,
       // A "?" starts a query, as in every name of a module in Bun. import.meta.filename has no query.
       queryInTheFilename: { dep: "text", filename: "dep.mjs" },
       importWithTheQueryOfTheFilename: "text",
+      // What happens today, not what is wanted: the failing test below has the wanted answer.
+      importInFlight: { compile: "text", import: "text", fileRan: false },
       mainModuleAsReceiver: { a: 1 },
       emptyFilenameAfterChdir: { sameModule: true, inAnotherDirectory: "sub" },
       dynamicImportFollowsTheFilename: "sub dep",
@@ -1450,9 +1452,7 @@ console.log("survived", require("./late.js"));`,
 
     let rowsUnderBun;
     test("under bun", async () => {
-      const result = await (rowsUnderBun ??= rows(bunExe()));
-      const { importInFlight, ...others } = result.rows || {};
-      expect({ ...result, rows: others }).toEqual({ rows: underBun, stderr: "", exitCode: 0 });
+      expect(await (rowsUnderBun ??= rows(bunExe()))).toEqual({ rows: underBun, stderr: "", exitCode: 0 });
     });
 
     // The import() started first, so the name is its own: the text keeps the error of the CommonJS parse, and the
@@ -1544,7 +1544,7 @@ console.log("survived", require("./late.js"));`,
           try {
             const module = new Module(filename);
             module._compile(text, filename);
-            return "loaded in " + path.basename(module.exports.directory);
+            return module.exports.directory === gone ? "loaded in the directory that is gone" : module.exports.directory;
           } catch (e) {
             return e.name;
           }
@@ -1564,7 +1564,7 @@ console.log("survived", require("./late.js"));`,
     expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
       stdout: {
         "": { typo: "SyntaxError", esModule: "SyntaxError" },
-        "t.js": { typo: "SyntaxError", esModule: "loaded in gone" },
+        "t.js": { typo: "SyntaxError", esModule: "loaded in the directory that is gone" },
       },
       stderr: "",
       exitCode: 0,

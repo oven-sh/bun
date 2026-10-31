@@ -256,6 +256,8 @@ pub struct SourceMapPieces {
     pub prefix: Vec<u8>,
     pub mappings: Vec<u8>,
     pub suffix: Vec<u8>,
+    /// The bundler's source index of each `sources` entry, in order. Empty unless the build reads them back.
+    pub source_indices: Box<[u32]>,
 }
 
 /// This function is extremely hot.

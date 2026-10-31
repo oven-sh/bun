@@ -1377,6 +1377,23 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }
     }
 
+    // Only the typed files of a library read these.
+    if c.options.is_library {
+        let sources = c.parse_graph().input_files.items_source();
+        for (chunk, file) in chunks.iter_mut().zip(&mut output_files.output_files) {
+            let indices = core::mem::take(&mut chunk.output_source_map.source_indices);
+            file.source_map_sources = (indices.iter())
+                .map(|&index| {
+                    let path = &sources[index as usize].path;
+                    match path.is_file() {
+                        true => SourceMapSource::File(Box::from(path.text)),
+                        false => SourceMapSource::NotFile(Box::from(path.pretty)),
+                    }
+                })
+                .collect();
+        }
+    }
+
     // The internal modules the executable will carry bytecode for, as its builtins section has them.
     let target_builtins = c.options.target_builtins.clone();
     let internal_modules = (c.options.generate_internal_module_bytecode
@@ -1971,4 +1988,4 @@ fn chunk_load_order(
 
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
-use crate::output_file::{BakeExtra, BakeRouteKind};
+use crate::output_file::{BakeExtra, BakeRouteKind, SourceMapSource};

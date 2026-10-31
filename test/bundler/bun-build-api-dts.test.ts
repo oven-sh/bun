@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const project = {
@@ -22,6 +22,49 @@ export { join };
 }
 `,
 };
+
+// Two entry points, each with a module `util.ts` beside it. The one in `sub` also takes the `util.ts` above it.
+const nested = {
+  "index.ts": `export { util } from "./util";\n`,
+  "util.ts": `export interface Options {
+  n: number;
+}
+export function util(options: Options): string {
+  return String(options.n);
+}
+`,
+  "sub/index.ts": `export { util } from "../util";
+export { util as subUtil } from "./util";
+`,
+  "sub/util.ts": `export interface Flagged {
+  n: string;
+}
+export function util(options: Flagged): string {
+  return options.n;
+}
+`,
+};
+// `sub/index.aot.ts`. The comment above each module is its path from the working directory.
+const NESTED_TYPED = `// util.ts
+interface Options {
+  n: number;
+}
+function util(options: Options): string {
+  return String(options.n);
+}
+// sub/util.ts
+interface Flagged {
+  n: string;
+}
+function util2(options: Flagged): string {
+  return options.n;
+}
+export {
+  util2 as subUtil,
+  util
+};
+`;
+const withoutModulePaths = (typed: string) => typed.replace(/^\/\/ .*\n/gm, "");
 
 const WRITTEN = ["index.aot.ts", "index.d.ts", "index.js", "join.d.ts"];
 const filesIn = (folder: string) => readdirSync(folder, { recursive: true }).map(String).sort();
@@ -177,5 +220,118 @@ export { join };
     expect(() => Bun.build({ entrypoints: ["./index.ts"], compile: true, dts: true })).toThrow(
       "dts cannot be used with compile",
     );
+  });
+
+  // Without outdir, the chunk of `sub/index.ts` and the `sources` of its source map are relative to the working
+  // directory, so the build runs in a process that has the project as its working directory.
+  test("without outdir, a chunk in a directory has the types of its own modules", async () => {
+    using dir = tempDir("build-api-dts-nested-memory", { "tsconfig.json": project["tsconfig.json"], ...nested });
+    const build = `
+      const built = await Bun.build({ entrypoints: ["./index.ts", "./sub/index.ts"], dts: true });
+      const typed = built.outputs.find(output => output.path === "sub/index.aot.ts");
+      console.log(JSON.stringify({ logs: built.logs.map(String), typed: await typed.text() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", build],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ logs: [], typed: NESTED_TYPED });
+    expect(exitCode).toBe(0);
+  });
+
+  test("with an outdir that holds the sources, a chunk in a directory has the types of its own modules", async () => {
+    using dir = tempDir("build-api-dts-nested-outdir", {
+      "tsconfig.json": project["tsconfig.json"],
+      ...Object.fromEntries(Object.entries(nested).map(([path, text]) => ["src/" + path, text])),
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts"), join(root, "src/sub/index.ts")],
+      outdir: join(root, "src"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    expect(withoutModulePaths(readFileSync(join(root, "src/sub/index.aot.ts"), "utf8"))).toBe(
+      withoutModulePaths(NESTED_TYPED),
+    );
+  });
+
+  // A plugin's module is not a file. It is not the module of the file that has its name.
+  test("a module that a plugin makes in a namespace of its own keeps the types that it is written with", async () => {
+    using dir = tempDir("build-api-dts-plugin", {
+      "tsconfig.json": JSON.stringify({
+        ...JSON.parse(project["tsconfig.json"]),
+        include: ["index.ts", "virtual.d.ts"],
+      }),
+      "virtual.d.ts": `declare module "virtual:thing.ts" {
+  export function twice(n: number): number;
+}
+`,
+      "thing.ts": `export function twice(text: string): string {
+  return text + text;
+}
+`,
+      "index.ts": `import { twice } from "virtual:thing.ts";
+import { twice as twiceText } from "./thing";
+export function run(n: number): string {
+  return twiceText(String(twice(n)));
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "index.ts")],
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+      plugins: [
+        {
+          name: "virtual",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:/ }, ({ path }) => ({
+              path: path.slice("virtual:".length),
+              namespace: "virtual",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+              contents: `export interface Doubled {
+  n: number;
+}
+export function twice(n: number): number {
+  const doubled: Doubled = { n: n * 2 };
+  return doubled.n;
+}
+`,
+              loader: "ts",
+            }));
+          },
+        },
+      ],
+    });
+    expect(built.logs).toEqual([]);
+    const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"))!;
+    expect(withoutModulePaths(await typed.text())).toBe(`interface Doubled {
+  n: number;
+}
+function twice(n: number): number {
+  const doubled: Doubled = { n: n * 2 };
+  return doubled.n;
+}
+
+function twice2(text: string): string {
+  return text + text;
+}
+
+function run(n: number): string {
+  return twice2(String(twice(n)));
+}
+export {
+  run
+};
+`);
   });
 });

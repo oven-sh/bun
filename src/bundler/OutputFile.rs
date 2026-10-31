@@ -42,6 +42,17 @@ pub struct OutputFile {
     /// Of a `Bytecode` or `BuiltinBytecode` file of a link with an order file, which has no bytes of its own: where its
     /// cache entry starts in the `BytecodePayload`.
     pub bytecode_entry_offset: u32,
+    /// Of a chunk of a library build: what each entry of its source map's `sources` names, in order. The typed files
+    /// take the sources of the chunk from here, so nothing resolves an entry of `sources` again.
+    pub source_map_sources: Box<[SourceMapSource]>,
+}
+
+/// What one entry of the `sources` of a chunk's source map names.
+pub enum SourceMapSource {
+    /// `Path::text` of a file.
+    File(Box<[u8]>),
+    /// `Path::pretty` of what is not a file, such as what a plugin made in a namespace of its own.
+    NotFile(Box<[u8]>),
 }
 
 impl OutputFile {
@@ -71,6 +82,7 @@ impl OutputFile {
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
             bytecode_entry_offset: 0,
+            source_map_sources: Box::default(),
         }
     }
 }
@@ -192,6 +204,7 @@ impl OutputFile {
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
             bytecode_entry_offset: 0,
+            source_map_sources: Box::default(),
         }
     }
 

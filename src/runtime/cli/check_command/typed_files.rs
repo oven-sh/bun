@@ -1,5 +1,6 @@
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
+use bun_bundler::output_file::SourceMapSource;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
@@ -14,14 +15,16 @@ use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::typed_files::{
-    ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
-    module_types, tsconfig_of_sources, typed_path_beside,
+    MappedSource, ModuleTypes, Output, annotate_implicit_any, build_typed_files,
+    emitted_declarations_of, module_types, tsconfig_of_sources, typed_path_beside,
 };
 use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
 
 use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
-use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
+use super::{
+    Entries, Paths, already_read, checker_path, request, script_kinds_by_extension, with_pages,
+};
 
 const SKIPPED_TYPED_FILES: &str =
     "the .aot.ts files that --aot compiles a package from are left out";
@@ -30,6 +33,8 @@ pub(crate) struct WrittenJavaScript<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) text: &'a [u8],
     pub(crate) source_map: &'a [u8],
+    /// `OutputFile::source_map_sources`.
+    pub(crate) sources: &'a [SourceMapSource],
     pub(crate) entry_point: Option<&'a [u8]>,
 }
 
@@ -232,11 +237,23 @@ pub(crate) fn typed_files_for_build(
         .iter()
         .map(|file| (from_native(file.path), file.entry_point.map(from_native)))
         .collect();
-    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths))
-        .map(|(file, (path, entry_point))| Output {
+    // A file has the name that the type checker was given for it, which is `ModuleTypes::path` of a module.
+    let sources: Vec<Vec<MappedSource>> = written
+        .iter()
+        .map(|file| {
+            let named = file.sources.iter().map(|source| match source {
+                SourceMapSource::File(path) => MappedSource::File(checker_path(cwd, path)),
+                SourceMapSource::NotFile(name) => MappedSource::NotFile(name.to_vec()),
+            });
+            named.collect()
+        })
+        .collect();
+    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths).zip(&sources))
+        .map(|((file, (path, entry_point)), sources)| Output {
             path,
             javascript: file.text,
             source_map: file.source_map,
+            sources,
             entry_point: entry_point.as_deref(),
         })
         .collect();

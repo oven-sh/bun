@@ -140,4 +140,64 @@ export function join(first: string, second: string): string {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
   });
+
+  // `defaults` has no written type: its type is from the declaration file of `src/limits.ts`.
+  test("a chunk in a directory has the types of a module above it, and of a value there without a written type", async () => {
+    using dir = tempDir("build-dts-nested", {
+      "tsconfig.json": project["tsconfig.json"],
+      "package.json": project["package.json"],
+      "src/index.ts": `export { clamp } from "./limits";\n`,
+      "src/limits.ts": `export interface Limits {
+  most: number;
+}
+export const defaults = { most: 10 };
+export function clamp(n: number, limits: Limits): number {
+  return Math.min(n, limits.most);
+}
+`,
+      "src/sub/index.ts": `import type { defaults } from "../limits";
+import { clamp } from "../limits";
+import { clamp as clampText } from "./limits";
+export function both(n: number, limits: typeof defaults): string {
+  return clampText(String(clamp(n, limits)), { most: "z" });
+}
+`,
+      "src/sub/limits.ts": `export interface TextLimits {
+  most: string;
+}
+export function clamp(text: string, limits: TextLimits): string {
+  return text < limits.most ? text : limits.most;
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "./src/sub/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/sub/index.aot.ts"), "utf8")).toBe(`// src/limits.ts
+interface Limits {
+  most: number;
+}
+declare const defaults: {
+    most: number;
+};
+function clamp(n: number, limits: Limits): number {
+  return Math.min(n, limits.most);
+}
+
+// src/sub/limits.ts
+interface TextLimits {
+  most: string;
+}
+function clamp2(text: string, limits: TextLimits): string {
+  return text < limits.most ? text : limits.most;
+}
+
+// src/sub/index.ts
+function both(n: number, limits: typeof defaults): string {
+  return clamp2(String(clamp(n, limits)), { most: "z" });
+}
+export {
+  both
+};
+`);
+  });
 });

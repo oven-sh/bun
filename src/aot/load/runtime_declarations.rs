@@ -524,7 +524,8 @@ mod tests {
     #[test]
     fn declares_every_function_of_bun_types_that_narrows() {
         // TypeScript's library has `Error.isError`. A type error in a test file stops no test run.
-        const DECLARED_ELSEWHERE_OR_FOR_TESTS: [&[u8]; 2] = [b"isError", b"unreachable"];
+        const DECLARED_ELSEWHERE_OR_FOR_TESTS: [&[u8]; 4] =
+            [b"isError", b"unreachable", b"isMockFunction", b"skip"];
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
         let stand_in = text(&runtime_modules, false);
         let mut found = 0;

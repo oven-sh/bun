@@ -584,7 +584,6 @@ test("error.stack doesnt lose frames", () => {
           at middle (<dir>/inspect.test.ts:<num>:<num>)
           at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
-          at IGNORE_ME_AFTER_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
     "
   `);
@@ -597,7 +596,6 @@ test("error.stack doesnt lose frames", () => {
           at middle (<dir>/inspect.test.ts:<num>:<num>)
           at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
-          at IGNORE_ME_AFTER_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at <dir>/inspect.test.ts:<num>:<num>
     "
   `);

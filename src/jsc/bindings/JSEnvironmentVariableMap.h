@@ -20,7 +20,13 @@ public:
     using Base = JSC::JSNonFinalObject;
     // OverridesPut alone doesn't stop the DFG from turning a put into a direct store when it knows the structure. OverridesGetOwnPropertySlot does.
     // The last flag keeps indexed properties in the sparse map, so every indexed store reaches putByIndex().
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesPut
+        | JSC::OverridesGetOwnPropertySlot
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero
+        | JSC::OverridesGetOwnPropertyNames
+        | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
+        | JSC::GetOwnPropertySlotIsImpureForPropertyAbsence;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -46,6 +52,10 @@ public:
     // Fills in a map nothing has read yet, without a Structure per variable. `name` must not be on the map.
     void putInitialValue(JSC::JSGlobalObject*, const JSC::Identifier& name, JSC::JSValue);
 
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSC::JSObject*, JSC::JSGlobalObject*, unsigned, JSC::PropertySlot&);
+    static bool deletePropertyByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned);
+    static void getOwnPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
@@ -80,7 +90,7 @@ JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject
 bool isProcessEnvClassInfo(const JSC::ClassInfo*);
 
 // SHARE_ENV store for a worker spawned from `globalObject`: the spawner's existing store,
-// else a fresh one seeded from its `process.env` (then swapped to a write-through view).
+// else a fresh one seeded from its `process.env` (then promoted in place to a write-through view).
 // Returns null if seeding threw.
 RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject);
 

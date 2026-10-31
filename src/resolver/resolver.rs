@@ -3748,9 +3748,18 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
+        // `DirEntry.dir` has no separator at the end, and `DirInfo.abs_path` must end with one.
+        let abs_path: &'static [u8] = if dir_entries_dir.last() == Some(&SEP) {
+            dir_entries_dir
+        } else {
+            let parts: [&[u8]; 2] = [dir_entries_dir, SEP_STR.as_bytes()];
+            Fs::file_system::DirnameStore::instance()
+                .append_parts(&parts)
+                .expect("unreachable")
+        };
         self.dir_info_uncached(
             dir_info_ptr,
-            dir_entries_dir,
+            abs_path,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
             dir_entries_option,
             dir_cache_info_result,
@@ -4791,7 +4800,8 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
-            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
+            // A listing that `read_directory` cached first names the directory with no separator at the end.
+            let dir_path: &'static [u8] = if queue_top_safe_path.last() == Some(&SEP) {
                 queue_top_safe_path
             } else {
                 // ensure trailing slash

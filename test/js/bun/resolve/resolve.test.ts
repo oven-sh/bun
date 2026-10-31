@@ -2230,6 +2230,48 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
   });
 });
 
+// The retry of the failed lookup reads `pages` again by its path with no separator at the end. The
+// `browser` map of pages/package.json is matched against the path of `pages`, which must end with one.
+test.concurrent("the browser map of a directory applies after a failed lookup in it", async () => {
+  using dir = tempDir("resolve-browser-map-after-failed-lookup", {
+    "pages/package.json": JSON.stringify({ name: "pages", browser: { "./lib.js": "./lib.browser.js" } }),
+    "pages/lib.js": `module.exports = "node lib";`,
+    "pages/lib.browser.js": `module.exports = "browser lib";`,
+    "pages/a/page.ts": `import lib from "../lib.js"; export default lib;`,
+    "main.ts": `
+      import path from "node:path";
+      const pages = path.join(import.meta.dir, "pages");
+      try {
+        Bun.resolveSync("./missing.ts", pages);
+      } catch (e) {
+        console.log(e.code);
+      }
+      const result = await Bun.build({
+        entrypoints: [path.join(pages, "a", "page.ts")],
+        target: "browser",
+        throw: false,
+      });
+      const bundle = result.success
+        ? await result.outputs[0].text()
+        : result.logs.map(log => String(log.message)).join("; ");
+      console.log(["node lib", "browser lib"].filter(text => bundle.includes(text)).join(", ") || bundle);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "main.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "ERR_MODULE_NOT_FOUND\nbrowser lib\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.
 test.concurrent.each(["import", "require"])(
   "%s() of a file written after its directory was read, by an absolute path with forward slashes",

@@ -1864,18 +1864,26 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
   it.skipIf(!isLinux)("of a write that fails is freed", async () => {
     await expectCopiesFreed(
       `
-      try {
-        const { dlopen, ptr } = require("bun:ffi");
-        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
-          sched_setaffinity: { args: ["i32", "usize", "ptr"], returns: "i32" },
+      const { dlopen, ptr } = require("bun:ffi");
+      const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+        sched_setaffinity: { args: ["i32", "usize", "ptr"], returns: "i32" },
+      });
+      const cpu = Number(/Cpus_allowed_list:\\s*(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]);
+      const mask = new Uint8Array(128);
+      mask[cpu >> 3] = 1 << (cpu & 7);
+      for (const tid of fs.readdirSync("/proc/self/task")) {
+        libc.symbols.sched_setaffinity(Number(tid), mask.length, ptr(mask));
+      }
+      // A thread that starts later takes the CPU of the thread that starts it.
+      const everyThreadIsOnOneCpu = () =>
+        fs.readdirSync("/proc/self/task").every(tid => {
+          try {
+            const status = fs.readFileSync("/proc/self/task/" + tid + "/status", "utf8");
+            return /Cpus_allowed_list:\\s*(\\S+)/.exec(status)[1] === String(cpu);
+          } catch {
+            return true;
+          }
         });
-        const cpu = Number(/Cpus_allowed_list:\\s*(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]);
-        const mask = new Uint8Array(128);
-        mask[cpu >> 3] = 1 << (cpu & 7);
-        for (const tid of fs.readdirSync("/proc/self/task")) {
-          libc.symbols.sched_setaffinity(Number(tid), mask.length, ptr(mask));
-        }
-      } catch {}
       const source = new Uint8Array(size).fill(0x61);
       const writes = [];
       for (let i = 0; i < ${count}; i++) {
@@ -1883,10 +1891,11 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
         // The JS thread stays in this loop, so it cannot complete any write.
         waitFor("write " + i, noJobRuns);
       }
+      const onOneCpu = everyThreadIsOnOneCpu();
       const codes = await Promise.all(writes);
-      console.log(JSON.stringify({ ENOSPC: codes.filter(code => code === "ENOSPC").length }));
+      console.log(JSON.stringify({ onOneCpu, ENOSPC: codes.filter(code => code === "ENOSPC").length }));
     `,
-      { ENOSPC: count },
+      { onOneCpu: true, ENOSPC: count },
     );
   });
 
@@ -1945,6 +1954,7 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
 
   // A copy of 8 MB or more of a typed array is a memfd, which /proc/self/maps names ("memfd-num-0").
   // The JS thread frees that one: a free on a pool thread makes the next memfd copy slower.
+  // This case passes on main too. It guards the memfd condition in WriteFile::on_finish.
   it.skipIf(!isLinux)("stays until the JS thread completes the write when it is a memfd", async () => {
     using dir = tempDir("bun-write-copy-memfd", { "out.bin": "" });
     await using proc = Bun.spawn({

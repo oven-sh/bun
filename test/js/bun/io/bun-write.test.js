@@ -610,7 +610,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
     },
   );
 
-  it("Bun.file(0) survives GC", async () => {
+  // Not concurrent: every gcTick() waits for the event loop, and 10 of them in the concurrent batch take over 5 s on a debug build.
+  it.serial("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);
       await gcTick();

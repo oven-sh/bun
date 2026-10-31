@@ -1461,7 +1461,6 @@ fn compile_programs<'a>(
     provider: &'a dyn SourceProvider,
     log: &mut Log,
 ) -> Result<CompiledPrograms, BuildFailed> {
-    bun_threading::thread_pool::exit_without_any_thread();
     // A process that `Preload::on_loaded` forks has the calling thread alone.
     let _keeps_free_blocks_below_the_peak =
         KeepsFreeBlocksBelowThePeak::begin(preload_of(options).is_none());

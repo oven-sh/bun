@@ -1512,8 +1512,12 @@ pub mod package_manifest {
             }));
 
             // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
-            PackageManager::get().thread_pool.schedule(batch);
+            let task = unsafe { core::ptr::addr_of_mut!((*task).task) };
+            let pool = &PackageManager::get().thread_pool;
+            if !pool.ensure_worker() {
+                return SaveTask::run(task);
+            }
+            pool.schedule(PoolBatch::from(task));
         }
 
         fn manifest_file_name<'b>(

@@ -3061,6 +3061,21 @@ pub(crate) mod internal {
             "getaddrinfo({}) = cache miss (libc)",
             bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
         );
+        // Nobody waits for a prefetch. If the OS can't start the pool's first thread, forget it: the next lookup of this host starts over.
+        if preload && !bun_threading::work_pool::WorkPool::get().ensure_worker() {
+            let mut guard = global_cache().lock();
+            // SAFETY: `req` is a live cache entry; `refcount` is only mutated under
+            // `global_cache().lock()`, which is held here. At 1 no lookup has joined it.
+            unsafe {
+                if (*req).refcount == 1 {
+                    (*req).refcount = 0;
+                    guard.remove(req);
+                    Request::deinit(req);
+                    return None;
+                }
+            }
+        }
+
         // schedule the request to be executed on the work pool
         run_on_work_pool(req);
         Some(req)

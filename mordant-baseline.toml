@@ -120,7 +120,6 @@
 
 [bun_lint]
 "bool_cluster:src/lint/estree/schema.rs" = 1
-"bool_cluster:src/lint/linter/config/flat.rs" = 1
 
 [bun_lint_driver]
 "options_as_enum:src/lint/driver/lint.rs" = 1

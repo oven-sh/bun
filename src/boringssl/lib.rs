@@ -13,7 +13,7 @@ use bun_core::strings;
 
 /// BoringSSL's translated C API
 pub use boring as c;
-pub use boring::rand_bytes;
+pub use boring::{bump_fork_generation, rand_bytes};
 
 pub fn load() {
     // Callers are expected to invoke this on a single thread during startup

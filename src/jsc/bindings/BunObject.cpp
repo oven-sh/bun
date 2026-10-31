@@ -1069,6 +1069,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
     readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
     registerMacro                                  Bun::Bindgen::Generated::BunObjectInternals::jsRegisterMacro        DontEnum|DontDelete|Function 1
+    reseedRandom                                   Bun::Bindgen::Generated::BunObject::jsReseedRandom                  DontDelete|Function 0
     resolve                                        Bun::Bindgen::Generated::BunObject::jsResolve                       DontDelete|Function 1
     resolveSync                                    Bun::Bindgen::Generated::BunObject::jsResolveSync                   DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback

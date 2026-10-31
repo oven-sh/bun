@@ -20,6 +20,14 @@ pub fn rand_bytes(buf: &mut [u8]) {
     }
 }
 
+/// After an address-space duplication BoringSSL cannot see (a restored VM snapshot):
+/// every thread's CTR-DRBG reseeds from the OS before its next `rand_bytes` output.
+#[inline]
+pub fn bump_fork_generation() {
+    // SAFETY: no arguments, no preconditions; thread-safe on every platform.
+    unsafe { boringssl::CRYPTO_fork_detect_bump_generation() }
+}
+
 /// Constant-time byte-slice equality via BoringSSL `CRYPTO_memcmp`.
 ///
 /// Returns `false` when lengths differ (the length comparison itself is NOT

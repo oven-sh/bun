@@ -401,6 +401,7 @@ export default b.declarations(
     "Bun.sleepSync",
     "Bun.gc",
     "Bun.shrink",
+    "Bun.reseedRandom",
     "Bun.allocUnsafe",
     "Bun.nanoseconds",
     "Bun.peek",

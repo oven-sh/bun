@@ -102,6 +102,13 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
     this.event_loop_mut().enqueue_task(Task::init(task));
 }
 
+/// BunReseedRandom.cpp posts this to every other live VM.
+// HOST_EXPORT(Bun__VM__rederiveLocalRandomState, c)
+pub fn vm_rederive_local_random_state(this: &VirtualMachine) {
+    crate::mark_binding!();
+    this.as_mut().rederive_local_random_state();
+}
+
 /// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
 /// first (a drain re-posting its own continuation).
 // HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)

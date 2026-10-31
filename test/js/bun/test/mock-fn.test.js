@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -383,6 +384,33 @@ describe("mock()", () => {
     expect(fn.mock.calls[0]).toEqual([43]);
     expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn).toHaveBeenCalledWith(43);
+  });
+  test("a call that a node:vm timeout stops keeps its incomplete result", () => {
+    let outcome;
+    let fn;
+    // A timeout can pass before the implementation starts, or too late. The next turn has a longer one.
+    for (let timeout = 50; timeout <= 400 && outcome !== "stopped"; timeout *= 2) {
+      let started = false;
+      let returned = false;
+      fn = jest.fn(() => {
+        started = true;
+        // The implementation waits here, off-CPU, when the timeout passes, and the run stops it in this call.
+        // A loop that spins can run to its end and return: the run then ends with the timeout error all the same.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, timeout + 250);
+        returned = true;
+      });
+      let code;
+      try {
+        vm.runInContext("fn()", vm.createContext({ fn }), { timeout });
+      } catch (error) {
+        code = error.code;
+      }
+      outcome = !started ? "not started" : returned ? "returned" : "stopped";
+      if (outcome !== "returned") expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
+    }
+    expect(outcome).toBe("stopped");
+    // What stops the run is not a value that the implementation threw.
+    expect(fn.mock.results).toEqual([{ type: "incomplete", value: undefined }]);
   });
   test("mockReset works", () => {
     const instance = new Error("foo");

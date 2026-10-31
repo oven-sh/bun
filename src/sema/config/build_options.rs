@@ -315,7 +315,7 @@ pub fn load_for_aot_package(host: &dyn Host, session: &Session, manifest_path: &
 impl Project {
     pub fn key_of_compiler_options(&self) -> Vec<u8> {
         let mut options: Vec<&(Vec<u8>, Json)> = self.raw_compiler_options.iter().collect();
-        options.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        options.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let mut key = self.options.base_url.clone();
         for (name, value) in options {
             key.push(b'\n');

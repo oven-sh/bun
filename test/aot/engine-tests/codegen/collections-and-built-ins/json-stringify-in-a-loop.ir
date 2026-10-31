@@ -152,5 +152,5 @@ function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName
 # CALLS-LABEL: end of loop
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
 # A turn calls, so the loop polls on every turn: one of the patchpoints.
-# X64: loop #{{*}}, instructions: 42, patchpoints: 5, rare instructions: 5
-# ARM64: loop #{{*}}, instructions: 39, patchpoints: 5, rare instructions: 5
+# X64: loop #{{*}}, instructions: 29, patchpoints: 5, rare instructions: 3
+# ARM64: loop #{{*}}, instructions: 25, patchpoints: 5, rare instructions: 3

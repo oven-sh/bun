@@ -175,7 +175,17 @@ export default b.declarations(
   extendAll(
     ["Ffi", ...nativeAddonFeatures],
     "Bun.FFI",
-    ...nativeBindings("Bindgen", "ffi.bind.ts", "cc", "closeCallback"),
+    ...nativeBindings(
+      "Bindgen",
+      "ffi.bind.ts",
+      "cc",
+      "closeCallback",
+      "linkLibrary",
+      "makeCallback",
+      "makeFunction",
+      "openLibrary",
+      "printSource",
+    ),
   ),
   extendAll(["Ffi"], "bun:ffi", "%FFI%"),
 
@@ -438,14 +448,11 @@ export default b.declarations(
       "NodeTLS.cpp",
       "getBundledRootCertificates",
       "getExtraCACertificates",
+      "getSystemCACertificates",
       "loadExtraCACertificates",
       "parseCACertificates",
       "selectServerName",
     ),
-  ),
-  extendAll(
-    ["Tls", "SystemCaCertificates"],
-    ...nativeBindings("NewCppFunction", "NodeTLS.cpp", "getSystemCACertificates"),
   ),
 
   // reload() changes none of these: the server stays what its first options made it.

@@ -487,6 +487,8 @@ pub struct TestOptions {
     pub timings_files: Vec<Box<[u8]>>,
     /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
     pub update_timings: bool,
+    /// `bun test --aot --aot-memory-limit=<size>`, in bytes.
+    pub aot_memory_limit: Option<u64>,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -552,6 +554,7 @@ impl Default for TestOptions {
             changed: None,
             shard: None,
             timings_files: Vec::new(),
+            aot_memory_limit: None,
             update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,

@@ -103,7 +103,7 @@ try { console.log("parsed data: " + replayed('{"ok":false,"reason":"c","detail":
 // CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sendDirect"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsChecked] syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[L_16]] site=[[w_17]]}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_18]]|[[L_19]]|[[L_20]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_21]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsChecked] syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[L_16]] site=[[w_17]] variableName="x"}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_18]]|[[L_19]]|[[L_20]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_21]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_16]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

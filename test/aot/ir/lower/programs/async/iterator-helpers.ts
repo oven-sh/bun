@@ -104,14 +104,25 @@ export function untyped(make) {
 // CHECK-NEXT: b0(v0: undefined|null|Generator<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Array
-// CHECK-NEXT: v2 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v3 = PropGet v0 key="map"
-// CHECK-NEXT: v4 = NewClosure function=[[f_5]]
-// CHECK-NEXT: v5 = Call v3, v0, v4 calleeKey="map" calleeName="it.map"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = Call v2, v1, v6 calleeName="Array.from"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|Array<number> site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v1 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v2 = PropGet v0 key="map"
+// CHECK-NEXT: v3 = NewClosure function=[[f_5]]
+// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="map" calleeName="it.map"
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v6 = IsPristineArray v5
+// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b4()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v7 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v7, v5
+// CHECK-NEXT: v9 = Convert v7 declared={type=undefined|null|Array<number> site=[[w_6]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Return v9
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v10 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v11 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v12 = Call v11, v10, v5
+// CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|null|Array<number> site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Countdown"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_7]]}] results=[{type=object flags=[IsFromCompiler]}] {

@@ -5,7 +5,8 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
-    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
+    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export,
+    names_own_file, settled_symbol,
 };
 use crate::util::FxHashSet;
 use bun_core::strings;
@@ -87,9 +88,17 @@ impl<'s> Folder<'_, 's> {
                 Expansion::OwnDirectory
             }
             ExprKind::Ident(_) => match self.find_const_initializer(e) {
-                Some(initializer) => Expansion::Parts(vec![Part::Expr(initializer)]),
+                Some(initializer) => match hir[hir.skip_type_assertions(initializer)].kind {
+                    ExprKind::Call(call) if self.is_dirname_of_own_file(hir[call]) => {
+                        Expansion::OwnDirectory
+                    }
+                    _ => Expansion::Parts(vec![Part::Expr(initializer)]),
+                },
                 None => Expansion::Unknown,
             },
+            ExprKind::Call(call) if self.is_dirname_of_own_file(hir[call]) => {
+                Expansion::OwnDirectory
+            }
             ExprKind::Call(call) => self.expand_call(hir[call]),
             ExprKind::Cond { .. } => Expansion::Alternatives(self.collect_alternatives(e)),
             _ => Expansion::Unknown,
@@ -117,6 +126,17 @@ impl<'s> Folder<'_, 's> {
             Some(_) => false,
             None => self.find_loader_name(e) == Some(CommonJsVariable::Dirname),
         }
+    }
+
+    // `dirname(fileURLToPath(import.meta.url))`, as an ES module makes itself a `__dirname`.
+    fn is_dirname_of_own_file(&self, call: Call) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let function =
+            find_export_of_module(hir, bound, call.callee, &|_| None, &is_path_specifier);
+        matches!(call.chain, Chain::No)
+            && call.args.len() == 1
+            && function == Some(known::meta_dirname)
+            && names_own_file(hir, bound, hir.id_at(call.args, 0))
     }
 
     fn collect_alternatives(&self, conditional: ExprId) -> Vec<ExprId> {
@@ -562,15 +582,41 @@ impl PathBelowFolder {
 }
 
 /// `join` or `resolve`, where `callee` is that function of `node:path`. `find_constant` answers with what folding makes of an expression.
-pub(crate) fn find_path_joining_function(
+fn find_path_joining_function(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
 ) -> Option<Atom> {
+    let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
+    find_export_of_module(hir, bound, callee, find_constant, &is_path_specifier).filter(joins_paths)
+}
+
+/// The name of the export that `callee` is, of a module whose name `is_module` accepts.
+pub(crate) fn find_export_of_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+) -> Option<Atom> {
+    match find_members_below_module(hir, bound, callee, find_constant, is_module)?[..] {
+        [member] => Some(member),
+        _ => None,
+    }
+}
+
+/// `fs.promises.writeFile`: the names that lead from the module to `callee`, the last one first.
+pub(crate) fn find_members_below_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+) -> Option<SmallVec<[Atom; 4]>> {
     let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
     let mut e = callee;
-    let is_path_module = loop {
+    let is_export = loop {
         e = hir.skip_type_assertions(e);
         match hir[e].kind {
             ExprKind::Dot {
@@ -603,30 +649,27 @@ pub(crate) fn find_path_joining_function(
                             break false;
                         };
                         pending_members.extend(export);
-                        break is_path_specifier(specifier);
+                        break is_module(specifier);
                     }
                     _ => break false,
                 }
             }
             ExprKind::Call(call) => {
-                break is_path_module_request(hir, bound, e, hir[call], find_constant);
+                break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
             }
             _ => break false,
         }
     };
-    let joins_paths = |member: Atom| member == known::join || member == known::resolve;
-    match pending_members[..] {
-        [member] if is_path_module && joins_paths(member) => Some(member),
-        _ => None,
-    }
+    is_export.then_some(pending_members)
 }
 
-fn is_path_module_request(
+fn is_module_request(
     hir: &File<'_>,
     bound: &Bound<'_>,
     request: ExprId,
     call: Call,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
 ) -> bool {
     let returns_exports = match call_site_kind(hir, bound, request) {
         Some(
@@ -643,13 +686,14 @@ fn is_path_module_request(
             | ImportSiteKind::ImportEquals(_)
             | ImportSiteKind::ImportCall(_)
             | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_),
+            | ImportSiteKind::ImportMetaResolve(_)
+            | ImportSiteKind::MockModule(_),
         )
         | None => false,
     };
     let argument = hir.ids(call.args).next();
     returns_exports
-        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_path_specifier(text))
+        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_module(text))
 }
 
 fn is_path_specifier(specifier: Atom) -> bool {
@@ -660,7 +704,7 @@ fn is_segment_boundary(byte: u8) -> bool {
     matches!(byte, b'/' | b'\\' | b':')
 }
 
-fn trim_to_last_segment(text: &mut Vec<u8>) -> bool {
+pub(crate) fn trim_to_last_segment(text: &mut Vec<u8>) -> bool {
     match text.iter().rposition(|&byte| is_segment_boundary(byte)) {
         Some(boundary) => {
             text.drain(..=boundary);

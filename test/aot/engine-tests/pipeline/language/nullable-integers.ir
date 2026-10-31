@@ -1,6 +1,6 @@
 # Integers beside `undefined` and `null`: in bit operations, as conditions, compared with each other, with constants and with nil.
 # FORM: AsRead
-# RUN: lower-to-air size f1
+# RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
 module m0 path="nullable-integers.ts" displayPath="nullable-integers.ts" body=f0 namespaceLayout=L(m0)
@@ -235,8 +235,8 @@ function f4 module=m0 position=198 kind=Initializer flags=[HasThis, IsChecked, I
     v4 = Undefined
     Return v4
 }
-# -- generated: flagsOf
-# CHECK-LABEL: function {{*}}name="flagsOf"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 40, patchpoints: 0, rare instructions: 114
-# CHECK-NEXT: end of function f1
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 71, patchpoints: 13, rare instructions: 17
+# CHECK-NEXT: end of function f0

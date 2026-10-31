@@ -1,0 +1,33 @@
+# new Bun.ModuleGraph().import(input); function kept(operand) { return operand }; globalThis.kept = kept
+# The table says nothing of the class. What it makes loads files under names that the build does not see and runs them from their text, in this realm: the read counts as such a load.
+# So code that nobody has seen runs, it has a loader, and it calls what the program has left on the global object
+# An engine that runs only the code of the image answers as under exclude=CodeOutsideImage: a-read-of-the-class-of-module-graphs-loads-nothing-where-code-from-disk-is-refused.ir
+# RUN: valueflow-solve unseen
+# REQUIRES: code-outside-image
+# CHECK: unseen LoadsCodeByName BunModuleGraph
+# CHECK-NEXT: unseen-code yes
+# CHECK-NEXT: modules-by-name yes
+# RUN(UNREACHED): valueflow-solve unreached
+# REQUIRES(UNREACHED): code-outside-image
+# UNREACHED-NOT: unreached f1
+# RUN(RESULTS): valueflow-results
+# REQUIRES(RESULTS): code-outside-image
+# RESULTS: unseen-code LoadsCodeByName {{*}}BunModuleGraph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Bun
+    v3 = PropGet v2 key="ModuleGraph"
+    v4 = Construct v3, -
+    v5 = PropGet v4 key="import"
+    v6 = Call v5, v4, v1
+    v7 = NewClosure function=f1
+    PropSet v0, v7 key="kept"
+    Return v6
+}
+function f1 name="kept" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

@@ -390,6 +390,64 @@ fn linked_functions_are_needed() {
 }
 
 #[test]
+fn caller_holds_what_it_calls_by_a_name_of_the_library() {
+    let promise = own_functions(BuiltinId::Promise).next();
+    let promise = promise.expect("Bun's own code stands behind Promise");
+    let linked = Mentions {
+        linked_functions: &[promise],
+        ..Mentions::default()
+    };
+    let linked = RuntimeUses::of_mentions(&linked, LINUX);
+    assert_eq!(*linked.linked_functions, [promise]);
+    assert!(linked.functions_held_with_caller().eq([promise]));
+}
+
+#[test]
+fn caller_finds_in_the_realm_what_an_object_holds() {
+    let uses = uses_of_program(&Mentions {
+        makes_promise: true,
+        has_generator: true,
+        iterates: true,
+        ..Mentions::default()
+    });
+    assert!(lists_function(BuiltinId::Promise, uses.functions[0]) || uses.functions.len() > 1);
+    assert!(uses.linked_functions.is_empty());
+    assert_eq!(uses.functions_held_with_caller().next(), None);
+}
+
+#[test]
+fn caller_holds_what_rejects_an_import_that_finds_nothing() {
+    let uses = uses_of_program(&Mentions {
+        imports_by_call: true,
+        ..Mentions::default()
+    });
+    let behind = table::entry(BuiltinId::CompilerHelpersImportRejectedByLoader).implemented_by();
+    assert!(!behind.is_empty());
+    let held: Vec<RuntimeFunction> = uses.functions_held_with_caller().collect();
+    assert!(behind.iter().all(|it| held.contains(it)));
+}
+
+#[test]
+fn caller_holds_what_stands_behind_a_helper_of_the_compiler() {
+    let uses = uses_of_program(&Mentions {
+        disposes_resource: true,
+        ..Mentions::default()
+    });
+    let held: Vec<RuntimeFunction> = uses.functions_held_with_caller().collect();
+    for helper in DISPOSAL_HELPERS {
+        let behind = table::entry(*helper).implemented_by();
+        assert!(!behind.is_empty(), "{helper:?}");
+        assert!(behind.iter().all(|it| held.contains(it)), "{helper:?}");
+    }
+    // They are written with the built-ins of the engine, so the role does not tell.
+    let is_of_engine = |function: &RuntimeFunction| {
+        let data = table::runtime_function(*function);
+        data.is_some_and(|data| data.role == RuntimeFunctionRole::EngineBuiltin)
+    };
+    assert!(held.iter().any(is_of_engine));
+}
+
+#[test]
 fn member_read_by_its_name_brings_the_code_of_every_member_of_that_name() {
     let sort = table::entry(BuiltinId::ArrayPrototypeSort).name;
     let uses = uses_of_program(&Mentions {

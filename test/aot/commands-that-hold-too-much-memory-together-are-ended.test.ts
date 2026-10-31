@@ -1,7 +1,8 @@
 // Runs alone: it judges by the memory that the machine has left.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
-import { endAtMemoryLimitTogether } from "./harness/memory-limit";
+import { describeKill, heldTooMuchTogether } from "./harness/killed-for-memory";
+import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { test } from "./supported";
 
 const MB = 2 ** 20;
@@ -31,6 +32,33 @@ test.skipIf(!isLinux)(
   },
   30_000,
 );
+
+test.skipIf(!isLinux)(
+  "a command that is killed because the machine is short of memory is told so",
+  async () => {
+    const { watch } = endAtMemoryLimitTogether(8 * availableMemory());
+    await using child = Bun.spawn({ cmd: [bunExe(), "-e", holds96MB, "60000"], env: bunEnv, stdout: "ignore" });
+    using held = watch(child);
+    await child.exited;
+    expect({ exceeded: held.exceeded, signal: child.signalCode, held: held.held.replace(/[0-9]+/g, "N") }).toEqual({
+      exceeded: true,
+      signal: "SIGKILL",
+      held: "it held N MB of the N MB that N processes held together, which may hold N MB; the machine had N MB left, and N MB have to stay free",
+    });
+  },
+  30_000,
+);
+
+test("the error says first whose doing it was, within what the runner keeps of an error", () => {
+  const held = "it held 9 MB of the 36 MB that 4 processes held together, which may hold 32 MB";
+  expect(describeKill(held, ["bun", "a.js"])).toBe(
+    `${heldTooMuchTogether}: ${held}. Run fewer of them at once: bun a.js`,
+  );
+  expect(describeKill(`${held}; the machine had 1 MB left, and 5 MB have to stay free`, ["bun"])).toStartWith(
+    "KILLED: the machine had too little left: it held 9 MB",
+  );
+  expect(`error: ${heldTooMuchTogether}`.length).toBeLessThan(97);
+});
 
 test.skipIf(!isLinux)(
   "a command that holds less than the limit runs to its end",

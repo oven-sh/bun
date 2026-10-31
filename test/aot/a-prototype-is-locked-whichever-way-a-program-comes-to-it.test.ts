@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { slot } from "./harness/commands";
+import { slot, spawned } from "./harness/commands";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -11,8 +11,9 @@ raiseDefaultTimeout(240_000);
 
 // The build takes a read of AbortSignal.prototype.throwIfAborted for a constant, so a compiled program may not change the member: the change throws. The prototype object
 // is the same whichever way a program comes to it, so the answer has to be the same too. Native code makes the object with the first instance, and a program has
-// instances of classes whose names it never reads: the signal of an AbortController, the writable end of a TransformStream, the controller of a byte stream. The global
-// object adds the constructor only at the first read of the name.
+// instances of classes whose names it never reads: the signal of an AbortController, the writable end of a TransformStream, the controller of a byte stream. Making
+// the constructor of a class makes the prototype of the class that it extends: a program that reads the name CustomEvent has Event.prototype, and has not read the
+// name Event. The global object adds the constructor only at the first read of the name.
 const members = [
   {
     member: "AbortSignal.prototype.throwIfAborted",
@@ -106,6 +107,11 @@ function answerIn(stdout: string) {
   const found = Object.entries(JSON.parse(answer) as Record<string, string>);
   return Object.fromEntries(found.map(([what, how]) => [what.replace(/\d+$/, row => members[+row].member), how]));
 }
+/** What a command wrote to stdout. One that a signal ended, or that ended with an error, fails the test with what it wrote to stderr: a test run reports there. */
+function stdoutOf({ stdout, stderr, exitCode }: { stdout: string; stderr: string; exitCode: number }) {
+  expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  return stdout;
+}
 /** What each way answers. */
 async function answers(outputOf: (file: string) => Promise<string>) {
   const all = await Promise.all(ways.map((_, way) => slot(() => outputOf(String(way)))));
@@ -127,8 +133,8 @@ const refused = (where: string) =>
 
 test.concurrent("in plain Bun every way changes the members", async () => {
   using directory = tempDir("prototype-by-every-way-plain", files);
-  const found = await answers(
-    async file => (await run([bunExe(), "run", `./${file}.mjs`], String(directory), bunEnv)).stdout,
+  const found = await answers(async file =>
+    stdoutOf(await spawned([bunExe(), "run", `./${file}.mjs`], String(directory), bunEnv)),
   );
   expect(found).toEqual(
     everyWay(
@@ -149,8 +155,8 @@ test.concurrent("in an executable every way is refused", async () => {
   const runCompiled = async (file: string, ...more: string[]) => {
     const executable = join(String(directory), file + (isWindows ? ".exe" : ".out"));
     const build = [bunExe(), "build", "--compile", "--aot", `./${file}.mjs`, ...more, "--outfile", executable];
-    expect(await run(build, String(directory), bunEnv)).toMatchObject({ exitCode: 0 });
-    return (await run([executable], String(directory), bunEnv)).stdout;
+    stdoutOf(await spawned(build, String(directory), bunEnv));
+    return stdoutOf(await spawned([executable], String(directory), bunEnv));
   };
   expect(await answers(file => runCompiled(file))).toEqual(everyWay(refused("a compiled executable")));
   expect(answerIn(await slot(() => runCompiled("starts-a-worker", "./worker.mjs")))).toEqual(
@@ -158,20 +164,16 @@ test.concurrent("in an executable every way is refused", async () => {
   );
 });
 
-// A debug build takes minutes to compile Bun's library into layers.
-if (isDebug)
-  console.error(
-    "SKIPPED: test/aot/a-prototype-is-locked-whichever-way-a-program-comes-to-it.test.ts: the test run over two layers, in a debug build of Bun",
-  );
-for (const [form, words, isSkipped] of [
-  ["as one program", "TestRunLayers:0", false],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1", isDebug],
-] as const)
-  test.skipIf(isSkipped).concurrent(`in a test run ${form} every way is refused`, async () => {
+for (const [form, words] of [
+  ["as one program", "TestRunLayers:0"],
+  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])
+  test.concurrent(`in a test run ${form} every way is refused`, async () => {
     using directory = tempDir("prototype-by-every-way-test-run", files);
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
-    const found = await answers(
-      async file => (await run([bunExe(), "test", "--aot", `./${file}.test.mjs`], String(directory), env)).stdout,
+    // run() fails a test run that asked for layers and was not built in them.
+    const found = await answers(async file =>
+      stdoutOf(await run([bunExe(), "test", "--aot", `./${file}.test.mjs`], String(directory), env)),
     );
     expect(found).toEqual(everyWay(refused("compiled code")));
   });

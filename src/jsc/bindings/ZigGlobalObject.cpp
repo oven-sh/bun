@@ -2978,7 +2978,11 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(obj);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             init.set(Bun::createBunObject(init.vm, init.owner));
+             JSObject* bunObject = Bun::createBunObject(init.vm, init.owner);
+             init.set(bunObject);
+             // The global object adds its `Bun` at the first read of the name. A program may come to the object without it: require("bun").
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
@@ -3178,6 +3182,8 @@ void GlobalObject::finishCreation(VM& vm)
     // hostDidCreateRealm() runs lazy property builders, which ask for the thread's default global object. The first one of a thread is recorded by its creator only after this returns.
     if (!defaultGlobalObject())
         setDefaultGlobalObject(vm, this);
+    // setDOMConstructor() reports a constructor to a realm that locks. One made earlier would stay open.
+    ASSERT(std::ranges::none_of(m_constructors->array(), [](const auto& constructor) { return !!constructor; }));
     JSC::AOT::hostDidCreateRealm(this);
 
 #if ENABLE(AOT)
@@ -3195,6 +3201,17 @@ void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
 {
     if (vm().hasCompiledCode()) [[unlikely]]
         JSC::AOT::hostDidCreateStructure(this, structure);
+}
+
+JSC::JSObject* GlobalObject::setDOMConstructor(WebCore::DOMConstructorID id, JSC::JSObject* constructor)
+{
+    auto& slot = m_constructors->array()[static_cast<unsigned>(id)];
+    ASSERT(!slot);
+    slot.set(vm(), this, constructor);
+    // The global object adds the name of a class at the first read of that name. A program may come to the constructor without it: instance.constructor. The name is the class name of the constructor.
+    if (vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidCreateObjectOfGlobal(this, JSC::Identifier::fromString(vm(), constructor->classInfo()->className).impl(), constructor);
+    return constructor;
 }
 
 // `console.Console` or `import { Console } from 'console';`

@@ -164,6 +164,40 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest('css import of a package.json "imports" alias', {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "package.json": JSON.stringify({ name: "app", imports: { "#second": "./second.css" } }),
+    "styles.css": `
+      @import "#second";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
+    await c.style("body").color.expect.toBe("red");
+
+    await dev.write(
+      "second.css",
+      `
+        h1 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("green");
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

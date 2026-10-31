@@ -279,6 +279,50 @@ devTest("external links", {
     expect(ico).toBe("https://bun.sh/favicon.ico");
   },
 });
+// An href of "#..." names a part of the page, also when package.json "imports" has that name.
+devTest("stylesheet links whose href is a fragment", {
+  files: {
+    "index.html": `
+      <!doctype html>
+      <html>
+      <head>
+        <link rel="stylesheet" href="#" />
+        <link rel="stylesheet" href="./index.css" />
+        <link rel="stylesheet" href="#theme" />
+      </head>
+      <body>
+        <script src="./index.client.tsx" type="module"></script>
+      </body>
+      </html>
+    `,
+    "package.json": JSON.stringify({ name: "app", imports: { "#theme": "./theme.css" } }),
+    "index.css": `
+      body {
+        color: red;
+      }
+    `,
+    "theme.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+    "index.client.tsx": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    expect(html.match(/<link rel="stylesheet" href="#[^>]*>/g)).toEqual([
+      `<link rel="stylesheet" href="#" />`,
+      `<link rel="stylesheet" href="#theme" />`,
+    ]);
+
+    await using c = await dev.client("/");
+    await c.expectMessage("hello");
+    await c.style("body").color.expect.toBe("red");
+    await c.style("h1").notFound();
+  },
+});
 devTest("memory leak case 1", {
   files: {
     "index.html": `

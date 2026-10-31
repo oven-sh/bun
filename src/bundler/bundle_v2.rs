@@ -2738,13 +2738,18 @@ pub mod bv2_impl {
                 }
             }
 
+            let kind = resolve_kind(
+                self.graph.input_files.items_loader()[import_record.importer_source_index as usize],
+                import_record.kind,
+                &import_record.specifier,
+            );
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
                     &import_record.specifier,
-                    import_record.kind,
+                    kind,
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
@@ -6528,6 +6533,18 @@ pub mod bv2_impl {
         only_records.is_none_or(|only| only.binary_search(&(record_index as u32)).is_ok())
     }
 
+    /// An HTML stylesheet `<link href="#x">` names a part of the page, so it resolves like `url(#x)`.
+    #[inline]
+    fn resolve_kind(importer: Loader, kind: ImportKind, specifier: &[u8]) -> ImportKind {
+        if importer == Loader::Html {
+            bun_core::hint::cold();
+            if kind == ImportKind::At && specifier.starts_with(b"#") {
+                return ImportKind::Url;
+            }
+        }
+        kind
+    }
+
     impl<'a> BundleV2<'a> {
         /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
         /// Skips records that are already resolved (valid source_index), unused, or internal.
@@ -6828,7 +6845,7 @@ pub mod bv2_impl {
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
-                        import_record.kind,
+                        resolve_kind(loader, import_record.kind, import_record.path.text),
                     ) {
                         Ok(r) => break r,
                         Err(err) => {

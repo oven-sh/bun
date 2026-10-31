@@ -1007,6 +1007,155 @@ describe("esbuild-bundler", () => {
     external: ["./src/external.png"],
   });
 
+  // https://github.com/oven-sh/bun/issues/19663
+  const packageJsonImports = JSON.stringify({
+    name: "app",
+    imports: {
+      "#plain": "./plain.css",
+      "#dir/*": "./dir/*",
+      "#conditional": { import: "./script.js", default: "./conditional.css" },
+      "#supported": { import: "./script.js", default: "./supported.css" },
+      "#styled": { style: "./styled.css", default: "./script.js" },
+      "#theme": { custom: "./custom.css", default: "./default.css" },
+    },
+  });
+  itBundled("css/CSSAtImportPackageJsonImports", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "#plain";
+        @import url(#dir/nested.css);
+        @import "#conditional";
+        @import "#supported" supports(display: grid);
+        @import "#styled";
+        .entry { color: red }
+      `,
+      "/plain.css": `.plain { color: green }`,
+      "/dir/nested.css": `.nested { color: blue }`,
+      "/conditional.css": `.conditional { color: black }`,
+      "/supported.css": `.supported { color: white }`,
+      "/styled.css": `.styled { color: gray }`,
+      "/script.js": `export default {};`,
+      "/package.json": packageJsonImports,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* plain.css */
+        .plain {
+          color: green;
+        }
+        /* dir/nested.css */
+        .nested {
+          color: #00f;
+        }
+        /* conditional.css */
+        .conditional {
+          color: #000;
+        }
+        /* supported.css */
+        @supports (display: grid) {
+          .supported {
+            color: #fff;
+          }
+        }
+        /* styled.css */
+        .styled {
+          color: gray;
+        }
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  // `conditions` does not reach an `@import`: its condition set is "style" and the defaults, as for "exports".
+  itBundled("css/CSSAtImportPackageJsonImportsUserCondition", {
+    files: {
+      "/entry.css": `@import "#theme";`,
+      "/custom.css": `.theme { color: green }`,
+      "/default.css": `.theme { color: blue }`,
+      "/package.json": packageJsonImports,
+    },
+    conditions: ["custom"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* default.css */
+        .theme {
+          color: #00f;
+        }
+        /* entry.css */
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportTsconfigPathsHash", {
+    files: {
+      "/entry.css": `@import "#/theme.css"; .entry { color: red }`,
+      "/src/theme.css": `.theme { color: green }`,
+      "/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#/*": ["./src/*"] } } }),
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* src/theme.css */
+        .theme {
+          color: green;
+        }
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/CSSAtImportPackageJsonImportsMissing", {
+    files: {
+      "/entry.css": `@import "#missing";`,
+      "/package.json": packageJsonImports,
+    },
+    bundleErrors: {
+      "/entry.css": ['Could not resolve: "#missing". Maybe you need to "bun install"?'],
+    },
+  });
+  itBundled("css/CSSAtImportPackageJsonImportsExternal", {
+    files: {
+      "/entry.css": `@import "#plain"; .entry { color: red }`,
+      "/plain.css": `.plain { color: green }`,
+      "/package.json": packageJsonImports,
+    },
+    external: ["#plain"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @import "#plain";
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/URLFragmentIsNotAPackageJsonImport", {
+    files: {
+      "/entry.css": `path { fill: url(#plain) } a { mask: url("#plain") }`,
+      "/plain.css": `.plain { color: green }`,
+      "/package.json": packageJsonImports,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        path {
+          fill: url("#plain");
+        }
+        a {
+          mask: url("#plain");
+        }
+      `);
+    },
+  });
+
   itBundled("css/InvalidImportURLInCSS", {
     // GENERATED
     files: {

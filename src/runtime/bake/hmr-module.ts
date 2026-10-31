@@ -248,17 +248,15 @@ export class HMRModule {
   }
 
   on(event: string, cb: HotEventHandler) {
-    // Vite compatibility, but favor using Bun's event names.
-    if (event.startsWith("vite:")) {
-      event = "bun:" + event.slice(4);
-    }
-
+    event = normalizeEventName(event);
     (eventHandlers[event] ??= []).push(cb);
     this.dispose(() => this.off(event, cb));
   }
 
   off(event: string, cb: HotEventHandler) {
-    const handlers = eventHandlers[event];
+    let handlers = eventHandlers[event];
+    // Only a miss can be a `vite:` name: `on()` files those under `bun:`. A name that is not a string stays a no-op.
+    if (!handlers && typeof event === "string") handlers = eventHandlers[normalizeEventName(event)];
     if (!handlers) return;
     const index = handlers.indexOf(cb);
     if (index !== -1) {
@@ -834,11 +832,25 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
+/** `vite:<name>` is accepted in place of `bun:<name>`. */
+function normalizeEventName(event: string): string {
+  return event.startsWith("vite:") ? "bun:" + event.slice("vite:".length) : event;
+}
+
 export function emitEvent(event: HMREvent, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
   for (const handler of handlers) {
-    handler(data);
+    if (side === "client") {
+      handler(data);
+    } else {
+      // The page reloads when a listener throws. The server has no reload: it reports the error and goes on.
+      try {
+        handler(data);
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }
 }
 

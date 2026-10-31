@@ -6,7 +6,7 @@
 // that Node's TestContext semantics (subtests, hooks, plan, mock tracker,
 // getTestContext) are observable without a separate runner process.
 
-const { jest } = Bun;
+const { jest, nanoseconds } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const {
   validateBoolean,
@@ -41,6 +41,8 @@ const kDefaultFunction = () => {};
 // globals, so capture them at module load like Node's runner does.
 const realSetTimeout = setTimeout;
 const realClearTimeout = clearTimeout;
+// The clock of the runner, in ms. A test file can replace or remove the global `performance`.
+const realNow = () => nanoseconds() / 1e6;
 const kDefaultOptions = kEmptyObject;
 // Matches Node's internal/timers TIMEOUT_MAX.
 const kTimeoutMax = 2 ** 31 - 1;
@@ -381,6 +383,8 @@ function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number
 async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
   const started = Date.now();
   const counts = makeRunCounts();
+  // Node fails the run for a failed suite that is not todo, and counts it in none of `counts`.
+  let suiteFailed = false;
 
   // run() returns the stream before any file starts, and callers attach their
   // listeners synchronously on the returned stream. Yield first so the earliest
@@ -394,7 +398,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     let i = 0;
     for (; i < files.length; i++) {
       if (opts.signal?.aborted) break;
-      await runOneFile(files[i], opts, reporter, counts);
+      if (await runOneFile(files[i], opts, reporter, counts)) suiteFailed = true;
     }
     // Node cancels each not-yet-started FileTest with cancelledByParent rather
     // than silently dropping it; an aborted run must not report success:true.
@@ -407,7 +411,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.summary({
       __proto__: null,
-      success: counts.failed === 0 && counts.cancelled === 0,
+      success: counts.failed === 0 && counts.cancelled === 0 && !suiteFailed,
       counts,
       duration_ms: durationMs,
       file: undefined,
@@ -455,12 +459,13 @@ function reportCancelledFile(
   counts.topLevel++;
 }
 
+// Returns true when the file reported the failure of a suite that is not todo.
 async function runOneFile(
   file: string,
   opts: ReturnType<typeof validateRunOptions>,
   reporter: TestsStream,
   counts: Record<string, number>,
-) {
+): Promise<boolean> {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
   // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
@@ -518,6 +523,7 @@ async function runOneFile(
     // loop is still suspended on I/O, before the finally's .catch attaches.
     drainStderr.catch(() => {});
 
+    let suiteFailed = false;
     const handleStdoutLine = (line: string) => {
       if (line.length === 0) return;
       // bun:test's own reporter can leave an unterminated line, so the marker is
@@ -540,7 +546,7 @@ async function runOneFile(
         return;
       }
       if (event == null || typeof event.data !== "object" || event.data === null) return;
-      republishChildEvent(event, absolute, reporter, fileCounts);
+      if (republishChildEvent(event, absolute, reporter, fileCounts)) suiteFailed = true;
     };
 
     const decoder = new TextDecoder();
@@ -562,7 +568,7 @@ async function runOneFile(
     // A nonzero exit with no child-reported failures means the file itself died
     // (top-level throw); child-reported failures are already covered by the
     // republished events and need no file-level verdict.
-    const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
+    const fileFailed = exitCode !== 0 && fileCounts.failed === 0 && !suiteFailed;
     const fileDuration = Date.now() - fileStarted;
     // Node's FileTest.#skipReporting(): no file-level complete/pass/fail when
     // the child reported at least one test and the only error is subtestsFailed
@@ -585,7 +591,7 @@ async function runOneFile(
     } else {
       reporter.summary({
         __proto__: null,
-        success: fileCounts.failed === 0,
+        success: fileCounts.failed === 0 && !suiteFailed,
         counts: { __proto__: null, ...fileCounts },
         duration_ms: fileDuration,
         file: absolute,
@@ -614,6 +620,7 @@ async function runOneFile(
       }
     }
     addRunCounts(counts, fileCounts);
+    return suiteFailed;
   } finally {
     proc.kill();
     if (drainStderr !== undefined) await drainStderr.catch(() => {});
@@ -631,12 +638,13 @@ function rebuildError(serialized: any, depth = 0): Error {
   return error;
 }
 
+// Returns true for a suite failure that the child counted (countOwnFailure): Node has it in none of `counts`.
 function republishChildEvent(
   event: { type: string; data: any },
   file: string,
   reporter: TestsStream,
   counts: Record<string, number>,
-) {
+): boolean {
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
   data.file = file;
@@ -669,11 +677,15 @@ function republishChildEvent(
     delete data.error;
     delete data.duration_ms;
     delete data.type;
-    if (type === "test:pass") reporter.pass(data);
-    else reporter.fail(data);
-    return;
+    if (type === "test:pass") {
+      reporter.pass(data);
+      return false;
+    }
+    reporter.fail(data);
+    return isSuite && !data.todo && data.expectFailure === undefined;
   }
   reporter.republish(type, data);
+  return false;
 }
 
 // Child side: with kRunChildEnv set, stream one JSON event per line so the
@@ -742,10 +754,9 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
 }
 
 // Called for every test node as its result is finalized, so subtests report
-// with the same shape as top-level tests. No-op outside a run() child.
-function reportNodeToRunParent(node: TestNode, startedAt: number) {
-  if (!runChildReporterEnabled || node.isSuite) return;
-  const { skipped, todoFlag, expectFailure } = node;
+// with the same shape as top-level tests. Only finalizeNode() calls it, in a run() child.
+function reportNodeToRunParent(node: TestNode, failure: unknown, startedAt: number) {
+  const { skipped, todoFlag, expectFailure, isSuite } = node;
   // node reports the xfail label when there is one, otherwise `true`.
   const xfail = !skipped && expectFailure ? (expectFailure.label ?? true) : undefined;
   // node spreads a `directive` into the event: `skip: true` / `todo: true`, with
@@ -755,12 +766,13 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
     name: node.name,
     nesting: nestingOf(node),
     testNumber: 0,
-    duration_ms: performance.now() - startedAt,
+    duration_ms: isSuite ? 0 : realNow() - startedAt,
+    type: isSuite ? "suite" : undefined,
     skip: skipped ? (node.message ?? true) : undefined,
     todo: !skipped && todoFlag ? (node.message ?? true) : undefined,
     expectFailure: xfail,
     tags: node.tags,
-    error: node.passed ? undefined : serializeRunError(node.error),
+    error: failure === undefined ? undefined : serializeRunError(failure),
   });
 }
 
@@ -1577,9 +1589,13 @@ class TestNode {
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<unknown> = Promise.resolve();
-  failedSubtests = 0;
-  firstSubtestError: unknown = undefined;
-  // First failure from a before hook created while this test was running.
+  // Subtests and inline suites that failed and were not todo then. It must outlive a --retry attempt.
+  failedChildren: TestNode[] | undefined = undefined;
+  // The chain link of the last subtest queued here that was not todo: only it, or a test below it, can still count.
+  countableTail: Promise<unknown> | undefined = undefined;
+  // On a test registered with bun:test: the first failure below it that Node counts, and the first of any kind.
+  failuresBelow: { counted: unknown; any: unknown } | undefined = undefined;
+  // Test: first failure of a before hook created while it ran. Inline suite: its own failure (callback or hooks).
   hookFailure: unknown = undefined;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
@@ -2256,13 +2272,11 @@ function runBeforeHookOnce(hook: Hook, owner: TestNode, arg: unknown): Promise<v
 // Failures fail the owning test (Node: hook.error -> test.fail) instead of
 // poisoning the subtest chain, so they are reported even when nothing awaits.
 function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
-  node.subtestChain = node.subtestChain.then(async () => {
-    try {
-      await runBeforeHookOnce(hook, node, arg);
-    } catch (err) {
-      node.hookFailure ??= err;
-    }
+  // Node runs it in the call: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1101-L1108
+  const settled = runBeforeHookOnce(hook, node, arg).catch(err => {
+    node.hookFailure ??= err;
   });
+  node.subtestChain = node.subtestChain.then(() => settled);
 }
 
 async function runOwnBeforeHooks(node: TestNode) {
@@ -2286,12 +2300,12 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+async function executeTestNode(node: TestNode, fn: TestFn, deadline: number): Promise<unknown> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
   node.started = true;
-  const started = runChildReporterEnabled ? performance.now() : 0;
+  const started = runChildReporterEnabled ? realNow() : 0;
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
@@ -2349,7 +2363,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
             // A t.test() that fulfilled the plan from an async callback was
             // scheduled onto subtestChain during the wait; drain again so its
-            // failure reaches failedSubtests below (Node fails the parent).
+            // failure is folded below (Node fails the parent).
             const drain = drainSubtestChain(node);
             await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
           }
@@ -2361,23 +2375,16 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       stop?.dispose();
       node.plan?.cancel();
     }
-
-    const { failedSubtests, firstSubtestError } = node;
-    if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(
-        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
-        "subtestsFailed",
-      );
-      if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
-      }
-      failure = error;
-    }
   }
 
   const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
   const acceptedXfail = bodyFailure !== undefined && failure === undefined;
+
+  // Only a queued subtest can still fail the run, and a body that threw did not wait for it. Node cancels it instead.
+  if ((acceptedXfail || failure !== undefined) && mustSettleSubtests(node, acceptedXfail)) {
+    await settleCountableSubtests(node, deadline);
+  }
 
   // Node sets passed/error before running afterEach/after so hooks can
   // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
@@ -2388,13 +2395,20 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
   node.finished = true;
 
-  for (let i = ancestors.length - 1; i >= 0; i--) {
+  // Node's runHook(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1263-L1279
+  afterEachHooks: for (let i = ancestors.length - 1; i >= 0; i--) {
     const ancestor = ancestors[i];
     for (const hook of ancestor.hooks.afterEach) {
       try {
         await runHook(hook, ancestor, ctx);
       } catch (err) {
-        if (!acceptedXfail) failure ??= err;
+        if (!acceptedXfail) {
+          failure ??= err;
+          // Node's fail() runs before the after hooks, so they see this failure.
+          node.passed = false;
+          node.error = failure;
+        }
+        break afterEachHooks;
       }
     }
   }
@@ -2404,7 +2418,20 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       await runHook(hook, node, ctx);
     } catch (err) {
       if (!acceptedXfail) failure ??= err;
+      break;
     }
+  }
+
+  // A hook, or a subtest that is still queued, can call this test's t.skip() or t.todo() after the body failed.
+  if ((acceptedXfail || failure !== undefined) && mustSettleSubtests(node, acceptedXfail)) {
+    await settleCountableSubtests(node, deadline);
+  }
+
+  // Node's postRun() fold: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1498-L1503
+  const { failedChildren } = node;
+  if (failure === undefined && !acceptedXfail && failedChildren !== undefined) {
+    const rolledUp = foldFailedChildren(failedChildren);
+    if (rolledUp !== undefined) failure = applyExpectFailure(node, rolledUp);
   }
 
   try {
@@ -2413,41 +2440,107 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     if (!acceptedXfail) failure ??= err;
   }
 
-  node.passed = failure === undefined;
-  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
-  reportNodeToRunParent(node, started);
+  finalizeNode(node, failure, failure ?? (acceptedXfail ? bodyFailure : null), started);
   return failure;
 }
 
-function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
+// Gives a finished test or inline suite its verdict, counts it, puts it in its parent's fold and reports it to run().
+function finalizeNode(node: TestNode, failure: unknown, error: unknown, startedAt: number) {
+  node.finished = true;
+  node.passed = failure === undefined;
+  node.error = error;
+  if (failure !== undefined && node.isExecutionPhase) {
+    countOwnFailure(node, error);
+    if (!node.todoFlag) $arrayPush((node.parent!.failedChildren ??= []), node);
+  }
+  if (runChildReporterEnabled) reportNodeToRunParent(node, failure, startedAt);
+}
+
+// Node's countCompletedTest(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/utils.js#L483-L510
+function countOwnFailure(node: TestNode, failure: unknown) {
+  let entry = node;
+  while (entry.isExecutionPhase) entry = entry.parent!;
+  const below = (entry.failuresBelow ??= { counted: undefined, any: failure });
+  // Node accepts the failure of a suite that expects one; an inline suite does not apply expectFailure to its verdict.
+  if (!node.todoFlag && (node.isSuite ? !node.expectFailure : !node.skipped)) below.counted ??= failure;
+}
+
+// Only todo exempts a child: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1485-L1496
+function foldFailedChildren(children: TestNode[]) {
+  let failed = 0;
+  let cause: unknown;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child.todoFlag) continue;
+    if (failed++ === 0) cause = child.error;
+  }
+  if (failed === 0) return undefined;
+  const error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
+  if (cause != null) (error as { cause?: unknown }).cause = cause;
+  return error;
+}
+
+// For a failed test: Node does not count the failure of a skipped, todo or expectFailure test, so its subtests decide.
+function mustSettleSubtests(node: TestNode, acceptedXfail: boolean) {
+  return node.countableTail !== undefined && (acceptedXfail || node.skipped || node.todoFlag);
+}
+
+// When a test stops waiting for its queued subtests: at the end of its timeout, counted from this call.
+function waitDeadline(node: TestNode) {
+  const { timeout } = node.options;
+  return typeof timeout === "number" && timeout < Infinity ? realNow() + timeout : Infinity;
+}
+
+// Waits until `deadline` for the queued subtests that Node could count.
+async function settleCountableSubtests(node: TestNode, deadline: number) {
+  const timeLeft = deadline - realNow();
+  try {
+    // A timer with a negative delay prints a TimeoutNegativeWarning.
+    await raceWithTimeoutAndSignal(() => awaitCountableTail(node), timeLeft > 0 ? timeLeft : 0, undefined);
+  } catch {
+    // The time of the test is over, so it waits no more. Node cancels these subtests, and Bun lets them run.
+    node.countableTail = undefined;
+  }
+}
+
+// Awaits the queued subtests that Node could count, including ones queued while waiting.
+async function awaitCountableTail(node: TestNode) {
+  let tail;
+  do {
+    tail = node.countableTail;
+    try {
+      await tail;
+    } catch {
+      // Failures are tracked through failedChildren.
+    }
+  } while (tail !== node.countableTail);
+}
+
+function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise<undefined> {
+  // Node starts a subtest inside t.test() when none is ahead of it, so a before hook created later does not hold it.
+  const waitsForHooks = parent.hooks.before.length > 0 || $isPromisePending(parent.subtestChain);
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
       child.passed = true;
       return;
     }
-    let failure: unknown;
     try {
-      await runOwnBeforeHooks(parent);
-      failure = await executeTestNode(child, fn);
+      await (waitsForHooks ? runOwnBeforeHooks(parent) : undefined);
+      await executeTestNode(child, fn, waitDeadline(child));
     } catch (err) {
-      failure = err;
-    }
-    // Check the child's own todo declaration (options.todo or test.todo(...)),
-    // not the inherited todoFlag: a subtest that threw must still fail a
-    // {todo:true} parent so bun:test under --todo reports Todo (failure rolls up).
-    if (failure !== undefined && !ownTodo && !child.skipped) {
-      parent.failedSubtests++;
-      parent.firstSubtestError ??= failure;
+      // A before hook above the child failed before it ran: Node fails the child with the hook's error and reports it.
+      const failure = applyExpectFailure(child, err);
+      finalizeNode(child, failure, failure ?? err, runChildReporterEnabled ? realNow() : 0);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
+  if (!child.todoFlag) parent.countableTail = result;
   return result.then(() => undefined);
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
-  suite.failedSubtests++;
-  suite.firstSubtestError ??= err ?? makeTestFailure("suite failed");
+  suite.hookFailure ??= err ?? makeTestFailure("suite failed");
 }
 
 // Awaits a node's subtest chain, including links appended while waiting.
@@ -2458,12 +2551,12 @@ async function drainSubtestChain(node: TestNode) {
     try {
       await chain;
     } catch {
-      // Failures are tracked through failedSubtests.
+      // Failures are tracked through failedChildren.
     }
   } while (chain !== node.subtestChain);
 }
 
-function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, ownTodo: boolean): Promise<undefined> {
+function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown): Promise<undefined> {
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
@@ -2490,37 +2583,18 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         await runHook(hook, suite, suite.getSuiteCtx());
       } catch (err) {
         recordSuiteFailure(suite, err);
+        break;
       }
     }
-    suite.finished = true;
-    suite.passed = suite.failedSubtests === 0;
-    if (runChildReporterEnabled) {
-      emitRunChildEvent(suite.passed ? "test:pass" : "test:fail", {
-        __proto__: null,
-        name: suite.name,
-        nesting: nestingOf(suite),
-        testNumber: 0,
-        duration_ms: 0,
-        type: "suite",
-        tags: suite.tags,
-        todo: suite.todoFlag ? (suite.message ?? true) : undefined,
-        error: suite.passed
-          ? undefined
-          : serializeRunError(
-              makeTestFailure(
-                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
-                "subtestsFailed",
-              ),
-            ),
-      });
-    }
-    // A todo suite's failures do not fail the owning test (Node).
-    if (suite.failedSubtests > 0 && !ownTodo) {
-      parent.failedSubtests++;
-      parent.firstSubtestError ??= suite.firstSubtestError;
-    }
+    // Node folds the members only into a suite that still passes; its own failure wins.
+    const { hookFailure, failedChildren } = suite;
+    const failure = hookFailure ?? (failedChildren !== undefined ? foldFailedChildren(failedChildren) : undefined);
+    // The owning test shows `error` as the cause of its own "N subtests failed".
+    const error = failure === undefined ? null : (hookFailure ?? (failure as { cause?: unknown }).cause ?? failure);
+    finalizeNode(suite, failure, error, 0);
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
+  if (!suite.todoFlag) parent.countableTail = result;
   return result.then(() => undefined);
 }
 
@@ -2558,7 +2632,7 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
+function createTopLevelTestRunner(node: TestNode, fn: TestFn) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
@@ -2567,24 +2641,40 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     // the flag was only inherited; under a run() child the suite registers as a
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
-    executeTestNode(node, fn).then(
+    const deadline = waitDeadline(node);
+    executeTestNode(node, fn, deadline).then(
       failure => {
-        // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
-        // (Node counts these as skip/todo even when the body threw); a declared
-        // todo body's failure must reach bun:test's own todo accounting instead.
-        if (node.skipped) {
-          markCurrentResult(false, done);
-        } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
-          markCurrentResult(true, done);
+        // A queued subtest can call this test's t.skip() or t.todo() after executeTestNode() read them.
+        if (failure !== undefined && mustSettleSubtests(node, false)) {
+          const deliver = () => deliverEntryResult(node, failure, todoBefore, done);
+          settleCountableSubtests(node, deadline).then(deliver);
         } else {
-          done(failure);
-          return;
+          deliverEntryResult(node, failure, todoBefore, done);
         }
-        done(undefined);
       },
       err => done(err),
     );
   };
+}
+
+// The bun:test entry of a registered test is the only result bun:test has for the test and everything below it.
+function deliverEntryResult(node: TestNode, failure: unknown, todoBefore: boolean, done: Done) {
+  const { skipped, todoFlag, failuresBelow } = node;
+  // bun:test decides Todo or fail for its own todo scope, so it is told of any failure below.
+  const bunTodoScope = todoBefore && !runChildReporterEnabled;
+  if (failuresBelow?.counted !== undefined) {
+    // Node counts a subtest below as failed, so the entry fails where Node reports this test as skip, todo or pass.
+    done(skipped || todoFlag ? failuresBelow.counted : (failure ?? failuresBelow.counted));
+  } else if (skipped) {
+    // Node counts a run-time t.skip() as skipped even when the body threw.
+    markCurrentResult(false, done);
+    done(undefined);
+  } else if (todoFlag && !bunTodoScope) {
+    markCurrentResult(true, done);
+    done(undefined);
+  } else {
+    done(bunTodoScope ? (failure ?? failuresBelow?.any) : failure);
+  }
 }
 
 function addTest(
@@ -2615,9 +2705,8 @@ function addTest(
         ));
         return chained.then(() => undefined);
       }
-      const ownTodo = mode === "todo" || !!options.todo;
-      if (ownTodo) child.todoFlag = true;
-      return scheduleSubtest(runningNode, child, fn, ownTodo);
+      if (mode === "todo") child.todoFlag = true;
+      return scheduleSubtest(runningNode, child, fn);
     }
   }
 
@@ -2646,14 +2735,13 @@ function addTest(
       else test(name, runner);
       return Promise.resolve(undefined);
     }
+    // test.todo() carries the directive in `mode`, not in the options: mark the node so the runner and subtests see it.
+    if (effectiveMode === "todo") node.todoFlag = true;
     // Node runs a todo body, so `t.skip()` inside one still changes the
     // directive it reports. bun:test only runs todo bodies under --todo, so a
     // run() child registers them as ordinary tests and marks the result at the
     // end (what createTopLevelTestRunner already does for a runtime t.todo()).
     if (runChildReporterEnabled && effectiveMode === "todo") {
-      // The test.todo() spelling carries the directive in `mode`, not in the
-      // options, so the node has to be marked for the runner to report it.
-      node.todoFlag = true;
       const runner = createTopLevelTestRunner(node, fn);
       if (passOptions !== undefined) test(name, runner, passOptions);
       else test(name, runner);
@@ -2661,7 +2749,7 @@ function addTest(
     }
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
-    const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
+    const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn) : kDefaultFunction;
     if (passOptions !== undefined) {
       register(name, body, passOptions);
     } else {
@@ -2711,8 +2799,7 @@ function addSuite(
       ));
       return chained.then(() => undefined);
     }
-    const ownTodo = mode === "todo" || !!options.todo;
-    if (ownTodo) suite.todoFlag = true;
+    if (mode === "todo") suite.todoFlag = true;
     // The suite's children must run after the parent's previously scheduled
     // subtests AND after the describe callback's own returned promise settles
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
@@ -2738,7 +2825,7 @@ function addSuite(
       gate.resolve();
       build = undefined;
     }
-    return scheduleSuiteSubtest(runningNode, suite, build, ownTodo);
+    return scheduleSuiteSubtest(runningNode, suite, build);
   }
 
   const parent = currentCollectionParent();

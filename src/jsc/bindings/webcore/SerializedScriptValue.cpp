@@ -5026,24 +5026,6 @@ Ref<SerializedScriptValue> SerializedScriptValue::createDoubleArrayFastPath(Vect
     return adoptRef(*new SerializedScriptValue(WTF::move(data), length, FastPath::DoubleArray));
 }
 
-Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
-{
-    if (this->m_data.size() == 0) {
-        return ArrayBuffer::create(static_cast<size_t>(0), static_cast<unsigned>(1));
-    }
-
-    this->ref();
-    auto arrayBuffer = ArrayBuffer::createFromBytes(
-        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
-            protectedThis->deref();
-        }));
-
-    // Note: using the SharedArrayBufferContents::create function directly didn't work.
-    arrayBuffer->makeShared();
-
-    return arrayBuffer;
-}
-
 JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength, SerializationErrorMode throwExceptions, bool* didFail)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -2597,6 +2597,131 @@ describe("bundler", () => {
       stdout: "second 2 shadow inner other",
     },
   });
+  // A `var` initialized by an unwrapped `require()` becomes the namespace of
+  // the import. Not one that a nested block declares again: that declaration
+  // can store to it, and a read in that block is a read of this variable.
+  for (const kind of ["lifted", "wrapped"] as const) {
+    const unwrappedPackage = (name: string) => ({
+      [`/node_modules/${name}/index.js`]:
+        kind === "lifted" ? `exports.name = "${name}";` : `module.exports = { name: "${name}" };`,
+      [`/node_modules/${name}/package.json`]: JSON.stringify({ name, version: "2.0.0", main: "index.js" }),
+    });
+    itBundled(`cjs2esm/UnwrappedRequireVarRedeclaredInNestedBlock/${kind}`, {
+      files: {
+        "/entry.js": /* js */ `
+          if (globalThis.process) {
+            var either = require("react");
+            console.log(either.name);
+          } else {
+            var either = require("react-dom");
+            console.log(either.name);
+          }
+
+          var stored = require("react-is");
+          if (globalThis.process) {
+            var stored = { name: "stored" };
+            console.log(stored.name);
+          }
+
+          var storedOneBlockDeeper = require("scheduler");
+          if (globalThis.process) {
+            {
+              var storedOneBlockDeeper = { name: "stored one block deeper" };
+            }
+            console.log(storedOneBlockDeeper.name);
+          }
+
+          var read = require("react-client");
+          if (globalThis.process) {
+            var read;
+            console.log(read.name);
+          }
+
+          function inFunction(stores) {
+            var local = require("react-server");
+            if (stores) {
+              var local = { name: "stored in a function" };
+            }
+            return local.name;
+          }
+          console.log(inFunction(true), inFunction(false));
+        `,
+        ...unwrappedPackage("react"),
+        ...unwrappedPackage("react-dom"),
+        ...unwrappedPackage("react-is"),
+        ...unwrappedPackage("scheduler"),
+        ...unwrappedPackage("react-client"),
+        ...unwrappedPackage("react-server"),
+      },
+      run: {
+        stdout: "react\nstored\nstored one block deeper\nreact-client\nstored in a function react-server",
+      },
+    });
+  }
+  // In a CommonJS file, a block that declares `var exports` again keeps its
+  // own symbol for the name. An object that the block stores is not the
+  // module's `exports`.
+  itBundled("cjs2esm/ExportsRedeclaredInNestedBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./exports-stored.js";
+      `,
+      "/exports-stored.js": /* js */ `
+        var exports;
+        exports.a = 1;
+        exports.b = 2;
+        if (globalThis.process) {
+          var exports = { a: "stored" };
+          console.log(exports.a, exports.b);
+        }
+        console.log(module.exports.a, module.exports.b);
+      `,
+    },
+    run: {
+      stdout: "stored undefined\n1 2",
+    },
+  });
+  // In a CommonJS file, a block that declares `var module` again keeps its own
+  // symbol for the name. An object that the block stores is read as written,
+  // and `module.require()`, `module.id` and `require.main === module` outside
+  // the block are still the module's.
+  itBundled("cjs2esm/ModuleRedeclaredInNestedBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./module-stored.js");
+        require("./module-members.js");
+        require("./module-bare.js");
+      `,
+      "/module-stored.js": /* js */ `
+        var module;
+        exports.a = 1;
+        if (globalThis.process) {
+          var module = { exports: { a: 2 } };
+          console.log(module.exports.a);
+        }
+      `,
+      "/module-members.js": /* js */ `
+        var module;
+        if (globalThis.process) {
+          var module = { id: "id", filename: "filename", path: "path", require: name => "require " + name };
+          console.log(module.id, module.filename, module.path, module.require("x"), require.main === module);
+        }
+      `,
+      "/module-bare.js": /* js */ `
+        var module;
+        if (globalThis.process) {
+          var module;
+        }
+        console.log(module.require("./dep.js").value, typeof module.id);
+      `,
+      "/dep.js": /* js */ `
+        exports.value = "dep";
+      `,
+    },
+    run: {
+      stdout: "2\nid filename path require x false\ndep string",
+    },
+  });
   // `module.exports = require()` in an unwrapped package becomes
   // `export * from`, which is module code too.
   itBundled("cjs2esm/ReactSpecificUnwrappingVarWithTheNameOfAFunctionKeepsWrapper", {

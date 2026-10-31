@@ -1261,4 +1261,35 @@ describe("bundler", () => {
       stdout: "true\n",
     },
   });
+
+  // The parse pass resolves a type before the block's `var` merges into the
+  // top-level declaration. The metadata has to keep that declaration.
+  itBundled("decorator_metadata/TypeIsVarRedeclaredInNestedBlock", {
+    files: {
+      "/entry.ts": /* ts */ `
+        (Reflect as any).metadata = (key: string, value: any) => () => {
+          console.log(key, value.name);
+        };
+        function dec(target: any, property: string) {}
+        var Foo = class {};
+        if (globalThis.process) {
+          var Foo;
+          class A {
+            @dec x: Foo;
+          }
+        }
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "experimentalDecorators": true,
+            "emitDecoratorMetadata": true,
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "design:type Foo",
+    },
+  });
 });

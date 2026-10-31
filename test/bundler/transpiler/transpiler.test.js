@@ -6885,3 +6885,17 @@ describe("same-target destructuring with an unstable target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("a var that a nested scope declares again", () => {
+  const plain = new Bun.Transpiler({ loader: "js" });
+
+  it("keeps a read in a with body", () => {
+    expect(plain.transformSync("var x = M; with (s) { var x; x; }")).toBe("var x = M;\nwith (s) {\n  x;\n}\nvar x;\n");
+  });
+
+  it("is an error below a block-level function of that name", () => {
+    expect(() => plain.transformSync("var f = 1; { function f() {} { var f; } }")).toThrow(
+      "f has already been declared",
+    );
+  });
+});

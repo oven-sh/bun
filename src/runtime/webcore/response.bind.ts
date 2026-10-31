@@ -50,7 +50,6 @@ export const Request = b.class({
     headers,
     integrity: getter,
     json: body.json,
-    keepalive: { getter: b.bool },
     method: getter,
     mode: getter,
     redirect: getter,

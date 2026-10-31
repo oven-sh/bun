@@ -133,7 +133,7 @@ Reflect : @@toStringTag/c apply/wc construct/wc defineProperty/wc deleteProperty
 RegExp : $&/ac $'/ac $*/ac $+/ac $1/ac $2/ac $3/ac $4/ac $5/ac $6/ac $7/ac $8/ac $9/ac $_/ac $`/ac @@species/ac escape/wc input/ac lastMatch/ac lastParen/ac leftContext/ac length/? multiline/ac name/? prototype/- rightContext/ac
 RegExp.prototype : @@match/wc @@matchAll/wc @@replace/wc @@search/wc @@split/wc compile/wc constructor/wc dotAll/ac exec/wc flags/ac global/ac hasIndices/ac ignoreCase/ac multiline/ac source/ac sticky/ac test/wc toString/wc unicode/ac unicodeSets/ac
 Request : length/c name/c prototype/-
-Request.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w cache/a clone/w constructor/wc credentials/a destination/a formData/w headers/a integrity/a json/w keepalive/a method/a mode/a redirect/a referrer/a referrerPolicy/a signal/a text/w textStream/w url/a
+Request.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w cache/a clone/w constructor/wc credentials/a destination/a formData/w headers/a integrity/a json/w method/a mode/a redirect/a referrer/a referrerPolicy/a signal/a text/w textStream/w url/a
 Response : error/w json/w length/c name/c prototype/- redirect/w
 Response.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w clone/w constructor/wc formData/w headers/a json/w ok/a redirected/a status/a statusText/a text/w textStream/w type/a url/a
 Set : @@species/ac length/? name/? prototype/-

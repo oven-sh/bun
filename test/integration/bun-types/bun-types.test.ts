@@ -450,7 +450,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
   "resolver_jsc.bind.ts": null,
   "response.bind.ts":
-    '{ Request: Class<Omit<Request, "duplex">>; Response: typeof Response & { prototype: Response } }',
+    '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',
   "server.bind.ts": "{ ServerWebSocket: Class<Required<Bun.ServerWebSocket>> }",
   "server_body.bind.ts": null,
   "shell_body.bind.ts": null,
@@ -673,7 +673,7 @@ describe("@types/bun integration test", () => {
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.
-      "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no duplex",
+      "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
       // globals.d.ts does not declare these.
       "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
       "resolve_message.bind.ts: new BuildMessage().column is not published",
@@ -691,7 +691,7 @@ describe("@types/bun integration test", () => {
       // Only compiled code calls it.
       "response.bind.ts: constructJSONFromText is not published",
       // As for `match` of FileSystemRouter.
-      "response.bind.ts: new Request().clone() has no duplex",
+      "response.bind.ts: new Request().clone() has no keepalive, duplex",
       // `undefined` once the socket is closed.
       "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.

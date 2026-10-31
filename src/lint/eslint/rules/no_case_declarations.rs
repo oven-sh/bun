@@ -3,9 +3,9 @@ use bun_lint::prelude::*;
 /// Disallow lexical declarations in case clauses.
 pub struct NoCaseDeclarations;
 
-const ADD_BRACKETS: Message = Message::new("addBrackets", "Add {} brackets around the case block.");
-const UNEXPECTED: Message =
-    Message::new("unexpected", "Unexpected lexical declaration in case block.");
+const ADD_BRACKETS: &Message = &Message::new("addBrackets", "Add {} brackets around the case block.");
+const UNEXPECTED: &Message =
+    &Message::new("unexpected", "Unexpected lexical declaration in case block.");
 
 fn is_lexical_declaration(statement: Stmt) -> bool {
     match statement.kind() {

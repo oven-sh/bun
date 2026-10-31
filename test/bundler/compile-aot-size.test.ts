@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawned, unsupported } from "../aot/run-programs";
+import { spawned, unsupported } from "../aot/harness/commands";
 import { canTrim, featureNamed, getMappedSegments, model, tempDirForAotBuilds } from "./compile-trim-features";
 
 // An AOT-compiled program never runs the CLI or the JIT, so --aot removes the code that only those two need.
@@ -74,7 +74,8 @@ const makeAndCollect = (expression: string) => `
 const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, segment) => sum + segment.length, 0);
 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
-const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_700_000 };
+// One exception: the engine of WebKit e8f704815e94 has 167,808 bytes more that a trimmed executable keeps, and the second bound went up with it.
+const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_880_000 };
 const mostBytesOfCompiler = 22_480_000;
 
 const importsItsArguments = `
@@ -106,6 +107,11 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     const { totalBytes } = measureFeature("ImageCompiler");
     console.log("the compiler takes", totalBytes, "bytes");
     expect(totalBytes).toBeLessThanOrEqual(mostBytesOfCompiler);
+  });
+
+  test.skipIf(!isGlibc || process.arch !== "x64")("every range of code of a page or more can be cut", () => {
+    const onlyFilled = readTrimTable(bunExe()).ranges.filter(each => each.isCode && !each.canBeCut);
+    expect(onlyFilled.filter(each => each.end - each.start >= 4096)).toEqual([]);
   });
 
   describe.skipIf(!!unsupported).each([[[] as string[]], [["--trim"]]])("with %j", flags => {

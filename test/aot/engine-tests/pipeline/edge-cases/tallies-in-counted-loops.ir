@@ -1,0 +1,1136 @@
+# -- source: tallies-in-counted-loops.ts
+# // Values that go up or down by a constant in some turns of a loop that an integer counter bounds.
+# function commas(text: string): number {
+#   let count = 0;
+#   for (let i = 0; i < text.length; i++) if (text[i] === ",") count++;
+#   return count;
+# }
+#
+# function balance(list: number[]): number {
+#   let level = 5;
+#   for (let i = 0; i < list.length; i++) {
+#     if (list[i] > 0) level += 2;
+#     else if (list[i] < 0) level -= 3;
+#   }
+#   return level;
+# }
+#
+# function leavesInTheTurnThatAdds(list: number[], limit: number): number {
+#   let seen = 0;
+#   for (let i = 0; i < list.length; i++) {
+#     seen++;
+#     if (list[i] === limit) break;
+#   }
+#   return seen;
+# }
+#
+# function startsAtAFraction(list: number[], start: number): number {
+#   let sum = start;
+#   for (let i = 0; i < list.length; i++) if (list[i] !== 0) sum++;
+#   return sum;
+# }
+#
+# function writesAtTheTally(list: number[]): number[] {
+#   const kept: number[] = [];
+#   let next = 0;
+#   for (let i = 0; i < list.length; i++) if (list[i] % 2 === 0) kept[next++] = list[i];
+#   return kept;
+# }
+#
+# function countsDown(list: number[]): number {
+#   let left = 0;
+#   for (let i = list.length - 1; i >= 0; i -= 2) left--;
+#   return left;
+# }
+#
+# function inTwoLoops(rows: number[][]): number {
+#   let cells = 0;
+#   for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x]) cells++;
+#   return cells;
+# }
+#
+# const list = [3, -1, 0, 4, 8, -2, 7, 0, 6];
+# for (let round = 0; round < 3; round++) {
+#   console.log(commas("a,b,,c" + ",".repeat(round)), commas(""), balance(list), balance([]));
+#   console.log(leavesInTheTurnThatAdds(list, 8), leavesInTheTurnThatAdds(list, 99), leavesInTheTurnThatAdds([], 1));
+#   console.log(startsAtAFraction(list, 0.5), startsAtAFraction(list, -0), Object.is(startsAtAFraction([], -0), -0), startsAtAFraction(list, 2 ** 53));
+#   console.log(writesAtTheTally(list).join(), countsDown(list), Object.is(countsDown([]), 0), inTwoLoops([list, [], [1, 0, 1]]));
+# }
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="tallies-in-counted-loops.ts" displayPath="tallies-in-counted-loops.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=1347 kind=Variable
+typesite w1 module=m0 position=115 kind=Parameter
+typesite w2 module=m0 position=99 kind=Result
+typesite w3 module=m0 position=262 kind=Parameter
+typesite w4 module=m0 position=245 kind=Result
+typesite w5 module=m0 position=474 kind=Parameter
+typesite w6 module=m0 position=490 kind=Parameter
+typesite w7 module=m0 position=441 kind=Result
+typesite w8 module=m0 position=668 kind=Parameter
+typesite w9 module=m0 position=684 kind=Parameter
+typesite w10 module=m0 position=641 kind=Result
+typesite w11 module=m0 position=837 kind=Parameter
+typesite w12 module=m0 position=811 kind=Result
+typesite w13 module=m0 position=1035 kind=Parameter
+typesite w14 module=m0 position=1015 kind=Result
+typesite w15 module=m0 position=1171 kind=Parameter
+typesite w16 module=m0 position=1151 kind=Result
+typesite w17 module=m0 position=1394 kind=Variable
+typesite w18 module=m0 position=1459 kind=CallResult
+typesite w19 module=m0 position=1441 kind=CallResult
+typesite w20 module=m0 position=1479 kind=CallResult
+typesite w21 module=m0 position=1491 kind=CallResult
+typesite w22 module=m0 position=1506 kind=CallResult
+typesite w23 module=m0 position=1534 kind=CallResult
+typesite w24 module=m0 position=1568 kind=CallResult
+typesite w25 module=m0 position=1603 kind=CallResult
+typesite w26 module=m0 position=1650 kind=CallResult
+typesite w27 module=m0 position=1680 kind=CallResult
+typesite w28 module=m0 position=1719 kind=CallResult
+typesite w29 module=m0 position=1709 kind=CallResult
+typesite w30 module=m0 position=1751 kind=CallResult
+typesite w31 module=m0 position=1800 kind=CallResult
+typesite w32 module=m0 position=1831 kind=CallResult
+typesite w33 module=m0 position=1859 kind=CallResult
+typesite w34 module=m0 position=1849 kind=CallResult
+typesite w35 module=m0 position=1879 kind=CallResult
+typesite w36 module=m0 position=145 kind=Variable
+typesite w37 module=m0 position=167 kind=Variable
+typesite w38 module=m0 position=178 kind=PropertyRead
+typesite w39 module=m0 position=200 kind=Element
+typesite w40 module=m0 position=294 kind=Variable
+typesite w41 module=m0 position=316 kind=Variable
+typesite w42 module=m0 position=327 kind=PropertyRead
+typesite w43 module=m0 position=355 kind=Element
+typesite w44 module=m0 position=393 kind=Element
+typesite w45 module=m0 position=521 kind=Variable
+typesite w46 module=m0 position=542 kind=Variable
+typesite w47 module=m0 position=553 kind=PropertyRead
+typesite w48 module=m0 position=593 kind=Element
+typesite w49 module=m0 position=715 kind=Variable
+typesite w50 module=m0 position=739 kind=Variable
+typesite w51 module=m0 position=750 kind=PropertyRead
+typesite w52 module=m0 position=772 kind=Element
+typesite w53 module=m0 position=873 kind=Variable
+typesite w54 module=m0 position=900 kind=Variable
+typesite w55 module=m0 position=921 kind=Variable
+typesite w56 module=m0 position=932 kind=PropertyRead
+typesite w57 module=m0 position=954 kind=Element
+typesite w58 module=m0 position=988 kind=Element
+typesite w59 module=m0 position=1067 kind=Variable
+typesite w60 module=m0 position=1088 kind=Variable
+typesite w61 module=m0 position=1092 kind=PropertyRead
+typesite w62 module=m0 position=1205 kind=Variable
+typesite w63 module=m0 position=1227 kind=Variable
+typesite w64 module=m0 position=1238 kind=PropertyRead
+typesite w65 module=m0 position=1265 kind=Variable
+typesite w66 module=m0 position=1276 kind=Element
+typesite w67 module=m0 position=1301 kind=Element
+data d0 root=Array{contents=number elements=[Number{value=3}, Number{value=-1}, Number{}, Number{value=4}, Number{value=8}, Number{value=-2}, Number{value=7}, Number{}, Number{value=6}]} module=m0
+data d1 root=Array{contents=number} module=m0
+data d2 root=Array{contents=number} module=m0
+data d3 root=Array{contents=number} module=m0
+data d4 root=Array{contents=number} module=m0
+data d5 root=Array{contents=number} module=m0
+data d6 root=Array{contents=number elements=[Number{value=1}, Number{}, Number{value=1}]} module=m0
+data d7 root=Array{contents=number} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = Data data=d0
+    v15 = Convert v14 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v16 = Integer
+    v17 = Convert v16 declared={type=number site=w17}
+    Jump -> next b2(v17)
+  b2(v18: number):
+    LoopHint
+    v20 = Integer integer=3
+    v21 = Less v18, v20
+    Branch v21 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v22):
+    Jump -> next b4()
+  b4():
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="console" [isFreeName]
+    v25 = Convert v24 declared={type=builtin(Console) flags=[IsExpected]}
+    v26 = PropGet v25 key="log"
+    v27 = Convert v26 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v28 = String string="a,b,,c"
+    v29 = String string=","
+    v30 = PropGet v29 key="repeat"
+    v31 = Call v30, v29, v22 calleeKey="repeat" calleeName="repeat"
+    v32 = Convert v31 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v33 = Add v28, v32
+    v34 = Call v1, -, v33 calleeName="commas"
+    v35 = Convert v34 declared={type=number site=w19}
+    v36 = String string=""
+    v37 = Call v1, -, v36 calleeName="commas"
+    v38 = Convert v37 declared={type=number site=w20}
+    v39 = Call v3, -, v15 calleeName="balance"
+    v40 = Convert v39 declared={type=number site=w21}
+    v41 = Data data=d1
+    v42 = Call v3, -, v41 calleeName="balance"
+    v43 = Convert v42 declared={type=number site=w22}
+    v44 = Call v27, v25, v35, v38, v40, v43 calleeKey="log" calleeName="console.log"
+    v45 = Builtin builtin=GlobalThis
+    v46 = PropGet v45 key="console" [isFreeName]
+    v47 = Convert v46 declared={type=builtin(Console) flags=[IsExpected]}
+    v48 = PropGet v47 key="log"
+    v49 = Convert v48 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v50 = Integer integer=8
+    v51 = Call v5, -, v15, v50 calleeName="leavesInTheTurnThatAdds"
+    v52 = Convert v51 declared={type=number site=w23}
+    v53 = Integer integer=99
+    v54 = Call v5, -, v15, v53 calleeName="leavesInTheTurnThatAdds"
+    v55 = Convert v54 declared={type=number site=w24}
+    v56 = Data data=d2
+    v57 = Integer integer=1
+    v58 = Call v5, -, v56, v57 calleeName="leavesInTheTurnThatAdds"
+    v59 = Convert v58 declared={type=number site=w25}
+    v60 = Call v49, v47, v52, v55, v59 calleeKey="log" calleeName="console.log"
+    v61 = Builtin builtin=GlobalThis
+    v62 = PropGet v61 key="console" [isFreeName]
+    v63 = Convert v62 declared={type=builtin(Console) flags=[IsExpected]}
+    v64 = PropGet v63 key="log"
+    v65 = Convert v64 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v66 = Double number=0.5
+    v67 = Call v7, -, v15, v66 calleeName="startsAtAFraction"
+    v68 = Convert v67 declared={type=number site=w26}
+    v69 = Double number=-0
+    v70 = Call v7, -, v15, v69 calleeName="startsAtAFraction"
+    v71 = Convert v70 declared={type=number site=w27}
+    v72 = Builtin builtin=Object
+    v73 = Builtin builtin=ObjectIs
+    v74 = Data data=d3
+    v75 = Double number=-0
+    v76 = Call v7, -, v74, v75 calleeName="startsAtAFraction"
+    v77 = Convert v76 declared={type=number site=w28}
+    v78 = Double number=-0
+    v79 = Call v73, v72, v77, v78 calleeName="Object.is"
+    v80 = Convert v79 declared={type=boolean site=w29} illTypedCause=DeclarationWithoutBody
+    v81 = Integer integer=9007199254740992
+    v82 = Call v7, -, v15, v81 calleeName="startsAtAFraction"
+    v83 = Convert v82 declared={type=number site=w30}
+    v84 = Call v65, v63, v68, v71, v80, v83 calleeKey="log" calleeName="console.log"
+    v85 = Builtin builtin=GlobalThis
+    v86 = PropGet v85 key="console" [isFreeName]
+    v87 = Convert v86 declared={type=builtin(Console) flags=[IsExpected]}
+    v88 = PropGet v87 key="log"
+    v89 = Convert v88 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v90 = Call v9, -, v15 calleeName="writesAtTheTally"
+    v91 = Convert v90 declared={type=undefined|null|Array<number> site=w31 flags=[OmitsNull, OmitsUndefined]}
+    v92 = PropGet v91 key="join"
+    v93 = Call v92, v91 calleeKey="join" calleeName="join"
+    v94 = Convert v93 declared={type=undefined|null|string site=w31 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v95 = Call v11, -, v15 calleeName="countsDown"
+    v96 = Convert v95 declared={type=number site=w32}
+    v97 = Builtin builtin=Object
+    v98 = Builtin builtin=ObjectIs
+    v99 = Data data=d4
+    v100 = Call v11, -, v99 calleeName="countsDown"
+    v101 = Convert v100 declared={type=number site=w33}
+    v102 = Integer
+    v103 = Call v98, v97, v101, v102 calleeName="Object.is"
+    v104 = Convert v103 declared={type=boolean site=w34} illTypedCause=DeclarationWithoutBody
+    v105 = Data data=d5
+    v106 = Data data=d6
+    v107 = NewArray v15, v105, v106 contents=undefined|null|Array<number>
+    v108 = Call v13, -, v107 calleeName="inTwoLoops"
+    v109 = Convert v108 declared={type=number site=w35}
+    v110 = Call v89, v87, v94, v96, v104, v109 calleeKey="log" calleeName="console.log"
+    Jump -> next b5()
+  b5():
+    v111 = Increment v22
+    v112 = Convert v111 declared={type=number site=w17}
+    Jump -> next b2(v112)
+  b6(v113):
+    Jump -> next b7()
+  b7():
+    v114 = Undefined
+    Return v114
+}
+function f1 name="commas" module=m0 position=99 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w36}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w37}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w38} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b8(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=undefined|null|string site=w39 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v16 = String string=","
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b5(), notTaken b6(v5)
+  b5():
+    v18 = Increment v5
+    v19 = Convert v18 declared={type=number site=w36}
+    Jump -> next b6(v19)
+  b6(v20: number):
+    Jump -> next b7()
+  b7():
+    v21 = Increment v13
+    v22 = Convert v21 declared={type=number site=w37}
+    Jump -> next b2(v20, v22)
+  b8(v23):
+    Jump -> next b9()
+  b9():
+    v24 = Convert v5 declared={type=number site=w2}
+    Return v24
+}
+function f2 name="balance" module=m0 position=245 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v1 = Integer integer=5
+    v2 = Convert v1 declared={type=number site=w40}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w41}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w42} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=number site=w43} illTypedCause=ContainerWriterUnseen
+    v16 = Integer
+    v17 = Greater v15, v16
+    Branch v17 -> taken b5(), notTaken b6()
+  b5():
+    v18 = Integer integer=2
+    v19 = Add v5, v18
+    v20 = Convert v19 declared={type=number site=w40}
+    Jump -> next b9(v20)
+  b6():
+    v21 = ElemGet v0, v13
+    v22 = Convert v21 declared={type=number site=w44} illTypedCause=ContainerWriterUnseen
+    v23 = Integer
+    v24 = Less v22, v23
+    Branch v24 -> taken b7(), notTaken b8(v5)
+  b7():
+    v25 = Integer integer=3
+    v26 = Sub v5, v25
+    v27 = Convert v26 declared={type=number site=w40}
+    Jump -> next b8(v27)
+  b8(v28: number):
+    Jump -> next b9(v28)
+  b9(v29: number):
+    Jump -> next b10()
+  b10():
+    v30 = Increment v13
+    v31 = Convert v30 declared={type=number site=w41}
+    Jump -> next b2(v29, v31)
+  b11(v32):
+    Jump -> next b12()
+  b12():
+    v33 = Convert v5 declared={type=number site=w4}
+    Return v33
+}
+function f3 name="leavesInTheTurnThatAdds" module=m0 position=441 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w45}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w46}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v10 = PropGet v0 key="length"
+    v11 = Convert v10 declared={type=number site=w47} illTypedCause=Assertion
+    v12 = Less v9, v11
+    Branch v12 -> taken b3(| 0), notTaken b10(| 0)
+  b3(v13):
+    Jump -> next b4()
+  b4():
+    v14 = Increment v6
+    v15 = Convert v14 declared={type=number site=w45}
+    v16 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v17 = ElemGet v0, v16
+    v18 = Convert v17 declared={type=number site=w48} illTypedCause=ContainerWriterUnseen
+    v19 = StrictEq v18, v1
+    Branch v19 -> taken b5(| 1), notTaken b7(| 1)
+  b5(v20):
+    Jump -> next b6()
+  b6():
+    Jump -> next b11(v15)
+  b7(v21):
+    Jump -> next b8()
+  b8():
+    Jump -> next b9()
+  b9():
+    v22 = Increment v16
+    v23 = Convert v22 declared={type=number site=w46}
+    Jump -> next b2(v15, v23)
+  b10(v24):
+    Jump -> next b11(v6)
+  b11(v25: number):
+    v26 = Convert v25 declared={type=number site=w7}
+    Return v26
+}
+function f4 name="startsAtAFraction" module=m0 position=641 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w9}] results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=number site=w49}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w50}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w51} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b8(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=number site=w52} illTypedCause=ContainerWriterUnseen
+    v16 = Integer
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b6(v5), notTaken b5()
+  b5():
+    v18 = Increment v5
+    v19 = Convert v18 declared={type=number site=w49}
+    Jump -> next b6(v19)
+  b6(v20: number):
+    Jump -> next b7()
+  b7():
+    v21 = Increment v13
+    v22 = Convert v21 declared={type=number site=w50}
+    Jump -> next b2(v20, v22)
+  b8(v23):
+    Jump -> next b9()
+  b9():
+    v24 = Convert v5 declared={type=number site=w10}
+    Return v24
+}
+function f5 name="writesAtTheTally" module=m0 position=811 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v1 = Data data=d7
+    v2 = Convert v1 declared={type=undefined|null|Array<number> site=w53 flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w54}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w55}
+    Jump -> next b2(v4, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = PropGet v0 key="length"
+    v12 = Convert v11 declared={type=number site=w56} illTypedCause=Assertion
+    v13 = Less v10, v12
+    Branch v13 -> taken b3(| 0), notTaken b8(| 0)
+  b3(v14):
+    Jump -> next b4()
+  b4():
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v16 = ElemGet v0, v15
+    v17 = Convert v16 declared={type=number site=w57} illTypedCause=ContainerWriterUnseen
+    v18 = Integer integer=2
+    v19 = Mod v17, v18
+    v20 = Integer
+    v21 = StrictEq v19, v20
+    Branch v21 -> taken b5(), notTaken b6(v7)
+  b5():
+    v22 = ToNumeric v7
+    v23 = Increment v22
+    v24 = Convert v23 declared={type=number site=w54}
+    v25 = ElemGet v0, v15
+    v26 = Convert v25 declared={type=number site=w58} illTypedCause=ContainerWriterUnseen
+    ElemSet v2, v22, v26
+    Jump -> next b6(v24)
+  b6(v28: number):
+    Jump -> next b7()
+  b7():
+    v29 = Increment v15
+    v30 = Convert v29 declared={type=number site=w55}
+    Jump -> next b2(v28, v30)
+  b8(v31):
+    Jump -> next b9()
+  b9():
+    Return v2
+}
+function f6 name="countsDown" module=m0 position=1015 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w14}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w59}
+    v3 = PropGet v0 key="length"
+    v4 = Convert v3 declared={type=number site=w61} illTypedCause=Assertion
+    v5 = Integer integer=1
+    v6 = Sub v4, v5
+    v7 = Convert v6 declared={type=number site=w60}
+    Jump -> next b2(v2, v7)
+  b2(v8: number, v9: number):
+    LoopHint
+    v11 = Integer
+    v12 = GreaterEq v9, v11
+    Branch v12 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v13):
+    Jump -> next b4()
+  b4():
+    v14 = Decrement v8
+    v15 = Convert v14 declared={type=number site=w59}
+    Jump -> next b5()
+  b5():
+    v16 = Integer integer=2
+    v17 = Sub v13, v16
+    v18 = Convert v17 declared={type=number site=w60}
+    Jump -> next b2(v15, v18)
+  b6(v19):
+    Jump -> next b7()
+  b7():
+    v20 = Convert v8 declared={type=number site=w14}
+    Return v20
+}
+function f7 name="inTwoLoops" module=m0 position=1151 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<number>>):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w62}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w63}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w64} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b16(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Integer
+    v14 = Convert v13 declared={type=number site=w65}
+    Jump -> next b5(v5, v14)
+  b5(v15: number, v16: number):
+    LoopHint
+    v18 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    v19 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v20 = ElemGet v0, v19
+    v21 = Convert v20 declared={type=undefined|null|Array<number> site=w66 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v22 = PropGet v21 key="length"
+    v23 = Less v18, v22
+    Branch v23 -> taken b6(| 0), notTaken b13(| 0)
+  b6(v24):
+    Jump -> next b7()
+  b7():
+    v25 = ElemGet v0, v19
+    v26 = Convert v25 declared={type=undefined|null|Array<number> site=w67 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v27 = Convert v24 declared={type=i32 flags=[IsExpected]}
+    v28 = ElemGet v26, v27
+    v29 = Convert v28 declared={type=number site=w67} illTypedCause=ContainerWriterUnseen
+    v30 = ToBoolean v29
+    Branch v30 -> taken b8(| 0), notTaken b10(| 0)
+  b8(v31):
+    Jump -> next b9()
+  b9():
+    v32 = Increment v15
+    v33 = Convert v32 declared={type=number site=w62}
+    Jump -> next b11(v33)
+  b10(v34):
+    Jump -> next b11(v15)
+  b11(v35: number):
+    Jump -> next b12()
+  b12():
+    v36 = Increment v27
+    v37 = Convert v36 declared={type=number site=w65}
+    Jump -> next b5(v35, v37)
+  b13(v38):
+    Jump -> next b14()
+  b14():
+    Jump -> next b15()
+  b15():
+    v39 = Increment v19
+    v40 = Convert v39 declared={type=number site=w63}
+    Jump -> next b2(v15, v40)
+  b16(v41):
+    Jump -> next b17()
+  b17():
+    v42 = Convert v5 declared={type=number site=w16}
+    Return v42
+}
+# -- generated: f0 commas
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 3 = Integer integer=3
+# CHECK-NEXT: v1: -1 = Integer integer=-1
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 4 = Integer integer=4
+# CHECK-NEXT: v4: 8 = Integer integer=8
+# CHECK-NEXT: v5: -2 = Integer integer=-2
+# CHECK-NEXT: v6: 7 = Integer integer=7
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: 6 = Integer integer=6
+# CHECK-NEXT: v9: Array<int[-2, 8], Int32> = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8 contents=int[-2, 8] allocationSite=7 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v10: Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v11)
+# CHECK-NEXT: b1(v12: int[0, 3]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v14: 3 = Integer integer=3
+# CHECK-NEXT: v15: boolean = Less v12, v14
+# CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b121()
+# CHECK-NEXT: b2(v16: int[0, 2]):
+# CHECK-NEXT: v17: "a,b,,c" = String string="a,b,,c"
+# CHECK-NEXT: v18: "," = String string=","
+# CHECK-NEXT: v19: string = CallBuiltin v18, v16 overload=StringPrototypeRepeat/0 accessSite=3
+# CHECK-NEXT: v20: string = Add v17, v19
+# CHECK-NEXT: v21: int|whole = CallDirect v20 function=f1 accessSite=4
+# CHECK-NEXT: v22: "" = String string=""
+# CHECK-NEXT: v23: int|whole = CallDirect v22 function=f1 accessSite=5
+# CHECK-NEXT: v24: 5 = Integer integer=5
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: Jump -> next b3(v24, v25)
+# CHECK-NEXT: b3(v26: int|whole ~ 5, v27: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b4(v26, v27)
+# CHECK-NEXT: b4(v28: int|whole ~ 5, v29: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b5(v28, v29)
+# CHECK-NEXT: b5(v30: int|whole, v31: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v33: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v31 castType=int|whole
+# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=35
+# CHECK-NEXT: v35: boolean = Less v33, v34
+# CHECK-NEXT: Branch v35 -> taken b6(| 0), notTaken b29()
+# CHECK-NEXT: b6(v36: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v37: boolean = IsInBounds v10, v36
+# CHECK-NEXT: Branch v37 -> taken b7(| 0), notTaken b13()
+# CHECK-NEXT: b7(v38: guard):
+# CHECK-NEXT: v39: int[-2, 8] = GetArrayElement v10, v36, v38 arrayStorage=Int32 level=Proven accessSite=36 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: v41: boolean = Greater v39, v40
+# CHECK-NEXT: Branch v41 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v42: 2 = Integer integer=2
+# CHECK-NEXT: v43: int|whole = Add v30, v42
+# CHECK-NEXT: Jump -> next b12(v43)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v44: int[-2, 8] = GetArrayElement v10, v36, v38 arrayStorage=Int32 level=Proven accessSite=37 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v45: 0 = Integer
+# CHECK-NEXT: v46: boolean = Less v44, v45
+# CHECK-NEXT: Branch v46 -> taken b10(), notTaken b11(v30)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v47: 3 = Integer integer=3
+# CHECK-NEXT: v48: int|whole = Sub v30, v47
+# CHECK-NEXT: Jump -> next b11(v48)
+# CHECK-NEXT: b11(v49: int|whole):
+# CHECK-NEXT: Jump -> next b12(v49)
+# CHECK-NEXT: b12(v50: int|whole):
+# CHECK-NEXT: v51: int[1, 4294967295] ~ int[1, 2147483648] = Increment v36
+# CHECK-NEXT: Jump -> next b5(v50, v51)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v52: undefined|int[-2, 8] = GetArrayElement v10, v36 arrayStorage=Int32 level=Proven accessSite=36 [keyIsIntegral]
+# CHECK-NEXT: v53: undefined|int[-2, 8] ~ int[-2, 8] = Expect v52 expectedType=number
+# CHECK-NEXT: v54: boolean ~ true = TypeTest v53 testedType=i32
+# CHECK-NEXT: Branch v54 -> taken b14(| 0), notTaken b22()
+# CHECK-NEXT: b14(v55: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v56: 0 = Integer
+# CHECK-NEXT: v57: boolean = Greater v55, v56
+# CHECK-NEXT: Branch v57 -> taken b15(), notTaken b16()
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v58: 2 = Integer integer=2
+# CHECK-NEXT: v59: int|whole = Add v30, v58
+# CHECK-NEXT: Jump -> next b20(v59)
+# CHECK-NEXT: b16() frequency=Rare:
+# CHECK-NEXT: v60: undefined|int[-2, 8] = GetArrayElement v10, v36 arrayStorage=Int32 level=Proven accessSite=37 [keyIsIntegral]
+# CHECK-NEXT: v61: undefined|int[-2, 8] ~ int[-2, 8] = Expect v60 expectedType=number
+# CHECK-NEXT: v62: boolean ~ true = TypeTest v61 testedType=i32
+# CHECK-NEXT: Branch v62 -> taken b17(| 0), notTaken b21()
+# CHECK-NEXT: b17(v63: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v64: 0 = Integer
+# CHECK-NEXT: v65: boolean = Less v63, v64
+# CHECK-NEXT: Branch v65 -> taken b18(), notTaken b19(v30)
+# CHECK-NEXT: b18() frequency=Rare:
+# CHECK-NEXT: v66: 3 = Integer integer=3
+# CHECK-NEXT: v67: int|whole = Sub v30, v66
+# CHECK-NEXT: Jump -> next b19(v67)
+# CHECK-NEXT: b19(v68: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b20(v68)
+# CHECK-NEXT: b20(v69: int|whole) frequency=Rare:
+# CHECK-NEXT: v70: int[1, 4294967295] ~ int[1, 2147483648] = Increment v36
+# CHECK-NEXT: Jump -> next b4(v69, v70)
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: v71: undefined = Undefined
+# CHECK-NEXT: Jump -> next b25(v71)
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v72: undefined = Undefined
+# CHECK-NEXT: v73: 0 = Integer
+# CHECK-NEXT: v74: boolean = Greater v72, v73
+# CHECK-NEXT: Branch v74 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23() frequency=Rare:
+# CHECK-NEXT: v75: 2 = Integer integer=2
+# CHECK-NEXT: v76: int|whole = Add v30, v75
+# CHECK-NEXT: Jump -> next b28(v76)
+# CHECK-NEXT: b24() frequency=Rare:
+# CHECK-NEXT: v77: undefined|int[-2, 8] = GetArrayElement v10, v36 arrayStorage=Int32 level=Proven accessSite=37 [keyIsIntegral]
+# CHECK-NEXT: v78: undefined|int[-2, 8] ~ int[-2, 8] = Expect v77 expectedType=number
+# CHECK-NEXT: Jump -> next b25(v78)
+# CHECK-NEXT: b25(v79: undefined|int[-2, 8] ~ int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v80: 0 = Integer
+# CHECK-NEXT: v81: boolean = Less v79, v80
+# CHECK-NEXT: Branch v81 -> taken b26(), notTaken b27(v30)
+# CHECK-NEXT: b26() frequency=Rare:
+# CHECK-NEXT: v82: 3 = Integer integer=3
+# CHECK-NEXT: v83: int|whole = Sub v30, v82
+# CHECK-NEXT: Jump -> next b27(v83)
+# CHECK-NEXT: b27(v84: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b28(v84)
+# CHECK-NEXT: b28(v85: int|whole) frequency=Rare:
+# CHECK-NEXT: v86: int[1, 4294967295] ~ int[1, 2147483648] = Increment v36
+# CHECK-NEXT: Jump -> next b3(v85, v86)
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v87: 5 = Integer integer=5
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v89: undefined = CallBuiltin -, v21, v23, v30, v87 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v90: 8 = Integer integer=8
+# CHECK-NEXT: v91: 0 = Integer
+# CHECK-NEXT: v92: 0 = Integer
+# CHECK-NEXT: Jump -> next b30(v91, v92)
+# CHECK-NEXT: b30(v93: int|whole ~ 0, v94: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b31(v93, v94)
+# CHECK-NEXT: b31(v95: int|whole, v96: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v98: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v96 castType=int|whole
+# CHECK-NEXT: v99: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=38
+# CHECK-NEXT: v100: boolean = Less v98, v99
+# CHECK-NEXT: Branch v100 -> taken b32(| 0), notTaken b40(v95)
+# CHECK-NEXT: b32(v101: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v102: int|whole = Increment v95
+# CHECK-NEXT: v103: boolean = IsInBounds v10, v101
+# CHECK-NEXT: Branch v103 -> taken b33(| 0), notTaken b35()
+# CHECK-NEXT: b33(v104: guard):
+# CHECK-NEXT: v105: int[-2, 8] = GetArrayElement v10, v101, v104 arrayStorage=Int32 level=Proven accessSite=39 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v106: boolean = StrictEq v105, v90
+# CHECK-NEXT: Branch v106 -> taken b40(v102), notTaken b34()
+# CHECK-NEXT: b34():
+# CHECK-NEXT: v107: int[1, 4294967295] ~ int[1, 2147483648] = Increment v101
+# CHECK-NEXT: Jump -> next b31(v102, v107)
+# CHECK-NEXT: b35() frequency=Rare:
+# CHECK-NEXT: v108: undefined|int[-2, 8] = GetArrayElement v10, v101 arrayStorage=Int32 level=Proven accessSite=39 [keyIsIntegral]
+# CHECK-NEXT: v109: undefined|int[-2, 8] ~ int[-2, 8] = Expect v108 expectedType=number
+# CHECK-NEXT: v110: boolean ~ true = TypeTest v109 testedType=i32
+# CHECK-NEXT: Branch v110 -> taken b36(| 0), notTaken b38()
+# CHECK-NEXT: b36(v111: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v112: boolean = StrictEq v111, v90
+# CHECK-NEXT: Branch v112 -> taken b37(), notTaken b39()
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: Jump -> next b41(v102)
+# CHECK-NEXT: b38() frequency=Rare:
+# CHECK-NEXT: Jump -> next b39()
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: v113: int[1, 4294967295] ~ int[1, 2147483648] = Increment v101
+# CHECK-NEXT: Jump -> next b30(v102, v113)
+# CHECK-NEXT: b40(v114: int|whole):
+# CHECK-NEXT: Jump -> next b41(v114)
+# CHECK-NEXT: b41(v115: int|whole):
+# CHECK-NEXT: v116: 0 = Integer
+# CHECK-NEXT: v117: 0 = Integer
+# CHECK-NEXT: Jump -> next b42(v116, v117)
+# CHECK-NEXT: b42(v118: int[0, 4294967295], v119: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v121: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v119 castType=int|whole
+# CHECK-NEXT: v122: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=38
+# CHECK-NEXT: v123: boolean = Less v121, v122
+# CHECK-NEXT: Branch v123 -> taken b43(| 0), notTaken b44()
+# CHECK-NEXT: b43(v124: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v125: int[1, 4294967296] = Increment v118
+# CHECK-NEXT: v126: int[1, 4294967295] ~ int[1, 2147483648] = Increment v124
+# CHECK-NEXT: v127: fact = Specified
+# CHECK-NEXT: v128: int[1, 4294967295] = AssumeType v125, v127 provenType=int[0, 4294967295]
+# CHECK-NEXT: Jump -> next b42(v128, v126)
+# CHECK-NEXT: b44():
+# CHECK-NEXT: v129: 0 = Integer
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v131: undefined = CallBuiltin -, v115, v118, v129 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v132: fractional = Double number=0.5
+# CHECK-NEXT: v133: 0 = Integer
+# CHECK-NEXT: Jump -> next b45(v132, v133)
+# CHECK-NEXT: b45(v134: number ~ fractional, v135: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b46(v134, v135)
+# CHECK-NEXT: b46(v136: number, v137: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v139: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v137 castType=int|whole
+# CHECK-NEXT: v140: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=40
+# CHECK-NEXT: v141: boolean = Less v139, v140
+# CHECK-NEXT: Branch v141 -> taken b47(| 0), notTaken b56()
+# CHECK-NEXT: b47(v142: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v143: boolean = IsInBounds v10, v142
+# CHECK-NEXT: Branch v143 -> taken b48(| 0), notTaken b51()
+# CHECK-NEXT: b48(v144: guard):
+# CHECK-NEXT: v145: int[-2, 8] = GetArrayElement v10, v142, v144 arrayStorage=Int32 level=Proven accessSite=41 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v146: 0 = Integer
+# CHECK-NEXT: v147: boolean = StrictEq v145, v146
+# CHECK-NEXT: Branch v147 -> taken b50(v136), notTaken b49()
+# CHECK-NEXT: b49():
+# CHECK-NEXT: v148: number = Increment v136
+# CHECK-NEXT: Jump -> next b50(v148)
+# CHECK-NEXT: b50(v149: number):
+# CHECK-NEXT: v150: int[1, 4294967295] ~ int[1, 2147483648] = Increment v142
+# CHECK-NEXT: Jump -> next b46(v149, v150)
+# CHECK-NEXT: b51() frequency=Rare:
+# CHECK-NEXT: v151: undefined|int[-2, 8] = GetArrayElement v10, v142 arrayStorage=Int32 level=Proven accessSite=41 [keyIsIntegral]
+# CHECK-NEXT: v152: undefined|int[-2, 8] ~ int[-2, 8] = Expect v151 expectedType=number
+# CHECK-NEXT: v153: boolean ~ true = TypeTest v152 testedType=i32
+# CHECK-NEXT: Branch v153 -> taken b52(| 0), notTaken b53()
+# CHECK-NEXT: b52(v154: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v155: 0 = Integer
+# CHECK-NEXT: v156: boolean = StrictEq v154, v155
+# CHECK-NEXT: Branch v156 -> taken b55(v136), notTaken b54()
+# CHECK-NEXT: b53() frequency=Rare:
+# CHECK-NEXT: Jump -> next b54()
+# CHECK-NEXT: b54() frequency=Rare:
+# CHECK-NEXT: v157: number = Increment v136
+# CHECK-NEXT: Jump -> next b55(v157)
+# CHECK-NEXT: b55(v158: number) frequency=Rare:
+# CHECK-NEXT: v159: int[1, 4294967295] ~ int[1, 2147483648] = Increment v142
+# CHECK-NEXT: Jump -> next b45(v158, v159)
+# CHECK-NEXT: b56():
+# CHECK-NEXT: v160: whole = Double number=-0
+# CHECK-NEXT: v161: 0 = Integer
+# CHECK-NEXT: Jump -> next b57(v160, v161)
+# CHECK-NEXT: b57(v162: int|whole ~ whole, v163: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b58(v162, v163)
+# CHECK-NEXT: b58(v164: int|whole, v165: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v167: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v165 castType=int|whole
+# CHECK-NEXT: v168: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=40
+# CHECK-NEXT: v169: boolean = Less v167, v168
+# CHECK-NEXT: Branch v169 -> taken b59(| 0), notTaken b68()
+# CHECK-NEXT: b59(v170: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v171: boolean = IsInBounds v10, v170
+# CHECK-NEXT: Branch v171 -> taken b60(| 0), notTaken b63()
+# CHECK-NEXT: b60(v172: guard):
+# CHECK-NEXT: v173: int[-2, 8] = GetArrayElement v10, v170, v172 arrayStorage=Int32 level=Proven accessSite=41 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v174: 0 = Integer
+# CHECK-NEXT: v175: boolean = StrictEq v173, v174
+# CHECK-NEXT: Branch v175 -> taken b62(v164), notTaken b61()
+# CHECK-NEXT: b61():
+# CHECK-NEXT: v176: int|whole = Increment v164
+# CHECK-NEXT: Jump -> next b62(v176)
+# CHECK-NEXT: b62(v177: int|whole):
+# CHECK-NEXT: v178: int[1, 4294967295] ~ int[1, 2147483648] = Increment v170
+# CHECK-NEXT: Jump -> next b58(v177, v178)
+# CHECK-NEXT: b63() frequency=Rare:
+# CHECK-NEXT: v179: undefined|int[-2, 8] = GetArrayElement v10, v170 arrayStorage=Int32 level=Proven accessSite=41 [keyIsIntegral]
+# CHECK-NEXT: v180: undefined|int[-2, 8] ~ int[-2, 8] = Expect v179 expectedType=number
+# CHECK-NEXT: v181: boolean ~ true = TypeTest v180 testedType=i32
+# CHECK-NEXT: Branch v181 -> taken b64(| 0), notTaken b65()
+# CHECK-NEXT: b64(v182: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v183: 0 = Integer
+# CHECK-NEXT: v184: boolean = StrictEq v182, v183
+# CHECK-NEXT: Branch v184 -> taken b67(v164), notTaken b66()
+# CHECK-NEXT: b65() frequency=Rare:
+# CHECK-NEXT: Jump -> next b66()
+# CHECK-NEXT: b66() frequency=Rare:
+# CHECK-NEXT: v185: int|whole = Increment v164
+# CHECK-NEXT: Jump -> next b67(v185)
+# CHECK-NEXT: b67(v186: int|whole) frequency=Rare:
+# CHECK-NEXT: v187: int[1, 4294967295] ~ int[1, 2147483648] = Increment v170
+# CHECK-NEXT: Jump -> next b57(v186, v187)
+# CHECK-NEXT: b68():
+# CHECK-NEXT: v188: whole = Double number=-0
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v190: whole = Double number=-0
+# CHECK-NEXT: v191: boolean = CallBuiltin -, v188, v190 overload=ObjectIs/0 accessSite=20
+# CHECK-NEXT: v192: 9007199254740992 = Integer integer=9007199254740992
+# CHECK-NEXT: v193: 0 = Integer
+# CHECK-NEXT: Jump -> next b69(v192, v193)
+# CHECK-NEXT: b69(v194: int|whole ~ 9007199254740992, v195: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b70(v194, v195)
+# CHECK-NEXT: b70(v196: int|whole, v197: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v199: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v197 castType=int|whole
+# CHECK-NEXT: v200: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=40
+# CHECK-NEXT: v201: boolean = Less v199, v200
+# CHECK-NEXT: Branch v201 -> taken b71(| 0), notTaken b80()
+# CHECK-NEXT: b71(v202: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v203: boolean = IsInBounds v10, v202
+# CHECK-NEXT: Branch v203 -> taken b72(| 0), notTaken b75()
+# CHECK-NEXT: b72(v204: guard):
+# CHECK-NEXT: v205: int[-2, 8] = GetArrayElement v10, v202, v204 arrayStorage=Int32 level=Proven accessSite=41 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v206: 0 = Integer
+# CHECK-NEXT: v207: boolean = StrictEq v205, v206
+# CHECK-NEXT: Branch v207 -> taken b74(v196), notTaken b73()
+# CHECK-NEXT: b73():
+# CHECK-NEXT: v208: int|whole = Increment v196
+# CHECK-NEXT: Jump -> next b74(v208)
+# CHECK-NEXT: b74(v209: int|whole):
+# CHECK-NEXT: v210: int[1, 4294967295] ~ int[1, 2147483648] = Increment v202
+# CHECK-NEXT: Jump -> next b70(v209, v210)
+# CHECK-NEXT: b75() frequency=Rare:
+# CHECK-NEXT: v211: undefined|int[-2, 8] = GetArrayElement v10, v202 arrayStorage=Int32 level=Proven accessSite=41 [keyIsIntegral]
+# CHECK-NEXT: v212: undefined|int[-2, 8] ~ int[-2, 8] = Expect v211 expectedType=number
+# CHECK-NEXT: v213: boolean ~ true = TypeTest v212 testedType=i32
+# CHECK-NEXT: Branch v213 -> taken b76(| 0), notTaken b77()
+# CHECK-NEXT: b76(v214: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v215: 0 = Integer
+# CHECK-NEXT: v216: boolean = StrictEq v214, v215
+# CHECK-NEXT: Branch v216 -> taken b79(v196), notTaken b78()
+# CHECK-NEXT: b77() frequency=Rare:
+# CHECK-NEXT: Jump -> next b78()
+# CHECK-NEXT: b78() frequency=Rare:
+# CHECK-NEXT: v217: int|whole = Increment v196
+# CHECK-NEXT: Jump -> next b79(v217)
+# CHECK-NEXT: b79(v218: int|whole) frequency=Rare:
+# CHECK-NEXT: v219: int[1, 4294967295] ~ int[1, 2147483648] = Increment v202
+# CHECK-NEXT: Jump -> next b69(v218, v219)
+# CHECK-NEXT: b80():
+# CHECK-NEXT: v220: undefined = CallBuiltin -, v136, v164, v191, v196 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: v221: Array<undefined|int[-2, 8]> = NewArray contents=undefined|int[-2, 8] allocationSite=15
+# CHECK-NEXT: v222: Array<undefined|int[-2, 8], proven, pristine[Storage, Names]> = AssumeType v221 provenType=Array<undefined|int[-2, 8], proven, pristine[Storage, Names]>
+# CHECK-NEXT: v223: 0 = Integer
+# CHECK-NEXT: v224: 0 = Integer
+# CHECK-NEXT: Jump -> next b81(v223, v224)
+# CHECK-NEXT: b81(v225: int|whole ~ 0, v226: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b82(v225, v226)
+# CHECK-NEXT: b82(v227: int|whole ~ 0, v228: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b83(v227, v228)
+# CHECK-NEXT: b83(v229: int|whole, v230: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v232: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v230 castType=int|whole
+# CHECK-NEXT: v233: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=42
+# CHECK-NEXT: v234: boolean = Less v232, v233
+# CHECK-NEXT: Branch v234 -> taken b84(| 0), notTaken b98()
+# CHECK-NEXT: b84(v235: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v236: boolean = IsInBounds v10, v235
+# CHECK-NEXT: Branch v236 -> taken b85(| 0), notTaken b89()
+# CHECK-NEXT: b85(v237: guard):
+# CHECK-NEXT: v238: int[-2, 8] = GetArrayElement v10, v235, v237 arrayStorage=Int32 level=Proven accessSite=43 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v239: 2 = Integer integer=2
+# CHECK-NEXT: v240: int[-1, 1]|whole = Mod v238, v239
+# CHECK-NEXT: v241: 0 = Integer
+# CHECK-NEXT: v242: boolean = StrictEq v240, v241
+# CHECK-NEXT: Branch v242 -> taken b86(), notTaken b88(v229)
+# CHECK-NEXT: b86():
+# CHECK-NEXT: v243: int|whole = ToNumeric v229
+# CHECK-NEXT: v244: int|whole = Increment v243
+# CHECK-NEXT: v245: undefined|int[-2, 8] = GetArrayElement v10, v235 arrayStorage=Int32 level=Proven accessSite=44 [keyIsIntegral]
+# CHECK-NEXT: v246: undefined|int[-2, 8] ~ int[-2, 8] = Expect v245 expectedType=number
+# CHECK-NEXT: v247: boolean = HasArrayStorage v222 arrayStorage=Int32 [isWritable]
+# CHECK-NEXT: Branch v247 -> taken b87(| 0), notTaken b96(v243, v244, v246)
+# CHECK-NEXT: b87(v248: guard):
+# CHECK-NEXT: PutArrayElement v222, v243, v246, v248 arrayStorage=Int32 level=Expected accessSite=45 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b88(v244)
+# CHECK-NEXT: b88(v250: int|whole):
+# CHECK-NEXT: v251: int[1, 4294967295] ~ int[1, 2147483648] = Increment v235
+# CHECK-NEXT: Jump -> next b83(v250, v251)
+# CHECK-NEXT: b89() frequency=Rare:
+# CHECK-NEXT: v252: undefined|int[-2, 8] = GetArrayElement v10, v235 arrayStorage=Int32 level=Proven accessSite=43 [keyIsIntegral]
+# CHECK-NEXT: v253: undefined|int[-2, 8] ~ int[-2, 8] = Expect v252 expectedType=number
+# CHECK-NEXT: v254: boolean ~ true = TypeTest v253 testedType=i32
+# CHECK-NEXT: Branch v254 -> taken b90(| 0), notTaken b94()
+# CHECK-NEXT: b90(v255: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v256: 2 = Integer integer=2
+# CHECK-NEXT: v257: int[-1, 1]|whole = Mod v255, v256
+# CHECK-NEXT: v258: 0 = Integer
+# CHECK-NEXT: v259: boolean = StrictEq v257, v258
+# CHECK-NEXT: Branch v259 -> taken b91(), notTaken b93(v229)
+# CHECK-NEXT: b91() frequency=Rare:
+# CHECK-NEXT: v260: int|whole = ToNumeric v229
+# CHECK-NEXT: v261: int|whole = Increment v260
+# CHECK-NEXT: v262: undefined|int[-2, 8] = GetArrayElement v10, v235 arrayStorage=Int32 level=Proven accessSite=44 [keyIsIntegral]
+# CHECK-NEXT: v263: undefined|int[-2, 8] ~ int[-2, 8] = Expect v262 expectedType=number
+# CHECK-NEXT: v264: boolean = HasArrayStorage v222 arrayStorage=Int32 [isWritable]
+# CHECK-NEXT: Branch v264 -> taken b92(| 0), notTaken b96(v260, v261, v263)
+# CHECK-NEXT: b92(v265: guard) frequency=Rare:
+# CHECK-NEXT: PutArrayElement v222, v260, v263, v265 arrayStorage=Int32 level=Expected accessSite=45 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b93(v261)
+# CHECK-NEXT: b93(v267: int|whole) frequency=Rare:
+# CHECK-NEXT: v268: int[1, 4294967295] ~ int[1, 2147483648] = Increment v235
+# CHECK-NEXT: Jump -> next b82(v267, v268)
+# CHECK-NEXT: b94() frequency=Rare:
+# CHECK-NEXT: v269: undefined = Undefined
+# CHECK-NEXT: v270: 2 = Integer integer=2
+# CHECK-NEXT: v271: number = Mod v269, v270
+# CHECK-NEXT: v272: 0 = Integer
+# CHECK-NEXT: v273: boolean = StrictEq v271, v272
+# CHECK-NEXT: Branch v273 -> taken b95(), notTaken b97(v229)
+# CHECK-NEXT: b95() frequency=Rare:
+# CHECK-NEXT: v274: int|whole = ToNumeric v229
+# CHECK-NEXT: v275: int|whole = Increment v274
+# CHECK-NEXT: v276: undefined|int[-2, 8] = GetArrayElement v10, v235 arrayStorage=Int32 level=Proven accessSite=44 [keyIsIntegral]
+# CHECK-NEXT: v277: undefined|int[-2, 8] ~ int[-2, 8] = Expect v276 expectedType=number
+# CHECK-NEXT: Jump -> next b96(v274, v275, v277)
+# CHECK-NEXT: b96(v278: int|whole, v279: int|whole, v280: undefined|int[-2, 8] ~ int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: ElemSet v222, v278, v280 accessSite=45 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b97(v279)
+# CHECK-NEXT: b97(v282: int|whole) frequency=Rare:
+# CHECK-NEXT: v283: int[1, 4294967295] ~ int[1, 2147483648] = Increment v235
+# CHECK-NEXT: Jump -> next b81(v282, v283)
+# CHECK-NEXT: b98():
+# CHECK-NEXT: v284: string = CallBuiltin v222 overload=ArrayPrototypeJoin/0 accessSite=27
+# CHECK-NEXT: v285: 0 = Integer
+# CHECK-NEXT: v286: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0 accessSite=46
+# CHECK-NEXT: v287: 1 = Integer integer=1
+# CHECK-NEXT: v288: int[-1, 4294967294] = Sub v286, v287
+# CHECK-NEXT: Jump -> next b99(v285, v288)
+# CHECK-NEXT: b99(v289: int[-2147483648, 0], v290: int[-2, 4294967294]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v292: 0 = Integer
+# CHECK-NEXT: v293: boolean = GreaterEq v290, v292
+# CHECK-NEXT: Branch v293 -> taken b100(| 0), notTaken b101()
+# CHECK-NEXT: b100(v294: int[0, 4294967294]):
+# CHECK-NEXT: v295: int[-2147483649, -1] = Decrement v289
+# CHECK-NEXT: v296: 2 = Integer integer=2
+# CHECK-NEXT: v297: int[-2, 4294967292] = Sub v294, v296
+# CHECK-NEXT: v298: fact = Specified
+# CHECK-NEXT: v299: int[-2147483648, -1] = AssumeType v295, v298 provenType=int[-2147483648, 0]
+# CHECK-NEXT: Jump -> next b99(v299, v297)
+# CHECK-NEXT: b101():
+# CHECK-NEXT: v300: 0 = Integer
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v302: 0 = Integer
+# CHECK-NEXT: v303: boolean = CallBuiltin -, v300, v302 overload=ObjectIs/0 accessSite=30
+# CHECK-NEXT: v304: Array<int[-2, 8], Int32> = NewArray contents=int[-2, 8] allocationSite=12 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v305: Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v304 provenType=Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v306: 1 = Integer integer=1
+# CHECK-NEXT: v307: 0 = Integer
+# CHECK-NEXT: v308: 1 = Integer integer=1
+# CHECK-NEXT: v309: Array<int[-2, 8], Int32> = NewArray v306, v307, v308 contents=int[-2, 8] allocationSite=13 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v310: Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v309 provenType=Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v311: 0 = Integer
+# CHECK-NEXT: v312: 0 = Integer
+# CHECK-NEXT: Jump -> next b102(v311, v312)
+# CHECK-NEXT: b102(v313: int|whole, v314: int[0, 3]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v316: 3 = Integer integer=3
+# CHECK-NEXT: v317: boolean = Less v314, v316
+# CHECK-NEXT: Branch v317 -> taken b103(| 0), notTaken b120()
+# CHECK-NEXT: b103(v318: int[0, 2]):
+# CHECK-NEXT: v319: 0 = Integer
+# CHECK-NEXT: Jump -> next b104(v313, v319)
+# CHECK-NEXT: b104(v320: int|whole, v321: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b105(v320, v321)
+# CHECK-NEXT: b105(v322: int|whole, v323: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v325: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v323 castType=int|whole
+# CHECK-NEXT: Switch v318 cases=[0, 1] -> case b106(v10), case b106(v305), otherwise b106(v310)
+# CHECK-NEXT: b106(v326: Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v327: int[0, 4294967295] = CallBuiltin v326 overload=ArrayPrototypeLength/0 accessSite=49
+# CHECK-NEXT: v328: boolean = Less v325, v327
+# CHECK-NEXT: Branch v328 -> taken b107(| 0), notTaken b119()
+# CHECK-NEXT: b107(v329: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: Switch v318 cases=[0, 1] -> case b108(v10), case b108(v305), otherwise b108(v310)
+# CHECK-NEXT: b108(v330: Array<int[-2, 8], proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v331: boolean = IsInBounds v330, v329
+# CHECK-NEXT: Branch v331 -> taken b109(| 0), notTaken b113()
+# CHECK-NEXT: b109(v332: guard):
+# CHECK-NEXT: v333: int[-2, 8] = GetArrayElement v330, v329, v332 arrayStorage=Int32 level=Proven accessSite=51 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v334: boolean = ToBoolean v333
+# CHECK-NEXT: Branch v334 -> taken b110(), notTaken b111()
+# CHECK-NEXT: b110():
+# CHECK-NEXT: v335: int|whole = Increment v322
+# CHECK-NEXT: Jump -> next b112(v335)
+# CHECK-NEXT: b111():
+# CHECK-NEXT: Jump -> next b112(v322)
+# CHECK-NEXT: b112(v336: int|whole):
+# CHECK-NEXT: v337: int[1, 4294967295] ~ int[1, 2147483648] = Increment v329
+# CHECK-NEXT: Jump -> next b105(v336, v337)
+# CHECK-NEXT: b113() frequency=Rare:
+# CHECK-NEXT: v338: undefined|int[-2, 8] = GetArrayElement v330, v329 arrayStorage=Int32 level=Proven accessSite=51 [keyIsIntegral]
+# CHECK-NEXT: v339: undefined|int[-2, 8] ~ int[-2, 8] = Expect v338 expectedType=number
+# CHECK-NEXT: v340: boolean ~ true = TypeTest v339 testedType=i32
+# CHECK-NEXT: Branch v340 -> taken b114(| 0), notTaken b116()
+# CHECK-NEXT: b114(v341: int[-2, 8]) frequency=Rare:
+# CHECK-NEXT: v342: boolean = ToBoolean v341
+# CHECK-NEXT: Branch v342 -> taken b115(), notTaken b117()
+# CHECK-NEXT: b115() frequency=Rare:
+# CHECK-NEXT: v343: int|whole = Increment v322
+# CHECK-NEXT: Jump -> next b118(v343)
+# CHECK-NEXT: b116() frequency=Rare:
+# CHECK-NEXT: Jump -> next b117()
+# CHECK-NEXT: b117() frequency=Rare:
+# CHECK-NEXT: Jump -> next b118(v322)
+# CHECK-NEXT: b118(v344: int|whole) frequency=Rare:
+# CHECK-NEXT: v345: int[1, 4294967295] ~ int[1, 2147483648] = Increment v329
+# CHECK-NEXT: Jump -> next b104(v344, v345)
+# CHECK-NEXT: b119():
+# CHECK-NEXT: v346: int[1, 3] = Increment v318
+# CHECK-NEXT: Jump -> next b102(v322, v346)
+# CHECK-NEXT: b120():
+# CHECK-NEXT: v347: undefined = CallBuiltin -, v284, v289, v303, v313 overload=ConsoleLog/0 accessSite=32
+# CHECK-NEXT: v348: int[1, 3] = Increment v16
+# CHECK-NEXT: Jump -> next b1(v348)
+# CHECK-NEXT: b121():
+# CHECK-NEXT: v349: undefined = Undefined
+# CHECK-NEXT: Return v349
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="commas"
+# CHECK: module=m0 position=99 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2)
+# CHECK-NEXT: b1(v3: int[0, 2147483647], v4: int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: b2(v8: int[0, 2147483646]):
+# CHECK-NEXT: v9: undefined|string = ElemGet v0, v8 accessSite=34 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v10: "," = String string=","
+# CHECK-NEXT: v11: boolean = StrictEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4(v3)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: int[1, 2147483648] = Increment v3
+# CHECK-NEXT: Jump -> next b4(v12)
+# CHECK-NEXT: b4(v13: int[0, 2147483648]):
+# CHECK-NEXT: v14: int[1, 2147483647] = Increment v8
+# CHECK-NEXT: v15: fact = Specified
+# CHECK-NEXT: v16: int[0, 2147483647] = AssumeType v13, v15 provenType=int[0, 2147483647]
+# CHECK-NEXT: Jump -> next b1(v16, v14)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

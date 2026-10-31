@@ -3,8 +3,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump } from "./harness/commands";
 import { run } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
 import { test } from "./supported";
 
 const program = `

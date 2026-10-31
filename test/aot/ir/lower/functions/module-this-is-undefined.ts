@@ -6,10 +6,10 @@
 // CHECK: [[inherited]] = Undefined
 // CHECK-NEXT: Return [[inherited]]
 
-// RUN(ENTRY): lower
-// ENTRY-NOT: HasThis
-// ENTRY-NOT: captures=
-// ENTRY-NOT: ToThis
+// RUN(MAIN): lower
+// MAIN-NOT: HasThis
+// MAIN-NOT: captures=
+// MAIN-NOT: ToThis
 
 export const top: unknown = this;
 

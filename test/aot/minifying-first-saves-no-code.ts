@@ -17,8 +17,9 @@
 // None of the three is larger as written. And all three executables print what `bun run` prints for the files as written.
 //
 // The IR of a program is the same for every target. The first two numbers are read behind the back end, from the map of the image, so they are the target's: an operation counts
-// if an instruction is its own. x64 stores a constant with one instruction, which is the store's, and arm64 loads it into a register first, which is the constant's. What is
-// allowed in bytes stands by target in `bytesOnThisTarget`, and nothing else here knows the target.
+// if an instruction is its own. x64 stores a constant with one instruction, which is the store's, and arm64 loads it into a register first, which is the constant's, unless a number
+// of the image with the same value is in a register already. So a constant that is one machine word is no operation here: its bytes count. What is allowed in bytes stands by target
+// in `bytesOnThisTarget`, and nothing else here knows the target.
 //
 // In every form a file of one line imports the entry point and starts the program. A program of several files has a function that runs them in their order, and a program of one file
 // has none: so every form has that function, and it is not what is compared. Nor is the call of each further file that has something to run.
@@ -26,6 +27,9 @@
 // The cases of a group are the entry points of one executable, behind ./minifying-first-saves-no-code/run-in-a-worker.mjs. An entry point begins a program
 // of its own, so each case is compiled as it is alone, and an executable is written once for all of them. Not quite alone: files that are scripts share their globals, and what is
 // counted in a run can move by one with the neighbors. So a case that is larger beside the others is asked again in executables of its own, and that answer counts.
+//
+// Where the minifier removes an error that the language demands, there is code that minifying first saves: the code that throws. Such a case names the error
+// (`errorThatTheMinifierRemoves`), and both halves are asked in place of the sizes: the executable of the files as written throws it, and those of the minified forms do not.
 //
 // The cases that are larger as written today stand in ./minifying-first-saves-no-code/known-today.ts with their numbers and are todo. They share executables with each other
 // alone, which only a run with --todo builds.
@@ -46,7 +50,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildEnvironment, compileCommand, runtimeEnvironment } from "./harness/flags";
-import { slot, spawned, withoutDebugInformation } from "./run-programs";
+import { slot, spawned, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 export type Case = {
@@ -59,6 +63,8 @@ export type Case = {
   flags?: string[];
   /** false: the code alone is compared. The case is the input of a test that only reads what the bundler prints, and names things that are nowhere. */
   runs?: boolean;
+  /** The executable of the files as written throws it, `bun run` and the executables of the minified forms do not. The sizes are not compared. */
+  errorThatTheMinifierRemoves?: string;
 };
 
 const minifiedForms = ["each file", "bundled"] as const;
@@ -70,6 +76,7 @@ export type Measured = {
   operations: number;
   /** The files whose own code has an operation. */
   filesThatRun: number;
+  pathsThatRun: string[];
   runtimeOperations: number | undefined;
   byOperation: Record<string, number>;
 };
@@ -91,6 +98,7 @@ const mostCodeBytesForOtherNumbers = bytesOnThisTarget.otherNumbers * (isASAN ? 
 const callOfAFile = { operations: 1, codeBytes: bytesOnThisTarget.callOfAFile * (isASAN ? 4 : 1) };
 // A debug or ASAN build of Bun is many times slower.
 const oneExecutableIn = (isASAN || isDebug) && !process.env.AOT_MINIFYING_FIRST ? 8 : 1;
+const constantsOfOneWord = new Set(["Undefined", "Null", "Absent", "Boolean", "Integer", "Double"]);
 const mark = "=== the program above has ended with";
 const isCode = (path: string) => /\.([cm]?[jt]s|[jt]sx)$/.test(path) && !/\.d\.[cm]?ts$/.test(path);
 const asJavaScript = (path: string) => path.replace(/\.([cm]?)tsx?$/, ".$1js").replace(/\.jsx$/, ".js");
@@ -178,17 +186,17 @@ function readMap(path: string): Omit<Measured, "runtimeOperations"> {
       for (let at = 1; at + 4 < fields.length + 1; at += 5) {
         if (fields[at] === "-" || fields[at] === undefined) continue;
         const key = fields.slice(at, at + 3).join(" ");
-        if (seen.has(key)) continue;
+        const name = fields[at].replace(/[./].*$/, "");
+        if (seen.has(key) || constantsOfOneWord.has(name.replace(/[+*]+$/, ""))) continue;
         seen.add(key);
         operations++;
-        const name = fields[at].replace(/[./].*$/, "");
         byOperation[name] = (byOperation[name] ?? 0) + 1;
       }
       if (seen.size) offsetsOfCodeWithOperations.add(offset);
     }
   }
-  const filesThatRun = new Set(files.filter(file => offsetsOfCodeWithOperations.has(file.offset)).map(file => file.path)).size;
-  return { codeBytes, operations, filesThatRun, byOperation };
+  const pathsThatRun = [...new Set(files.filter(file => offsetsOfCodeWithOperations.has(file.offset)).map(file => file.path))]; // prettier-ignore
+  return { codeBytes, operations, filesThatRun: pathsThatRun.length, pathsThatRun, byOperation };
 }
 
 function runtimeOperationsIn(path: string) {
@@ -371,7 +379,23 @@ export function savedByMinifyingFirst({ plain, written, ...minified }: Compared)
     for (const name of Object.keys(written.byOperation).sort())
       if (written.byOperation[name] > (other.byOperation[name] ?? 0))
         lines.push(moved(name, written.byOperation[name], other.byOperation[name] ?? 0));
+    if (written.filesThatRun > 4)
+      lines.push(`${moved("files that run", written.filesThatRun, other.filesThatRun)}: ${written.pathsThatRun.join(" ").slice(0, 800)}`); // prettier-ignore
     found.push(`${form}: ${lines.join(", ")}`);
+  }
+  return found;
+}
+
+/** Nothing, if the files as written throw the error and nothing else does. */
+export function whoThrowsOtherwise(error: string, { plain, written, ...minified }: Compared) {
+  if ("failure" in written) return ["written: " + written.failure];
+  const found: string[] = [];
+  if (!written.output?.includes(error)) found.push(`written prints ${JSON.stringify(written.output)}, without ${error}`);
+  if (plain?.includes(error)) found.push(`bun run prints ${JSON.stringify(plain)}`);
+  for (const form of minifiedForms) {
+    const other = minified[form];
+    if ("failure" in other) found.push(`${form}: ${other.failure}`);
+    else if (other.output !== plain) found.push(`${form} prints ${JSON.stringify(other.output)}, bun run ${JSON.stringify(plain)}`); // prettier-ignore
   }
   return found;
 }
@@ -412,9 +436,11 @@ export function minifyingFirstSavesNoCode(
           isKnown ? `${name} (${knownToday[name]})` : name,
           async () => {
             measured ??= measureGroup(group.map(each => cases[each]));
-            let saved = savedByMinifyingFirst((await measured)[index]);
-            if (saved.length && group.length > 1)
-              saved = savedByMinifyingFirst((await measureGroup([cases[name]]))[0]);
+            const error = cases[name].errorThatTheMinifierRemoves;
+            const judge = (compared: Compared) =>
+              error === undefined ? savedByMinifyingFirst(compared) : whoThrowsOtherwise(error, compared);
+            let saved = judge((await measured)[index]);
+            if (saved.length && group.length > 1) saved = judge((await measureGroup([cases[name]]))[0]);
             if (saved.length && process.env.AOT_REDS)
               appendFileSync(process.env.AOT_REDS, `${name}\t${saved.join("; ")}\n`);
             expect(saved).toEqual([]);

@@ -1,0 +1,126 @@
+# A literal whose members the checker knows is handed to Object.create, is used by itself too, and changes meanwhile: every read below it sees the change.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="typed-literal-stands-object-create.ts" displayPath="typed-literal-stands-object-create.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=4685 fields=[{key="bump" declared={type=undefined|null|function|f2 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="count" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+variable g0 name="counters" module=m0 declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number}
+    v10 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    v11 = Integer
+    v12 = Convert v11 declared={type=number}
+    v13 = NewClosure function=f2
+    v14 = Convert v13 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v15 = NewObject -, v12, v14 layout=L0 fields=[1, 0]
+    v16 = FinishObject v15
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v17 variable=g0
+    v19 = Integer
+    v20 = Convert v19 declared={type=number}
+    v21 = Integer
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b1(v20, v22)
+  b1(v23: number, v24: number):
+    LoopHint
+    v26 = Call v1, -, v24 calleeName="bumpBelow"
+    v27 = Convert v26 declared={type=number}
+    v28 = Add v23, v27
+    v29 = Convert v28 declared={type=number}
+    v30 = Increment v24
+    v31 = Convert v30 declared={type=number}
+    Jump -> next b1(v29, v31)
+}
+function f1 name="bumpBelow" module=m0 position=4751 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="counters"
+    v5 = Call v2, v1, v4 calleeName="Object.create"
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v8 = PropGet v7 key="bump"
+    v9 = Call v8, v7 calleeKey="bump" calleeName="made.bump"
+    v10 = Convert v9 declared={type=number}
+    v11 = Integer integer=100
+    v12 = Mul v10, v11
+    v13 = GetModuleVariable variable=g0
+    v14 = CheckInitialized v13 name="counters"
+    v15 = PropGet v14 key="count"
+    v16 = Add v12, v15
+    v17 = Convert v16 declared={type=number}
+    Return v17
+}
+function f2 name="bump" module=m0 position=4701 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 bumpBelow
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: "" = String string=""
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v7: object = NewDictionary
+# CHECK-NEXT: PropDefine v7, v5 key="count"
+# CHECK-NEXT: PropDefine v7, v6 key="bump"
+# CHECK-NEXT: v8: object = Upcast v7 castType=object
+# CHECK-NEXT: v22: Object = AssumeType v8 provenType=Object
+# CHECK-NEXT: PutModuleVariable v22 variable=g0
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v10, v11)
+# CHECK-NEXT: b1(v12: number, v13: int|whole):
+# CHECK-NEXT: v21: int = AssumeType v12 provenType=int
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v15: anything ~ number = Call v0, -, v13 calleeName="bumpBelow" accessSite=0 callees=[f1]
+# CHECK-NEXT: v18: number = Check v15 expectedType=number cause=AddedByPass
+# CHECK-NEXT: v16: number = Add v21, v18
+# CHECK-NEXT: v17: int|whole = Increment v13
+# CHECK-NEXT: Jump -> next b1(v16, v17)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="bumpBelow"
+# CHECK: module=m0 position=4751 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v2: builtin(ObjectCreate) = Builtin builtin=ObjectCreate
+# CHECK-NEXT: v3: Object = GetModuleVariable variable=g0
+# CHECK-NEXT: v4: Object = CheckInitialized v3 name="counters"
+# CHECK-NEXT: v19: Object = AssumeType v4 provenType=Object
+# CHECK-NEXT: v5: anything = Call v2, v1, v19
+# CHECK-NEXT: v20: Object = AssumeType v5 provenType=Object
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: v7: Object = Upcast v20 castType=anything
+# CHECK-NEXT: v21: Object = AssumeType v7 provenType=Object
+# CHECK-NEXT: v8: Object = AssumeType v21 provenType=Object
+# CHECK-NEXT: v22: Object = AssumeType v8 provenType=Object
+# CHECK-NEXT: v9: anything = PropGet v22 key="bump" accessSite=1
+# CHECK-NEXT: v23: undefined|f2 = AssumeType v9 provenType=undefined|f2
+# CHECK-NEXT: v10: anything = Call v23, v22 calleeKey="bump" calleeName="made.bump" accessSite=2 callees=[f2]
+# CHECK-NEXT: v11: number = Check v10 expectedType=number
+# CHECK-NEXT: v12: 100 = Integer integer=100
+# CHECK-NEXT: v13: number = Mul v11, v12
+# CHECK-NEXT: v14: Object = GetModuleVariable variable=g0
+# CHECK-NEXT: v15: Object = CheckInitialized v14 name="counters"
+# CHECK-NEXT: v24: Object = AssumeType v15 provenType=Object
+# CHECK-NEXT: v16: anything ~ int[-2147483643, 2147483647] = PropGet v24 key="count" accessSite=3
+# CHECK-NEXT: v25: int ~ int[-2147483643, 2147483647] = AssumeType v16 provenType=int
+# CHECK-NEXT: v17: number = Add v13, v25
+# CHECK-NEXT: v18: number = Check v17 expectedType=number
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: }

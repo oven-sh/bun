@@ -36,12 +36,12 @@ enum Problem {
     SpaceNeeded,
 }
 
-const NO_NEWLINE_AFTER: Message = Message::new("noNewlineAfter", "There should be no newline after '{{token}}'");
-const NO_NEWLINE_BEFORE: Message = Message::new("noNewlineBefore", "There should be no newline before '{{token}}'");
-const NO_SPACE_AFTER: Message = Message::new("noSpaceAfter", "There should be no space after '{{token}}'");
-const NO_SPACE_BEFORE: Message = Message::new("noSpaceBefore", "There should be no space before '{{token}}'");
-const SPACE_NEEDED_AFTER: Message = Message::new("spaceNeededAfter", "A space is required after '{{token}}'");
-const SPACE_NEEDED_BEFORE: Message = Message::new("spaceNeededBefore", "A space is required before '{{token}}'");
+const NO_NEWLINE_AFTER: &Message = &Message::new("noNewlineAfter", "There should be no newline after '{{token}}'");
+const NO_NEWLINE_BEFORE: &Message = &Message::new("noNewlineBefore", "There should be no newline before '{{token}}'");
+const NO_SPACE_AFTER: &Message = &Message::new("noSpaceAfter", "There should be no space after '{{token}}'");
+const NO_SPACE_BEFORE: &Message = &Message::new("noSpaceBefore", "There should be no space before '{{token}}'");
+const SPACE_NEEDED_AFTER: &Message = &Message::new("spaceNeededAfter", "A space is required after '{{token}}'");
+const SPACE_NEEDED_BEFORE: &Message = &Message::new("spaceNeededBefore", "A space is required before '{{token}}'");
 
 impl Spacing {
     fn from_option(value: Option<&str>) -> Option<Spacing> {

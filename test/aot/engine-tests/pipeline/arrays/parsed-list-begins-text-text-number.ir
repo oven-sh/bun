@@ -1,0 +1,508 @@
+# -- source: parsed-list-begins-text-text-number.js
+# // Each line is parsed into a list. The first element says what the rest means: it is compared with a text, then with a number, and the elements behind it are read as numbers.
+# let out = "";
+# for (const line of ["[\"p\",1]", "[3,0]"]) {
+#   const c = JSON.parse(line);
+#   const key = c[0] === "p" ? "p:" : c[0] === 3 ? "D" + c[1] : "L" + c[8];
+#   out += key + (c[9] > 0 ? c[9] * 0.5 : 0) + "; ";
+# }
+# console.log(out);
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="parsed-list-begins-text-text-number.js" displayPath="parsed-list-begins-text-text-number.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+data d0 root=Array{contents=undefined|null|string elements=[String{value="[\"p\",1]"}, String{value="[3,0]"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = String string=""
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v4 = IteratorOpen v3
+    Jump -> next b2(v1)
+  b2(v5):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="console" [isFreeName]
+    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]}
+    v13 = PropGet v12 key="log"
+    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v15 = Call v14, v12, v5 calleeKey="log" calleeName="console.log"
+    v16 = Undefined
+    Return v16
+  b4():
+    Jump -> next b5()
+  b5() handler=b15():
+    v17 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    v18 = Builtin builtin=JSON
+    v19 = PropGet v18 key="parse"
+    v20 = Convert v19 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v21 = Call v20, v18, v17 calleeKey="parse" calleeName="JSON.parse"
+    v22 = Convert v21 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v23 = Integer
+    v24 = ElemGet v22, v23
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    v26 = String string="p"
+    v27 = StrictEq v25, v26
+    Branch v27 -> taken b6(), notTaken b7()
+  b6() handler=b15():
+    v28 = String string="p:"
+    Jump -> next b10(v28)
+  b7() handler=b15():
+    v29 = Integer
+    v30 = ElemGet v22, v29
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Integer integer=3
+    v33 = StrictEq v31, v32
+    Branch v33 -> taken b8(), notTaken b9()
+  b8() handler=b15():
+    v34 = String string="D"
+    v35 = Integer integer=1
+    v36 = ElemGet v22, v35
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Add v34, v37
+    Jump -> next b10(v38)
+  b9() handler=b15():
+    v39 = String string="L"
+    v40 = Integer integer=8
+    v41 = ElemGet v22, v40
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
+    v43 = Add v39, v42
+    Jump -> next b10(v43)
+  b10(v44) handler=b15():
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]}
+    v46 = Integer integer=9
+    v47 = ElemGet v22, v46
+    v48 = Convert v47 declared={type=number flags=[IsExpected]}
+    v49 = Integer
+    v50 = Greater v48, v49
+    Branch v50 -> taken b11(), notTaken b12()
+  b11() handler=b15():
+    v51 = Integer integer=9
+    v52 = ElemGet v22, v51
+    v53 = Convert v52 declared={type=number flags=[IsExpected]}
+    v54 = Double number=0.5
+    v55 = Mul v53, v54
+    Jump -> next b13(v55)
+  b12() handler=b15():
+    v56 = Integer
+    Jump -> next b13(v56)
+  b13(v57) handler=b15():
+    v58 = Add v45, v57
+    v59 = String string="; "
+    v60 = Add v58, v59
+    v61 = Add v5, v60
+    v62 = Convert v61 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b14()
+  b14() handler=b15():
+    Jump -> next b2(v62)
+  b15() role=IterationCleanup subject=v4:
+    v63 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v63
+}
+function f1 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = HasJSType v0 first=5 last=5
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5 index=1
+    v7 = ResultAt v5
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v9 = CreateIteratorResult v6, v8
+    Return v9
+  b4(v10):
+    Jump -> next b5()
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+    Unreachable
+}
+runtimefunction id=68 function=f1
+# -- generated: f0 next
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "[\"p\",1]" = String string="[\"p\",1]"
+# CHECK-NEXT: v1: "[3,0]" = String string="[3,0]"
+# CHECK-NEXT: v2: boolean = JSONSourceOpen v0
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v3: guard):
+# CHECK-NEXT: v4: cursor = JSONSourceStart v3
+# CHECK-NEXT: v5: cursor = JSONSkipWhitespace v4
+# CHECK-NEXT: v6: undefined = CallDirect v5 function=f5
+# CHECK-NEXT: v7: int[0, 2] = ResultAt v6
+# CHECK-NEXT: v8: undefined|null|Array<number> = ResultAt v6 index=1
+# CHECK-NEXT: v9: cursor = ResultAt v6 index=2
+# CHECK-NEXT: Switch v7 cases=[1] -> case b2(), otherwise b4()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: boolean = JSONSourceClose v3, v9
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v11: fact = Specified
+# CHECK-NEXT: v12: null|Array<number> = AssumeType v8, v11 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b6(v12)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v3
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: null|boolean|number|string|object = CallBuiltin -, v0, v14 overload=JSONParse/0 accessSite=4
+# CHECK-NEXT: Jump -> next b6(v15)
+# CHECK-NEXT: b6(v16: null|boolean|number|string|object ~ null|Array<number>):
+# CHECK-NEXT: v17: 0 = Integer
+# CHECK-NEXT: v18: boolean = TypeTest v16 testedType=Array<number>
+# CHECK-NEXT: Branch v18 -> taken b7(| 0), notTaken b19()
+# CHECK-NEXT: b7(v19: Array<number>):
+# CHECK-NEXT: v20: boolean = HasArrayStorage v19 arrayStorage=Double
+# CHECK-NEXT: Branch v20 -> taken b8(| 0), notTaken b57()
+# CHECK-NEXT: b8(v21: guard):
+# CHECK-NEXT: v22: boolean = IsElementPresent v19, v17, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v22 -> taken b9(), notTaken b19()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: v24: boolean = IsElementPresent v19, v23, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v24 -> taken b10(| 0), notTaken b21()
+# CHECK-NEXT: b10(v25: guard):
+# CHECK-NEXT: v26: guard = AllGuards v21, v25
+# CHECK-NEXT: v27: number = GetArrayElement v19, v23, v26 arrayStorage=Double level=Expected accessSite=6 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v28: 3 = Integer integer=3
+# CHECK-NEXT: v29: boolean = StrictEq v27, v28
+# CHECK-NEXT: Branch v29 -> taken b11(), notTaken b13()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v30: 1 = Integer integer=1
+# CHECK-NEXT: v31: boolean = IsElementPresent v19, v30, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v31 -> taken b12(| 0), notTaken b22()
+# CHECK-NEXT: b12(v32: guard):
+# CHECK-NEXT: v33: guard = AllGuards v21, v32
+# CHECK-NEXT: v34: number = GetArrayElement v19, v30, v33 arrayStorage=Double level=Expected accessSite=7 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v35: "D" = String string="D"
+# CHECK-NEXT: v36: string = Add v35, v34
+# CHECK-NEXT: Jump -> next b15(v36)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v37: 8 = Integer integer=8
+# CHECK-NEXT: v38: boolean = IsElementPresent v19, v37, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v38 -> taken b14(| 0), notTaken b23()
+# CHECK-NEXT: b14(v39: guard):
+# CHECK-NEXT: v40: guard = AllGuards v21, v39
+# CHECK-NEXT: v41: number = GetArrayElement v19, v37, v40 arrayStorage=Double level=Expected accessSite=8 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v42: "L" = String string="L"
+# CHECK-NEXT: v43: string = Add v42, v41
+# CHECK-NEXT: Jump -> next b15(v43)
+# CHECK-NEXT: b15(v44: string):
+# CHECK-NEXT: v45: 9 = Integer integer=9
+# CHECK-NEXT: v46: boolean = IsElementPresent v19, v45, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v46 -> taken b16(| 0), notTaken b25(v44)
+# CHECK-NEXT: b16(v47: guard):
+# CHECK-NEXT: v48: guard = AllGuards v21, v47
+# CHECK-NEXT: v49: number = GetArrayElement v19, v45, v48 arrayStorage=Double level=Expected accessSite=9 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: v51: boolean = Greater v49, v50
+# CHECK-NEXT: Branch v51 -> taken b17(), notTaken b27(v44)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v52: 9 = Integer integer=9
+# CHECK-NEXT: v53: boolean = IsElementPresent v19, v52, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v53 -> taken b18(| 0), notTaken b26(v44)
+# CHECK-NEXT: b18(v54: guard):
+# CHECK-NEXT: v55: guard = AllGuards v21, v54
+# CHECK-NEXT: v56: number = GetArrayElement v19, v52, v55 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v57: fractional = Double number=0.5
+# CHECK-NEXT: v58: number = Mul v56, v57
+# CHECK-NEXT: Jump -> next b28(v58, v44)
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: v59: anything ~ undefined|number = ElemGet v16, v17 accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v60: anything ~ number = Upcast v59 castType=anything
+# CHECK-NEXT: v61: "p" = String string="p"
+# CHECK-NEXT: v62: boolean ~ false = StrictEq v60, v61
+# CHECK-NEXT: Branch v62 -> taken b20(), notTaken b21()
+# CHECK-NEXT: b20() frequency=Unlikely:
+# CHECK-NEXT: v63: "p:" = String string="p:"
+# CHECK-NEXT: Jump -> next b24(v63)
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: v64: 0 = Integer
+# CHECK-NEXT: v65: anything ~ undefined|number = ElemGet v16, v64 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v66: anything ~ number = Upcast v65 castType=anything
+# CHECK-NEXT: v67: 3 = Integer integer=3
+# CHECK-NEXT: v68: boolean = StrictEq v66, v67
+# CHECK-NEXT: Branch v68 -> taken b22(), notTaken b23()
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: v69: 1 = Integer integer=1
+# CHECK-NEXT: v70: anything ~ undefined|number = ElemGet v16, v69 accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v71: anything ~ number = Upcast v70 castType=anything
+# CHECK-NEXT: v72: "D" = String string="D"
+# CHECK-NEXT: v73: string = Add v72, v71
+# CHECK-NEXT: Jump -> next b24(v73)
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v74: 8 = Integer integer=8
+# CHECK-NEXT: v75: anything ~ undefined|number = ElemGet v16, v74 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v76: anything ~ number = Upcast v75 castType=anything
+# CHECK-NEXT: v77: "L" = String string="L"
+# CHECK-NEXT: v78: string = Add v77, v76
+# CHECK-NEXT: Jump -> next b24(v78)
+# CHECK-NEXT: b24(v79: string) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b25(v79)
+# CHECK-NEXT: b25(v80: string) frequency=Unlikely:
+# CHECK-NEXT: v81: 9 = Integer integer=9
+# CHECK-NEXT: v82: anything ~ undefined|number = ElemGet v16, v81 accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v83: anything ~ number = Upcast v82 castType=anything
+# CHECK-NEXT: v84: 0 = Integer
+# CHECK-NEXT: v85: boolean = Greater v83, v84
+# CHECK-NEXT: Branch v85 -> taken b26(v80), notTaken b27(v80)
+# CHECK-NEXT: b26(v86: string) frequency=Unlikely:
+# CHECK-NEXT: v87: 9 = Integer integer=9
+# CHECK-NEXT: v88: anything ~ undefined|number = ElemGet v16, v87 accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v89: anything ~ number = Upcast v88 castType=anything
+# CHECK-NEXT: v90: fractional = Double number=0.5
+# CHECK-NEXT: v91: number = Mul v89, v90
+# CHECK-NEXT: Jump -> next b28(v91, v86)
+# CHECK-NEXT: b27(v92: string):
+# CHECK-NEXT: v93: 0 = Integer
+# CHECK-NEXT: Jump -> next b28(v93, v92)
+# CHECK-NEXT: b28(v94: number, v95: string):
+# CHECK-NEXT: v96: "; " = String string="; "
+# CHECK-NEXT: v97: string = Strcat v95, v94, v96
+# CHECK-NEXT: v98: boolean = JSONSourceOpen v1
+# CHECK-NEXT: Branch v98 -> taken b29(| 0), notTaken b33()
+# CHECK-NEXT: b29(v99: guard):
+# CHECK-NEXT: v100: cursor = JSONSourceStart v99
+# CHECK-NEXT: v101: cursor = JSONSkipWhitespace v100
+# CHECK-NEXT: v102: undefined = CallDirect v101 function=f5
+# CHECK-NEXT: v103: int[0, 2] = ResultAt v102
+# CHECK-NEXT: v104: undefined|null|Array<number> = ResultAt v102 index=1
+# CHECK-NEXT: v105: cursor = ResultAt v102 index=2
+# CHECK-NEXT: Switch v103 cases=[1] -> case b30(), otherwise b32()
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v106: boolean = JSONSourceClose v99, v105
+# CHECK-NEXT: Branch v106 -> taken b31(), notTaken b33()
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v107: fact = Specified
+# CHECK-NEXT: v108: null|Array<number> = AssumeType v104, v107 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b34(v108)
+# CHECK-NEXT: b32() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v99
+# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: b33() frequency=Rare:
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: v111: null|boolean|number|string|object = CallBuiltin -, v1, v110 overload=JSONParse/0 accessSite=4
+# CHECK-NEXT: Jump -> next b34(v111)
+# CHECK-NEXT: b34(v112: null|boolean|number|string|object ~ null|Array<number>):
+# CHECK-NEXT: v113: 0 = Integer
+# CHECK-NEXT: v114: boolean = TypeTest v112 testedType=Array<number>
+# CHECK-NEXT: Branch v114 -> taken b35(| 0), notTaken b47()
+# CHECK-NEXT: b35(v115: Array<number>):
+# CHECK-NEXT: v116: boolean = HasArrayStorage v115 arrayStorage=Double
+# CHECK-NEXT: Branch v116 -> taken b36(| 0), notTaken b58()
+# CHECK-NEXT: b36(v117: guard):
+# CHECK-NEXT: v118: boolean = IsElementPresent v115, v113, v117 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v118 -> taken b37(), notTaken b47()
+# CHECK-NEXT: b37():
+# CHECK-NEXT: v119: 0 = Integer
+# CHECK-NEXT: v120: boolean = IsElementPresent v115, v119, v117 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v120 -> taken b38(| 0), notTaken b49()
+# CHECK-NEXT: b38(v121: guard):
+# CHECK-NEXT: v122: guard = AllGuards v117, v121
+# CHECK-NEXT: v123: number = GetArrayElement v115, v119, v122 arrayStorage=Double level=Expected accessSite=6 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v124: 3 = Integer integer=3
+# CHECK-NEXT: v125: boolean = StrictEq v123, v124
+# CHECK-NEXT: Branch v125 -> taken b39(), notTaken b41()
+# CHECK-NEXT: b39():
+# CHECK-NEXT: v126: 1 = Integer integer=1
+# CHECK-NEXT: v127: boolean = IsElementPresent v115, v126, v117 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v127 -> taken b40(| 0), notTaken b50()
+# CHECK-NEXT: b40(v128: guard):
+# CHECK-NEXT: v129: guard = AllGuards v117, v128
+# CHECK-NEXT: v130: number = GetArrayElement v115, v126, v129 arrayStorage=Double level=Expected accessSite=7 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v131: "D" = String string="D"
+# CHECK-NEXT: v132: string = Add v131, v130
+# CHECK-NEXT: Jump -> next b43(v132)
+# CHECK-NEXT: b41():
+# CHECK-NEXT: v133: 8 = Integer integer=8
+# CHECK-NEXT: v134: boolean = IsElementPresent v115, v133, v117 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v134 -> taken b42(| 0), notTaken b51()
+# CHECK-NEXT: b42(v135: guard):
+# CHECK-NEXT: v136: guard = AllGuards v117, v135
+# CHECK-NEXT: v137: number = GetArrayElement v115, v133, v136 arrayStorage=Double level=Expected accessSite=8 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v138: "L" = String string="L"
+# CHECK-NEXT: v139: string = Add v138, v137
+# CHECK-NEXT: Jump -> next b43(v139)
+# CHECK-NEXT: b43(v140: string):
+# CHECK-NEXT: v141: 9 = Integer integer=9
+# CHECK-NEXT: v142: boolean = IsElementPresent v115, v141, v117 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v142 -> taken b44(| 0), notTaken b53(v140)
+# CHECK-NEXT: b44(v143: guard):
+# CHECK-NEXT: v144: guard = AllGuards v117, v143
+# CHECK-NEXT: v145: number = GetArrayElement v115, v141, v144 arrayStorage=Double level=Expected accessSite=9 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v146: 0 = Integer
+# CHECK-NEXT: v147: boolean = Greater v145, v146
+# CHECK-NEXT: Branch v147 -> taken b45(), notTaken b55(v140)
+# CHECK-NEXT: b45():
+# CHECK-NEXT: v148: 9 = Integer integer=9
+# CHECK-NEXT: v149: boolean = IsElementPresent v115, v148, v117 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v149 -> taken b46(| 0), notTaken b54(v140)
+# CHECK-NEXT: b46(v150: guard):
+# CHECK-NEXT: v151: guard = AllGuards v117, v150
+# CHECK-NEXT: v152: number = GetArrayElement v115, v148, v151 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v153: fractional = Double number=0.5
+# CHECK-NEXT: v154: number = Mul v152, v153
+# CHECK-NEXT: Jump -> next b56(v154, v140)
+# CHECK-NEXT: b47() frequency=Unlikely:
+# CHECK-NEXT: v155: anything ~ undefined|number = ElemGet v112, v113 accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v156: anything ~ number = Upcast v155 castType=anything
+# CHECK-NEXT: v157: "p" = String string="p"
+# CHECK-NEXT: v158: boolean ~ false = StrictEq v156, v157
+# CHECK-NEXT: Branch v158 -> taken b48(), notTaken b49()
+# CHECK-NEXT: b48() frequency=Unlikely:
+# CHECK-NEXT: v159: "p:" = String string="p:"
+# CHECK-NEXT: Jump -> next b52(v159)
+# CHECK-NEXT: b49() frequency=Unlikely:
+# CHECK-NEXT: v160: 0 = Integer
+# CHECK-NEXT: v161: anything ~ undefined|number = ElemGet v112, v160 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v162: anything ~ number = Upcast v161 castType=anything
+# CHECK-NEXT: v163: 3 = Integer integer=3
+# CHECK-NEXT: v164: boolean = StrictEq v162, v163
+# CHECK-NEXT: Branch v164 -> taken b50(), notTaken b51()
+# CHECK-NEXT: b50() frequency=Unlikely:
+# CHECK-NEXT: v165: 1 = Integer integer=1
+# CHECK-NEXT: v166: anything ~ undefined|number = ElemGet v112, v165 accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v167: anything ~ number = Upcast v166 castType=anything
+# CHECK-NEXT: v168: "D" = String string="D"
+# CHECK-NEXT: v169: string = Add v168, v167
+# CHECK-NEXT: Jump -> next b52(v169)
+# CHECK-NEXT: b51() frequency=Unlikely:
+# CHECK-NEXT: v170: 8 = Integer integer=8
+# CHECK-NEXT: v171: anything ~ undefined|number = ElemGet v112, v170 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v172: anything ~ number = Upcast v171 castType=anything
+# CHECK-NEXT: v173: "L" = String string="L"
+# CHECK-NEXT: v174: string = Add v173, v172
+# CHECK-NEXT: Jump -> next b52(v174)
+# CHECK-NEXT: b52(v175: string) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b53(v175)
+# CHECK-NEXT: b53(v176: string) frequency=Unlikely:
+# CHECK-NEXT: v177: 9 = Integer integer=9
+# CHECK-NEXT: v178: anything ~ undefined|number = ElemGet v112, v177 accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v179: anything ~ number = Upcast v178 castType=anything
+# CHECK-NEXT: v180: 0 = Integer
+# CHECK-NEXT: v181: boolean = Greater v179, v180
+# CHECK-NEXT: Branch v181 -> taken b54(v176), notTaken b55(v176)
+# CHECK-NEXT: b54(v182: string) frequency=Unlikely:
+# CHECK-NEXT: v183: 9 = Integer integer=9
+# CHECK-NEXT: v184: anything ~ undefined|number = ElemGet v112, v183 accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v185: anything ~ number = Upcast v184 castType=anything
+# CHECK-NEXT: v186: fractional = Double number=0.5
+# CHECK-NEXT: v187: number = Mul v185, v186
+# CHECK-NEXT: Jump -> next b56(v187, v182)
+# CHECK-NEXT: b55(v188: string):
+# CHECK-NEXT: v189: 0 = Integer
+# CHECK-NEXT: Jump -> next b56(v189, v188)
+# CHECK-NEXT: b56(v190: number, v191: string):
+# CHECK-NEXT: v192: "; " = String string="; "
+# CHECK-NEXT: v193: string = Strcat v97, v191, v190, v192
+# CHECK-NEXT: v194: undefined = CallBuiltin -, v193 overload=ConsoleLog/0 accessSite=2
+# CHECK-NEXT: v195: undefined = Undefined
+# CHECK-NEXT: Return v195
+# CHECK-NEXT: b57() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v19
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b58() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v115
+# CHECK-NEXT: Jump -> next b47()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
+# CHECK-NEXT: v1: boolean = HasJSType v0 first=5 last=5
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b17()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: object ~ ArrayIterator = AssumeType v0 provenType=object [isWordOfFrontEnd]
+# CHECK-NEXT: v3: anything = GetInternalField v2
+# CHECK-NEXT: v4: -1 = Integer integer=-1
+# CHECK-NEXT: v5: boolean = StrictEq v3, v4
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: true = Boolean boolean=true
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v6, v7)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v8: anything = GetInternalField v2 index=1
+# CHECK-NEXT: v9: object ~ Array = AssumeType v8 provenType=object
+# CHECK-NEXT: v10: boolean ~ false = TypeTest v9 testedType=BigInt64Array|BigUint64Array|Float16Array|Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: RequireAttachedTypedArray v9
+# CHECK-NEXT: v12: int[0, 17179869184] = GetTypedArrayLength v9
+# CHECK-NEXT: Jump -> next b9(v12)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v13: boolean ~ true = TypeTest v9 testedType=Array
+# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v14: Array):
+# CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v14 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v16: anything = PropGet v9 key="length"
+# CHECK-NEXT: Jump -> next b8(v16)
+# CHECK-NEXT: b8(v17: anything ~ int[0, 4294967295]):
+# CHECK-NEXT: v18: int[0, 9007199254740991] ~ int[0, 4294967295] = ToLength v17
+# CHECK-NEXT: Jump -> next b9(v18)
+# CHECK-NEXT: b9(v19: int[0, 9007199254740991] ~ int[0, 17179869184]):
+# CHECK-NEXT: v20: boolean = Less v3, v19
+# CHECK-NEXT: Branch v20 -> taken b10(), notTaken b15()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: number|string|bigint = Add v3, v21
+# CHECK-NEXT: v23: number|string|bigint = PutInternalField v2, v22
+# CHECK-NEXT: v24: anything = GetInternalField v2 index=2
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: v26: boolean = StrictEq v24, v25
+# CHECK-NEXT: Branch v26 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v27: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v27, v3)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v28: anything = ElemGet v9, v3
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: v30: boolean = StrictEq v24, v29
+# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v31: Array = NewArray v3, v28 contents=anything
+# CHECK-NEXT: v32: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v32, v31)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v33: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v33, v28)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v34: -1 = Integer integer=-1
+# CHECK-NEXT: v35: -1 = PutInternalField v2, v34
+# CHECK-NEXT: v36: true = Boolean boolean=true
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v36, v37)
+# CHECK-NEXT: b16(v38: boolean, v39: anything):
+# CHECK-NEXT: v40: L(IteratorResult) = NewObject -, v39, v38 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v40
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v41: never = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=68 captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f1, v1: anything):
+# CHECK-NEXT: v2: L(IteratorResult) = CallDirect v1 function=f1
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }

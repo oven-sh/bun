@@ -1,0 +1,876 @@
+# The object is reachable through something made in the constructor and handed out.
+# FORM: AsRead
+# DIAGNOSTIC: StoredTypeOwedToCheck
+# RUN: valueflow-apply
+
+module m0 path="reachable-constructor-made-handed.js" displayPath="reachable-constructor-made-handed.js" flags=[HasTopLevelAwait, KeepsError] body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="internal:async_hooks_tick" displayPath="internal:async_hooks_tick" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalAsync_hooks_tick body=f75
+module m5 path="internal:fs/binding" displayPath="internal:fs/binding" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalFsBinding body=f78
+module m6 path="internal:process/next_tick_queue" displayPath="internal:process/next_tick_queue" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f79
+module m7 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f100
+module m8 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f115
+entry module=m0
+typesite w0 module=m1 position=12468 kind=Parameter
+typesite w1 module=m1 position=12380 kind=Result
+typesite w2 module=m1 position=25321 kind=Parameter
+typesite w3 module=m1 position=25357 kind=Parameter
+typesite w4 module=m1 position=25394 kind=Parameter
+typesite w5 module=m1 position=25259 kind=Result
+typesite w6 module=m1 position=12504 kind=Variable
+typesite w7 module=m1 position=12510 kind=Variable
+typesite w8 module=m1 position=12520 kind=Variable
+typesite w9 module=m1 position=16756 kind=Variable
+typesite w10 module=m1 position=16819 kind=Variable
+typesite w11 module=m1 position=14681 kind=Parameter
+typesite w12 module=m1 position=14702 kind=Parameter
+typesite w13 module=m1 position=16653 kind=CallResult
+typesite w14 module=m1 position=25434 kind=Variable
+typesite w15 module=m1 position=25712 kind=Variable
+typesite w16 module=m1 position=25630 kind=Variable
+typesite w17 module=m1 position=25766 kind=Parameter
+typesite w18 module=m1 position=25656 kind=PropertyRead
+typesite w19 module=m1 position=25677 kind=CallResult
+typesite w20 module=m1 position=12668 kind=Variable
+typesite w21 module=m1 position=26612 kind=Variable
+typesite w22 module=m1 position=26656 kind=Variable
+typesite w23 module=m1 position=27033 kind=Variable
+typesite w24 module=m1 position=27126 kind=Variable
+typesite w25 module=m1 position=26619 kind=PropertyRead
+typesite w26 module=m1 position=26962 kind=CallResult
+typesite w27 module=m1 position=26993 kind=CallResult
+typesite w28 module=m1 position=27487 kind=PropertyRead
+typesite w29 module=m1 position=27527 kind=Variable
+typesite w30 module=m1 position=27572 kind=CallResult
+typesite w31 module=m1 position=27605 kind=PropertyRead
+typesite w32 module=m1 position=27925 kind=CallResult
+typesite w33 module=m1 position=13173 kind=Variable
+typesite w34 module=m1 position=12889 kind=Variable
+typesite w35 module=m1 position=12956 kind=Variable
+typesite w36 module=m1 position=12999 kind=Variable
+typesite w37 module=m1 position=13035 kind=Variable
+typesite w38 module=m1 position=13065 kind=Field
+typesite w39 module=m1 position=13102 kind=Field
+typesite w40 module=m1 position=13136 kind=Field
+typesite w41 module=m1 position=13679 kind=CallResult
+typesite w42 module=m4 position=590 kind=Variable
+typesite w43 module=m4 position=704 kind=Variable
+typesite w44 module=m5 position=229 kind=Assertion
+typesite w45 module=m6 position=285 kind=Parameter
+typesite w46 module=m6 position=266 kind=Result
+typesite w47 module=m6 position=1117 kind=Parameter
+typesite w48 module=m6 position=1153 kind=Parameter
+typesite w49 module=m6 position=1099 kind=Result
+typesite w50 module=m6 position=339 kind=Variable
+typesite w51 module=m6 position=456 kind=Variable
+typesite w52 module=m6 position=493 kind=Variable
+typesite w53 module=m6 position=683 kind=Variable
+typesite w54 module=m6 position=711 kind=Variable
+typesite w55 module=m6 position=1476 kind=Parameter
+typesite w56 module=m6 position=1497 kind=Parameter
+typesite w57 module=m6 position=4792 kind=Parameter
+typesite w58 module=m6 position=4811 kind=Parameter
+typesite w59 module=m6 position=4733 kind=Result
+typesite w60 module=m6 position=899 kind=Variable
+typesite w61 module=m6 position=1183 kind=Variable
+typesite w62 module=m6 position=1209 kind=Variable
+typesite w63 module=m6 position=1284 kind=CallResult
+typesite w64 module=m6 position=1306 kind=Field
+typesite w65 module=m6 position=1334 kind=Field
+typesite w66 module=m6 position=1356 kind=Field
+typesite w67 module=m6 position=1678 kind=Variable
+typesite w68 module=m6 position=1711 kind=Variable
+typesite w69 module=m6 position=1686 kind=PropertyRead
+typesite w70 module=m6 position=1768 kind=PropertyRead
+typesite w71 module=m6 position=1862 kind=CallResult
+typesite w72 module=m6 position=1964 kind=CallResult
+typesite w73 module=m6 position=2017 kind=CallResult
+typesite w74 module=m6 position=2042 kind=Field
+typesite w75 module=m7 position=3393 kind=Parameter
+typesite w76 module=m7 position=3417 kind=Parameter
+typesite w77 module=m7 position=3446 kind=Parameter
+typesite w78 module=m7 position=3370 kind=Result
+typesite w79 module=m7 position=3721 kind=Parameter
+typesite w80 module=m7 position=114 kind=Variable
+typesite w81 module=m7 position=120 kind=Variable
+typesite w82 module=m7 position=198 kind=Variable
+typesite w83 module=m7 position=260 kind=Variable
+typesite w84 module=m7 position=312 kind=Variable
+typesite w85 module=m7 position=341 kind=Variable
+typesite w86 module=m7 position=1837 kind=Parameter
+typesite w87 module=m7 position=1819 kind=Result
+typesite w88 module=m7 position=3599 kind=Parameter
+typesite w89 module=m7 position=3575 kind=Result
+typesite w90 module=m7 position=3871 kind=Parameter
+typesite w91 module=m7 position=3889 kind=Parameter
+typesite w92 module=m7 position=3906 kind=Parameter
+typesite w93 module=m7 position=4703 kind=Parameter
+typesite w94 module=m7 position=929 kind=Field
+typesite w95 module=m7 position=967 kind=Field
+typesite w96 module=m7 position=1039 kind=Field
+typesite w97 module=m7 position=1072 kind=Field
+typesite w98 module=m7 position=1088 kind=Field
+typesite w99 module=m7 position=2365 kind=Variable
+typesite w100 module=m7 position=2392 kind=Variable
+typesite w101 module=m7 position=2419 kind=Variable
+typesite w102 module=m7 position=2559 kind=Variable
+typesite w103 module=m7 position=2658 kind=Variable
+typesite w104 module=m7 position=2450 kind=Variable
+typesite w105 module=m7 position=2683 kind=Field
+typesite w106 module=m7 position=3762 kind=CallResult
+typesite w107 module=m7 position=3796 kind=Field
+typesite w108 module=m7 position=3817 kind=Field
+typesite w109 module=m7 position=1940 kind=Variable
+typesite w110 module=m7 position=1873 kind=CallResult
+typesite w111 module=m7 position=1887 kind=Field
+typesite w112 module=m7 position=2043 kind=Field
+typesite w113 module=m7 position=2062 kind=Field
+typesite w114 module=m7 position=2111 kind=CallResult
+typesite w115 module=m7 position=2127 kind=Field
+typesite w116 module=m7 position=3633 kind=Variable
+typesite w117 module=m7 position=3655 kind=Field
+typesite w118 module=m7 position=3945 kind=CallResult
+typesite w119 module=m7 position=4777 kind=CallResult
+typesite w120 module=m7 position=1123 kind=Field
+typesite w121 module=m7 position=1154 kind=Field
+typesite w122 module=m7 position=1259 kind=Field
+typesite w123 module=m7 position=1287 kind=Field
+typesite w124 module=m7 position=1315 kind=Field
+typesite w125 module=m8 position=3126 kind=Parameter
+typesite w126 module=m8 position=3146 kind=Parameter
+typesite w127 module=m8 position=3160 kind=Parameter
+typesite w128 module=m8 position=3105 kind=Result
+typesite w129 module=m8 position=1855 kind=Assertion
+typesite w130 module=m8 position=1890 kind=Assertion
+typesite w131 module=m8 position=1967 kind=Assertion
+typesite w132 module=m8 position=1999 kind=Assertion
+typesite w133 module=m8 position=2706 kind=Assertion
+typesite w134 module=m8 position=2792 kind=Assertion
+typesite w135 module=m8 position=2824 kind=Assertion
+typesite w136 module=m8 position=3877 kind=Field
+typesite w137 module=m8 position=3928 kind=Field
+layout L0 kind=Instance name="A" module=m0 position=365 constructor=f5 fields=[{key="fa" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="B" module=m0 position=500 constructor=f6 fields=[{key="fb" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="C" module=m0 position=607 constructor=f7 fields=[{key="fc" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L3 kind=Instance name="D" module=m0 position=724 constructor=f8 fields=[{key="self" declared={type=undefined|null|L3 flags=[IsExpected]} flags=[IsRequired]}, {key="fd" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L4 kind=Instance name="E" module=m0 position=854 constructor=f9 fields=[{key="fe" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L5 kind=Instance name="F" module=m0 position=997 constructor=f10 fields=[{key="ff" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L6 kind=Instance name="G" module=m0 position=1145 constructor=f11 fields=[{key="fg" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L7 kind=Instance name="I" module=m0 position=1314 constructor=f12 fields=[{key="fi" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L8 kind=Instance name="J" module=m0 position=1449 constructor=f14 fields=[{key="fj" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L9 kind=Instance name="L" module=m0 position=1575 constructor=f15 fields=[{key="fl" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L10 kind=Instance name="N" module=m0 position=1704 constructor=f16 fields=[{key="fn" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L11 kind=Instance name="O" module=m0 position=1842 constructor=f17 fields=[{key="fo" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L12 kind=Instance name="R" module=m0 position=1968 constructor=f18 fields=[{key="fr" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L13 module=m0 position=397 fields=[{key="me" declared={type=undefined|null|L0|L10|L11 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L14 module=m0 position=470 fields=[{key="qe" declared={type=anything}}] ownFieldCount=1
+layout L15 module=m0 position=1472 fields=[{key="toString" declared={type=undefined|null|function|f29 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L16 name="Path" module=m8 position=315 fields=[{key="_makeLong" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="basename" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="delimiter" declared={type=undefined|null|":"|";" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="dirname" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="extname" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="format" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="isAbsolute" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="join" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="matchesGlob" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="normalize" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="parse" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="posix" declared={type=undefined|null|L16 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="relative" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="resolve" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="sep" declared={type=undefined|null|"/"|"\\" flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="toNamespacedPath" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="win32" declared={type=undefined|null|L16 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[13, 9, 6, 7, 12, 15, 3, 1, 4, 5, 10, 8, 14, 2, 16, 11, 0] ownFieldCount=17
+layout L17 kind=Environment module=m1 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L20 site=w6 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|function|absent|f82 site=w7 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=undefined|null|function|absent|f81 site=w8 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=undefined|null|object|absent flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=undefined|null|absent|L21 site=w9 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}, {key=@"binding.5" declared={type=undefined|null|absent|Array<undefined|null|function> site=w10 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}] ownFieldCount=6
+layout L18 kind=Environment module=m1 fields=[{key=@"binding.0" declared={type=undefined|null|absent|NodeJSFS site=w14 flags=[OmitsNull]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=boolean|absent site=w15}}] ownFieldCount=2
+layout L19 kind=Environment module=m1 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L22 site=w20 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}] ownFieldCount=1
+layout L20 name="Ring" module=m7 position=1490 fields=[{key="made" declared={type=number} flags=[IsRequired]}, {key="pushWithInitHooks" declared={type=undefined|null|function|f108 flags=[OmitsNull]} flags=[IsRequired]}, {key="read" declared={type=undefined|null|L26 flags=[OmitsNull]} flags=[IsRequired]}, {key="write" declared={type=undefined|null|L26 flags=[OmitsNull]} flags=[IsRequired]}] declaredOrder=[2, 3, 0, 1] ownFieldCount=4
+layout L21 module=m4 position=737 fields=[{key="newAsyncId" declared={type=undefined|null|function|f76 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="tickInitHooks" declared={type=undefined|null|Array<undefined|null|function> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L22 module=m7 position=4970 fields=[{key="growRing" declared={type=undefined|null|function|f104 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="pushTickObject" declared={type=undefined|null|function|f103 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="pushWithInitHooks" declared={type=undefined|null|function|f108 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="pushWithList" declared={type=undefined|null|function|f107 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="queueTickInFront" declared={type=undefined|null|function|f105 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="start" declared={type=undefined|null|function|f109 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="takeTickObject" declared={type=undefined|null|function|f106 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="tickInitHooks" declared={type=undefined|null|Array<undefined|null|function> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[0, 7, 3, 2, 1, 6, 4, 5] ownFieldCount=8
+layout L23 module=m1 position=15094 fields=[{key="args" declared={type=undefined|null|Array flags=[OmitsNull]} flags=[IsRequired]}, {key="callback" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L27 flags=[OmitsNull]} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
+layout L24 module=m6 position=614
+layout L25 module=m6 position=5005 fields=[{key="asyncContext" declared={type=undefined|null|object flags=[IsExpected]} flags=[IsRequired]}, {key="enqueueTick1" declared={type=undefined|null|function|f86 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="install" declared={type=undefined|null|function|f90 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="nextTick" declared={type=undefined|null|function|f83 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="queueTick1" declared={type=undefined|null|function|f87 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="queueTick2" declared={type=undefined|null|function|f88 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="queueTick3" declared={type=undefined|null|function|f89 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="ring" declared={type=undefined|null|L20 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="setUp" declared={type=undefined|null|function|f81 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="takeTick" declared={type=undefined|null|function|f82 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="ticksAreUnhooked" declared={type=undefined|null|function|f85 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="ticksAreUnseen" declared={type=undefined|null|function|f84 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 8, 0, 3, 11, 10, 1, 4, 5, 6, 7, 9] ownFieldCount=12
+layout L26 kind=Instance name="Tick" module=m7 position=920 constructor=f110 fields=[{key="callback" declared={type=undefined|null|function site=w94 flags=[OmitsNull]} flags=[IsRequired]}, {key="count" declared={type=number site=w95} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}, {key="third" declared={type=anything} flags=[IsRequired]}, {key="shown" declared={type=undefined|null|L23 site=w96 flags=[OmitsNull]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L27 site=w97 flags=[OmitsNull]} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L26 site=w98 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=8
+layout L27 kind=Instance
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Object{layout=L14 members=[{key="qe" value=Number{value=1}}]} module=m0
+data d2 root=Object{layout=L14 members=[{key="qe" value=Number{value=2}}]} module=m0
+data d3 root=Object{layout=L14 members=[{key="qe" value=Number{value=3}}]} module=m0
+data d4 root=Object{layout=L14 members=[{key="qe" value=Number{value=4}}]} module=m0
+data d5 root=Object{layout=L14 members=[{key="qe" value=Number{value=5}}]} module=m0
+data d6 root=Object{layout=L14 members=[{key="qe" value=Number{value=6}}]} module=m0
+data d7 root=Object{layout=L14 members=[{key="qe" value=Number{value=7}}]} module=m0
+data d8 root=Object{layout=L14 members=[{key="qe" value=Number{value=8}}]} module=m0
+data d9 root=Object{layout=L14 members=[{key="qe" value=Number{value=9}}]} module=m0
+data d10 root=Object{layout=L14 members=[{key="qe" value=Number{value=10}}]} module=m0
+data d11 root=Object{layout=L13} module=m0
+data d12 root=Object{layout=L14 members=[{key="qe" value=Number{value=11}}]} module=m0
+data d13 root=Object{layout=L14 members=[{key="qe" value=Number{value=12}}]} module=m0
+data d14 root=Object{layout=L14 members=[{key="qe" value=Number{value=13}}]} module=m0
+data d15 root=Array{contents=undefined|null|function} module=m4
+data d16 root=Object{layout=L20 members=[{key="read"}, {key="write"}, {key="made" value=Number{}}, {key="pushWithInitHooks"}]} module=m6
+data d17 root=Object{layout=L24} module=m6
+variable g0 name="attempt" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="give" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="look" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="seen" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g4 name="hold" module=m0 declared={type=undefined|null|function|absent flags=[IsExpected]}
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g10 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g11 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g12 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g13 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g14 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g15 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g16 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g17 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g18 name="nextAsyncId" module=m4 declared={type=undefined|number site=w43} initialization=Undefined
+variable g19 name="listOf" module=m6 declared={type=f80 flags=[IsFromCompiler]} initialization=Function function=f80 flags=[IsImmutable]
+variable g20 name="setUp" module=m6 declared={type=f81 flags=[IsFromCompiler]} initialization=Function function=f81 flags=[IsImmutable]
+variable g21 name="takeTick" module=m6 declared={type=f82 flags=[IsFromCompiler]} initialization=Function function=f82 flags=[IsImmutable]
+variable g22 name="ring" module=m6 declared={type=undefined|null|L20 site=w50 flags=[OmitsNull]} initialization=Undefined flags=[IsImmutable]
+variable g23 name="growRing" module=m6 declared={type=undefined|null|function|f104 site=w51 flags=[OmitsNull]} initialization=Undefined
+variable g24 name="pushWithList" module=m6 declared={type=undefined|null|function|f107 site=w52 flags=[OmitsNull]} initialization=Undefined
+variable g25 name="tickInitHooks" module=m6 declared={type=undefined|null|Array<undefined|null|function> flags=[IsExpected, OmitsNull]} initialization=Undefined
+variable g26 name="installedNextTick" module=m6 declared={type=anything} initialization=Undefined
+variable g27 name="tickingProcess" module=m6 declared={type=undefined|null|object flags=[IsExpected]} initialization=Undefined
+variable g28 name="nextTickQueue" module=m6 declared={type=anything} initialization=Undefined
+variable g29 name="startRing" module=m6 declared={type=undefined|null|function|f56 site=w53 flags=[OmitsNull]} initialization=Undefined
+variable g30 name="isSetUp" module=m6 declared={type=undefined|boolean site=w54} initialization=Undefined
+variable g31 name="asyncContext" module=m6 declared={type=undefined|null|object flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g32 name="dropFreeTicks" module=m7 declared={type=f101 flags=[IsFromCompiler]} initialization=Function function=f101 flags=[IsImmutable]
+variable g33 name="newTickObject" module=m7 declared={type=f102 flags=[IsFromCompiler]} initialization=Function function=f102 flags=[IsImmutable]
+variable g34 name="pushTickObject" module=m7 declared={type=f103 flags=[IsFromCompiler]} initialization=Function function=f103 flags=[IsImmutable]
+variable g35 name="ring" module=m7 declared={type=undefined|null|L20 site=w80 flags=[OmitsNull]} initialization=Undefined flags=[IsImmutable]
+variable g36 name="takeTick" module=m7 declared={type=undefined|null|function|f82 site=w81 flags=[OmitsNull]} initialization=Undefined flags=[IsImmutable]
+variable g37 name="asyncContext" module=m7 declared={type=undefined|null|object flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g38 name="asyncHooksTick" module=m7 declared={type=undefined|null|L21 site=w82 flags=[OmitsNull]} initialization=Undefined flags=[IsImmutable]
+variable g39 name="tickInitHooks" module=m7 declared={type=undefined|null|Array<undefined|null|function> site=w83 flags=[OmitsNull]} initialization=Undefined flags=[IsImmutable]
+variable g40 name="kFreeTicksKept" module=m7 declared={type=undefined|4096 site=w84} initialization=Undefined flags=[IsImmutable]
+variable g41 name="kHasTickObject" module=m7 declared={type=undefined|-1 site=w85} initialization=Undefined flags=[IsImmutable]
+variable g42 name="Tick" module=m7 declared={type=absent|f110 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g43 name="tickingProcess" module=m7 declared={type=undefined|null|object flags=[IsExpected]} initialization=Undefined
+variable g44 name="nextTickQueue" module=m7 declared={type=anything} initialization=Undefined
+variable g45 module=m7 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f10
+    v1 = NewClass v0 layout=L5
+    v2 = FinishClass v1 layout=L5
+    v3 = Convert v2 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f15
+    v5 = NewClass v4 layout=L9
+    v6 = FinishClass v5 layout=L9
+    v7 = Convert v6 declared={type=f15 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f18
+    v9 = NewClass v8 layout=L12
+    v10 = FinishClass v9 layout=L12
+    v11 = Convert v10 declared={type=f18 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = Construct v3 calleeName="F"
+    v13 = Construct v7 calleeName="L"
+    v14 = Construct v11 calleeName="R"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="attempt" module=m0 position=85 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="give" module=m0 position=288 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function|L3|L13|f13|f20|Array<undefined|null|Array<undefined|null|L2>>|Generator<number>|Map<number, undefined|null|L4>|Promise|WeakRef flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="look" module=m0 position=319 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="mayThrow" module=m0 position=181 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="A" module=m0 position=380 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f6 name="B" module=m0 position=515 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f7 name="C" module=m0 position=622 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f8 name="D" module=m0 position=739 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f9 name="E" module=m0 position=869 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f10 name="F" module=m0 position=1012 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f24
+    v5 = Convert v3 declared={type=undefined|null|L5 flags=[IsExpected]}
+    v6 = Call v4, -, v5
+    v7 = GetModuleVariable variable=g2
+    v8 = NewClosure function=f25
+    v9 = Call v7, -, v8 calleeName="look"
+    v10 = Undefined
+    Return v10
+}
+function f11 name="G" module=m0 position=1160 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6
+    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f26
+    v5 = Convert v3 declared={type=undefined|null|L6 flags=[IsExpected]}
+    v6 = Call v4, -, v5
+    v7 = Undefined
+    Return v7
+}
+function f12 name="I" module=m0 position=1329 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f13 name="m" module=m0 position=1405 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L7 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="J" module=m0 position=1464 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L8 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f15 name="L" module=m0 position=1590 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L9 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L9
+    v2 = NewObject v1 layout=L9
+    v3 = Convert v2 declared={type=L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = GetModuleVariable variable=g1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="WeakRef" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(WeakRef) flags=[IsExpected]}
+    v8 = Convert v3 declared={type=undefined|null|L9 flags=[IsExpected]}
+    v9 = Construct v7, -, v8 calleeName="WeakRef"
+    v10 = Convert v9 declared={type=undefined|null|WeakRef flags=[IsExpected]}
+    v11 = Call v4, -, v10 calleeName="give"
+    v12 = GetModuleVariable variable=g2
+    v13 = NewClosure function=f30
+    v14 = Call v12, -, v13 calleeName="look"
+    v15 = Undefined
+    Return v15
+}
+function f16 name="N" module=m0 position=1719 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L10 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f17 name="O" module=m0 position=1857 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L11 {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f18 name="R" module=m0 position=1983 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L12 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L12
+    v2 = NewObject v1 layout=L12
+    v3 = Convert v2 declared={type=L12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = GetModuleVariable variable=g1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Promise" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Promise) flags=[IsExpected]}
+    v8 = PropGet v7 key="resolve"
+    v9 = Convert v8 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
+    v10 = Convert v3 declared={type=undefined|null|L12 flags=[IsExpected]}
+    v11 = Call v9, v7, v10 calleeKey="resolve" calleeName="Promise.resolve"
+    v12 = Convert v11 declared={type=undefined|null|Promise flags=[IsExpected]}
+    v13 = Call v4, -, v12 calleeName="give"
+    v14 = Undefined
+    Return v14
+}
+function f19 module=m0 position=437 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 module=m0 position=525 kind=Arrow captures=[{type=L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 module=m0 position=658 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 module=m0 position=794 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 module=m0 position=930 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 module=m0 position=1022 flags=[IsGenerator, HasThis, TakesCallee] length=1 thisType={type=anything} parameters=[{type=undefined|null|L5 flags=[IsExpected]}] results=[{type=undefined|null|Generator<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: undefined|null|L5):
+    InitialYield v2
+    v4 = PropGet v2 key="ff"
+    v5 = Convert v4 declared={type=undefined|null|L14 flags=[IsExpected]}
+    v6 = PropGet v5 key="qe"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Yield v7, v2
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v9
+  b2():
+    Return v9
+  b3():
+    v11 = Undefined
+    Return v11
+}
+function f25 module=m0 position=1078 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 module=m0 position=1171 kind=Arrow flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=undefined|null|L6 flags=[IsExpected]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L6):
+    v1 = PropGet v0 key="fg"
+    v2 = Convert v1 declared={type=undefined|null|L14 flags=[IsExpected]}
+    v3 = PropGet v2 key="qe"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Convert v4 declared={type=number|object flags=[IsExpected]}
+    Return v5
+}
+function f27 module=m0 position=1202 kind=Arrow length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 module=m0 position=1210 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f29 name="toString" module=m0 position=1484 kind=Arrow captures=[{type=L8 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f30 module=m0 position=1635 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f31 module=m0 position=1778 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f32 module=m0 position=1904 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f33 module=m0 position=1506 kind=Arrow captures=[{type=L8 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f51]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f52]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f49 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f50 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f51 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f52 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f54 module=m1 position=12380 kind=Method role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=65580 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f83 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f55 module=m1 position=25259 kind=Method role=Library flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w2 flags=[OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w3 flags=[OmitsNull]}, {type=undefined|null|function site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f59 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|object, v1: undefined|null|string, v2: undefined|null|Array<undefined|null|string>, v3: undefined|null|function):
+    v4 = NewObject layout=L18
+    v5 = NewClosure v4, v1, v3 function=f58
+    v6 = Convert v5 declared={type=f58 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = RequireModule module=m5 referrer=m1 specifier="internal/fs/binding"
+    v8 = PropGet v2 key="length"
+    v9 = Convert v8 declared={type=number site=w18} illTypedCause=Assertion
+    v10 = Builtin builtin=Set
+    v11 = Construct v10, -, v2 calleeName="Set"
+    v12 = Convert v11 declared={type=undefined|null|Set<undefined|null|string> site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v13 = Convert v12 declared={type=undefined|null|Set<undefined|null|string> site=w16 flags=[OmitsUndefined]}
+    v14 = NewClosure v4, v0, v6, v13 function=f59
+    v15 = Convert v14 declared={type=undefined|null|function|f59 site=w5 flags=[OmitsNull, OmitsUndefined]}
+    Return v15
+}
+function f56 name="startRing" module=m1 position=12653 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65580 captures=[{type=env L17 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f62] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f57 name="nextTick" module=m1 position=14680 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65580 captures=[{type=env L17 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|function site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w12 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f58 name="writeOut" module=m1 position=25765 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65574 captures=[{type=env L18 flags=[IsFromCompiler]}, {type=undefined|null|string site=w2 flags=[OmitsNull]}, {type=undefined|null|function site=w4 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: env L18, v1: undefined|null|string, v2: undefined|null|function, v3: undefined|null|string):
+    v4 = GetEnvironmentField v0 layout=L18
+    v5 = CheckInitialized v4 name="fs"
+    Jump -> next b1()
+  b1() handler=b2():
+    v6 = Undefined
+    Return v6
+  b2() role=CatchHandler:
+    Jump -> next b3()
+  b3():
+    v7 = Undefined
+    Return v7
+}
+function f59 name="onWarning" module=m1 position=26529 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65574 captures=[{type=env L18 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=f58 flags=[IsFromCompiler]}, {type=undefined|null|Set<undefined|null|string> site=w16 flags=[OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: env L18, v1: undefined|null|object, v2: f58, v3: undefined|null|Set<undefined|null|string>, v4: undefined|null|object):
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Error"
+    v7 = Convert v6 declared={type=builtin(Error) flags=[IsExpected]}
+    v8 = InstanceOf v4, v7 writtenExpression="warning instanceof Error"
+    v9 = PropGet v4 key="name"
+    v10 = Convert v9 declared={type=undefined|null|string site=w25} illTypedCause=Assertion
+    v11 = Convert v10 declared={type=undefined|null|string site=w21 flags=[OmitsNull, OmitsUndefined]}
+    v12 = String string="DeprecationWarning"
+    v13 = StrictEq v11, v12
+    v14 = Convert v13 declared={type=boolean site=w22}
+    v15 = PropGet v1 key="noDeprecation"
+    v16 = PropGet v4 key="code"
+    v17 = Convert v16 declared={type=undefined|null|string} illTypedCause=Assertion
+    v18 = PropGet v3 key="has"
+    v19 = Call v18, v3, v11 calleeKey="has" calleeName="disabled.has"
+    v20 = Convert v19 declared={type=boolean site=w26} illTypedCause=DeclarationWithoutBody
+    v21 = PropGet v3 key="has"
+    v22 = Call v21, v3, v17 calleeKey="has" calleeName="disabled.has"
+    v23 = Convert v22 declared={type=boolean site=w27} illTypedCause=DeclarationWithoutBody
+    v24 = PropGet v1 key="traceProcessWarnings"
+    v25 = Convert v24 declared={type=undefined|boolean site=w23}
+    v26 = String string="(node:"
+    v27 = PropGet v1 key="pid"
+    v28 = ToString v27
+    v29 = String string=") "
+    v30 = Strcat v26, v28, v29
+    v31 = Convert v30 declared={type=undefined|null|string site=w24 flags=[OmitsNull, OmitsUndefined]}
+    v32 = String string="["
+    v33 = ToString v17
+    v34 = String string="] "
+    v35 = Strcat v32, v33, v34
+    v36 = Add v31, v35
+    v37 = Convert v36 declared={type=undefined|null|string site=w24 flags=[OmitsNull, OmitsUndefined]}
+    v38 = PropGet v4 key="stack"
+    v39 = Convert v38 declared={type=undefined|null|string} illTypedCause=Assertion
+    v40 = PropGet v4 key="stack"
+    v41 = Convert v40 declared={type=undefined|null|string site=w28} illTypedCause=Assertion
+    v42 = Add v37, v41
+    v43 = Convert v42 declared={type=undefined|null|string site=w24 flags=[OmitsNull, OmitsUndefined]}
+    v44 = PropGet v4 key="detail"
+    v45 = String string="\n"
+    v46 = Convert v44 declared={type=undefined|null|string} illTypedCause=Assertion
+    v47 = ToString v46
+    v48 = Strcat v45, v47
+    v49 = Add v43, v48
+    v50 = Convert v49 declared={type=undefined|null|string site=w24 flags=[OmitsNull, OmitsUndefined]}
+    v51 = GetEnvironmentField v0 layout=L18 field=1
+    v52 = CheckInitialized v51 name="traceWarningHelperShown"
+    v53 = RequireModule module=m8 referrer=m1 specifier="node:path"
+    v54 = PropGet v53 key="basename"
+    v55 = Convert v54 declared={type=undefined|null|function} illTypedCause=Assertion
+    v56 = String string="(Use `"
+    v57 = PropGet v1 key="argv0"
+    v58 = Call v55, -, v57 calleeName="basename"
+    v59 = Convert v58 declared={type=undefined|null|string site=w32 flags=[OmitsNull, OmitsUndefined]}
+    v60 = ToString v59
+    v61 = String string=" --trace-warnings ...` to show where the warning was created)"
+    v62 = Strcat v56, v60, v61
+    v63 = Call v2, -, v62 calleeName="writeOut"
+    v64 = Undefined
+    Return v64
+}
+function f60 name="processTicksAndRejections" module=m1 position=12820 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65580 captures=[{type=env L17 flags=[IsFromCompiler]}, {type=env L19 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f61 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f71]
+function f62 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f67]
+function f63 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f64 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f65 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f66 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f67 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f91]
+function f68 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f69 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f70 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f71 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f72 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f73 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f74 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f75 module=m4 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Data data=d15
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|function> site=w42 flags=[OmitsNull]}
+    v2 = NewClosure function=f76
+    v3 = Convert v2 declared={type=undefined|null|function|f76 flags=[OmitsNull, OmitsUndefined]}
+    v4 = NewObject -, v1, v3 layout=L21 fields=[1, 0]
+    v5 = FinishObject v4
+    Return v5
+}
+function f76 name="newAsyncId" module=m4 position=758 kind=Method role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f77 module=m4 role=Signature thisType={type=anything} results=[{type=anything}]
+function f78 module=m5 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_fs_bindingBindTsBinding
+    v1 = Convert v0 declared={type=undefined|null|NodeJSFS site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Return v1
+}
+function f79 module=m6 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NewClosure function=f90
+    v1 = Convert v0 declared={type=f90 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Convert v1 declared={type=undefined|null|function|f90 flags=[OmitsNull, OmitsUndefined]}
+    v3 = GetModuleVariable variable=g20
+    v4 = Convert v3 declared={type=undefined|null|function|f81 flags=[OmitsNull, OmitsUndefined]}
+    v5 = NewObject -, v2, v4 layout=L25 fields=[2, 8]
+    v6 = FinishObject v5
+    Return v6
+}
+function f80 name="listOf" module=m6 position=266 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array site=w45 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w46 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f81 name="setUp" module=m6 position=866 role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f82 name="takeTick" module=m6 position=1099 role=Library flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function site=w47 flags=[OmitsNull]}, {type=undefined|null|L27 site=w48 flags=[OmitsNull]}] results=[{type=undefined|null|L26 site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f65] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f83 name="nextTick" module=m6 position=1458 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function site=w55 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w56 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f84 name="ticksAreUnseen" module=m6 position=3341 role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f92] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f85 name="ticksAreUnhooked" module=m6 position=3471 role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f93] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f86 name="enqueueTick1" module=m6 position=3561 role=Library flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f94] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f87 name="queueTick1" module=m6 position=3691 role=Library flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f95] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f88 name="queueTick2" module=m6 position=3990 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f96] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f89 name="queueTick3" module=m6 position=4311 role=Library flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f97] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f90 name="install" module=m6 position=4733 role=Library flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=undefined|null|function|f56 site=w57 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f83 site=w58 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f83 site=w59 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f68] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f91 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f92 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f93 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f94 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f95 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f96 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f97 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f98 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f99 module=m6 role=Signature thisType={type=anything} results=[{type=anything}]
+function f100 module=m7 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = RequireModule module=m6 referrer=m7 specifier="internal/process/next_tick_queue"
+    Jump -> next b1()
+  b1() frequency=Unlikely:
+    v1 = NewRuntimeError runtimeError=NotDestructurable name="ring"
+    Throw v1
+}
+function f101 name="dropFreeTicks" module=m7 position=2324 role=Library flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f102 name="newTickObject" module=m7 position=3370 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function site=w75 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array site=w76 flags=[OmitsNull]}, {type=undefined|null|L27 site=w77 flags=[OmitsNull]}] results=[{type=undefined|null|L23 site=w78 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f103 name="pushTickObject" module=m7 position=3697 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L23 site=w79 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f104 name="growRing" module=m7 position=1819 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L26 site=w86 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L26 site=w87 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f98] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f105 name="queueTickInFront" module=m7 position=2841 role=Library flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f113] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f106 name="takeTickObject" module=m7 position=3575 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L26 site=w88 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L23 site=w89 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f69] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f107 name="pushWithList" module=m7 position=3849 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function site=w90 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array site=w91 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L27 site=w92 flags=[OmitsNull]}] results=[{type=anything}] functionTypes=[f99] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f108 name="pushWithInitHooks" module=m7 position=3981 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f70] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f109 name="start" module=m7 position=4650 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=undefined|null|function|f60 site=w93 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f72] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f110 name="Tick" module=m7 position=1114 kind=BaseConstructor role=Library flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] constructedClass=L26
+function f111 module=m7 position=920 kind=Initializer role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L26 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f112 module=m7 role=Signature thisType={type=anything} results=[{type=anything}]
+function f113 module=m7 role=Signature thisType={type=anything} results=[{type=anything}]
+function f114 module=m7 role=Signature thisType={type=anything} results=[{type=anything}]
+function f115 module=m8 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_pathBindTsToNamespacedPathPosix
+    v1 = NativeBinding builtin=NativeBindgenNode_pathBindTsResolvePosix
+    v2 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v3 = NativeBinding builtin=NativeBindgenNode_pathBindTsNormalizePosix
+    v4 = Convert v3 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v5 = NativeBinding builtin=NativeBindgenNode_pathBindTsIsAbsolutePosix
+    v6 = Convert v5 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v7 = NativeBinding builtin=NativeBindgenNode_pathBindTsJoinPosix
+    v8 = Convert v7 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v9 = NativeBinding builtin=NativeBindgenNode_pathBindTsRelativePosix
+    v10 = Convert v9 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v11 = Convert v0 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v12 = NativeBinding builtin=NativeBindgenNode_pathBindTsDirnamePosix
+    v13 = Convert v12 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v14 = NativeBinding builtin=NativeBindgenNode_pathBindTsBasenamePosix
+    v15 = Convert v14 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v16 = NativeBinding builtin=NativeBindgenNode_pathBindTsExtnamePosix
+    v17 = Convert v16 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v18 = NativeBinding builtin=NativeBindgenNode_pathBindTsFormatPosix
+    v19 = Convert v18 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v20 = NativeBinding builtin=NativeBindgenNode_pathBindTsParsePosix
+    v21 = Convert v20 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v22 = String string="/"
+    v23 = Convert v22 declared={type=undefined|null|"/"|"\\" flags=[OmitsNull, OmitsUndefined]}
+    v24 = String string=":"
+    v25 = Convert v24 declared={type=undefined|null|":"|";" flags=[OmitsNull, OmitsUndefined]}
+    v26 = Undefined
+    v27 = Convert v26 declared={type=undefined|null|L16 site=w129 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v28 = Undefined
+    v29 = Convert v28 declared={type=undefined|null|L16 site=w130 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v30 = Convert v0 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v31 = Undefined
+    v32 = Convert v31 declared={type=undefined|null|function site=w131 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v33 = NewObject -, v2, v4, v6, v8, v10, v11, v13, v15, v17, v19, v21, v23, v25, v27, v29, v30, v32 layout=L16 fields=[13, 9, 6, 7, 12, 15, 3, 1, 4, 5, 10, 14, 2, 16, 11, 0, 8]
+    v34 = FinishObject v33
+    v35 = Convert v34 declared={type=undefined|null|L16 site=w132 flags=[OmitsNull, OmitsUndefined]}
+    Return v35
+}
+function f116 name="matchesGlob" module=m8 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w125}, {type=undefined|null|string site=w126 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w128}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=68 function=f73
+runtimefunction id=69 function=f74 visibility=Private
+runtimefunction id=65574 function=f55
+runtimefunction id=65580 function=f54
+# -- generated: f0 F L R f24 f55 writeOut f78 f115
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=Promise}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f10 = NewClosure function=f10 allocationSite=0
+# CHECK-NEXT: v1: f10 = NewClass v0 layout=L5
+# CHECK-NEXT: v2: f10 = FinishClass v1 layout=L5
+# CHECK-NEXT: v3: f15 = NewClosure function=f15 allocationSite=1
+# CHECK-NEXT: v4: f15 = NewClass v3 layout=L9
+# CHECK-NEXT: v5: f15 = FinishClass v4 layout=L9
+# CHECK-NEXT: v6: f18 = NewClosure function=f18 allocationSite=2
+# CHECK-NEXT: v7: f18 = NewClass v6 layout=L12
+# CHECK-NEXT: v8: f18 = FinishClass v7 layout=L12
+# CHECK-NEXT: v9: anything ~ object = Construct v2 calleeName="F" accessSite=0 callees=[f10]
+# CHECK-NEXT: v10: anything ~ object = Construct v5 calleeName="L" accessSite=1 callees=[f15]
+# CHECK-NEXT: v11: anything ~ object = Construct v8 calleeName="R" accessSite=2 callees=[f18]
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="F"
+# CHECK: module=m0 position=1012 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v10: f10 = AssumeType v0 provenType=f10
+# CHECK-NEXT: v1: object = GetConstructPrototype v10 layout=L5
+# CHECK-NEXT: v2: object ~ L5 = NewObject v1 layout=L5 allocationSite=3 allocationClass=0
+# CHECK-NEXT: v11: L5 = AssumeType v2 provenType=L5
+# CHECK-NEXT: v3: L5 = AssumeType v11 provenType=L5
+# CHECK-NEXT: v4: f24 = NewClosure function=f24 allocationSite=4
+# CHECK-NEXT: v5: anything = Call v4, -, v3 accessSite=3 callees=[f24]
+# CHECK-NEXT: v6: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v7: f25 = NewClosure function=f25 allocationSite=5
+# CHECK-NEXT: v8: anything ~ undefined|null|string = Call v6, -, v7 calleeName="look" accessSite=4 callees=[f3]
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="L"
+# CHECK: module=m0 position=1590 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L9 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v15: f15 = AssumeType v0 provenType=f15
+# CHECK-NEXT: v1: object = GetConstructPrototype v15 layout=L9
+# CHECK-NEXT: v2: object ~ L9 = NewObject v1 layout=L9 allocationSite=6 allocationClass=1
+# CHECK-NEXT: v16: L9 = AssumeType v2 provenType=L9
+# CHECK-NEXT: v3: L9 = AssumeType v16 provenType=L9
+# CHECK-NEXT: v4: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v5: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v6: anything = PropGet v5 key="WeakRef" accessSite=6 [isFreeName]
+# CHECK-NEXT: v17: builtin(WeakRef) = AssumeType v6 provenType=builtin(WeakRef)
+# CHECK-NEXT: v7: builtin(WeakRef) = Upcast v17 castType=anything
+# CHECK-NEXT: v18: builtin(WeakRef) = AssumeType v7 provenType=builtin(WeakRef)
+# CHECK-NEXT: v8: anything ~ object = Construct v18, -, v3 calleeName="WeakRef" accessSite=7 callees=[builtin(WeakRef)]
+# CHECK-NEXT: v19: WeakRef<pristine[Storage, Names]> = AssumeType v8 provenType=WeakRef<pristine[Storage, Names]>
+# CHECK-NEXT: v9: WeakRef<pristine[Storage, Names]> = Upcast v19 castType=anything
+# CHECK-NEXT: v20: WeakRef<pristine[Storage, Names]> = AssumeType v9 provenType=WeakRef<pristine[Storage, Names]>
+# CHECK-NEXT: v10: anything = Call v4, -, v20 calleeName="give" accessSite=8 callees=[f2]
+# CHECK-NEXT: v11: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v12: f30 = NewClosure function=f30 allocationSite=7
+# CHECK-NEXT: v13: anything ~ undefined|null|string = Call v11, -, v12 calleeName="look" accessSite=9 callees=[f3]
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="R"
+# CHECK: module=m0 position=1983 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L12 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v14: f18 = AssumeType v0 provenType=f18
+# CHECK-NEXT: v1: object = GetConstructPrototype v14 layout=L12
+# CHECK-NEXT: v2: object ~ L12 = NewObject v1 layout=L12 allocationSite=8 allocationClass=2
+# CHECK-NEXT: v15: L12 = AssumeType v2 provenType=L12
+# CHECK-NEXT: v3: L12 = AssumeType v15 provenType=L12
+# CHECK-NEXT: v4: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v5: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v6: anything = PropGet v5 key="Promise" accessSite=10 [isFreeName]
+# CHECK-NEXT: v16: builtin(Promise) = AssumeType v6 provenType=builtin(Promise)
+# CHECK-NEXT: v7: builtin(Promise) = Upcast v16 castType=anything
+# CHECK-NEXT: v17: builtin(Promise) = AssumeType v7 provenType=builtin(Promise)
+# CHECK-NEXT: v8: anything = PropGet v17 key="resolve" accessSite=11
+# CHECK-NEXT: v18: builtin(PromiseResolve) = AssumeType v8 provenType=builtin(PromiseResolve)
+# CHECK-NEXT: v9: builtin(PromiseResolve) = Upcast v18 castType=anything
+# CHECK-NEXT: v19: builtin(PromiseResolve) = AssumeType v9 provenType=builtin(PromiseResolve)
+# CHECK-NEXT: v10: anything = Call v19, v17, v3 calleeKey="resolve" calleeName="Promise.resolve" accessSite=12 callees=[builtin(PromiseResolve)]
+# CHECK-NEXT: v20: Promise<L12, proven, pristine[Storage, Names]> = AssumeType v10 provenType=Promise<L12, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v11: Promise<L12, proven, pristine[Storage, Names]> = Upcast v20 castType=anything
+# CHECK-NEXT: v21: Promise<L12, proven, pristine[Storage, Names]> = AssumeType v11 provenType=Promise<L12, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v12: anything = Call v4, -, v21 calleeName="give" accessSite=13 callees=[f2]
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }
+# CHECK-LABEL: function f24 module=
+# CHECK: m0 position=1022 flags=[IsGenerator, HasThis, TakesCallee] length=1 thisType={type=undefined} parameters=[{type=L5}] results=[{type=Generator<number, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: L5):
+# CHECK-NEXT: InitialYield v2
+# CHECK-NEXT: v4: anything ~ undefined|null|L14 = PropGet v2 key="ff" accessSite=14 receivers=[L5]
+# CHECK-NEXT: v5: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v4 key="qe" accessSite=15 receivers=[]
+# CHECK-NEXT: v6: anything ~ int[-2147483643, 2147483647] = Upcast v5 castType=anything
+# CHECK-NEXT: v7: undefined = Yield v6, v2
+# CHECK-NEXT: v8: anything = ResultAt v7
+# CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
+# CHECK-NEXT: Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Throw v8
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function f55 module=
+# CHECK: m1 position=25259 kind=Method role=Library flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w2 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w3 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f59 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|object, v1: anything ~ undefined|null|string, v2: anything ~ undefined|null|Array<undefined|null|string>, v3: anything ~ undefined|null|function):
+# CHECK-NEXT: v4: undefined|null|string = Check v1 expectedType=undefined|null|string site=w2
+# CHECK-NEXT: v5: undefined|null|Array<undefined|null|string> = Check v2 expectedType=undefined|null|Array<undefined|null|string> site=w3
+# CHECK-NEXT: v6: undefined|null|function = Check v3 expectedType=undefined|null|function site=w4
+# CHECK-NEXT: v7: env L18 = NewObject layout=L18 allocationSite=9
+# CHECK-NEXT: v17: undefined|string = AssumeType v4 provenType=undefined|string [isBehindChecks]
+# CHECK-NEXT: v18: builtin(NativeFunctionsBunProcessCppProcess_functionWriteWarning) = AssumeType v6 provenType=builtin(NativeFunctionsBunProcessCppProcess_functionWriteWarning) [isBehindChecks]
+# CHECK-NEXT: v8: f58 = NewClosure v7, v17, v18 function=f58 allocationSite=10
+# CHECK-NEXT: v9: anything = RequireModule module=m5 referrer=m1 specifier="internal/fs/binding"
+# CHECK-NEXT: v10: anything = PropGet v5 key="length" accessSite=18
+# CHECK-NEXT: v11: number = Check v10 expectedType=number site=w18
+# CHECK-NEXT: v12: builtin(Set) = Builtin builtin=Set
+# CHECK-NEXT: v13: anything ~ object = Construct v12, -, v5 calleeName="Set" accessSite=19 callees=[builtin(Set)]
+# CHECK-NEXT: v16: Set<undefined|string, proven, pristine[Storage, Names]> = AssumeType v13 provenType=Set<undefined|string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v14: Set<undefined|string, proven, pristine[Storage, Names]> = Check v16 expectedType=undefined|null|Set<undefined|null|string> site=w19
+# CHECK-NEXT: v19: builtin(Process) = AssumeType v0 provenType=builtin(Process)
+# CHECK-NEXT: v20: Set<undefined|string, proven, pristine[Storage, Names]> = AssumeType v14 provenType=Set<undefined|string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v15: f59 = NewClosure v7, v19, v8, v20 function=f59 allocationSite=11
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="writeOut"
+# CHECK: module=m1 position=25765 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65574 captures=[{type=env L18 flags=[IsFromCompiler]}, {type=undefined|string site=w2 flags=[OmitsNull]}, {type=builtin(NativeFunctionsBunProcessCppProcess_functionWriteWarning) site=w4 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L18, v1: undefined|string, v2: builtin(NativeFunctionsBunProcessCppProcess_functionWriteWarning), v3: string):
+# CHECK-NEXT: v8: string = Check v3 expectedType=undefined|null|string site=w17
+# CHECK-NEXT: v4: absent = GetEnvironmentField v0 layout=L18
+# CHECK-NEXT: v5: never = CheckInitialized v4 name="fs"
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function f78 module=
+# CHECK: m5 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = NativeBinding builtin=NativeBindgenNode_fs_bindingBindTsBinding
+# CHECK-NEXT: v2: object = AssumeType v0 provenType=object
+# CHECK-NEXT: v1: NodeJSFS = Check v2 expectedType=undefined|null|NodeJSFS site=w44
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f115 module=
+# CHECK: m8 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=L16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsToNamespacedPathPosix
+# CHECK-NEXT: v30: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = AssumeType v0 provenType=builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix)
+# CHECK-NEXT: v1: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsResolvePosix
+# CHECK-NEXT: v31: builtin(NativeFunctionsNode_pathBindTsResolvePosix) = AssumeType v1 provenType=builtin(NativeFunctionsNode_pathBindTsResolvePosix)
+# CHECK-NEXT: v2: builtin(NativeFunctionsNode_pathBindTsResolvePosix) = Check v31 expectedType=undefined|null|function
+# CHECK-NEXT: v32: builtin(NativeFunctionsNode_pathBindTsResolvePosix) = AssumeType v2 provenType=builtin(NativeFunctionsNode_pathBindTsResolvePosix)
+# CHECK-NEXT: v3: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsNormalizePosix
+# CHECK-NEXT: v33: builtin(NativeFunctionsNode_pathBindTsNormalizePosix) = AssumeType v3 provenType=builtin(NativeFunctionsNode_pathBindTsNormalizePosix)
+# CHECK-NEXT: v4: builtin(NativeFunctionsNode_pathBindTsNormalizePosix) = Check v33 expectedType=undefined|null|function
+# CHECK-NEXT: v34: builtin(NativeFunctionsNode_pathBindTsNormalizePosix) = AssumeType v4 provenType=builtin(NativeFunctionsNode_pathBindTsNormalizePosix)
+# CHECK-NEXT: v5: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsIsAbsolutePosix
+# CHECK-NEXT: v35: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v5 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v6: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = Check v35 expectedType=undefined|null|function
+# CHECK-NEXT: v36: builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix) = AssumeType v6 provenType=builtin(NativeFunctionsNode_pathBindTsIsAbsolutePosix)
+# CHECK-NEXT: v7: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsJoinPosix
+# CHECK-NEXT: v37: builtin(NativeFunctionsNode_pathBindTsJoinPosix) = AssumeType v7 provenType=builtin(NativeFunctionsNode_pathBindTsJoinPosix)
+# CHECK-NEXT: v8: builtin(NativeFunctionsNode_pathBindTsJoinPosix) = Check v37 expectedType=undefined|null|function
+# CHECK-NEXT: v38: builtin(NativeFunctionsNode_pathBindTsJoinPosix) = AssumeType v8 provenType=builtin(NativeFunctionsNode_pathBindTsJoinPosix)
+# CHECK-NEXT: v9: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsRelativePosix
+# CHECK-NEXT: v39: builtin(NativeFunctionsNode_pathBindTsRelativePosix) = AssumeType v9 provenType=builtin(NativeFunctionsNode_pathBindTsRelativePosix)
+# CHECK-NEXT: v10: builtin(NativeFunctionsNode_pathBindTsRelativePosix) = Check v39 expectedType=undefined|null|function
+# CHECK-NEXT: v40: builtin(NativeFunctionsNode_pathBindTsRelativePosix) = AssumeType v10 provenType=builtin(NativeFunctionsNode_pathBindTsRelativePosix)
+# CHECK-NEXT: v11: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = Check v30 expectedType=undefined|null|function
+# CHECK-NEXT: v41: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = AssumeType v11 provenType=builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix)
+# CHECK-NEXT: v12: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsDirnamePosix
+# CHECK-NEXT: v42: builtin(NativeFunctionsNode_pathBindTsDirnamePosix) = AssumeType v12 provenType=builtin(NativeFunctionsNode_pathBindTsDirnamePosix)
+# CHECK-NEXT: v13: builtin(NativeFunctionsNode_pathBindTsDirnamePosix) = Check v42 expectedType=undefined|null|function
+# CHECK-NEXT: v43: builtin(NativeFunctionsNode_pathBindTsDirnamePosix) = AssumeType v13 provenType=builtin(NativeFunctionsNode_pathBindTsDirnamePosix)
+# CHECK-NEXT: v14: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsBasenamePosix
+# CHECK-NEXT: v44: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v14 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
+# CHECK-NEXT: v15: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = Check v44 expectedType=undefined|null|function
+# CHECK-NEXT: v45: builtin(NativeFunctionsNode_pathBindTsBasenamePosix) = AssumeType v15 provenType=builtin(NativeFunctionsNode_pathBindTsBasenamePosix)
+# CHECK-NEXT: v16: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsExtnamePosix
+# CHECK-NEXT: v46: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v16 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
+# CHECK-NEXT: v17: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = Check v46 expectedType=undefined|null|function
+# CHECK-NEXT: v47: builtin(NativeFunctionsNode_pathBindTsExtnamePosix) = AssumeType v17 provenType=builtin(NativeFunctionsNode_pathBindTsExtnamePosix)
+# CHECK-NEXT: v18: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsFormatPosix
+# CHECK-NEXT: v48: builtin(NativeFunctionsNode_pathBindTsFormatPosix) = AssumeType v18 provenType=builtin(NativeFunctionsNode_pathBindTsFormatPosix)
+# CHECK-NEXT: v19: builtin(NativeFunctionsNode_pathBindTsFormatPosix) = Check v48 expectedType=undefined|null|function
+# CHECK-NEXT: v49: builtin(NativeFunctionsNode_pathBindTsFormatPosix) = AssumeType v19 provenType=builtin(NativeFunctionsNode_pathBindTsFormatPosix)
+# CHECK-NEXT: v20: anything = NativeBinding builtin=NativeBindgenNode_pathBindTsParsePosix
+# CHECK-NEXT: v50: builtin(NativeFunctionsNode_pathBindTsParsePosix) = AssumeType v20 provenType=builtin(NativeFunctionsNode_pathBindTsParsePosix)
+# CHECK-NEXT: v21: builtin(NativeFunctionsNode_pathBindTsParsePosix) = Check v50 expectedType=undefined|null|function
+# CHECK-NEXT: v51: builtin(NativeFunctionsNode_pathBindTsParsePosix) = AssumeType v21 provenType=builtin(NativeFunctionsNode_pathBindTsParsePosix)
+# CHECK-NEXT: v22: "/" = String string="/"
+# CHECK-NEXT: v23: ":" = String string=":"
+# CHECK-NEXT: v24: undefined = Undefined
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = Check v30 expectedType=undefined|null|function
+# CHECK-NEXT: v52: builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix) = AssumeType v26 provenType=builtin(NativeFunctionsNode_pathBindTsToNamespacedPathPosix)
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: v28: L16 = NewObject -, v32, v34, v36, v38, v40, v41, v43, v45, v47, v49, v51, v22, v23, v24, v25, v52, v27 layout=L16 fields=[13, 9, 6, 7, 12, 15, 3, 1, 4, 5, 10, 14, 2, 16, 11, 0, 8] allocationSite=12 allocationClass=3
+# CHECK-NEXT: v29: L16 = FinishObject v28
+# CHECK-NEXT: v53: L16 = AssumeType v29 provenType=L16
+# CHECK-NEXT: Return v53
+# CHECK-NEXT: }

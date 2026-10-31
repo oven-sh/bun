@@ -239,7 +239,7 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
 
     fn parse_value(
         this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut css::Parser,
     ) -> Result<Self::Declaration> {
         parse_declaration(

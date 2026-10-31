@@ -1,0 +1,551 @@
+# -- source: element-pushed-list-fractions-tested.ts
+# // The list has storage for any value where it was filled by push(). A validating build keeps both reads of one element in one block.
+# // Flags: --aot-validate
+# function lessEach(from: number[], to: number[]): number[] {
+#   const out: number[] = [];
+#   for (let i = 1; i < from.length; i++) {
+#     if (typeof from[i] === "number") to[i] = from[i] - 97;
+#     out.push(from[i]);
+#   }
+#   return out;
+# }
+# const pushed: number[] = (() => {
+#   const list = [];
+#   for (const each of [1.5, 100, 3.5]) list.push(each);
+#   return list;
+# })();
+# console.log(JSON.stringify(lessEach(pushed, pushed)), JSON.stringify(pushed));
+# const written = [1.5, 100, 3.5, 4.5];
+# console.log(JSON.stringify(lessEach(written, [0])), JSON.stringify(written));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="element-pushed-list-fractions-tested.ts" displayPath="element-pushed-list-fractions-tested.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=605 kind=Variable
+typesite w1 module=m0 position=177 kind=Parameter
+typesite w2 module=m0 position=193 kind=Parameter
+typesite w3 module=m0 position=159 kind=Result
+typesite w4 module=m0 position=417 kind=Result
+typesite w5 module=m0 position=416 kind=CallResult
+typesite w6 module=m0 position=547 kind=CallResult
+typesite w7 module=m0 position=532 kind=CallResult
+typesite w8 module=m0 position=574 kind=CallResult
+typesite w9 module=m0 position=664 kind=CallResult
+typesite w10 module=m0 position=649 kind=CallResult
+typesite w11 module=m0 position=689 kind=CallResult
+typesite w12 module=m0 position=227 kind=Variable
+typesite w13 module=m0 position=258 kind=Variable
+typesite w14 module=m0 position=269 kind=PropertyRead
+typesite w15 module=m0 position=304 kind=Element
+typesite w16 module=m0 position=334 kind=Element
+typesite w17 module=m0 position=326 kind=Element
+typesite w18 module=m0 position=361 kind=Element
+typesite w19 module=m0 position=352 kind=CallResult
+typesite w20 module=m0 position=433 kind=Variable
+typesite w21 module=m0 position=457 kind=Element
+typesite w22 module=m0 position=482 kind=CallResult
+data d0 root=Array{contents=number elements=[Number{value=1.5}, Number{value=100}, Number{value=3.5}, Number{value=4.5}]} module=m0
+data d1 root=Array{contents=number elements=[Number{}]} module=m0
+data d2 root=Array{contents=number} module=m0
+data d3 root=Array{contents=anything} module=m0
+data d4 root=Array{contents=number elements=[Number{value=1.5}, Number{value=100}, Number{value=3.5}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Call v2
+    v4 = Convert v3 declared={type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="console" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]}
+    v8 = PropGet v7 key="log"
+    v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v10 = Builtin builtin=JSON
+    v11 = PropGet v10 key="stringify"
+    v12 = Convert v11 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v13 = Call v1, -, v4, v4 calleeName="lessEach"
+    v14 = Convert v13 declared={type=undefined|null|Array<number> site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v15 = Call v12, v10, v14 calleeKey="stringify" calleeName="JSON.stringify"
+    v16 = Convert v15 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v17 = Builtin builtin=JSON
+    v18 = PropGet v17 key="stringify"
+    v19 = Convert v18 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v20 = Call v19, v17, v4 calleeKey="stringify" calleeName="JSON.stringify"
+    v21 = Convert v20 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v22 = Call v9, v7, v16, v21 calleeKey="log" calleeName="console.log"
+    v23 = Data data=d0
+    v24 = Convert v23 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="console" [isFreeName]
+    v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]}
+    v28 = PropGet v27 key="log"
+    v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v30 = Builtin builtin=JSON
+    v31 = PropGet v30 key="stringify"
+    v32 = Convert v31 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v33 = Data data=d1
+    v34 = Call v1, -, v24, v33 calleeName="lessEach"
+    v35 = Convert v34 declared={type=undefined|null|Array<number> site=w9 flags=[OmitsNull, OmitsUndefined]}
+    v36 = Call v32, v30, v35 calleeKey="stringify" calleeName="JSON.stringify"
+    v37 = Convert v36 declared={type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v38 = Builtin builtin=JSON
+    v39 = PropGet v38 key="stringify"
+    v40 = Convert v39 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v41 = Call v40, v38, v24 calleeKey="stringify" calleeName="JSON.stringify"
+    v42 = Convert v41 declared={type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v43 = Call v29, v27, v37, v42 calleeKey="log" calleeName="console.log"
+    v44 = Undefined
+    Return v44
+}
+function f1 name="lessEach" module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v2 = Data data=d2
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer integer=1
+    v5 = Convert v4 declared={type=number site=w13}
+    Jump -> next b2(v5)
+  b2(v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w14} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b10(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen
+    v16 = TypeTest v15 testedType=number
+    Branch v16 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v17):
+    Jump -> next b6()
+  b6():
+    v18 = ElemGet v0, v13
+    v19 = Convert v18 declared={type=number site=w16} illTypedCause=ContainerWriterUnseen
+    v20 = Integer integer=97
+    v21 = Sub v19, v20
+    v22 = Convert v21 declared={type=number site=w17}
+    ElemSet v1, v13, v22
+    Jump -> next b8()
+  b7(v24):
+    Jump -> next b8()
+  b8():
+    v25 = PropGet v3 key="push"
+    v26 = ElemGet v0, v13
+    v27 = Convert v26 declared={type=number site=w18} illTypedCause=ContainerWriterUnseen
+    v28 = Call v25, v3, v27 calleeKey="push" calleeName="out.push"
+    v29 = Convert v28 declared={type=number site=w19} illTypedCause=DeclarationWithoutBody
+    Jump -> next b9()
+  b9():
+    v30 = Increment v13
+    v31 = Convert v30 declared={type=number site=w13}
+    Jump -> next b2(v31)
+  b10(v32):
+    Jump -> next b11()
+  b11():
+    Return v3
+}
+function f2 module=m0 position=417 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Data data=d3
+    v1 = Convert v0 declared={type=undefined|null|Array site=w20 flags=[OmitsNull, OmitsUndefined]}
+    v2 = Data data=d4
+    v3 = IteratorOpen v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Convert v1 declared={type=undefined|null|Array<number>} illTypedCause=Assertion
+    Return v8
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v9 = Convert v7 declared={type=number site=w21} illTypedCause=ContainerWriterUnseen
+    v10 = PropGet v1 key="push"
+    v11 = Call v10, v1, v9 calleeKey="push" calleeName="list.push"
+    v12 = Convert v11 declared={type=number site=w22} illTypedCause=DeclarationWithoutBody
+    Jump -> next b2()
+  b6() role=IterationCleanup subject=v3:
+    v13 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v13
+}
+function f3 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = HasJSType v0 first=5 last=5
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5 index=1
+    v7 = ResultAt v5
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v9 = CreateIteratorResult v6, v8
+    Return v9
+  b4(v10):
+    Jump -> next b5()
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+    Unreachable
+}
+runtimefunction id=68 function=f3
+# -- generated: f0 lessEach f2 next
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: ValidateFirstRun variable=g0
+# CHECK-NEXT: v1: Array<undefined|number, proven, pristine[Storage, Names]> = CallDirect function=f2 accessSite=0
+# CHECK-NEXT: ValidateType v1 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = CallDirect v1, v1 function=f1 accessSite=4
+# CHECK-NEXT: ValidateType v3 validatedType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: undefined|string = CallBuiltin -, v3, v5 overload=JSONStringify/0 accessSite=5
+# CHECK-NEXT: ValidateType v6 validatedType=undefined|null|string
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: undefined|string = CallBuiltin -, v1, v8 overload=JSONStringify/0 accessSite=7
+# CHECK-NEXT: ValidateType v9 validatedType=undefined|null|string
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v6, v9 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v12: Array<100|fractional> = Data data=d5 allocationSite=2
+# CHECK-NEXT: ValidateType v12 validatedType=Array<100|fractional, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: Array<100|fractional, proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<100|fractional, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: Array<number> = NewArray v15 contents=number allocationSite=3
+# CHECK-NEXT: ValidateType v16 validatedType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v18: Array<number, proven, pristine[Storage, Names]> = AssumeType v16 provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v19: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = CallDirect v14, v18 function=f1 accessSite=12
+# CHECK-NEXT: ValidateType v19 validatedType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: v22: undefined|string = CallBuiltin -, v19, v21 overload=JSONStringify/0 accessSite=13
+# CHECK-NEXT: ValidateType v22 validatedType=undefined|null|string
+# CHECK-NEXT: v24: undefined = Undefined
+# CHECK-NEXT: v25: undefined|string = CallBuiltin -, v14, v24 overload=JSONStringify/0 accessSite=15
+# CHECK-NEXT: ValidateType v25 validatedType=undefined|null|string
+# CHECK-NEXT: v27: undefined = CallBuiltin -, v22, v25 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="lessEach"
+# CHECK: module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names]> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|number, proven, pristine[Storage, Names]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage, Names]>, v1: Array<undefined|number, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: ValidateType v0 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ValidateType v1 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ValidateType v0 validatedType=undefined|null|Array<number>
+# CHECK-NEXT: ValidateType v0 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ValidateType v1 validatedType=undefined|null|Array<number>
+# CHECK-NEXT: ValidateType v1 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v8: Array<undefined|number> = NewArray contents=undefined|number allocationSite=4
+# CHECK-NEXT: ValidateType v8 validatedType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b1(v11)
+# CHECK-NEXT: b1(v12: int[1, 4294967295] ~ 1):
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b2(v13: int[1, 4294967295] ~ int[1, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v15: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v13 castType=int|whole
+# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=17
+# CHECK-NEXT: ValidateType v16 validatedType=number
+# CHECK-NEXT: v18: boolean = Less v15, v16
+# CHECK-NEXT: Branch v18 -> taken b3(| 0), notTaken b42()
+# CHECK-NEXT: b3(v19: int[1, 4294967294] ~ int[1, 2147483647]):
+# CHECK-NEXT: v20: boolean = HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: Branch v20 -> taken b4(| 0), notTaken b7()
+# CHECK-NEXT: b4(v21: guard):
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v22: boolean = IsElementPresent v0, v19, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b36()
+# CHECK-NEXT: b6(v23: guard):
+# CHECK-NEXT: v24: guard = AllGuards v21, v23
+# CHECK-NEXT: v25: boolean = HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: v26: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v25, v26
+# CHECK-NEXT: v28: boolean = IsElementPresent v0, v19, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v29: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v28, v29
+# CHECK-NEXT: v31: number = GetArrayElement v0, v19, v24 arrayStorage=Double level=Expected accessSite=18 [keyIsIntegral, isPresent]
+# CHECK-NEXT: ValidateType v31 validatedType=undefined|number
+# CHECK-NEXT: v33: guard = AllGuards v21, v23
+# CHECK-NEXT: v34: boolean = HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: v35: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v34, v35
+# CHECK-NEXT: v37: boolean = IsElementPresent v0, v19, v21 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v38: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v37, v38
+# CHECK-NEXT: v40: number = GetArrayElement v0, v19, v33 arrayStorage=Double level=Expected accessSite=19 [keyIsIntegral, isPresent]
+# CHECK-NEXT: Jump -> next b16(v40)
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v42: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v42 -> taken b9(| 0), notTaken b36()
+# CHECK-NEXT: b9(v43: guard) frequency=Rare:
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v44: boolean = IsElementPresent v0, v19, v43 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v44 -> taken b11(| 0), notTaken b36()
+# CHECK-NEXT: b11(v45: guard) frequency=Unlikely:
+# CHECK-NEXT: v46: guard = AllGuards v43, v45
+# CHECK-NEXT: v47: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: v48: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v47, v48
+# CHECK-NEXT: v50: boolean = IsElementPresent v0, v19, v43 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: v51: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v50, v51
+# CHECK-NEXT: v53: undefined|number = GetArrayElement v0, v19, v46 arrayStorage=Contiguous level=Expected accessSite=18 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v54: boolean = TypeTest v53 testedType=number
+# CHECK-NEXT: Branch v54 -> taken b12(| 0), notTaken b35(| 0)
+# CHECK-NEXT: b12(v55: number) frequency=Unlikely:
+# CHECK-NEXT: ValidateType v53 validatedType=number
+# CHECK-NEXT: Jump -> next b13(v55)
+# CHECK-NEXT: b13(v57: number) frequency=Unlikely:
+# CHECK-NEXT: ValidateType v57 validatedType=undefined|number
+# CHECK-NEXT: v59: guard = AllGuards v43, v45
+# CHECK-NEXT: v60: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: v61: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v60, v61
+# CHECK-NEXT: v63: boolean = IsElementPresent v0, v19, v43 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: v64: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v63, v64
+# CHECK-NEXT: v66: undefined|number = GetArrayElement v0, v19, v59 arrayStorage=Contiguous level=Expected accessSite=19 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v67: boolean = TypeTest v66 testedType=number
+# CHECK-NEXT: Branch v67 -> taken b14(| 0), notTaken b34(| 0)
+# CHECK-NEXT: b14(v68: number) frequency=Unlikely:
+# CHECK-NEXT: ValidateType v66 validatedType=number
+# CHECK-NEXT: Jump -> next b15(v68)
+# CHECK-NEXT: b15(v70: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v70)
+# CHECK-NEXT: b16(v71: number):
+# CHECK-NEXT: ValidateType v71 validatedType=undefined|number
+# CHECK-NEXT: v73: 97 = Integer integer=97
+# CHECK-NEXT: v74: number = Sub v71, v73
+# CHECK-NEXT: v75: boolean = HasArrayStorage v1 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v75 -> taken b17(| 0), notTaken b33()
+# CHECK-NEXT: b17(v76: guard):
+# CHECK-NEXT: v77: boolean = HasArrayStorage v1 arrayStorage=Double [isWritable]
+# CHECK-NEXT: v78: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v77, v78
+# CHECK-NEXT: PutArrayElement v1, v19, v74, v76 arrayStorage=Double level=Expected accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v81: boolean = HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: Branch v81 -> taken b18(| 0), notTaken b21()
+# CHECK-NEXT: b18(v82: guard):
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v83: boolean = IsElementPresent v0, v19, v82 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v83 -> taken b20(| 0), notTaken b41()
+# CHECK-NEXT: b20(v84: guard):
+# CHECK-NEXT: v85: guard = AllGuards v82, v84
+# CHECK-NEXT: v86: boolean = HasArrayStorage v0 arrayStorage=Double
+# CHECK-NEXT: v87: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v86, v87
+# CHECK-NEXT: v89: boolean = IsElementPresent v0, v19, v82 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v90: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v89, v90
+# CHECK-NEXT: v92: number = GetArrayElement v0, v19, v85 arrayStorage=Double level=Expected accessSite=22 [keyIsIntegral, isPresent]
+# CHECK-NEXT: Jump -> next b28(v92)
+# CHECK-NEXT: b21() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v94: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v94 -> taken b23(| 0), notTaken b41()
+# CHECK-NEXT: b23(v95: guard) frequency=Rare:
+# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v96: boolean = IsElementPresent v0, v19, v95 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v96 -> taken b25(| 0), notTaken b41()
+# CHECK-NEXT: b25(v97: guard) frequency=Unlikely:
+# CHECK-NEXT: v98: guard = AllGuards v95, v97
+# CHECK-NEXT: v99: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: v100: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v99, v100
+# CHECK-NEXT: v102: boolean = IsElementPresent v0, v19, v95 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: v103: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v102, v103
+# CHECK-NEXT: v105: undefined|number = GetArrayElement v0, v19, v98 arrayStorage=Contiguous level=Expected accessSite=22 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v106: boolean = TypeTest v105 testedType=number
+# CHECK-NEXT: Branch v106 -> taken b26(| 0), notTaken b32(| 0)
+# CHECK-NEXT: b26(v107: number) frequency=Unlikely:
+# CHECK-NEXT: ValidateType v105 validatedType=number
+# CHECK-NEXT: Jump -> next b27(v107)
+# CHECK-NEXT: b27(v109: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v109)
+# CHECK-NEXT: b28(v110: number):
+# CHECK-NEXT: ValidateType v110 validatedType=undefined|number
+# CHECK-NEXT: v112: boolean = HasSpareArrayCapacity v10
+# CHECK-NEXT: Branch v112 -> taken b29(), notTaken b30()
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v113: int[0, 4294967295] = CallBuiltin v10, v110 overload=ArrayPrototypePush/0 accessSite=23
+# CHECK-NEXT: Jump -> next b31(v113)
+# CHECK-NEXT: b30() frequency=Rare:
+# CHECK-NEXT: v114: int[-4294967295, 4294967294] ~ int[-2147483648, 4294967294] = Sub v16, v13
+# CHECK-NEXT: ReserveArrayCapacity v10, v114
+# CHECK-NEXT: v116: int[0, 4294967295] = CallBuiltin v10, v110 overload=ArrayPrototypePush/0 accessSite=23
+# CHECK-NEXT: Jump -> next b31(v116)
+# CHECK-NEXT: b31(v117: int[0, 4294967295]):
+# CHECK-NEXT: v118: int[2, 4294967295] ~ int[2, 2147483648] = Increment v19
+# CHECK-NEXT: Jump -> next b2(v118)
+# CHECK-NEXT: b32(v119: undefined) frequency=Rare:
+# CHECK-NEXT: Jump -> next b41()
+# CHECK-NEXT: b33() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v1
+# CHECK-NEXT: Jump -> next b38(v74)
+# CHECK-NEXT: b34(v121: undefined) frequency=Rare:
+# CHECK-NEXT: Jump -> next b36()
+# CHECK-NEXT: b35(v122: undefined) frequency=Rare:
+# CHECK-NEXT: Jump -> next b36()
+# CHECK-NEXT: b36() frequency=Rare:
+# CHECK-NEXT: v123: undefined|number = ElemGet v0, v19 accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: ValidateType v123 validatedType=undefined|number
+# CHECK-NEXT: v125: undefined|number ~ number = Expect v123 expectedType=number
+# CHECK-NEXT: v126: boolean ~ true = TypeTest v125 testedType=number
+# CHECK-NEXT: Branch v126 -> taken b37(), notTaken b39()
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: v127: undefined|number = ElemGet v0, v19 accessSite=19 [keyIsIntegral]
+# CHECK-NEXT: ValidateType v127 validatedType=undefined|number
+# CHECK-NEXT: v129: undefined|number ~ number = Expect v127 expectedType=number
+# CHECK-NEXT: v130: 97 = Integer integer=97
+# CHECK-NEXT: v131: number = Sub v129, v130
+# CHECK-NEXT: Jump -> next b38(v131)
+# CHECK-NEXT: b38(v132: number) frequency=Rare:
+# CHECK-NEXT: ElemSet v1, v19, v132 accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b40()
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: Jump -> next b40()
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: Jump -> next b41()
+# CHECK-NEXT: b41() frequency=Rare:
+# CHECK-NEXT: v134: undefined|number = ElemGet v0, v19 accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: ValidateType v134 validatedType=undefined|number
+# CHECK-NEXT: v136: undefined|number ~ number = Expect v134 expectedType=number
+# CHECK-NEXT: v137: int[0, 4294967295] = CallBuiltin v10, v136 overload=ArrayPrototypePush/0 accessSite=23
+# CHECK-NEXT: v138: int[2, 4294967295] ~ int[2, 2147483648] = Increment v19
+# CHECK-NEXT: Jump -> next b1(v138)
+# CHECK-NEXT: b42():
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m0 position=417 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage, Names]> site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: ValidateFirstRun variable=g1
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: Array<undefined|number> = NewArray contents=undefined|number capacity=v1 allocationSite=5
+# CHECK-NEXT: ValidateType v2 validatedType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: Array<undefined|number, proven, pristine[Storage, Names]> = AssumeType v2 provenType=Array<undefined|number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v5: fractional = Double number=1.5
+# CHECK-NEXT: v6: 100 = Integer integer=100
+# CHECK-NEXT: v7: fractional = Double number=3.5
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v4, v7 overload=ArrayPrototypePush/0 accessSite=25
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
+# CHECK-NEXT: v1: boolean = HasJSType v0 first=5 last=5
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b17()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: ValidateType v0 validatedType=object
+# CHECK-NEXT: v3: object ~ ArrayIterator = AssumeType v0 provenType=object [isWordOfFrontEnd]
+# CHECK-NEXT: v4: anything = GetInternalField v3
+# CHECK-NEXT: v5: -1 = Integer integer=-1
+# CHECK-NEXT: v6: boolean = StrictEq v4, v5
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v7: true = Boolean boolean=true
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v7, v8)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: anything = GetInternalField v3 index=1
+# CHECK-NEXT: ValidateType v9 validatedType=object
+# CHECK-NEXT: v11: object ~ Array = AssumeType v9 provenType=object
+# CHECK-NEXT: v12: boolean ~ false = TypeTest v11 testedType=BigInt64Array|BigUint64Array|Float16Array|Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
+# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: RequireAttachedTypedArray v11
+# CHECK-NEXT: v14: int[0, 17179869184] = GetTypedArrayLength v11
+# CHECK-NEXT: Jump -> next b9(v14)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v15: boolean ~ true = TypeTest v11 testedType=Array
+# CHECK-NEXT: Branch v15 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v16: Array):
+# CHECK-NEXT: ValidateSameValue v16, v11
+# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v16 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next b8(v18)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v19: anything = PropGet v11 key="length"
+# CHECK-NEXT: Jump -> next b8(v19)
+# CHECK-NEXT: b8(v20: anything ~ int[0, 4294967295]):
+# CHECK-NEXT: v21: int[0, 9007199254740991] ~ int[0, 4294967295] = ToLength v20
+# CHECK-NEXT: Jump -> next b9(v21)
+# CHECK-NEXT: b9(v22: int[0, 9007199254740991] ~ int[0, 17179869184]):
+# CHECK-NEXT: v23: boolean = Less v4, v22
+# CHECK-NEXT: Branch v23 -> taken b10(), notTaken b15()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: number|string|bigint = Add v4, v24
+# CHECK-NEXT: v26: number|string|bigint = PutInternalField v3, v25
+# CHECK-NEXT: v27: anything = GetInternalField v3 index=2
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: boolean = StrictEq v27, v28
+# CHECK-NEXT: Branch v29 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v30: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v30, v4)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v31: anything = ElemGet v11, v4
+# CHECK-NEXT: v32: 2 = Integer integer=2
+# CHECK-NEXT: v33: boolean = StrictEq v27, v32
+# CHECK-NEXT: Branch v33 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v34: Array = NewArray v4, v31 contents=anything
+# CHECK-NEXT: v35: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v35, v34)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v36: false = Boolean
+# CHECK-NEXT: Jump -> next b16(v36, v31)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v37: -1 = Integer integer=-1
+# CHECK-NEXT: v38: -1 = PutInternalField v3, v37
+# CHECK-NEXT: v39: true = Boolean boolean=true
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v39, v40)
+# CHECK-NEXT: b16(v41: boolean, v42: anything):
+# CHECK-NEXT: v43: L(IteratorResult) = NewObject -, v42, v41 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v43
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v44: never = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=68 captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f3, v1: anything):
+# CHECK-NEXT: v2: L(IteratorResult) = CallDirect v1 function=f3
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }

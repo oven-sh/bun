@@ -178,7 +178,7 @@ fn normalize_package_json_path<'a>(
 
     let abs_len = if strings::starts_with_char(normalized, b'.') {
         let parts: [&[u8]; 2] = [normalized, b"package.json"];
-        FileSystem::instance()
+        FileSystem::get()
             .abs_buf_checked(&parts, &mut joined[..capacity])?
             .len()
     } else {
@@ -211,8 +211,8 @@ fn normalize_package_json_path<'a>(
     };
 
     // We store the folder name without package.json
-    let rel = FileSystem::instance().relative(
-        FileSystem::instance().top_level_dir(),
+    let rel = FileSystem::get().relative(
+        FileSystem::get().top_level_dir(),
         &joined[..abs_len - PACKAGE_JSON_LEN],
     );
     joined[abs_len] = 0;

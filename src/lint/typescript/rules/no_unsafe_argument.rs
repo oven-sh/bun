@@ -8,14 +8,14 @@ use bun_lint::types::utils::{
 /// Disallow calling a function with a value with type `any`.
 pub struct NoUnsafeArgument;
 
-const UNSAFE_ARGUMENT: Message = Message::new(
+const UNSAFE_ARGUMENT: &Message = &Message::new(
     "unsafeArgument",
     "Unsafe argument of type {{sender}} assigned to a parameter of type {{receiver}}.",
 );
-const UNSAFE_ARRAY_SPREAD: Message =
-    Message::new("unsafeArraySpread", "Unsafe spread of an {{sender}} array type.");
-const UNSAFE_SPREAD: Message = Message::new("unsafeSpread", "Unsafe spread of an {{sender}} type.");
-const UNSAFE_TUPLE_SPREAD: Message = Message::new(
+const UNSAFE_ARRAY_SPREAD: &Message =
+    &Message::new("unsafeArraySpread", "Unsafe spread of an {{sender}} array type.");
+const UNSAFE_SPREAD: &Message = &Message::new("unsafeSpread", "Unsafe spread of an {{sender}} type.");
+const UNSAFE_TUPLE_SPREAD: &Message = &Message::new(
     "unsafeTupleSpread",
     "Unsafe spread of a tuple type. The argument is {{sender}} and is assigned to a parameter of type {{receiver}}.",
 );

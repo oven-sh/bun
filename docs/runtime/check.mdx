@@ -449,7 +449,7 @@ bun compile --define 'process.env.NODE_ENV="production"' ./server.ts
 
 It checks each file with the `tsconfig.json` that the build uses for it, so it takes neither `-b` nor [compiler options as flags](#compiler-options-as-flags). `-p` is the build's `--tsconfig-override`.
 
-With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging#list-them-from-your-source).
+With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging#find-the-guards-that-fail).
 
 ## If `package.json` has a `check` script
 

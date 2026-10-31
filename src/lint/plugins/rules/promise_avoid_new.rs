@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Disallow creating promises with `new Promise()`.
 pub struct AvoidNew;
 
-const AVOID_NEW_PROMISE: Message = Message::new("", "Avoid creating new promises");
+const AVOID_NEW_PROMISE: &Message = &Message::new("", "Avoid creating new promises");
 
 impl Rule for AvoidNew {
     const META: Meta = Meta::oxlint(Plugin::Promise, "avoid-new", Kind::Suggestion);

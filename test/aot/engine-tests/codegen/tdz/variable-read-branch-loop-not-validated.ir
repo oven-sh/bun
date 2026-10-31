@@ -1,0 +1,99 @@
+# Each variable is stored once. Each loop reads it only in a branch, and the branch is not taken as long as the variable is empty: a read that ran in front of the loop would run where the program never reads.
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="variable-read-branch-loop-not-validated.js" displayPath="variable-read-branch-loop-not-validated.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=7}]} module=m0
+variable g0 name="inBranch" module=m0 declared={type=undefined|null|absent|Array<number> flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|Array flags=[IsExpected]}
+    Jump -> next b1()
+  b1() handler=b3():
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v7 = Integer
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Integer
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Integer
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    v13 = Integer
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5() handler=b7():
+    Jump -> next b6()
+  b6():
+    Jump -> next b8()
+  b7() role=CatchHandler:
+    Jump -> next b8()
+  b8():
+    v15 = PropGet v6 key="length"
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Integer integer=1000
+    v18 = Greater v16, v17
+    Branch v18 -> taken b9(), notTaken b10()
+  b9():
+    v19 = Data data=d1
+    v20 = Convert v19 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    PutModuleVariable v20 variable=g0
+    Jump -> next b10()
+  b10():
+    v22 = Integer integer=3
+    v23 = Call v1, -, v22 calleeName="readInBranch"
+    v24 = Integer integer=3
+    v25 = Call v3, -, v24 calleeName="readVar"
+    v26 = Integer integer=3
+    v27 = Call v3, -, v26 calleeName="readVar"
+    v28 = Undefined
+    Return v28
+}
+function f1 name="readInBranch" module=m0 position=1796 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v10, v11):
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="inBranch"
+    v14 = GetModuleVariable variable=g0
+    v15 = CheckInitialized v14 name="inBranch"
+    v16 = Integer
+    v17 = ElemGet v15, v16
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Add v5, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Increment v10
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v20, v22)
+  b3(v23, v24):
+    v25 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v25
+}
+function f2 name="readVar" module=m0 position=2499 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: readInBranch
+# CHECK-LABEL: function {{*}}name="readInBranch"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 88, patchpoints: 16, rare instructions: 36, polls: 2
+# CHECK-NEXT: end of function f1

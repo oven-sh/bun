@@ -17,6 +17,8 @@ pub(in crate::modules) struct CommonJsNames {
     targets: FxHashMap<(ModuleRef, Atom), Resolution>,
     /// Of those, the names that an ES importer can tell from what they stand for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
     copied: FxHashSet<(ModuleRef, Atom)>,
+    /// Of those, the names whose getter reads a name of a CommonJS module off an ES module, which holds what that module had when it was linked.
+    read_off_es_modules: FxHashSet<(ModuleRef, Atom)>,
     /// The names with a getter that returns a name of another module or a binding and that no loop over the object sees.
     hidden: FxHashSet<(ModuleRef, Atom)>,
     is_refused: Vec<bool>,
@@ -33,6 +35,10 @@ impl CommonJsNames {
     /// An ES importer has a copy of the name itself, not of what the name stands for.
     pub(in crate::modules) fn is_copied(&self, module: ModuleRef, name: Atom) -> bool {
         self.copied.contains(&(module, name))
+    }
+
+    pub(in crate::modules) fn is_read_off_es_module(&self, module: ModuleRef, name: Atom) -> bool {
+        self.read_off_es_modules.contains(&(module, name))
     }
 
     /// No loop over the object sees the name, so the namespace object lacks it. An import statement is still bound to what the name stands for.
@@ -56,6 +62,18 @@ impl CommonJsNames {
                 .is_some_and(is_created)
     }
 
+    /// Somebody may look at the module while its body runs.
+    pub(in crate::modules) fn is_half(&self, module: ModuleRef) -> bool {
+        let index = self.index.get(&module);
+        index.is_some_and(|&index| self.entries[index].is_half)
+    }
+
+    /// Something may store to `module.exports` once the body has ended.
+    pub(in crate::modules) fn is_replaced_late(&self, module: ModuleRef) -> bool {
+        let index = self.index.get(&module);
+        index.is_some_and(|&index| self.entries[index].is_replaced_late)
+    }
+
     /// Whether an ES importer finds under the name what `require` of the module reads under it. Without the marker its `default` is the value of the module.
     fn shows_member(&self, module: ModuleRef, name: Atom) -> bool {
         let index = self.index.get(&module);
@@ -63,13 +81,20 @@ impl CommonJsNames {
             || index.is_some_and(|&index| self.entries[index].marker == Some(true))
     }
 
+    /// The text says which names a loop over the object sees once the body has run.
+    pub(in crate::modules) fn says_all_names(&self, module: ModuleRef) -> bool {
+        self.index.get(&module).is_some_and(|&index| {
+            let entries = &self.entries[index];
+            !self.is_refused[index] && entries.has_names && entries.knows_all_names
+        })
+    }
+
     /// The names that a loop over the object sees once the body has run, and `default`. `None`: the text does not say.
     pub(in crate::modules) fn names_of(&self, module: ModuleRef) -> Option<Vec<Atom>> {
-        let &index = self.index.get(&module)?;
-        let entries = &self.entries[index];
-        if self.is_refused[index] || !entries.has_names || !entries.knows_all_names {
+        if !self.says_all_names(module) {
             return None;
         }
+        let entries = &self.entries[*self.index.get(&module)?];
         let is_shown = |entry: &&NameEntry| entry.is_enumerable && entry.name != known::__esModule;
         let shown = entries.names.iter().filter(is_shown);
         let mut names: Vec<Atom> = shown.map(|entry| entry.name).collect();
@@ -94,6 +119,8 @@ struct Resolver<'a, 's> {
     tables: &'a ExportTables,
     names: CommonJsNames,
     states: Vec<State>,
+    /// Whether the last name that was resolved is read off an ES module.
+    is_read_off_es_module: bool,
 }
 
 impl Resolver<'_, '_> {
@@ -113,14 +140,17 @@ impl Resolver<'_, '_> {
                 return None;
             }
             let own = Resolution::Synthetic { module, name };
+            self.is_read_off_es_module = self.names.is_read_off_es_module(module, name);
             return Some(self.names.find(module, name).unwrap_or(own));
         }
         let file = self.es_module_file(module)?;
+        self.is_read_off_es_module = false;
         match self.tables.resolve(self.modules, file, name).resolution {
             Resolution::Variable(symbol) => Some(Resolution::Variable(symbol)),
             // The ES module holds the copy, or the value of the module, which no name of a CommonJS module stands for.
             Resolution::Synthetic { module, name } => {
                 let target = self.resolve_name(module, name);
+                self.is_read_off_es_module = true;
                 let names = &self.names;
                 target
                     .filter(|_| !names.is_copied(module, name) && names.shows_member(module, name))
@@ -152,6 +182,7 @@ impl Resolver<'_, '_> {
         let module = self.names.entries[index].module;
         for position in 0..self.names.entries[index].names.len() {
             let entry = self.names.entries[index].names[position];
+            self.is_read_off_es_module = false;
             let target = match entry.target {
                 None => continue,
                 Some(AliasTarget::Binding(symbol)) => Some(Resolution::Variable(symbol)),
@@ -163,6 +194,10 @@ impl Resolver<'_, '_> {
             let Some(target) = target else {
                 return false;
             };
+            if self.is_read_off_es_module && matches!(target, Resolution::Synthetic { .. }) {
+                let read = &mut self.names.read_off_es_modules;
+                read.insert((module, entry.name));
+            }
             let is_found_by_import =
                 self.names.shows_member(module, entry.name) && self.is_found_by_import(target);
             if !entry.is_enumerable && (!is_found_by_import || entry.name == known::default) {
@@ -216,11 +251,13 @@ pub(super) fn resolve_commonjs_names(
             entries,
             targets: FxHashMap::default(),
             copied: FxHashSet::default(),
+            read_off_es_modules: FxHashSet::default(),
             hidden,
             is_refused: vec![false; count],
             refused: Vec::new(),
         },
         states: vec![State::Unvisited; count],
+        is_read_off_es_module: false,
     };
     for index in 0..count {
         resolver.visit(index);

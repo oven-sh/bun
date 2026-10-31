@@ -4,12 +4,7 @@
 bun compile [flags] [entry point]
 ```
 
-`bun compile` is short for `bun build --compile --aot` and takes every flag of [`bun build`](/bundler#cli-usage).
-
-Without an entry point, it compiles the file that `"bin"` in `package.json` points to, then `"module"`, then `"main"`, then
-`index.ts`, `index.tsx`, `index.mts` or `index.js`. The executable is named after the `"bin"` entry or the package.
-
-If `package.json` has a `"compile"` script, `bun compile` runs that script.
+`bun compile` takes every flag of [`bun build`](/bundler#cli-usage), and these. If `package.json` has a `"compile"` script, it runs that script instead.
 
 ### Output
 
@@ -76,23 +71,7 @@ If `package.json` has a `"compile"` script, `bun compile` runs that script.
 bun compile --library [flags] [entry points]
 ```
 
-Builds a package to publish instead of an executable. It writes into `--outdir`:
-
-- the JavaScript (ES modules), which any runtime or bundler can use
-- `.d.ts` files, for `tsc` and `bun check`
-- each JavaScript file once more with its types kept (`index.aot.ts`), which `bun compile` compiles
-- a `package.json` made from the project's own: `main`, `module`, `types`, `exports` and `files` name what was written,
-  the `"aot"` condition names the `.aot.ts` files, `"compilerOptions"` says how strict the sources are, and
-  `scripts`, `devDependencies`, `private` and `workspaces` are left out
-- the project's `README` and `LICENSE`
-
-`dependencies`, `peerDependencies` and `optionalDependencies` stay imports. `devDependencies` are bundled.
-
-Without an entry point, it builds the TypeScript files that `"exports"` in `package.json` points to, then `"module"` or
-`"main"` if that is a TypeScript file, then `index.ts` or `src/index.ts`.
-
-The sources can be plain JavaScript. The `.d.ts` files are then inferred from the code and its JSDoc comments, one for
-each source file, and there is no `.aot.ts` file.
+Builds [a package to publish](/compiler/libraries#publish-a-package-with-its-types) instead of an executable. Without an entry point, it builds the TypeScript files that `"exports"` in `package.json` points to. `dependencies` stay imports, and `devDependencies` are bundled.
 
 <ParamField path="--library" type="boolean">
   Build a package to publish instead of an executable

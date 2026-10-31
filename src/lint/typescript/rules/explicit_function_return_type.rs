@@ -14,8 +14,8 @@ pub struct ExplicitFunctionReturnType {
     options: ReturnTypeOptions,
 }
 
-const MISSING_RETURN_TYPE: Message =
-    Message::new("missingReturnType", "Missing return type on function.");
+const MISSING_RETURN_TYPE: &Message =
+    &Message::new("missingReturnType", "Missing return type on function.");
 
 /// The name `allowedNames` is matched against: the function's own, or that of the variable, method or property it's the
 /// value of.

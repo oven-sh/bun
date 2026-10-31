@@ -13,6 +13,7 @@ use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use crate::load::sources::EntryPoint;
+use crate::options::WaysBetweenModuleObjects;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
@@ -124,9 +125,14 @@ pub(super) struct Plan {
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
+    ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
+    ways_followed_for_their_names: WaysBetweenModuleObjects,
+    lets_process_out_of_sight: bool,
     /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
     is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
+    /// A file stores `__esModule` on what `require` of the module answers.
+    is_marker_stored: Vec<bool>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
@@ -146,8 +152,12 @@ impl Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
+            ways_not_followed_out_of_sight: WaysBetweenModuleObjects::default(),
+            ways_followed_for_their_names: WaysBetweenModuleObjects::default(),
+            lets_process_out_of_sight: false,
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
+            is_marker_stored: vec![false; order.numbers.len()],
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -168,6 +178,10 @@ impl Plan {
         if let Some(number) = self.order.numbers.number_of(module) {
             set(self)[number] = true;
         }
+    }
+
+    pub(super) fn set_marker_is_stored(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_marker_stored, module);
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -326,8 +340,18 @@ impl ModuleGraph {
         }
     }
 
+    // Whoever has the object can store a name on it, define it or delete it.
+    fn is_object_seen(&self, module: ModuleRef) -> bool {
+        match self.shape(module) {
+            Shape::EsModule => self.plan.has(&self.plan.is_namespace_seen, module),
+            Shape::Names => false,
+            Shape::Value | Shape::AsToday => true,
+        }
+    }
+
     fn finish_fixed_member(&self, module: ModuleRef, member: Member) -> Member {
         match member {
+            Member::Marker(_) if self.is_object_seen(module) => Member::OnObject,
             Member::Marker(_) => self.marker(module).map_or(Member::OnObject, Member::Marker),
             _ => member,
         }
@@ -457,10 +481,14 @@ impl ModuleGraph {
         self.commonjs().ignores_this(module, name)
     }
 
+    pub(super) fn is_marker_stored(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.is_marker_stored, module)
+    }
+
     /// Whether whoever requires the module finds `__esModule` on it.
     pub fn marker(&self, module: ModuleRef) -> Option<bool> {
         match self.shape(module) {
-            Shape::EsModule => Some(true),
+            Shape::EsModule => (!self.is_marker_stored(module)).then_some(true),
             Shape::Names | Shape::Value => self.commonjs().marker(module),
             Shape::AsToday => None,
         }
@@ -529,6 +557,33 @@ impl ModuleGraph {
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
         self.plan.add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
+    }
+
+    /// A module object goes where nothing follows it, and the files that these lead to from there have no module objects.
+    pub fn ways_not_followed_out_of_sight(&self) -> WaysBetweenModuleObjects {
+        self.plan.ways_not_followed_out_of_sight
+    }
+
+    pub fn set_ways_not_followed_out_of_sight(&mut self, ways: WaysBetweenModuleObjects) {
+        self.plan.ways_not_followed_out_of_sight = ways;
+    }
+
+    /// A module object goes where nothing follows it, and these are followed from there because a file names them: whether anybody reads them of a module object is the engine's to say.
+    pub fn ways_followed_for_their_names(&self) -> WaysBetweenModuleObjects {
+        self.plan.ways_followed_for_their_names
+    }
+
+    pub fn set_ways_followed_for_their_names(&mut self, ways: WaysBetweenModuleObjects) {
+        self.plan.ways_followed_for_their_names = ways;
+    }
+
+    /// `process` goes where nothing follows it, and the main module has no module object.
+    pub fn lets_process_out_of_sight(&self) -> bool {
+        self.plan.lets_process_out_of_sight
+    }
+
+    pub fn set_lets_process_out_of_sight(&mut self, lets: bool) {
+        self.plan.lets_process_out_of_sight = lets;
     }
 
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {

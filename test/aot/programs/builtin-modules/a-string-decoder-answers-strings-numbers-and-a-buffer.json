@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for node:string_decoder, which the jsc shell does not provide" }

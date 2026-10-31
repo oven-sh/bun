@@ -12,10 +12,7 @@ async function expectOutput(program: string, expected: string) {
 
 test("the own keys of responses, requests, sockets and emitters through their lives", async () => {
   await expectOutput(
-    join(
-      import.meta.dir,
-      "../../../aot/programs/library-modules/own-keys-of-responses-sockets-and-emitters-through-their-lives.js",
-    ),
+    join(import.meta.dir, "../../../aot/parallel/library-modules/keys-responses-sockets-emitters-lives.js"),
     "node-http-own-keys-through-an-exchange.expected.txt",
   );
 });

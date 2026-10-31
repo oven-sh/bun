@@ -1,0 +1,409 @@
+# The atomic-group idiom `(?=(X))\1` inside very long regular expressions (the same program without type annotations).
+# FORM: AsRead
+# DIAGNOSTIC: RegExpWithoutCode
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="atomic-group-idiom-long-regexps-untyped.js" displayPath="atomic-group-idiom-long-regexps-untyped.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="(?=([^\\s\"'(\\[{<]*))\\1\\s"
+    v3 = String string="giu"
+    v4 = Call v1, -, v2, v3 calleeName="long"
+    v5 = String string="(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X"
+    v6 = String string="giu"
+    v7 = Call v1, -, v5, v6 calleeName="long"
+    v8 = String string="(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1X"
+    v9 = String string="v"
+    v10 = Call v1, -, v8, v9 calleeName="long"
+    v11 = String string="(?=([\\p{L}\\d_]+))\\1!"
+    v12 = String string="u"
+    v13 = Call v1, -, v11, v12 calleeName="long"
+    v14 = String string="(?=([\\p{L}\\d_]*))\\1!"
+    v15 = String string="iu"
+    v16 = Call v1, -, v14, v15 calleeName="long"
+    v17 = String string="(?=([^\\p{L}\\d_]+))\\1a"
+    v18 = String string="u"
+    v19 = Call v1, -, v17, v18 calleeName="long"
+    v20 = String string="(?=([\\ud83d\\ude00ab0-9]+))\\1a"
+    v21 = String string=""
+    v22 = Call v1, -, v20, v21 calleeName="long"
+    v23 = String string="(?=([\\ud83d\\ude00ab0-9]*))\\1X"
+    v24 = String string=""
+    v25 = Call v1, -, v23, v24 calleeName="long"
+    v26 = String string="(?=([^\\ud83d\\ude00ab0-9]+))\\1a"
+    v27 = String string=""
+    v28 = Call v1, -, v26, v27 calleeName="long"
+    v29 = String string="y(?=([abd-fx-z0-9_]+))\\1!"
+    v30 = String string="u"
+    v31 = Call v1, -, v29, v30 calleeName="long"
+    v32 = String string="xy(?=([abd-fx-z0-9_]*))\\1!!"
+    v33 = String string="iu"
+    v34 = Call v1, -, v32, v33 calleeName="long"
+    v35 = String string="\\u{1f600}(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X"
+    v36 = String string="u"
+    v37 = Call v1, -, v35, v36 calleeName="long"
+    v38 = String string=".(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X"
+    v39 = String string="u"
+    v40 = Call v1, -, v38, v39 calleeName="long"
+    v41 = String string="..(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_"
+    v42 = String string="u"
+    v43 = Call v1, -, v41, v42 calleeName="long"
+    v44 = String string="(?=([abd-fx-z0-9_]+))\\1-(?=([abd-fx-z0-9_]*))\\2;"
+    v45 = String string="u"
+    v46 = Call v1, -, v44, v45 calleeName="long"
+    v47 = String string="(?=([abd-fx-z0-9_]+))\\1-(?=([^abd-fx-z0-9_]+))\\2a"
+    v48 = String string="iu"
+    v49 = Call v1, -, v47, v48 calleeName="long"
+    v50 = String string="(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1-(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\2;"
+    v51 = String string="u"
+    v52 = Call v1, -, v50, v51 calleeName="long"
+    v53 = String string="(?=([\\w$.-]+))\\1 (?=([abd-fx-z0-9_]+))\\2!"
+    v54 = String string="giu"
+    v55 = Call v1, -, v53, v54 calleeName="long"
+    v56 = String string="(?:(?=([abd-fx-z0-9_]+))\\1|q)z"
+    v57 = String string=""
+    v58 = Call v1, -, v56, v57 calleeName="long"
+    v59 = String string="(?:(?=([abd-fx-z0-9_]+))\\1!|q)z"
+    v60 = String string="u"
+    v61 = Call v1, -, v59, v60 calleeName="long"
+    v62 = String string="(?:(?=([abd-fx-z0-9_]*))\\1!|(?=([\\w$.-]+))\\2;)+"
+    v63 = String string="u"
+    v64 = Call v1, -, v62, v63 calleeName="long"
+    v65 = String string="(?:(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X|.)+$"
+    v66 = String string="u"
+    v67 = Call v1, -, v65, v66 calleeName="long"
+    v68 = String string="(z)?(?=([abd-fx-z0-9_]+))\\2(!)?;"
+    v69 = String string="iu"
+    v70 = Call v1, -, v68, v69 calleeName="long"
+    v71 = String string="^(?:(?=([^\\s\"'(\\[{<]+))\\1\\s)*$"
+    v72 = String string="u"
+    v73 = Call v1, -, v71, v72 calleeName="long"
+    v74 = Builtin builtin=StringFromCodePoint
+    v75 = Convert v74 declared={type=undefined|null|function|builtin(StringFromCodePoint) flags=[IsExpected]}
+    v76 = Integer integer=128512
+    v77 = Call v75, -, v76 calleeName="F"
+    v78 = Convert v77 declared={type=undefined|null|string flags=[IsExpected]}
+    v79 = Integer integer=128591
+    v80 = Call v75, -, v79 calleeName="F"
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]}
+    v82 = Integer integer=55357
+    v83 = Call v75, -, v82 calleeName="F"
+    v84 = Convert v83 declared={type=undefined|null|string flags=[IsExpected]}
+    v85 = Integer integer=56832
+    v86 = Call v75, -, v85 calleeName="F"
+    v87 = Convert v86 declared={type=undefined|null|string flags=[IsExpected]}
+    v88 = Integer integer=1078
+    v89 = Call v75, -, v88 calleeName="F"
+    v90 = Convert v89 declared={type=undefined|null|string flags=[IsExpected]}
+    v91 = String string=""
+    v92 = String string="a"
+    v93 = String string="!"
+    v94 = String string="ab!"
+    v95 = String string="AB!"
+    v96 = String string="ab"
+    v97 = String string="c!"
+    v98 = String string="abc!"
+    v99 = String string="ab09_z!"
+    v100 = String string="ab09_z"
+    v101 = String string="  a"
+    v102 = String string="--a"
+    v103 = String string="cca"
+    v104 = String string="CCa"
+    v105 = String string="a.b-c;"
+    v106 = String string="$;"
+    v107 = String string=";"
+    v108 = String string="a.b c"
+    v109 = String string="word next"
+    v110 = String string="word"
+    v111 = String string="(x y"
+    v112 = String string="y12_ab!"
+    v113 = String string="yab"
+    v114 = String string="xyab!!"
+    v115 = String string="xy!!"
+    v116 = String string="xyab!"
+    v117 = String string="ab-xy;"
+    v118 = String string="ab-;"
+    v119 = String string="ab-"
+    v120 = String string="-;"
+    v121 = String string="ab---a"
+    v122 = String string="ab-cca"
+    v123 = String string="a.b ab!"
+    v124 = String string="a.b ab"
+    v125 = String string="qz"
+    v126 = String string="abz"
+    v127 = String string="ab!z"
+    v128 = String string="z"
+    v129 = String string="ab!a.b;ab!"
+    v130 = String string="zab!;"
+    v131 = String string="ab;"
+    v132 = String string="zab;"
+    v133 = String string="one two three "
+    v134 = String string="one two three"
+    v135 = String string="one (two "
+    v136 = String string="X"
+    v137 = Add v78, v136
+    v138 = Add v78, v81
+    v139 = String string="X"
+    v140 = Add v138, v139
+    v141 = String string="a"
+    v142 = Add v141, v78
+    v143 = String string="_"
+    v144 = Add v142, v143
+    v145 = Add v144, v90
+    v146 = String string="X"
+    v147 = Add v145, v146
+    v148 = String string="A"
+    v149 = Add v148, v78
+    v150 = String string="x"
+    v151 = Add v149, v150
+    v152 = String string="a"
+    v153 = Add v78, v152
+    v154 = String string="X"
+    v155 = Add v84, v154
+    v156 = String string="a"
+    v157 = Add v156, v84
+    v158 = String string="X"
+    v159 = Add v157, v158
+    v160 = String string="a"
+    v161 = Add v160, v84
+    v162 = String string="_"
+    v163 = Add v162, v84
+    v164 = String string="_"
+    v165 = Add v164, v87
+    v166 = String string="X"
+    v167 = Add v165, v166
+    v168 = String string="X"
+    v169 = Add v87, v168
+    v170 = Add v84, v87
+    v171 = String string="X"
+    v172 = Add v170, v171
+    v173 = Add v87, v84
+    v174 = String string="X"
+    v175 = Add v173, v174
+    v176 = Add v78, v84
+    v177 = String string="X"
+    v178 = Add v176, v177
+    v179 = Add v84, v78
+    v180 = String string="X"
+    v181 = Add v179, v180
+    v182 = Add v78, v84
+    v183 = String string="x"
+    v184 = Add v183, v84
+    v185 = String string="_"
+    v186 = Add v184, v185
+    v187 = String string="_"
+    v188 = Add v84, v187
+    v189 = String string="_"
+    v190 = Add v87, v189
+    v191 = String string="x"
+    v192 = Add v191, v78
+    v193 = String string="_"
+    v194 = Add v192, v193
+    v195 = String string="xx"
+    v196 = Add v195, v84
+    v197 = String string="x"
+    v198 = Add v197, v84
+    v199 = Add v198, v78
+    v200 = String string="dd"
+    v201 = Add v200, v78
+    v202 = Add v84, v78
+    v203 = Add v78, v78
+    v204 = String string="X"
+    v205 = Add v203, v204
+    v206 = String string="a"
+    v207 = Add v78, v206
+    v208 = Add v207, v78
+    v209 = String string="X"
+    v210 = Add v208, v209
+    v211 = String string="q"
+    v212 = Add v211, v78
+    v213 = String string="X"
+    v214 = Add v212, v213
+    v215 = String string="aX"
+    v216 = Add v84, v215
+    v217 = String string="qq"
+    v218 = Add v217, v84
+    v219 = String string="x_"
+    v220 = Add v218, v219
+    v221 = Add v78, v78
+    v222 = String string="-"
+    v223 = Add v221, v222
+    v224 = Add v223, v81
+    v225 = String string=";"
+    v226 = Add v224, v225
+    v227 = String string="-"
+    v228 = Add v78, v227
+    v229 = Add v228, v84
+    v230 = String string=";"
+    v231 = Add v229, v230
+    v232 = String string="7_!"
+    v233 = Add v90, v232
+    v234 = Add v90, v84
+    v235 = String string="!"
+    v236 = Add v234, v235
+    v237 = String string="a"
+    v238 = Add v84, v237
+    v239 = String string="a"
+    v240 = Add v87, v239
+    v241 = Add v84, v84
+    v242 = String string="a"
+    v243 = Add v241, v242
+    v244 = String string="ab"
+    v245 = Add v244, v84
+    v246 = String string="9a"
+    v247 = Add v245, v246
+    v248 = String string="9X"
+    v249 = Add v84, v248
+    v250 = String string="x"
+    v251 = Add v250, v90
+    v252 = String string="a"
+    v253 = Add v251, v252
+    v254 = String string="X"
+    v255 = Add v78, v254
+    v256 = Add v255, v84
+    v257 = String string="aX"
+    v258 = Add v256, v257
+    v259 = String string="aX"
+    v260 = Add v259, v84
+    v261 = Add v90, v90
+    v262 = String string=" "
+    v263 = Add v261, v262
+    v264 = Add v263, v78
+    v265 = String string=" "
+    v266 = Add v264, v265
+    v267 = String string="ab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_z!"
+    v268 = String string="ab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_z"
+    v269 = String string="aaaaaaaaa~"
+    v270 = String string="aaaaaaaaa~~"
+    v271 = String string="xaaaaaaaaaa~~y"
+    v272 = NewArray v91, v92, v93, v94, v95, v96, v97, v98, v99, v100, v101, v102, v103, v104, v105, v106, v107, v108, v109, v110, v111, v112, v113, v114, v115, v116, v117, v118, v119, v120, v121, v122, v123, v124, v125, v126, v127, v128, v129, v130, v131, v132, v133, v134, v135, v137, v140, v147, v151, v78, v153, v155, v159, v161, v163, v167, v169, v172, v175, v178, v181, v182, v186, v188, v190, v194, v196, v199, v201, v202, v205, v210, v214, v216, v220, v226, v231, v233, v236, v238, v240, v243, v247, v249, v253, v258, v260, v266, v267, v268, v269, v270, v271 contents=undefined|null|string
+    v273 = Convert v272 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v274 = Integer
+    v275 = Convert v274 declared={type=number flags=[IsExpected]}
+    v276 = Integer
+    v277 = Convert v276 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v275, v277)
+  b1(v278, v279):
+    v280 = String string=""
+    v281 = Convert v280 declared={type=undefined|null|string flags=[IsExpected]}
+    v282 = IteratorOpen v273
+    LoopHint
+    v284 = IteratorResume v282
+    v285 = Increment v278
+    v286 = Convert v285 declared={type=number flags=[IsExpected]}
+    v287 = Increment v279
+    v288 = Convert v287 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v286, v288)
+}
+function f1 name="long" module=m0 position=120 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|RegExp flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = Builtin builtin=RegExp
+    v3 = String string="|["
+    v4 = Add v0, v3
+    v5 = String string="a"
+    v6 = PropGet v5 key="repeat"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = Integer integer=17000
+    v9 = Call v7, v5, v8 calleeKey="repeat" calleeName="repeat"
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    v11 = Add v4, v10
+    v12 = String string="]{9}~~"
+    v13 = Add v11, v12
+    v14 = Construct v2, -, v13, v1 calleeName="RegExp"
+    v15 = Convert v14 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    Return v15
+}
+# -- generated: long
+# CHECK-LABEL: function {{*}}name="long"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@22 = Load(b@21, offset = 32, ControlDependent|Reads:AOTInstance_stringCells, v2:String)
+# CHECK-NEXT: Void b@24 = Branch(b@22, Terminal, v2:String)
+# CHECK-NEXT: Successors: Then:#2, Else:Rare:#3
+# CHECK-NEXT: BB#2: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@25 = Upsilon(b@22, ^30, WritesLocalState, v2:String)
+# CHECK-NEXT: Void b@26 = Jump(Terminal, v2:String)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #3, #2
+# CHECK-NEXT: Int64 b@30 = Phi(ReadsLocalState, v2:String)
+# CHECK-NEXT: Int64 b@32 = Load(b@21, offset = 40, ControlDependent|Reads:AOTInstance_stringCells, v3:String)
+# CHECK-NEXT: Void b@34 = Branch(b@32, Terminal, v3:String)
+# CHECK-NEXT: Successors: Then:#5, Else:Rare:#6
+# CHECK-NEXT: BB#5: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Void b@35 = Upsilon(b@32, ^40, WritesLocalState, v3:String)
+# CHECK-NEXT: Void b@36 = Jump(Terminal, v3:String)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#7: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #6, #5
+# CHECK-NEXT: Int64 b@40 = Phi(ReadsLocalState, v3:String)
+# CHECK-NEXT: Int64 b@42 = Load(b@21, offset = 48, ControlDependent|Reads:AOTInstance_stringCells, v4:String)
+# CHECK-NEXT: Void b@44 = Branch(b@42, Terminal, v4:String)
+# CHECK-NEXT: Successors: Then:#8, Else:Rare:#9
+# CHECK-NEXT: BB#8: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Void b@45 = Upsilon(b@42, ^50, WritesLocalState, v4:String)
+# CHECK-NEXT: Void b@46 = Jump(Terminal, v4:String)
+# CHECK-NEXT: Successors: #10
+# CHECK-NEXT: BB#10: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #9, #8
+# CHECK-NEXT: Int64 b@50 = Phi(ReadsLocalState, v4:String)
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@51 = Patchpoint(b@18:Register(%rax), b@30:Register(%rdx), b@40:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v5:Strcat)
+# CHECK-NEXT: Int64 b@52 = Patchpoint(b@51:Register(%rax), b@50:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v5:Strcat)
+# CHECK-NEXT: Int64 b@53 = Load(b@10, offset = 131088, ControlDependent|Reads:AllocatorState, v6:CallBuiltin)
+# CHECK-NEXT: Void b@55 = Branch(b@53, Terminal, v6:CallBuiltin)
+# CHECK-NEXT: Successors: Then:#11, Else:Rare:#12
+# CHECK-NEXT: BB#11: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Void b@56 = Upsilon(b@53, ^61, WritesLocalState, v6:CallBuiltin)
+# CHECK-NEXT: Void b@57 = Jump(Terminal, v6:CallBuiltin)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#13: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #12, #11
+# CHECK-NEXT: Int64 b@61 = Phi(ReadsLocalState, v6:CallBuiltin)
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int64 b@63 = Patchpoint(b@61:Register(%r8), b@61:Register(%rax), b@52:Register(%rdi), b@19:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v6:CallBuiltin)
+# CHECK-NEXT: Void b@64 = Return(b@63, Terminal)
+# CHECK-NEXT: BB#12: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int64 b@58 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v6:CallBuiltin)
+# CHECK-NEXT: Void b@59 = Upsilon(b@58, ^61, WritesLocalState, v6:CallBuiltin)
+# CHECK-NEXT: Void b@60 = Jump(Terminal, v6:CallBuiltin)
+# CHECK-NEXT: Successors: #13
+# CHECK-NEXT: BB#9: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Int64 b@47 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x6, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v4:String)
+# CHECK-NEXT: Void b@48 = Upsilon(b@47, ^50, WritesLocalState, v4:String)
+# CHECK-NEXT: Void b@49 = Jump(Terminal, v4:String)
+# CHECK-NEXT: Successors: #10
+# CHECK-NEXT: BB#6: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Int64 b@37 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x5, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v3:String)
+# CHECK-NEXT: Void b@38 = Upsilon(b@37, ^40, WritesLocalState, v3:String)
+# CHECK-NEXT: Void b@39 = Jump(Terminal, v3:String)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#3: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@27 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x4, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v2:String)
+# CHECK-NEXT: Void b@28 = Upsilon(b@27, ^30, WritesLocalState, v2:String)
+# CHECK-NEXT: Void b@29 = Jump(Terminal, v2:String)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
+# CHECK-NEXT: b@19: dereferenceableBytes = 16
+# CHECK-NEXT: b@30: dereferenceableBytes = 16
+# CHECK-NEXT: b@40: dereferenceableBytes = 16
+# CHECK-NEXT: b@50: dereferenceableBytes = 16
+# CHECK-NEXT: b@52: dereferenceableBytes = 16
+# CHECK-NEXT: b@63: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f1

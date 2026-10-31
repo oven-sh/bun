@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for process.env, Bun.env and import.meta.env, which the jsc shell does not provide" }

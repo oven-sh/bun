@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { chmodSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, isMacOS, isWindows } from "harness";
 import { join } from "path";
-import { spawned } from "../run-programs";
+import { spawned } from "../harness/commands";
 
 export type SpawnResult = Awaited<ReturnType<typeof spawned>>;
 
@@ -17,13 +17,15 @@ async function writeExecutable(path: string, bytes: Buffer) {
   if (isMacOS) expect((await spawned(["codesign", "--force", "--sign", "-", path], "/", bunEnv)).exitCode).toBe(0);
 }
 
+let copies = 0;
+
 /** Runs `bytes` as an executable in `folder` and removes the file. */
 export async function runCopy(
   folder: string,
   bytes: Buffer,
   env: Record<string, string | undefined>,
 ): Promise<SpawnResult> {
-  const path = join(folder, isWindows ? "copy.exe" : "copy");
+  const path = join(folder, `copy-${copies++}${isWindows ? ".exe" : ""}`);
   try {
     await writeExecutable(path, bytes);
     return await spawned([path], folder, env);

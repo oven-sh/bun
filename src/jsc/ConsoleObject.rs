@@ -2908,6 +2908,71 @@ pub mod formatter {
         }
     }
 
+    /// Where one instance of `print_array` stops and another one prints the rest: at a hole.
+    pub(super) struct ArrayWalkPoint {
+        len: u64,
+        /// The hole.
+        i: u32,
+        /// The first hole of its run.
+        empty_start: u32,
+        nonempty_count: u32,
+        was_good_time: bool,
+        writer_failed: bool,
+    }
+
+    /// How an instance of `print_array` gets past a run of holes in an array.
+    pub(super) trait ArrayWalk {
+        /// What the instance starts from.
+        type From<'a>: Copy;
+        /// `None` in the instance that starts at index 0.
+        fn resumed<'a>(from: Self::From<'a>) -> Option<&'a ArrayWalkPoint>;
+        fn new() -> Self;
+        /// The element after the holes from `start` on. `want` is how many more elements the
+        /// instance can use.
+        fn next(&mut self, value: JSValue, start: u32, want: u32) -> jsc::PresentIndex;
+    }
+
+    /// From index 0. It asks the array for each next element and keeps nothing.
+    pub(super) struct WalkFromStart;
+
+    impl ArrayWalk for WalkFromStart {
+        type From<'a> = ();
+        #[inline(always)]
+        fn resumed<'a>(_: Self::From<'a>) -> Option<&'a ArrayWalkPoint> {
+            None
+        }
+        #[inline(always)]
+        fn new() -> Self {
+            Self
+        }
+        #[inline(always)]
+        fn next(&mut self, value: JSValue, start: u32, _want: u32) -> jsc::PresentIndex {
+            value.next_present_index(start)
+        }
+    }
+
+    /// From the first hole whose answer is in a sparse map that is too big to scan for each
+    /// answer. It lists the map's indexes.
+    pub(super) struct WalkThroughSparseMap(jsc::PresentIndexCursor);
+
+    impl ArrayWalk for WalkThroughSparseMap {
+        type From<'a> = &'a ArrayWalkPoint;
+        #[inline(always)]
+        fn resumed<'a>(from: Self::From<'a>) -> Option<&'a ArrayWalkPoint> {
+            Some(from)
+        }
+        fn new() -> Self {
+            Self(jsc::PresentIndexCursor::new())
+        }
+        #[inline]
+        fn next(&mut self, value: JSValue, start: u32, want: u32) -> jsc::PresentIndex {
+            match self.0.next(value, start, want) {
+                Some(index) => jsc::PresentIndex::At(index),
+                None => jsc::PresentIndex::None,
+            }
+        }
+    }
+
     pub(crate) struct PropertyIteratorCtx<'a, 'b, const C: bool> {
         pub(crate) formatter: &'a mut Formatter<'b>,
         pub(crate) writer: &'a mut dyn bun_io::Write,
@@ -3325,7 +3390,9 @@ pub mod formatter {
                 Tag::CustomGetterSetter => {
                     self.print_getter_setter::<ENABLE_ANSI_COLORS, true>(writer_, value)
                 }
-                Tag::Array => self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                Tag::Array => {
+                    self.print_array::<ENABLE_ANSI_COLORS, WalkFromStart>(writer_, value, js_type, ())
+                }
                 Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(
                     writer_,
                     value,
@@ -4213,15 +4280,33 @@ pub mod formatter {
             Ok(())
         }
 
+        /// The rest of a `print_array` from a hole whose answer is in a big sparse map.
+        #[cold]
         #[inline(never)]
-        fn print_array<const C: bool>(
+        fn print_array_through_sparse_map<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
+            from: &ArrayWalkPoint,
         ) -> JsResult<()> {
-            let len = value.get_length(self.global_this)?;
-            if len != 0 && self.depth > self.max_depth {
+            self.print_array::<C, WalkThroughSparseMap>(writer_, value, js_type, from)
+        }
+
+        #[inline(never)]
+        fn print_array<const C: bool, W: ArrayWalk>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+            from: W::From<'_>,
+        ) -> JsResult<()> {
+            let from = W::resumed(from);
+            let len = match from {
+                Some(from) => from.len,
+                None => value.get_length(self.global_this)?,
+            };
+            if from.is_none() && len != 0 && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
             }
             // Cache once: `disable_inspect_custom` does not change inside this
@@ -4230,7 +4315,7 @@ pub mod formatter {
             let tag_opts = self.tag_opts();
             let mut writer = WrappedWriter {
                 ctx: writer_,
-                failed: false,
+                failed: from.is_some_and(|from| from.writer_failed),
                 estimated_line_length: &mut self.estimated_line_length,
             };
             macro_rules! pf {
@@ -4248,22 +4333,32 @@ pub mod formatter {
                 return Ok(());
             }
 
-            let mut was_good_time = self.always_newline_scope ||
-                // heuristic: more than 10, probably should have a newline before it
-                len > 10;
+            let mut was_good_time = match from {
+                Some(from) => from.was_good_time,
+                None => {
+                    self.always_newline_scope ||
+                    // heuristic: more than 10, probably should have a newline before it
+                    len > 10
+                }
+            };
             {
                 self.indent += 1;
                 self.depth += 1;
                 let _depth = defer_decrement!(self.depth);
                 let _indent = defer_decrement!(self.indent);
 
-                writer.add_for_new_line(2);
+                if from.is_none() {
+                    writer.add_for_new_line(2);
+                }
 
                 let prev_quote_strings = self.quote_strings;
                 self.quote_strings = true;
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
+                    if from.is_some() {
+                        break 'first;
+                    }
                     let element = value.get_direct_index(self.global_this, 0)?;
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
@@ -4302,6 +4397,12 @@ pub mod formatter {
 
                 let mut i: u32 = 1;
                 let mut nonempty_count: u32 = 1;
+                if let Some(from) = from {
+                    i = from.i;
+                    nonempty_count = from.nonempty_count;
+                    empty_start = Some(from.empty_start);
+                }
+                let mut walk = W::new();
 
                 while (i as u64) < len {
                     if i > jsc::MAX_ARRAY_INDEX {
@@ -4320,8 +4421,29 @@ pub mod formatter {
                             // Skip the whole run of holes at once: probing each
                             // index is O(length), and a sparse array's length
                             // can be 2^32 - 1 with no elements at all.
-                            match value.next_present_index(i + 1) {
-                                Some(next) if (next as u64) < len => i = next,
+                            // The loop can use 100 elements less the ones it printed,
+                            // and one more to print that there are more.
+                            match walk.next(value, i + 1, 101 - nonempty_count) {
+                                jsc::PresentIndex::At(next) if (next as u64) < len => i = next,
+                                jsc::PresentIndex::InSparseMap => {
+                                    // Each answer from here on costs a pass over the sparse
+                                    // map. An instance that lists the map's indexes prints
+                                    // the rest, from this hole.
+                                    let from = ArrayWalkPoint {
+                                        len,
+                                        i,
+                                        empty_start: empty_start.unwrap_or(i),
+                                        nonempty_count,
+                                        was_good_time,
+                                        writer_failed: writer.failed,
+                                    };
+                                    drop(_qs);
+                                    drop(_indent);
+                                    drop(_depth);
+                                    return self.print_array_through_sparse_map::<C>(
+                                        writer_, value, js_type, &from,
+                                    );
+                                }
                                 _ => break,
                             }
                         } else {

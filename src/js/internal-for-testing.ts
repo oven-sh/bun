@@ -834,6 +834,13 @@ export const readFreedStringUnderASAN: () => number | undefined = $newCppFunctio
   0,
 );
 
+/** In a build with assertions: how many passes over a whole sparse map the walks of present indexes made (a print of an array in sparse mode makes them). Elsewhere: nothing. */
+export const sparseMapPassCount: () => number | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_sparseMapPassCount",
+  0,
+);
+
 /** The native stack of the calling thread as WTF writes it into the report of a failed assertion. */
 export const nativeStackTrace: () => string = $newCppFunction(
   "InternalForTesting.cpp",

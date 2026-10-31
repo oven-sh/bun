@@ -7332,8 +7332,16 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
 }
 
+// What nextPresentButterflyIndex answers in place of a pass over a sparse map with more keys than its caller lets it scan.
+static constexpr uint64_t presentIndexInSparseMap = std::numeric_limits<uint64_t>::max() - 1;
+
+#if ASSERT_ENABLED
+static std::atomic<uint32_t> sparseMapPassCount { 0 };
+extern "C" uint32_t Bun__sparseMapPassCount() { return sparseMapPassCount.load(std::memory_order_relaxed); }
+#endif
+
 // Smallest index in `start..end` that the butterfly holds, or `end`. Mirrors the walk in JSObject::getOwnIndexedPropertyNames.
-static ALWAYS_INLINE uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start, uint64_t end)
+static ALWAYS_INLINE uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start, uint64_t end, uint32_t maxScannedSparseKeys)
 {
     switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -7375,6 +7383,11 @@ static ALWAYS_INLINE uint64_t nextPresentButterflyIndex(JSC::JSObject* object, u
 
         uint64_t result = end;
         if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            if (map->size() > maxScannedSparseKeys)
+                return presentIndexInSparseMap;
+#if ASSERT_ENABLED
+            sparseMapPassCount.fetch_add(1, std::memory_order_relaxed);
+#endif
             for (const auto& entry : *map) {
                 if (entry.index() >= start && entry.index() < result)
                     result = entry.index();
@@ -7390,12 +7403,116 @@ static ALWAYS_INLINE uint64_t nextPresentButterflyIndex(JSC::JSObject* object, u
 }
 
 // Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX when every index from `start` on is a hole.
+// The sparse map has no order, so an answer from it costs a pass over all of it. Above 16 keys the answer is
+// UINT64_MAX - 1: the caller walks the map with Bun__JSArray__nextPresentIndexListed, which does not pay a pass for each answer.
 extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     JSC::EncodedJSValue encodedValue,
     uint32_t start)
 {
     JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
-    return nextPresentButterflyIndex(array, start, std::numeric_limits<uint64_t>::max());
+    return nextPresentButterflyIndex(array, start, std::numeric_limits<uint64_t>::max(), 16);
+}
+
+// The sparse-map indexes that one walk of an array has listed ahead of where it is.
+// Mirrors `PresentIndexList` in JSArrayIterator.rs.
+struct PresentIndexList {
+    static constexpr uint32_t notScanned = std::numeric_limits<uint32_t>::max();
+
+    // Listed indexes. They are in the walk's `room`, in ascending order.
+    uint32_t count;
+    // The first of them that the walk has not passed.
+    uint32_t position;
+    // The largest of them.
+    uint32_t last;
+    // Sparse-map indexes that the last pass did not list: how many after a pass that lists, the
+    // size of the map after the first pass (it lists nothing), `notScanned` before that.
+    uint32_t remaining;
+};
+static_assert(sizeof(PresentIndexList) == 16);
+
+// One pass over the sparse map: lists its smallest indexes >= `start` in `room`, in ascending
+// order, as many as fit, and counts the ones that do not.
+static NEVER_INLINE uint64_t listSparseIndexes(const JSC::SparseArrayValueMap& map, uint32_t start, PresentIndexList& list, std::span<uint32_t> room)
+{
+#if ASSERT_ENABLED
+    sparseMapPassCount.fetch_add(1, std::memory_order_relaxed);
+#endif
+    uint32_t count = 0;
+    // Indexes >= `start`, listed or not.
+    uint32_t matched = 0;
+    // The largest listed index once `room` is full. Until then no index reaches it: an array
+    // index is at most MAX_ARRAY_INDEX.
+    uint32_t largest = std::numeric_limits<uint32_t>::max();
+    for (const auto& entry : map) {
+        uint32_t index = entry.index();
+        ASSERT(index <= MAX_ARRAY_INDEX);
+        if (index < start)
+            continue;
+        ++matched;
+        if (index >= largest)
+            continue;
+        if (count < room.size()) {
+            room[count++] = index;
+            if (count < room.size())
+                continue;
+            // A full `room` is a max-heap: its first index is the largest one listed.
+            std::ranges::make_heap(room);
+        } else {
+            std::ranges::pop_heap(room);
+            room.back() = index;
+            std::ranges::push_heap(room);
+        }
+        largest = room.front();
+    }
+    auto listed = room.first(count);
+    if (count == room.size())
+        std::ranges::sort_heap(listed);
+    else
+        std::ranges::sort(listed);
+
+    list.count = count;
+    list.position = 0;
+    list.last = count ? listed.back() : 0;
+    list.remaining = matched - count;
+    return count ? listed.front() : std::numeric_limits<uint64_t>::max();
+}
+
+// Bun__JSArray__nextPresentIndex for a walk that it sent here (PresentIndexCursor): `list` and the
+// `capacity` indexes at `room` belong to the walk. Its first answer from the sparse map is one
+// scan. After that a pass lists the next indexes, and the walk reads the list.
+extern "C" uint64_t Bun__JSArray__nextPresentIndexListed(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start,
+    PresentIndexList* list,
+    uint32_t* room,
+    uint32_t capacity)
+{
+    static constexpr uint64_t none = std::numeric_limits<uint64_t>::max();
+    static constexpr uint32_t anyKeys = std::numeric_limits<uint32_t>::max();
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
+
+    // Without room that holds what `list` says, nothing can be listed: every answer is a scan.
+    if (!capacity || list->count > capacity) [[unlikely]]
+        return nextPresentButterflyIndex(array, start, none, anyKeys);
+
+    if (list->remaining == PresentIndexList::notScanned) {
+        JSC::SparseArrayValueMap* map = hasAnyArrayStorage(array->indexingType()) ? array->butterfly()->arrayStorage()->m_sparseMap.get() : nullptr;
+        list->remaining = map ? static_cast<uint32_t>(map->size()) : 0;
+        return nextPresentButterflyIndex(array, start, none, anyKeys);
+    }
+
+    // The vector answers first. A sparse map with keys is left to the list.
+    uint64_t found = nextPresentButterflyIndex(array, start, none, 0);
+    if (found != presentIndexInSparseMap)
+        return found;
+
+    while (list->position < list->count && room[list->position] < start)
+        ++list->position;
+    if (list->position < list->count)
+        return room[list->position];
+    if (!list->remaining)
+        return none;
+    return listSparseIndexes(*array->butterfly()->arrayStorage()->m_sparseMap.get(), start, *list, std::span { room, capacity });
 }
 
 // Smallest index in `start..end` whose argument is still in its slot outside the butterfly, or `end`.
@@ -7413,7 +7530,7 @@ static uint32_t nextMappedArgumentIndex(const Slots* slots, uint32_t start, uint
 // One copy of the butterfly walk for the three kinds of arguments objects.
 static uint32_t nextPresentButterflyIndexBelow(JSC::JSObject* object, uint32_t start, uint32_t end)
 {
-    return static_cast<uint32_t>(nextPresentButterflyIndex(object, start, end));
+    return static_cast<uint32_t>(nextPresentButterflyIndex(object, start, end, std::numeric_limits<uint32_t>::max()));
 }
 
 // Smallest own present index in `start..end` of an arguments object, or `end`.

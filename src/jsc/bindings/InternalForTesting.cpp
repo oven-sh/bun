@@ -37,6 +37,9 @@
 
 extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 extern "C" void BunString__makeThreadShareable(BunString* str);
+#if ASSERT_ENABLED
+extern "C" uint32_t Bun__sparseMapPassCount();
+#endif
 
 namespace Bun {
 
@@ -101,6 +104,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN, (JSC::JSGlobalObje
         freed = string.impl();
     }
     return JSValue::encode(jsNumber(freed->length()));
+#else
+    return JSValue::encode(jsUndefined());
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_sparseMapPassCount, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if ASSERT_ENABLED
+    return JSValue::encode(jsNumber(Bun__sparseMapPassCount()));
 #else
     return JSValue::encode(jsUndefined());
 #endif

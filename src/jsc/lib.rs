@@ -177,6 +177,7 @@ pub use self::js_value::{
     Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
     TemporalType,
 };
+pub(crate) use self::js_value::PresentIndex;
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
 // task variant — most of which live in
@@ -196,6 +197,7 @@ pub use self::console_object::Formatter;
 pub use self::console_object::formatter::Tag as FormatTag;
 pub use self::console_object::formatter::Tag as FormatAs;
 pub use self::js_array_iterator::JSArrayIterator;
+pub(crate) use self::js_array_iterator::PresentIndexCursor;
 pub use self::js_promise::JSPromise;
 /// `JSInternalPromise` was removed upstream; the module loader uses `JSPromise`
 /// everywhere now. Alias kept for existing call sites.

@@ -2096,6 +2096,18 @@ unsafe extern "C" {
 // Additional bindings.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What `JSValue::next_present_index` answers.
+pub(crate) enum PresentIndex {
+    /// The smallest own present index that is `>= start`.
+    At(u32),
+    /// Every index from `start` on is a hole.
+    None,
+    /// The answer is in a sparse map. The map has no order, so each answer
+    /// from it costs a pass over all of it: a `PresentIndexCursor` walks it
+    /// without a pass for each answer.
+    InSparseMap,
+}
+
 /// `JSValue.ProxyInternalField`.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2491,19 +2503,21 @@ impl JSValue {
         }
         crate::call_check_slow(global, || JSC__JSValue__getDirectIndex(self, global, i))
     }
-    /// Smallest own present index of a `JSArray` that is `>= start`, or
-    /// `None` when every index from `start` to the end of the array is a
-    /// hole. Walks the array's backing storage (and sparse map) so a run of
-    /// holes is skipped in one call instead of probing each index.
+    /// Smallest own present index of a `JSArray` that is `>= start`. Walks the
+    /// array's backing storage so a run of holes is skipped in one call
+    /// instead of probing each index. It does not walk a sparse map of more
+    /// than 16 keys: see `PresentIndex::InSparseMap`.
     /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
-    pub(crate) fn next_present_index(self, start: u32) -> Option<u32> {
+    pub(crate) fn next_present_index(self, start: u32) -> PresentIndex {
         debug_assert!(self.is_cell() && self.js_type().is_array());
         unsafe extern "C" {
             safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
         }
         match Bun__JSArray__nextPresentIndex(self, start) {
-            u64::MAX => None,
-            index => Some(index as u32),
+            u64::MAX => PresentIndex::None,
+            // `presentIndexInSparseMap` in bindings.cpp
+            0xFFFF_FFFF_FFFF_FFFE => PresentIndex::InSparseMap,
+            index => PresentIndex::At(index as u32),
         }
     }
     /// The same for an arguments object, searched up to `length`. Its arguments can be outside the butterfly.

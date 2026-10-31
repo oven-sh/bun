@@ -46,14 +46,27 @@ function initRepo(cwd: string) {
   git(cwd, "commit", "-q", "-m", "initial");
 }
 
+// Bun's ASAN defaults leave LeakSanitizer off. With the VM freed at exit it reports only what
+// nothing references any more, and it then fails the run through the exit code.
+const leakCheckEnv = isASAN
+  ? {
+      ...gitEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
+    }
+  : gitEnv;
+
 async function runTestChanged(
   cwd: string,
   extra: string[] = [],
+  flag = "--changed",
+  env: Record<string, string | undefined> = gitEnv,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--changed", ...extra],
+    cmd: [bunExe(), "test", flag, ...extra],
     cwd,
-    env: gitEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -352,6 +365,65 @@ describe.concurrent("bun test --changed", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr.toLowerCase()).toContain("git");
     expect(exitCode).not.toBe(0);
+  });
+
+  // The scan's log keeps the syntax error. Only LeakSanitizer sees it, through the exit code.
+  test.skipIf(!isASAN)("a syntax error in a file that only an unselected test imports is released", async () => {
+    using dir = tempDir("test-changed-scan-log", {
+      "package.json": JSON.stringify({ name: "scanlog", type: "module" }),
+      "good.ts": `export const g = 1;\n`,
+      "good.test.ts": `import { test, expect } from "bun:test";\nimport { g } from "./good";\ntest("good", () => expect(g).toBe(1));\n`,
+      "broken.ts": `export const broken = ;\n`,
+      "bad.test.ts": `import { test } from "bun:test";\nimport "./broken";\ntest("bad", () => {});\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "good.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), [], "--changed", leakCheckEnv);
+    expect(ranFiles(stderr, ["good.test.ts", "bad.test.ts"])).toEqual(["good.test.ts"]);
+    expect(exitCode, stderr).toBe(0);
+  });
+
+  // `a.test.ts` is the changed file. It prints how many bundles the process built, each with a worker pool.
+  async function runScanFixture(args: string[], files: Record<string, string>) {
+    using dir = tempDir("test-changed-scan", {
+      "package.json": JSON.stringify({ name: "scan", type: "module" }),
+      "a.test.ts": `import { test } from "bun:test";
+import { bundlerPoolsCreated } from "bun:internal-for-testing";
+test("a", () => console.log("bundler pools: " + bundlerPoolsCreated()));
+`,
+      "b.test.ts": `import { test, expect } from "bun:test";\ntest("b", () => expect(1).toBe(1));\n`,
+      ...files,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "a.test.ts"), "// touched\n");
+
+    const { stdout, stderr, exitCode } = await runTestChanged(String(dir), args, "--changed", leakCheckEnv);
+    return {
+      warned: stderr.includes("--changed: failed to build module graph (BuildFailed); running all tests"),
+      ran: ranFiles(stderr, ["a.test.ts", "b.test.ts"]),
+      bundlerPools: stdout.match(/bundler pools: (\d+)/)?.[1],
+      stderr,
+      exitCode,
+    };
+  }
+
+  test("a scan with no config error builds one bundle", async () => {
+    const { stderr, exitCode, ...scan } = await runScanFixture([], {});
+    expect(scan).toEqual({ warned: false, ran: ["a.test.ts"], bundlerPools: "1" });
+    expect(exitCode, stderr).toBe(0);
+  });
+
+  // The config error is in the log before the scan starts. The scan refuses the log, so every test file runs.
+  test.each([
+    ["--define", ["--define", "a-b=1"], {}],
+    ["--drop", ["--drop=a-b"], {}],
+    ["--tsconfig-override", ["--tsconfig-override", "./missing.json"], {}],
+    ["bunfig.toml [define]", [], { "bunfig.toml": `[define]\n"a-b" = "1"\n` }],
+  ])("a config error from %s runs every test file and builds no bundle", async (_, args, files) => {
+    const { stderr, exitCode, ...scan } = await runScanFixture(args, files);
+    expect(scan).toEqual({ warned: true, ran: ["a.test.ts", "b.test.ts"], bundlerPools: "0" });
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("test with a syntax-error dependency still filters by changed path", async () => {

@@ -10,8 +10,10 @@ import {
   gc,
   isASAN,
   isDebug,
+  isGlibc,
   isMusl,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -202,7 +204,7 @@ describe("net.Socket read", () => {
                 },
               })
             : Bun.listen({
-                hostname: "localhost",
+                hostname: "127.0.0.1",
                 port: 0,
                 socket: {
                   open(socket) {
@@ -991,43 +993,63 @@ it("should not hang after destroy", async () => {
   }
 }, 120_000);
 
-it("should trigger error when aborted even if connection failed #13126", async () => {
-  const signal = AbortSignal.timeout(100);
-  const socket = createConnection({
-    host: "example.com",
-    port: 999,
-    signal: signal,
+describe("abort during lookup #13126", () => {
+  const runtimes: [string, string][] = [["bun", bunExe()]];
+  let referenceNode = nodeExe();
+  if (referenceNode) {
+    const probe = Bun.spawnSync({
+      cmd: [referenceNode, "-p", '!process.versions.bun && Number(process.versions.node.split(".")[0]) >= 24'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+      maxBuffer: 1024,
+    });
+    if (probe.exitCode !== 0 || probe.stdout.toString().trim() !== "true") {
+      referenceNode = null;
+    }
+  }
+  if (referenceNode) {
+    runtimes.push(["node", referenceNode]);
+  } else {
+    for (const autoSelectFamily of [false, true]) {
+      it.skip(`node pending abort autoSelectFamily=${autoSelectFamily} (requires genuine Node >=24)`);
+    }
+  }
+
+  async function runFixture(exe: string, autoSelectFamily: boolean, alreadyAborted: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        join(import.meta.dir, "net-abort-lookup-fixture.cjs"),
+        String(autoSelectFamily),
+        String(alreadyAborted),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "abort assertions passed\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  describe.each(runtimes)("%s pending abort", (_, exe) => {
+    for (const autoSelectFamily of [false, true]) {
+      it.concurrent(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(exe, autoSelectFamily, false));
+    }
   });
-  const { promise, resolve, reject } = Promise.withResolvers();
 
-  socket.on("connect", reject);
-  socket.on("error", resolve);
-
-  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
-  const err = (await promise) as Error & { code?: string; cause?: Error };
-  expect(err.name).toBe("AbortError");
-  expect(err.code).toBe("ABORT_ERR");
-  expect(err.cause?.name).toBe("TimeoutError");
-});
-
-it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
-  const signal = AbortSignal.timeout(1);
-  await Bun.sleep(10);
-  const socket = createConnection({
-    host: "example.com",
-    port: 999,
-    signal: signal,
+  // Node destroys a pre-aborted Socket during construction and only guarantees
+  // reconnecting after close. Bun's immediate-connect behavior is a separate contract.
+  describe("bun already-aborted immediate connect", () => {
+    for (const autoSelectFamily of [false, true]) {
+      it.concurrent(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(bunExe(), autoSelectFamily, true));
+    }
   });
-  const { promise, resolve, reject } = Promise.withResolvers();
-
-  socket.on("connect", reject);
-  socket.on("error", resolve);
-
-  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
-  const err = (await promise) as Error & { code?: string; cause?: Error };
-  expect(err.name).toBe("AbortError");
-  expect(err.code).toBe("ABORT_ERR");
-  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 // Regression test for #30697: net.connect({ localPort, lookup }) on the
@@ -3488,6 +3510,55 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stdout).not.toContain("socket-error:");
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
+  });
+});
+
+// This raw-libc blackhole is qualified on glibc; macOS needs the loopback binding
+// from https://github.com/oven-sh/bun/pull/44413.
+it.concurrent.skipIf(!isGlibc)("aborting a pending native connection emits one AbortError and closes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      ${blackholePortSource}
+      const controller = new AbortController();
+      const reason = new Error("pending connection aborted");
+      const events = [];
+      const errors = [];
+      let attempts = 0;
+      const socket = new net.Socket({ signal: controller.signal });
+      socket.on("connectionAttempt", () => attempts++);
+      socket.on("connect", () => events.push("connect"));
+      socket.on("error", error => {
+        events.push("error");
+        errors.push({ name: error.name, code: error.code, causeMatches: error.cause === reason });
+      });
+      socket.on("close", () => {
+        events.push("close");
+        filler.destroy();
+        console.log(JSON.stringify({ attempts, events, errors, destroyed: socket.destroyed }));
+      });
+      // Let connect() create its native pending handle before aborting it.
+      socket.once("connectionAttempt", () => setImmediate(() => controller.abort(reason)));
+      socket.connect({ host: "127.0.0.1", port });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      JSON.stringify({
+        attempts: 1,
+        events: ["error", "close"],
+        errors: [{ name: "AbortError", code: "ABORT_ERR", causeMatches: true }],
+        destroyed: true,
+      }) + "\n",
+    stderr: "",
+    exitCode: 0,
   });
 });
 

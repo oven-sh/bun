@@ -1,5 +1,6 @@
+import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir, type DirectoryTree } from "harness";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "path";
 
@@ -1409,4 +1410,225 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("(pass) covered");
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
+});
+
+// The URL of a module does not say which loader made it: an import attribute,
+// `?raw` and a plugin's onLoad each pick one. A text, Markdown or sqlite import
+// is a module that Bun generates under the URL of the file. Every JavaScript
+// file below has one function that runs and one that does not.
+describe("a module that is not the JavaScript of its file has no row", () => {
+  const esm = `export function used() {
+  return 1;
+}
+export function unused() {
+  return 2;
+}
+`;
+  const cjs = `exports.used = function used() {
+  return 1;
+};
+exports.unused = function unused() {
+  return 2;
+};
+`;
+  const row = { functions: "50.00", lines: expect.any(String), uncovered: expect.stringMatching(/^\d/) };
+  // The wrapper of a CommonJS file is one more function.
+  const cjsRow = { ...row, functions: expect.any(String) };
+
+  function sqliteFile() {
+    using db = new Database(":memory:");
+    db.run("create table t (a)");
+    db.run("insert into t values (1)");
+    return db.serialize();
+  }
+
+  async function run(fixture: DirectoryTree, { hot = false } = {}) {
+    using dir = tempDir("cov-by-loader", fixture);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--coverage",
+        "--coverage-reporter=text",
+        "--coverage-reporter=lcov",
+        ...(hot ? ["--hot"] : []),
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    // With --hot the process can stay up after the report: the last line of the report ends the read.
+    const lastLine = /^Ran \d+ tests? across \d+ files?\./m;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      if (lastLine.test(stderr)) break;
+    }
+    expect(stderr).toMatch(lastLine);
+    // A debug build also reports the internal modules that it loads, such as bun:sqlite.
+    const isFixtureFile = (name: string) => Object.hasOwn(fixture, name);
+    const rows: Record<string, { functions: string; lines: string; uncovered: string }> = {};
+    for (const line of stderr.split("\n")) {
+      const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
+      if (uncovered !== undefined && isFixtureFile(file)) rows[file] = { functions, lines, uncovered };
+    }
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+    const records = Array.from(lcov.matchAll(/^SF:(.+)$/gm), match => match[1]).filter(isFixtureFile);
+    return { rows, records: records.sort(), stderr, exitCode: hot ? null : await proc.exited };
+  }
+
+  // With the file watcher on, the loader builds the source of a module another way.
+  test.concurrent.each([
+    ["", false],
+    [", with the file watcher on", true],
+  ])("a data import%s", async (_, hot) => {
+    const { rows, records, stderr, exitCode } = await run(
+      {
+        "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+        "lib.ts": esm,
+        "UPPER.TS": esm,
+        "no-extension": esm,
+        "required.unknown": cjs,
+        "also-text.ts": esm,
+        "only-text.ts": esm,
+        "raw.ts": esm,
+        "d.md": "# Title\n",
+        "e.markdown": "# Title\n",
+        "README.MD": "# Title\n",
+        "required.md": "# Title\n",
+        "UPPER.TXT": "words\n",
+        "lower.txt": "words\n",
+        "query.sql": "words\n",
+        "db.sqlite": sqliteFile(),
+        "d.yaml": "k: 1\n",
+        "d.json": `{ "k": 1 }\n`,
+        "asset.bin": "words\n",
+        "style.css": ".a { color: red }\n",
+        "data.test.ts": `
+import { expect, test } from "bun:test";
+import { used } from "./lib.ts";
+import { used as upperCase } from "./UPPER.TS";
+import { used as noExtension } from "./no-extension";
+import { used as alsoText } from "./also-text.ts";
+import alsoTextSource from "./also-text.ts" with { type: "text" };
+import onlyTextSource from "./only-text.ts" with { type: "text" };
+import rawSource from "./raw.ts?raw";
+import md from "./d.md";
+import markdown from "./e.markdown";
+import readme from "./README.MD";
+import upperCaseText from "./UPPER.TXT";
+import text from "./lower.txt";
+import sql from "./query.sql" with { type: "text" };
+import db from "./db.sqlite" with { type: "sqlite" };
+import yaml from "./d.yaml";
+import json from "./d.json";
+import asset from "./asset.bin";
+import css from "./style.css";
+const required = require("./required.unknown");
+const requiredMarkdown = require("./required.md");
+
+test("each import is what its loader makes of the file", () => {
+  expect([used(), upperCase(), noExtension(), alsoText(), required.used()]).toEqual([1, 1, 1, 1, 1]);
+  expect([alsoTextSource, onlyTextSource, rawSource]).toEqual(Array(3).fill(${JSON.stringify(esm)}));
+  expect([md, markdown, readme, requiredMarkdown.default]).toEqual(Array(4).fill("<h1>Title</h1>\\n"));
+  expect([upperCaseText, text, sql]).toEqual(Array(3).fill("words\\n"));
+  expect(db.query("select a from t").get()).toEqual({ a: 1 });
+  expect({ yaml, json, css, asset: typeof asset }).toEqual({ yaml: { k: 1 }, json: { k: 1 }, css: {}, asset: "string" });
+});
+`,
+      },
+      { hot },
+    );
+    const javascript = {
+      "UPPER.TS": row,
+      "also-text.ts": row,
+      "lib.ts": row,
+      "no-extension": row,
+      "required.unknown": cjsRow,
+    };
+
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(rows).toEqual(javascript);
+    expect(records).toEqual(Object.keys(javascript));
+    if (!hot) expect(exitCode).toBe(0);
+  });
+
+  // The text module has the path of lib.ts as its URL. It must not replace what
+  // the JavaScript of lib.ts reported, which is below the threshold.
+  test.concurrent("an import of a source file as text, after its code ran", async () => {
+    const { rows, stderr, exitCode } = await run({
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = 0.9\n`,
+      "lib.ts": esm,
+      "lib.test.ts": `
+import { expect, test } from "bun:test";
+import { used } from "./lib.ts";
+
+test("reads the text of a module that ran", async () => {
+  expect(used()).toBe(1);
+  const raw = await import("./lib.ts?raw");
+  const text = await import("./lib.ts", { with: { type: "text" } });
+  expect([raw.default, text.default]).toEqual(Array(2).fill(${JSON.stringify(esm)}));
+});
+`,
+    });
+
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(rows).toEqual({ "lib.ts": row });
+    expect(exitCode).toBe(1);
+  });
+
+  // JavaScript that a plugin compiles is the code of its path. With a plugin
+  // registered, each module is compiled as its import is reached: the text
+  // module of code-then-text.ts comes after its JavaScript.
+  test.concurrent("the Markdown result of a plugin, and a static text import after the code", async () => {
+    const { rows, records, stderr, exitCode } = await run({
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\npreload = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+import { plugin } from "bun";
+
+plugin({
+  name: "compile",
+  setup(build) {
+    build.onLoad({ filter: /\\.(md|svelte)$/ }, () => ({ contents: ${JSON.stringify(esm)}, loader: "js" }));
+    build.onLoad({ filter: /\\.no-loader$/ }, () => ({ contents: ${JSON.stringify(esm)} }));
+    build.onLoad({ filter: /\\.markdown-loader$/ }, () => ({ contents: "# Title", loader: "md" }));
+  },
+});
+`,
+      "plugin.md": "# Title\n",
+      "plugin.svelte": "<h1>Title</h1>\n",
+      "plugin.no-loader": "\n",
+      "plugin.markdown-loader": "\n",
+      "code-then-text.ts": esm,
+      "compiled.test.ts": `
+import { expect, test } from "bun:test";
+import * as md from "./plugin.md";
+import * as svelte from "./plugin.svelte";
+import * as noLoader from "./plugin.no-loader";
+import markdown from "./plugin.markdown-loader";
+import * as code from "./code-then-text.ts";
+import text from "./code-then-text.ts" with { type: "text" };
+
+test("each import is what its loader makes of the file", () => {
+  for (const compiled of [md, svelte, noLoader, code]) expect(compiled.used()).toBe(1);
+  expect(markdown).toBe("<h1>Title</h1>\\n");
+  expect(text).toBe(${JSON.stringify(esm)});
+});
+`,
+    });
+    const javascript = {
+      "code-then-text.ts": row,
+      "plugin.md": row,
+      "plugin.no-loader": row,
+      "plugin.svelte": row,
+      "plugin.ts": { functions: "100.00", lines: "100.00", uncovered: "" },
+    };
+
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(rows).toEqual(javascript);
+    expect(records).toEqual(Object.keys(javascript));
+    expect(exitCode).toBe(0);
+  });
 });

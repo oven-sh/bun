@@ -77,8 +77,9 @@ Ref<SourceProvider> SourceProvider::create(
 
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
+    // A text, Markdown or sqlite module has the path of the file as its URL, and is not the code of the file.
     bool shouldGenerateCodeCoverage = false;
-    if (isCodeCoverageEnabled && !isBuiltin) {
+    if (isCodeCoverageEnabled && !isBuiltin && isJavaScriptTag(resolvedSource.tag)) {
         BunString sourceURLBunString = Bun::toString(sourceURLString);
         shouldGenerateCodeCoverage = BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
     }

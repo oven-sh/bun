@@ -378,6 +378,10 @@ typedef struct {
 
 #include "SyntheticModuleType.h"
 
+// Source text under these tags is what a JS/TS loader compiled for the module's path (Rust: ResolvedSourceTag::is_javascript). A builtin keeps the default tag.
+inline constexpr bool isJavaScriptTag(uint32_t tag) { return tag <= SyntheticModuleType::PackageJSONTypeCommonJS; }
+static_assert(SyntheticModuleType::JavaScript == 0 && SyntheticModuleType::PackageJSONTypeModule == 1 && SyntheticModuleType::PackageJSONTypeCommonJS == 2, "isJavaScriptTag is a range test over the first three tags");
+
 extern "C" const char* Bun__userAgent;
 
 extern "C" bool Bun__transpileVirtualModule(

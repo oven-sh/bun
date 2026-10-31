@@ -2189,6 +2189,13 @@ fn transpile_source_code_inner<const DATA_ONLY: bool>(
 ) -> crate::Result<ResolvedSource> {
     let mut resolved_source = transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args)?;
     resolved_source.is_static |= is_input_static(jsc_vm, args);
+    debug_assert!(
+        args.flags.disable_transpiling()
+            || !resolved_source.tag.is_javascript()
+            // SAFETY: `extra` is live for the call (fn contract).
+            || unsafe { (*args.extra).loader }.is_java_script_like(),
+        "only a JS-like loader returns source text under a JavaScript tag",
+    );
     Ok(resolved_source)
 }
 
@@ -3193,6 +3200,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
+                    if !loader.is_java_script_like() {
+                        resolved_source.tag = ResolvedSourceTag::Esm;
+                    }
                     return Ok(resolved_source);
                 }
 
@@ -3240,7 +3250,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             _ => ResolvedSourceTag::Javascript,
                         }
                     }
-                    _ => ResolvedSourceTag::Javascript,
+                    // Text, Markdown: module text Bun generated, not JavaScript of `path`.
+                    _ => ResolvedSourceTag::Esm,
                 };
 
                 // SAFETY: `extra.source_code_printer` is non-null per

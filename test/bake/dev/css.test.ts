@@ -1238,6 +1238,347 @@ devTest("css file with an @import that an onResolve plugin answers fails its pag
     }
   },
 });
+devTest(
+  "css file that an onResolve plugin answers comes back in the stylesheet that imports it when a script is saved",
+  {
+    // A request for a failed page answers with the recorded failure. It does not bundle the page again.
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+    files: {
+      "bunfig.toml": `
+        [serve.static]
+        plugins = ["./import-plugin.ts"]
+      `,
+      // The plugin gives one import a path in the file namespace, and two a path in its own namespace. It builds
+      // each from "data/<name>.txt", which no watcher sees. "counted.css" names how many times the plugin built it.
+      "import-plugin.ts": `
+        import { basename, join } from "node:path";
+        const builds = {};
+        export default {
+          name: "import-plugin",
+          setup(build) {
+            const load = async ({ path }) => {
+              const name = basename(path, ".css").split("-")[1];
+              return { contents: await Bun.file(join(import.meta.dir, "data", name + ".txt")).text(), loader: "css" };
+            };
+            build.onResolve({ filter: /^plugin-/ }, ({ path }) => {
+              if (path === "plugin-file.css") return { path: join(import.meta.dir, "file", path) };
+              return { path: path === "plugin-kept.css" ? path : "module-renamed.css", namespace: "virtual" };
+            });
+            build.onLoad({ filter: /plugin-file\\.css$/ }, load);
+            build.onLoad({ filter: /\\.css$/, namespace: "virtual" }, load);
+            build.onLoad({ filter: /counted\\.css$/ }, ({ path }) => ({
+              contents: ".counted-v" + (builds[path] = (builds[path] ?? 0) + 1) + " { color: red; }",
+              loader: "css",
+            }));
+          },
+        };
+      `,
+      // The script imports the three css files. Each one has a page with a stylesheet that imports it too.
+      "other/index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "other/index.ts": `import "plugin-file.css";\nimport "plugin-kept.css";\nimport "plugin-renamed.css";`,
+      ...Object.fromEntries(
+        ["file", "kept", "renamed"].flatMap(name => [
+          [`${name}/index.html`, emptyHtmlFile({ styles: ["main.css"] })],
+          [`${name}/main.css`, `@import "./counted.css";\n@import "plugin-${name}.css";\n.main-v1 { color: red; }`],
+          [`${name}/counted.css`, ``],
+          [`data/${name}.txt`, `.${name}-v1 { color: red; }}`],
+        ]),
+      ),
+    },
+    async test(dev) {
+      const pages = async () => {
+        const result: Record<string, { status: number; sheets: string[] }> = {};
+        for (const page of ["/other", "/file", "/kept", "/renamed"]) result[page] = await linkedStylesheets(dev, page);
+        return result;
+      };
+      const failed = { status: 500, sheets: [] };
+      const allFailed = { "/other": failed, "/file": failed, "/kept": failed, "/renamed": failed };
+      expect(await pages()).toEqual(allFailed);
+      // This save bundles the script with the three css files, which still do not build.
+      await dev.writeNoChanges("other/index.ts");
+      expect(await pages()).toEqual(allFailed);
+      for (const name of ["file", "kept", "renamed"]) {
+        await Bun.write(dev.join(`data/${name}.txt`), `.${name}-v2 { color: red; }`);
+      }
+      await dev.writeNoChanges("other/index.ts");
+      // Each "main.css" was built for its first request, and in the bundle that found its css file repaired.
+      const repaired = {
+        "/other": { status: 200, sheets: [".file-v2", ".kept-v2", ".renamed-v2"] },
+        "/file": { status: 200, sheets: [".counted-v2 .file-v2 .main-v1"] },
+        "/kept": { status: 200, sheets: [".counted-v2 .kept-v2 .main-v1"] },
+        "/renamed": { status: 200, sheets: [".counted-v2 .renamed-v2 .main-v1"] },
+      };
+      expect(await pages()).toEqual(repaired);
+      // The three css files build now: one more save of the script does not build a "main.css" again.
+      await dev.writeNoChanges("other/index.ts");
+      expect(await pages()).toEqual(repaired);
+    },
+  },
+);
+// A plugin that builds "<dir>/<name>.css" from "data/<dir>/<name>.txt" if that file exists. A write to "data" breaks
+// or repairs the stylesheet, and no watcher sees it.
+const dataPluginFiles = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./data-plugin.ts"]
+  `,
+  "data-plugin.ts": `
+    import { basename, dirname, join } from "node:path";
+    export default {
+      name: "data-plugin",
+      setup(build) {
+        build.onLoad({ filter: /\\.css$/ }, async ({ path }) => {
+          const name = join(basename(dirname(path)), basename(path, ".css") + ".txt");
+          const data = Bun.file(join(import.meta.dir, "data", name));
+          if (await data.exists()) return { contents: await data.text(), loader: "css" };
+        });
+      },
+    };
+  `,
+};
+devTest(
+  "css file repaired with no watcher event comes back in the stylesheet that imports it when another importer is saved",
+  {
+    files: {
+      ...dataPluginFiles,
+      ...Object.fromEntries(
+        ["page", "stylesheet", "mirror"].flatMap(dir => [
+          [`${dir}/index.html`, emptyHtmlFile({ styles: ["main.css"] })],
+          [`${dir}/main.css`, `@import "./dep.css";\n.main-v1 { color: red; }`],
+          [`${dir}/dep.css`, ``],
+          [`data/${dir}/dep.txt`, `.dep-v1 { color: red; }}`],
+        ]),
+      ),
+      // This page links "dep.css".
+      "page/other.html": emptyHtmlFile({ styles: ["dep.css"] }),
+      // These two link a stylesheet that imports "dep.css", as "main.css" does.
+      ...Object.fromEntries(
+        ["stylesheet", "mirror"].flatMap(dir => [
+          [`${dir}/other.html`, emptyHtmlFile({ styles: ["other.css"] })],
+          [`${dir}/other.css`, `@import "./dep.css";\n.other-v1 { color: red; }`],
+        ]),
+      ),
+    },
+    async test(dev) {
+      const failed = { status: 500, sheets: [] };
+      // Per directory: the file that is saved after the repair, and the stylesheets of "other.html".
+      for (const { dir, saved, sheets } of [
+        { dir: "page", saved: "other.html", sheets: [".dep-v2"] },
+        { dir: "stylesheet", saved: "other.css", sheets: [".dep-v2 .other-v1"] },
+        // The other order: the save is of "main.css", and "other.css" is the stylesheet that no save bundles.
+        { dir: "mirror", saved: "main.css", sheets: [".dep-v2 .other-v1"] },
+      ]) {
+        const pages = async () => ({
+          dir,
+          index: await linkedStylesheets(dev, `/${dir}`),
+          other: await linkedStylesheets(dev, `/${dir}/other`),
+        });
+        expect(await pages()).toEqual({ dir, index: failed, other: failed });
+        await Bun.write(dev.join(`data/${dir}/dep.txt`), `.dep-v2 { color: red; }`);
+        await dev.writeNoChanges(`${dir}/${saved}`);
+        expect(await pages()).toEqual({
+          dir,
+          index: { status: 200, sheets: [".dep-v2 .main-v1"] },
+          other: { status: 200, sheets },
+        });
+      }
+    },
+  },
+);
+devTest(
+  "css file repaired with no watcher event comes back in the stylesheet that imports it when another page is requested",
+  {
+    // A request for a failed page bundles the page again: the "again" directory needs that.
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: "0" },
+    files: {
+      ...dataPluginFiles,
+      ...Object.fromEntries(
+        ["first", "linked", "again"].flatMap(dir => [
+          [`${dir}/index.html`, emptyHtmlFile({ styles: ["main.css"] })],
+          [`${dir}/main.css`, `@import "./dep.css";\n.main-v1 { color: red; }`],
+          [`${dir}/dep.css`, ``],
+          [`data/${dir}/dep.txt`, `.dep-v1 { color: red; }}`],
+        ]),
+      ),
+      // The script of this page imports "dep.css". "third.html" links "main.css", as "index.html" does.
+      "first/other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+      "first/other.ts": `import "./dep.css";`,
+      "first/third.html": emptyHtmlFile({ styles: ["main.css"] }),
+      // This page links "main.css" too.
+      "linked/other.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["other.ts"] }),
+      "linked/other.ts": `import "./dep.css";`,
+      // This page links a stylesheet that imports "dep.css".
+      "again/other.html": emptyHtmlFile({ styles: ["other.css"] }),
+      "again/other.css": `@import "./dep.css";\n.other-v1 { color: red; }`,
+    },
+    async test(dev) {
+      const failed = { status: 500, sheets: [] };
+      const repaired = { status: 200, sheets: [".dep-v2 .main-v1"] };
+      expect(await linkedStylesheets(dev, "/first")).toEqual(failed);
+      await Bun.write(dev.join("data/first/dep.txt"), `.dep-v2 { color: red; }`);
+      // The first bundle of this page builds "dep.css". No page that links "main.css" is in it.
+      expect(await linkedStylesheets(dev, "/first/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+      expect(await linkedStylesheets(dev, "/first")).toEqual(repaired);
+      // This page has its first bundle after that one.
+      expect(await linkedStylesheets(dev, "/first/third")).toEqual(repaired);
+
+      expect(await linkedStylesheets(dev, "/linked")).toEqual(failed);
+      await Bun.write(dev.join("data/linked/dep.txt"), `.dep-v2 { color: red; }`);
+      // The response to the request that started the bundle links "main.css" with "dep.css" in it.
+      expect(await linkedStylesheets(dev, "/linked/other")).toEqual({
+        status: 200,
+        sheets: [".dep-v2", ".dep-v2 .main-v1"],
+      });
+      expect(await linkedStylesheets(dev, "/linked")).toEqual(repaired);
+
+      for (const page of ["/again", "/again/other"]) {
+        expect({ page, ...(await linkedStylesheets(dev, page)) }).toEqual({ page, ...failed });
+      }
+      await Bun.write(dev.join("data/again/dep.txt"), `.dep-v2 { color: red; }`);
+      // This request finds the failure of its page on record, and bundles the page again.
+      expect(await linkedStylesheets(dev, "/again/other")).toEqual({ status: 200, sheets: [".dep-v2 .other-v1"] });
+      expect(await linkedStylesheets(dev, "/again")).toEqual(repaired);
+    },
+  },
+);
+devTest("css file repaired with no watcher event comes back in a stylesheet that another stylesheet imports", {
+  files: {
+    ...dataPluginFiles,
+    ...Object.fromEntries(
+      ["saved", "requested"].flatMap(dir => [
+        // "outer.css" has "dep.css" through "main.css". Each of the two stylesheets has a page.
+        [`${dir}/index.html`, emptyHtmlFile({ styles: ["main.css"] })],
+        [`${dir}/outer.html`, emptyHtmlFile({ styles: ["outer.css"] })],
+        [`${dir}/main.css`, `@import "./dep.css";\n.main-v1 { color: red; }`],
+        [`${dir}/outer.css`, `@import "./main.css";\n.outer-v1 { color: red; }`],
+        [`${dir}/dep.css`, ``],
+        [`data/${dir}/dep.txt`, `.dep-v1 { color: red; }}`],
+      ]),
+    ),
+    "requested/other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+    "requested/other.ts": `import "./dep.css";`,
+  },
+  async test(dev) {
+    const failed = { status: 500, sheets: [] };
+    const pages = async (dir: string) => ({
+      dir,
+      index: await linkedStylesheets(dev, `/${dir}`),
+      outer: await linkedStylesheets(dev, `/${dir}/outer`),
+    });
+    const repaired = {
+      index: { status: 200, sheets: [".dep-v2 .main-v1"] },
+      outer: { status: 200, sheets: [".dep-v2 .main-v1 .outer-v1"] },
+    };
+    expect(await pages("saved")).toEqual({ dir: "saved", index: failed, outer: failed });
+    await Bun.write(dev.join("data/saved/dep.txt"), `.dep-v2 { color: red; }`);
+    // This save bundles "outer.css" with "main.css" as an import of it. "main.css" has a page of its own.
+    await dev.writeNoChanges("saved/outer.css");
+    expect(await pages("saved")).toEqual({ dir: "saved", ...repaired });
+
+    expect(await pages("requested")).toEqual({ dir: "requested", index: failed, outer: failed });
+    await Bun.write(dev.join("data/requested/dep.txt"), `.dep-v2 { color: red; }`);
+    // The first bundle of this page has "dep.css", and neither of the two stylesheets.
+    expect(await linkedStylesheets(dev, "/requested/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    expect(await pages("requested")).toEqual({ dir: "requested", ...repaired });
+  },
+});
+devTest("css file that a page links while it does not build is repaired through the stylesheet that imports it", {
+  // A request for a failed page answers with the recorded failure. It does not bundle the page again.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    ...dataPluginFiles,
+    // "index.html" links "dep.css". "other.html" reaches it through the @import in "other.css".
+    "site/index.html": emptyHtmlFile({ styles: ["dep.css"] }),
+    "site/other.html": emptyHtmlFile({ styles: ["other.css"] }),
+    "site/other.css": `@import "./dep.css";\n.other-v1 { color: red; }`,
+    "site/dep.css": ``,
+    "data/site/dep.txt": `.dep-v1 { color: red; }}`,
+  },
+  async test(dev) {
+    const pages = async () => [await linkedStylesheets(dev, "/site"), await linkedStylesheets(dev, "/site/other")];
+    const failed = { status: 500, sheets: [] };
+    // "dep.css" has never built in the first round. In the second one, a save of "other.css" finds it broken again.
+    for (const version of [2, 4]) {
+      if (version === 4) {
+        await Bun.write(dev.join("data/site/dep.txt"), `.dep-v3 { color: red; }}`);
+        await dev.writeNoChanges("site/other.css");
+      }
+      expect({ version, pages: await pages() }).toEqual({ version, pages: [failed, failed] });
+      await Bun.write(dev.join("data/site/dep.txt"), `.dep-v${version} { color: red; }`);
+      // This bundle has "dep.css" as an import of "other.css". "index.html" needs it as a stylesheet of its own.
+      await dev.writeNoChanges("site/other.css");
+      expect({ version, pages: await pages() }).toEqual({
+        version,
+        pages: [
+          { status: 200, sheets: [`.dep-v${version}`] },
+          { status: 200, sheets: [`.dep-v${version} .other-v1`] },
+        ],
+      });
+    }
+  },
+});
+devTest("stylesheet with two imports that do not build comes back when a bundle repairs the last of them", {
+  files: {
+    ...dataPluginFiles,
+    ...Object.fromEntries(
+      ["apart", "together"].flatMap(dir => [
+        [`${dir}/index.html`, emptyHtmlFile({ styles: ["main.css"] })],
+        [`${dir}/main.css`, `@import "./dep.css";\n@import "./late.css";\n.main-v1 { color: red; }`],
+        [`${dir}/other.html`, emptyHtmlFile({ scripts: ["other.ts"] })],
+        [`${dir}/dep.css`, ``],
+        [`${dir}/late.css`, ``],
+        [`data/${dir}/dep.txt`, `.dep-v1 { color: red; }}`],
+        [`data/${dir}/late.txt`, `.late-v1 { color: red; }}`],
+      ]),
+    ),
+    // Two pages, and so two bundles, repair the two imports of "apart/main.css". "narrow.css" has the first one only.
+    "apart/other.ts": `import "./dep.css";`,
+    "apart/third.html": emptyHtmlFile({ scripts: ["third.ts"] }),
+    "apart/third.ts": `import "./late.css";`,
+    "apart/narrow.html": emptyHtmlFile({ styles: ["narrow.css"] }),
+    "apart/narrow.css": `@import "./dep.css";\n.narrow-v1 { color: red; }`,
+    // One page, and so one bundle, repairs both imports of "together/main.css".
+    "together/other.ts": `import "./dep.css";\nimport "./late.css";`,
+    // "own/main.css" does not build itself when a bundle repairs its import.
+    "own/index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "own/main.css": `@import "./dep.css";\n.main-v1 { color: red; }`,
+    "own/dep.css": `.dep-v1 { color: red; }`,
+    "own/other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+    "own/other.ts": `import "./dep.css";`,
+  },
+  async test(dev) {
+    const failed = { status: 500, sheets: [] };
+    const repaired = { status: 200, sheets: [".dep-v2 .late-v2 .main-v1"] };
+    for (const page of ["/apart", "/apart/narrow"]) {
+      expect({ page, ...(await linkedStylesheets(dev, page)) }).toEqual({ page, ...failed });
+    }
+    await Bun.write(dev.join("data/apart/dep.txt"), `.dep-v2 { color: red; }`);
+    // "late.css" still does not build, and this page does not import it: its first bundle must not fail.
+    expect(await linkedStylesheets(dev, "/apart/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    // Every import of "narrow.css" builds now. "main.css" still has one that does not.
+    expect(await linkedStylesheets(dev, "/apart/narrow")).toEqual({ status: 200, sheets: [".dep-v2 .narrow-v1"] });
+    expect(await linkedStylesheets(dev, "/apart")).toEqual(failed);
+    await Bun.write(dev.join("data/apart/late.txt"), `.late-v2 { color: red; }`);
+    expect(await linkedStylesheets(dev, "/apart/third")).toEqual({ status: 200, sheets: [".late-v2"] });
+    expect(await linkedStylesheets(dev, "/apart")).toEqual(repaired);
+
+    expect(await linkedStylesheets(dev, "/together")).toEqual(failed);
+    for (const name of ["dep", "late"]) {
+      await Bun.write(dev.join(`data/together/${name}.txt`), `.${name}-v2 { color: red; }`);
+    }
+    expect(await linkedStylesheets(dev, "/together/other")).toEqual({ status: 200, sheets: [".dep-v2", ".late-v2"] });
+    expect(await linkedStylesheets(dev, "/together")).toEqual(repaired);
+
+    expect(await linkedStylesheets(dev, "/own")).toEqual({ status: 200, sheets: [".dep-v1 .main-v1"] });
+    // Both files stop building, each through a save.
+    await dev.write("own/dep.css", `.dep-v2 { color: red; }}`, { errors: null });
+    await dev.write("own/main.css", `@import "./dep.css";\n.main-v2 { color: red; }}`, { errors: null });
+    expect(await linkedStylesheets(dev, "/own")).toEqual(failed);
+    await Bun.write(dev.join("data/own/dep.txt"), `.dep-v3 { color: red; }`);
+    // "main.css" still does not build, and this page does not import it: its first bundle must not fail.
+    expect(await linkedStylesheets(dev, "/own/other")).toEqual({ status: 200, sheets: [".dep-v3"] });
+  },
+});
 devTest("an open page gets the stylesheet that imports a repaired css file in the hot update that removes the error", {
   files: {
     "bunfig.toml": `
@@ -1293,6 +1634,206 @@ devTest("an open page gets the stylesheet that imports a repaired css file in th
     await c.style(".dep-v3").color.expect.toBe("red");
     // One build removed the error and sent two stylesheets: the one of "dep.css", and the one of "main.css".
     expect(frames).toEqual(["e", "u .dep-v3 .dep-v3 .main-v2"]);
+  },
+});
+// Nested ":fullscreen" rules parse, and the css printer rejects them (see bundle.test.ts).
+const stylesheetThatDoesNotPrint =
+  Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+  "\ncolor: red;\n" +
+  Buffer.alloc(30, "}").toString() +
+  "\n";
+devTest("css file that did not print comes back in every stylesheet that holds it", {
+  // A request for a failed page answers with the recorded failure. It does not bundle the page again.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./leaf-plugin.ts"]
+    `,
+    // Each "leaf.css" is what the "leaf.txt" beside it holds.
+    "leaf-plugin.ts": `
+      import { dirname, join } from "node:path";
+      export default {
+        name: "leaf-plugin",
+        setup(build) {
+          build.onLoad({ filter: /leaf\\.css$/ }, async ({ path }) => ({
+            contents: await Bun.file(join(dirname(path), "leaf.txt")).text(),
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    ...Object.fromEntries(
+      ["holder", "linked"].flatMap(dir => [
+        [`${dir}/outer.html`, emptyHtmlFile({ styles: ["outer.css"] })],
+        [`${dir}/inner.html`, emptyHtmlFile({ styles: ["inner.css"] })],
+        [`${dir}/outer.css`, `@import "./inner.css";\n.outer-v1 { color: red; }`],
+        [`${dir}/inner.css`, `@import "./leaf.css";\n.inner-v1 { color: red; }`],
+        [`${dir}/leaf.css`, ``],
+      ]),
+    ),
+    "holder/leaf.txt": `.leaf-v1 { color: red; }`,
+    "linked/leaf.txt": stylesheetThatDoesNotPrint,
+  },
+  async test(dev) {
+    // "holder": "outer.css" builds. Then "leaf.css" stops printing, and only "inner.css" is bundled with it.
+    expect(await linkedStylesheets(dev, "/holder/outer")).toEqual({
+      status: 200,
+      sheets: [".leaf-v1 .inner-v1 .outer-v1"],
+    });
+    await Bun.write(dev.join("holder/leaf.txt"), stylesheetThatDoesNotPrint);
+    expect(await linkedStylesheets(dev, "/holder/inner")).toEqual({ status: 500, sheets: [] });
+    // No watcher event reaches "leaf.css": the plugin reads "leaf.txt" when a stylesheet that imports it is bundled.
+    await Bun.write(dev.join("holder/leaf.txt"), `.leaf-v2 { color: red; }`);
+    // This bundle has "inner.css", and does not have "outer.css".
+    await dev.write("holder/inner.html", emptyHtmlFile({ styles: ["inner.css"], body: "saved" }), { errors: null });
+    expect(await linkedStylesheets(dev, "/holder/inner")).toEqual({ status: 200, sheets: [".leaf-v2 .inner-v1"] });
+    expect(await linkedStylesheets(dev, "/holder/outer")).toEqual({
+      status: 200,
+      sheets: [".leaf-v2 .inner-v1 .outer-v1"],
+    });
+
+    // "linked": neither stylesheet prints, and each has a page that links it.
+    expect(await linkedStylesheets(dev, "/linked/inner")).toEqual({ status: 500, sheets: [] });
+    expect(await linkedStylesheets(dev, "/linked/outer")).toEqual({ status: 500, sheets: [] });
+    await Bun.write(dev.join("linked/leaf.txt"), `.leaf-v2 { color: red; }`);
+    // This bundle has "inner.css" as an @import of "outer.css" only.
+    await dev.write("linked/outer.css", `@import "./inner.css";\n.outer-v2 { color: red; }`, { errors: null });
+    expect(await linkedStylesheets(dev, "/linked/outer")).toEqual({
+      status: 200,
+      sheets: [".leaf-v2 .inner-v1 .outer-v2"],
+    });
+    expect(await linkedStylesheets(dev, "/linked/inner")).toEqual({ status: 200, sheets: [".leaf-v2 .inner-v1"] });
+  },
+});
+devTest("css file repaired with no watcher event comes back in a stylesheet that only a plugin can resolve", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-main-plugin.ts"]
+    `,
+    // "virtual-<name>.css" is "<name>.css" in the namespace of the plugin, and its text is "data/<name>.txt".
+    // "virtual-path-main.css" is a path in the file namespace instead, and no file has that path.
+    "virtual-main-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "virtual-main-plugin",
+        setup(build) {
+          const load = async name => ({
+            contents: await Bun.file(join(import.meta.dir, "data", name + ".txt")).text(),
+            loader: "css",
+          });
+          build.onResolve({ filter: /^virtual-/ }, ({ path }) =>
+            path === "virtual-path-main.css"
+              ? { path: join(import.meta.dir, "path", "no-such-file.css") }
+              : { path: path.slice("virtual-".length), namespace: "virtual" },
+          );
+          build.onLoad({ filter: /no-such-file\\.css$/ }, () => load("path-main"));
+          build.onLoad({ filter: /\\.css$/, namespace: "virtual" }, ({ path }) => load(path.slice(0, -".css".length)));
+        },
+      };
+    `,
+    // "main" imports "dep", which does not build. "other.ts" imports "dep" too.
+    ...Object.fromEntries(
+      ["link", "script", "path", "two", "failed"].flatMap(dir => [
+        [`data/${dir}-main.txt`, `@import "virtual-${dir}-dep.css";\n.main-v1 { color: red; }`],
+        [`data/${dir}-dep.txt`, `.dep-v1 { color: red; }}`],
+        [`${dir}/other.html`, emptyHtmlFile({ scripts: ["other.ts"] })],
+        [`${dir}/other.ts`, `import "virtual-${dir}-dep.css";`],
+      ]),
+    ),
+    // A page links "main", or a script of the page imports it.
+    "link/index.html": emptyHtmlFile({ styles: ["virtual-link-main.css"] }),
+    "script/index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "script/index.ts": `import "virtual-script-main.css";`,
+    "path/index.html": emptyHtmlFile({ styles: ["virtual-path-main.css"] }),
+    // Here "main" imports a second css file that does not build, and "more.ts" imports that one too.
+    "two/index.html": emptyHtmlFile({ styles: ["virtual-two-main.css"] }),
+    "data/two-main.txt": `@import "virtual-two-dep.css";\n@import "virtual-two-more.css";\n.main-v1 { color: red; }`,
+    "data/two-more.txt": `.more-v1 { color: red; }}`,
+    "two/more.html": emptyHtmlFile({ scripts: ["more.ts"] }),
+    "two/more.ts": `import "virtual-two-more.css";`,
+    // Here the script that imports "main" stops building before "dep" is repaired.
+    "failed/index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "failed/index.ts": `import "virtual-failed-main.css";`,
+  },
+  async test(dev) {
+    for (const dir of ["link", "script", "path"]) {
+      for (const page of [`/${dir}`, `/${dir}/other`]) {
+        expect({ page, ...(await linkedStylesheets(dev, page)) }).toEqual({ page, status: 500, sheets: [] });
+      }
+      // The plugin reads "dep" again when "other.ts" is bundled. No bundle can have "main" as an entry point:
+      // the bundle has the page or the script that imports "main" instead.
+      await Bun.write(dev.join(`data/${dir}-dep.txt`), `.dep-v2 { color: red; }`);
+      await dev.writeNoChanges(`${dir}/other.ts`);
+      expect({ dir, ...(await linkedStylesheets(dev, `/${dir}/other`)) }).toEqual({
+        dir,
+        status: 200,
+        sheets: [".dep-v2"],
+      });
+      expect({ dir, ...(await linkedStylesheets(dev, `/${dir}`)) }).toEqual({
+        dir,
+        status: 200,
+        sheets: [".dep-v2 .main-v1"],
+      });
+    }
+    // Two imports of "main" do not build. The first request of "other" repairs the first one. That request gets
+    // its page: "main" is not bundled again while its second import would fail again.
+    expect(await linkedStylesheets(dev, "/two")).toEqual({ status: 500, sheets: [] });
+    await Bun.write(dev.join("data/two-dep.txt"), `.dep-v2 { color: red; }`);
+    expect(await linkedStylesheets(dev, "/two/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    // The first request of "more" repairs the second import, and its bundle brings "main" back with both.
+    await Bun.write(dev.join("data/two-more.txt"), `.more-v2 { color: red; }`);
+    expect(await linkedStylesheets(dev, "/two/more")).toEqual({ status: 200, sheets: [".more-v2"] });
+    expect(await linkedStylesheets(dev, "/two")).toEqual({ status: 200, sheets: [".dep-v2 .more-v2 .main-v1"] });
+    // The only importer of "main" does not build when "dep" is repaired: the bundle that repairs "dep" leaves it out.
+    expect(await linkedStylesheets(dev, "/failed")).toEqual({ status: 500, sheets: [] });
+    await dev.write("failed/index.ts", `import "virtual-failed-main.css";\nconst = ;`, { errors: null });
+    await Bun.write(dev.join("data/failed-dep.txt"), `.dep-v2 { color: red; }`);
+    expect(await linkedStylesheets(dev, "/failed/other")).toEqual({ status: 200, sheets: [".dep-v2"] });
+    // The join asked the resolver for the path of "main" in "path", which no file has: no error of that is printed.
+    expect(dev.output.lines.filter(line => line.includes("no-such-file.css"))).toEqual([]);
+  },
+});
+devTest("css file repaired with no watcher event comes back in a plugin stylesheet that a saved stylesheet imports", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-app-plugin.ts"]
+    `,
+    // "virtual-<name>" is "<name>" in the namespace of the plugin. The text of a stylesheet is "data/<name>.txt".
+    "virtual-app-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "virtual-app-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^virtual-/ }, ({ path }) => ({
+            path: path.slice("virtual-".length),
+            namespace: "virtual",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, async ({ path }) => {
+            if (path === "app.js") return { contents: 'import "virtual-main.css";', loader: "js" };
+            return { contents: await Bun.file(join(import.meta.dir, "data", path + ".txt")).text(), loader: "css" };
+          });
+        },
+      };
+    `,
+    // The script that imports "main" is in the namespace too: nothing that imports "main" can enter a bundle alone.
+    "main.html": emptyHtmlFile({ scripts: ["virtual-app.js"] }),
+    "data/main.css.txt": `@import "virtual-dep.css";\n.main-v1 { color: red; }`,
+    "data/dep.css.txt": `.dep-v1 { color: red; }}`,
+    "outer.html": emptyHtmlFile({ styles: ["outer.css"] }),
+    "outer.css": `@import "virtual-main.css";\n.outer-v1 { color: red; }`,
+  },
+  async test(dev) {
+    for (const page of ["/main", "/outer"]) {
+      expect({ page, ...(await linkedStylesheets(dev, page)) }).toEqual({ page, status: 500, sheets: [] });
+    }
+    // The bundle of "outer.css" parses "main" and "dep" as its imports, and gives "main" its own stylesheet again.
+    await Bun.write(dev.join("data/dep.css.txt"), `.dep-v2 { color: red; }`);
+    await dev.writeNoChanges("outer.css");
+    expect(await linkedStylesheets(dev, "/outer")).toEqual({ status: 200, sheets: [".dep-v2 .main-v1 .outer-v1"] });
+    expect(await linkedStylesheets(dev, "/main")).toEqual({ status: 200, sheets: [".dep-v2 .main-v1"] });
   },
 });
 devTest("css file with an @import that is not css does not bundle the stylesheet that imports it while it fails", {

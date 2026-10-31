@@ -1,3 +1,4 @@
+use super::children::{TreeNode, push_children};
 use super::dead_code::{DeadRoots, mark_nodes_below};
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
@@ -7,8 +8,8 @@ use super::inputs::{FoldInputs, PathState};
 use super::known_to_bun_run::ExcludedOperand;
 use super::run_order::RunOrder;
 use super::{
-    Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NodeBits,
-    literal_constant, slice_in,
+    Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NamedPath,
+    NodeBits, literal_constant, root_of_head, slice_in,
 };
 use crate::atom::Interner;
 use crate::bind::{Bound, Parent, SymbolId};
@@ -61,6 +62,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) inputs: &'a FoldInputs<'s>,
     pub(super) file: &'a FileInputs<'s>,
     pub(super) atoms: &'a Interner<'s>,
+    pub(super) arena: &'s Arena,
     pub(super) evaluator: Evaluator<'a, 's>,
     pub(super) feature_symbol: SymbolId,
     pub(super) loader_names: OnceCell<LoaderNames>,
@@ -84,6 +86,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) conditions: FxHashMap<ExprId, bool>,
     pub(super) short_circuited_links: PositionSet,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
+    pub(super) applied_heads: Vec<(ExprId, &'s NamedPath<'s>)>,
     pub(super) strings_over_limit: Vec<ExprId>,
 }
 
@@ -103,6 +106,7 @@ pub(super) fn run<'s>(
         inputs,
         file,
         atoms,
+        arena,
         evaluator: Evaluator::new(atoms, inputs.max_string_bytes, &over_limit_count),
         feature_symbol: find_feature_import(hir, bound, &mut errors),
         loader_names: OnceCell::new(),
@@ -126,6 +130,7 @@ pub(super) fn run<'s>(
         conditions: FxHashMap::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         call_errors: Vec::new(),
+        applied_heads: Vec::new(),
         strings_over_limit: Vec::new(),
     };
     folder.fold_exprs();
@@ -182,6 +187,10 @@ impl<'s> Folder<'_, 's> {
             Decision::Constant(constant) => Folded::constant(constant),
             Decision::Data(_) => {
                 self.data_literals.insert(e.idx());
+                Folded::UNKNOWN
+            }
+            Decision::NamedPath(named) => {
+                self.applied_heads.push((e, named));
                 Folded::UNKNOWN
             }
             Decision::Unknown | Decision::GlobalPath(_) | Decision::DeferredData => Folded::UNKNOWN,
@@ -274,6 +283,24 @@ impl<'s> Folder<'_, 's> {
         found
     }
 
+    // Of the paths that defines give the members of one chain only the longest is applied. A path in dead code stays: a build and `bun run` do not remove the same code.
+    fn freeze_applied_heads(&self, arena: &'s Arena) -> &'s [(ExprId, &'s NamedPath<'s>)] {
+        if self.applied_heads.is_empty() {
+            return &[];
+        }
+        let mut replaced = Vec::new();
+        for entry in &self.decided {
+            push_children(self.hir, TreeNode::Expr(entry.0), &mut replaced);
+        }
+        let replaced = mark_nodes_below(self.hir, replaced).exprs;
+        let applied = self.applied_heads.iter();
+        let kept = applied.filter(|entry| !replaced.contains(entry.0.idx()));
+        let mut kept: Vec<(ExprId, &NamedPath<'s>)> = kept.copied().collect();
+        kept.shared_sort_unstable_by_key(|entry| root_of_head(&entry.1.head));
+        debug_assert!(kept.is_sorted_by(|a, b| root_of_head(&a.1.head) < root_of_head(&b.1.head)));
+        slice_in(&kept, arena)
+    }
+
     fn finish(mut self, mut errors: Vec<FoldError>, arena: &'s Arena) -> FoldResult<'s> {
         self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
         self.paths_from_own_directory.shared_sort_unstable();
@@ -292,8 +319,17 @@ impl<'s> Folder<'_, 's> {
         );
         let (dead_exprs_in_bun_run, dead_stmts_in_bun_run) =
             dead_in_bun_run.unwrap_or((dead_exprs, dead_stmts));
+        // Only a fold with a define whose value is a name or a path decides one, so any other fold looks at no decision here.
+        let is_path = |entry: &(ExprId, Decision<'s>)| {
+            matches!(entry.1, Decision::GlobalPath(_) | Decision::NamedPath(_))
+        };
+        let is_built_with_define_paths = !self.inputs.define_heads().is_empty();
+        let has_define_paths = is_built_with_define_paths && self.decided.iter().any(is_path);
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
+            is_built_with_define_paths,
+            has_define_paths,
+            applied_heads: self.freeze_applied_heads(arena),
             constants: slice_in(&self.collect_constants(&dead), arena),
             specifiers: slice_in(&self.specifiers, arena),
             paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),

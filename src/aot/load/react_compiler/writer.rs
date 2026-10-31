@@ -73,12 +73,14 @@ impl<'a, 's> TreeWriter<'a, 's> {
         }
     }
 
+    /// `define_heads` are the first names of the paths that defines put in place of expressions of the function.
     pub(super) fn replace_function(
         &mut self,
         function: FnId,
         generated: &GeneratedFunction<'_>,
+        define_heads: &[Atom],
     ) -> Written<()> {
-        self.function = self.create_function_context(function, generated);
+        self.function = self.create_function_context(function, generated, define_heads);
         let original = self.file[function];
         let first_expression = self.file.exprs.len();
         let params =
@@ -152,11 +154,16 @@ impl<'a, 's> TreeWriter<'a, 's> {
         &mut self,
         function: FnId,
         generated: &GeneratedFunction<'_>,
+        define_heads: &[Atom],
     ) -> FunctionContext {
         let record = self.file[function];
+        let atoms = self.atoms;
         let symbols = generated.symbols.iter();
         let outside = symbols.clone().filter(|symbol| symbol.is_outside);
-        let outside_names: FxHashSet<&[u8]> = outside.map(|symbol| &*symbol.name).collect();
+        let outside = outside.map(|symbol| &*symbol.name);
+        // Where the output names what a define replaces, the first name of the define's path is looked up again: no local of the output may have that name.
+        let heads = define_heads.iter().map(|&head| atoms.bytes(head));
+        let outside_names: FxHashSet<&[u8]> = outside.chain(heads).collect();
         let spans = generated.spans.iter().map(|span| (span.start, span.end));
         let spans: Vec<(u32, u32)> = spans.collect();
         FunctionContext {

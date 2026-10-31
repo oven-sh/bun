@@ -3,7 +3,9 @@ use core::mem::{replace, take};
 use core::ops::Range;
 
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, Decl, ImplicitReferenceKind, Parent, SymbolId,
+};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
@@ -1183,9 +1185,16 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
-        // The factory of a JSX element, and a class that the metadata of a decorator names.
+        // The factory of a JSX element, a class that the metadata of a decorator names, and the first name of the value of a define.
         for reference in bound.runtime.implicit_references() {
-            if let Binding::Symbol(symbol) = reference.binding {
+            let is_read = match reference.kind {
+                ImplicitReferenceKind::JsxFactory
+                | ImplicitReferenceKind::JsxFragment
+                | ImplicitReferenceKind::DecoratorMetadata(_) => true,
+                // The binder records the name wherever the fold may apply the define. Code reads it only where the fold did, outside dead code.
+                ImplicitReferenceKind::DefineHead => decisions.reads_define_head(reference),
+            };
+            if is_read && let Binding::Symbol(symbol) = reference.binding {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
@@ -1548,7 +1557,10 @@ impl<'a, 's> FileScan<'a, 's> {
         loop {
             match decisions.decision(node) {
                 Decision::Constant(_) | Decision::Data(_) => return true,
-                Decision::Unknown | Decision::GlobalPath(_) | Decision::DeferredData => {}
+                Decision::Unknown
+                | Decision::GlobalPath(_)
+                | Decision::NamedPath(_)
+                | Decision::DeferredData => {}
             }
             let Parent::Expr(parent) = self.bound.parent_of_expr(node) else {
                 return false;

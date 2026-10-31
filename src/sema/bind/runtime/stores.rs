@@ -1,9 +1,10 @@
 use super::bits::{has_bit, insert_bit};
 use super::queries::find_entry;
 use super::references::ReferencePass;
-use super::{Binding, StoreKind, SymbolStore};
+use super::{Binding, ImplicitReferenceKind, StoreKind, SymbolStore};
 use crate::atom::known;
-use crate::bind::{BoundBuilder, Parent};
+use crate::bind::{BoundBuilder, Parent, ScopeKind};
+use crate::fold::{DefineHead, DefineRoot};
 use crate::hir::*;
 
 impl ReferencePass<'_, '_> {
@@ -134,6 +135,59 @@ impl ReferencePass<'_, '_> {
     fn evaluated_ident_binding(&self, ident: ExprId) -> Binding {
         let binding = find_entry(&self.references.ident_bindings, ident).copied();
         binding.unwrap_or_else(|| self.lookup.bound.default_binding(ident))
+    }
+
+    /// `bun build` writes the one name of a define in place of an identifier, so a store to the identifier is a store to what that name is there.
+    pub(super) fn collect_stores_through_defines(&mut self) {
+        let heads = self.define_heads;
+        if !heads.iter().any(|entry| entry.renames_root) {
+            return;
+        }
+        let hir = self.lookup.hir;
+        for reference in &self.references.implicit_references {
+            let (ImplicitReferenceKind::DefineHead, NodeData::Expr(root), Binding::Symbol(symbol)) =
+                (reference.kind, reference.node, reference.binding)
+            else {
+                continue;
+            };
+            let ExprKind::Ident(name) = hir[root].kind else {
+                continue;
+            };
+            let renames_root = |entry: &DefineHead| {
+                entry.renames_root
+                    && entry.root == DefineRoot::Global(name)
+                    && entry.head == reference.name
+            };
+            if !has_bit(&self.references.store_targets, root.idx())
+                || !heads.iter().any(renames_root)
+                || self.is_in_with_scope(root)
+            {
+                continue;
+            }
+            // The identifier itself names no symbol, so `record_store` has listed its store among those to unbound names.
+            let mut unbound = self.references.unbound_name_stores.iter();
+            if let Some(&(target, kind)) = unbound.find(|store| store.0 == root) {
+                self.references.stores.push(SymbolStore {
+                    symbol,
+                    target,
+                    kind,
+                });
+            }
+        }
+    }
+
+    // What `is_in_with_scope` of `import_sites` answers once the file is bound. The fold applies no define to such an identifier.
+    fn is_in_with_scope(&self, ident: ExprId) -> bool {
+        let scopes = &self.lookup.bound.scopes;
+        let mut scope = find_entry(&self.references.dynamic_ident_lookups, ident).copied();
+        while let Some(at) = scope {
+            let data = &scopes[at.idx()];
+            if matches!(data.kind, ScopeKind::With(_)) {
+                return true;
+            }
+            scope = data.parent.some();
+        }
+        false
     }
 }
 

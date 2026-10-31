@@ -36,6 +36,15 @@ pub struct Define<'s> {
     pub value: DefineValue<'s>,
 }
 
+/// A define gives `root`, or a path below it, a path that begins with `head`. `bun build` looks `head` up where the path is written in its place.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct DefineHead {
+    pub root: DefineRoot,
+    pub head: Atom,
+    /// A define gives `root` itself the one name `head`, so a store to `root` is a store to what `head` names there.
+    pub renames_root: bool,
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub struct FoldOptions<'s> {
     pub defines: &'s [Define<'s>],
@@ -58,6 +67,7 @@ pub struct FoldInputs<'s> {
     pub(super) nodes: &'s [TrieNode<'s>],
     pub(super) roots: &'s [(DefineRoot, u32)],
     pub(super) root_filter: u64,
+    pub(super) heads: &'s [DefineHead],
     pub(super) features: &'s [Atom],
     pub(super) preserves_unused_imports: bool,
     pub(super) minifies_syntax: bool,

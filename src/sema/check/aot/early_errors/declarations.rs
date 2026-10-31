@@ -96,6 +96,10 @@ impl Checker<'_, '_> {
                 BindingKind::Import => 2632,
                 _ => continue,
             };
+            // The target of a store through a define does not itself name the binding that is stored to. `bun build` prints such a file, and the store throws where it runs.
+            if bound.binding(store.target) != Binding::Symbol(store.symbol) {
+                continue;
+            }
             let at = self.span_of_token(file, hir[store.target].pos);
             self.early_error_at(at, code, &[Arg::Atom(name)]);
         }

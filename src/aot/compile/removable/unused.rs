@@ -71,7 +71,9 @@ impl Removable<'_, '_> {
         }
         match decisions.decision(expression) {
             Decision::Constant(_) | Decision::Data(_) => return true,
-            Decision::GlobalPath(_) | Decision::DeferredData => return false,
+            Decision::GlobalPath(_) | Decision::NamedPath(_) | Decision::DeferredData => {
+                return false;
+            }
             Decision::Unknown => {}
         }
         if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {

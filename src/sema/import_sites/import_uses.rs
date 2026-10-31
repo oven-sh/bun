@@ -1,5 +1,7 @@
 use super::statements::value_import_symbols;
-use crate::bind::{Binding, Bound, Decl, ImplicitReferenceKind, Parent, SymbolId};
+use crate::bind::{
+    Binding, Bound, Decl, ImplicitReference, ImplicitReferenceKind, Parent, SymbolId,
+};
 use crate::fold::Decisions;
 use crate::hir::{ExprId, File, Flags, ImportEqualsId, ImportId, NodeData};
 use crate::util::PositionSet;
@@ -171,9 +173,32 @@ pub(super) fn compute_import_uses(
                 !matches!(reference.node, NodeData::Expr(e) if decisions.is_dead_expr(e))
             }
             ImplicitReferenceKind::DecoratorMetadata(_) => true,
+            ImplicitReferenceKind::DefineHead => {
+                let Some(site) = find_name_site(bound, decisions, reference) else {
+                    continue;
+                };
+                // `bun run` removes a statement that does nothing, and with it the use of an import whose name a define puts there.
+                let is_removed_by_bun_run = decisions.as_folded_by_bun_run().is_dead_expr(site);
+                let is_live = !decisions.is_dead_expr(site) && !is_removed_by_bun_run;
+                if is_live {
+                    uses.read_live.insert(symbol.idx());
+                }
+                is_live
+            }
         };
         uses.add_use(symbol, is_live);
     }
     add_entity_root_uses(hir, bound, &mut uses);
     uses
+}
+
+// The site where a define puts the name of `head` alone, in code that runs or in dead code: `bun run` counts a use of the name there.
+fn find_name_site(
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    head: &ImplicitReference,
+) -> Option<ExprId> {
+    let (site, named) = decisions.site_of_define_head(head)?;
+    let is_name_alone = named.names.len() == 1 && !bound.is_define_head_behind_member(head);
+    is_name_alone.then_some(site)
 }

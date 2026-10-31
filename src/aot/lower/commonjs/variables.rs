@@ -149,6 +149,21 @@ impl FileLowering<'_, '_, '_, '_> {
                 | Binding::Free => {}
             }
         }
+        // The value of a define may begin with either name where no identifier spells it, and nobody looks at what the code does with `module` there.
+        for head in self.decisions().applied_define_heads() {
+            match head.binding() {
+                Binding::CommonJs(CommonJsVariable::Exports) => names_exports = true,
+                Binding::CommonJs(CommonJsVariable::Module) => replaces_exports = true,
+                Binding::CommonJs(
+                    CommonJsVariable::Require
+                    | CommonJsVariable::Filename
+                    | CommonJsVariable::Dirname,
+                )
+                | Binding::Symbol(_)
+                | Binding::Arguments(_)
+                | Binding::Free => {}
+            }
+        }
         CommonJsState {
             form: BodyForm::Plain,
             keeps_first_exports: replaces_exports && names_exports,

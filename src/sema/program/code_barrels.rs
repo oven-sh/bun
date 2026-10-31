@@ -2,7 +2,7 @@ use self::object_reads::ObjectReads;
 use super::code_imports::files_of;
 use super::code_load::{LoadKey, LoadedCode};
 use super::*;
-use crate::bind::{Binding, Parent};
+use crate::bind::{Binding, ImplicitReferenceKind, Parent};
 use crate::file_analysis::FileAnalysis;
 use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use crate::module_format::ModuleFormat;
@@ -340,12 +340,16 @@ impl Summary<'_, '_> {
         }
         let entity_roots = (0..hir.import_equals.len() as u32)
             .map(|import| bound.entity_root_binding(ImportEqualsId(import)));
-        let implicit = bound
-            .runtime
-            .implicit_references()
-            .iter()
-            .map(|it| it.binding);
-        for binding in entity_roots.chain(implicit) {
+        let decisions = &self.analysis.decisions;
+        let implicit = bound.runtime.implicit_references().iter();
+        // The binder records the first name of a define at every root of the define. Only where the fold applied the define in code that runs is the name read.
+        let implicit = implicit.filter(|reference| match reference.kind {
+            ImplicitReferenceKind::DefineHead => decisions.reads_define_head(reference),
+            ImplicitReferenceKind::JsxFactory
+            | ImplicitReferenceKind::JsxFragment
+            | ImplicitReferenceKind::DecoratorMetadata(_) => true,
+        });
+        for binding in entity_roots.chain(implicit.map(|reference| reference.binding)) {
             if let Binding::Symbol(symbol) = binding {
                 uses.used_otherwise.insert(symbol);
             }

@@ -8,7 +8,7 @@ use top_level_await::has_live_top_level_await;
 pub(crate) use top_level_await::has_written_top_level_await;
 
 use crate::atom::{Atom, Interner};
-use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};
+use crate::bind::{BindOptions, Binding, Bound, Decl, ImplicitReferenceKind, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
@@ -116,7 +116,7 @@ impl FileAnalysis<'_> {
         Some(first_call_site + found)
     }
 
-    /// What code that runs reads where no expression spells the name: the root of `import a = b.c`, the factory of a JSX element, a class that the metadata of a decorator names.
+    /// What code that runs reads where no expression spells the name: the root of `import a = b.c`, the factory of a JSX element, a class that the metadata of a decorator names, a define's first name.
     pub fn bindings_read_without_expression(
         &self,
         hir: &File<'_>,
@@ -129,8 +129,14 @@ impl FileAnalysis<'_> {
             is_evaluated.then(|| bound.entity_root_binding(alias))
         });
         let implicit = bound.runtime.implicit_references().iter();
-        let implicit = implicit.filter(|reference| {
-            !matches!(reference.node, NodeData::Expr(element) if self.decisions.is_dead_expr(element))
+        let implicit = implicit.filter(|reference| match reference.kind {
+            // The record is at the root that the define names: dead code where the fold applied the define at an access above it, and code that runs where the fold applied none.
+            ImplicitReferenceKind::DefineHead => self.decisions.reads_define_head(reference),
+            ImplicitReferenceKind::JsxFactory
+            | ImplicitReferenceKind::JsxFragment
+            | ImplicitReferenceKind::DecoratorMetadata(_) => {
+                !matches!(reference.node, NodeData::Expr(element) if self.decisions.is_dead_expr(element))
+            }
         });
         roots.chain(implicit.map(|reference| reference.binding))
     }

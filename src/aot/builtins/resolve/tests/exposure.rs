@@ -1,3 +1,4 @@
+use super::super::{ModuleObjectOwner, ModuleObjectUse};
 use super::*;
 
 const TSX: Setup = Setup {
@@ -498,4 +499,101 @@ fn decorator_metadata_type_is_exposed() {
     with_case(setup, "class E { a: Bun.Glob; }", |case| {
         assert!(!case.mentions(BuiltinId::BunGlob));
     });
+}
+
+#[test]
+fn alias_read_as_first_name_of_define_is_exposed_where_code_reads_it() {
+    let setup = Setup {
+        defines: &[(&["process", "env", "PROBE"], &["h", "floor"])],
+        ..PROGRAM
+    };
+    with_case(setup, "const h = Math; process.env.PROBE;", |case| {
+        assert!(case.exposes(BuiltinId::Math));
+    });
+    // The binder records the name at every `process`. The fold applies the define to no path of the first text, and only in dead code of the second.
+    for source in [
+        "const h = Math; process.env.OTHER;",
+        "const h = Math; if (false) process.env.PROBE;",
+    ] {
+        with_case(setup, source, |case| {
+            assert!(case.mentions(BuiltinId::Math), "{source}");
+            assert!(!case.exposes(BuiltinId::Math), "{source}");
+        });
+    }
+}
+
+#[test]
+fn path_of_define_behind_a_direct_eval_is_exposed() {
+    let setup = Setup {
+        defines: &[(&["PROBE"], &["Bun", "Glob"])],
+        ..SCRIPT
+    };
+    // The text may declare `Bun`, so the binder records the name and no expression stands for the path.
+    with_case(setup, "function f(s) { eval(s); return PROBE; }", |case| {
+        assert!(case.mentions(BuiltinId::Bun));
+        assert!(case.mentions(BuiltinId::BunGlob));
+        assert!(case.exposes(BuiltinId::BunGlob));
+        assert!(!case.exposes(BuiltinId::Bun));
+    });
+}
+
+fn module_objects_without_expression(
+    case: &Case<'_, '_>,
+) -> Vec<(ModuleObjectOwner, ModuleObjectUse)> {
+    let mentions = case.resolved.module_object_mentions().iter();
+    let unspelled = mentions.filter(|mention| mention.expr.is_none());
+    unspelled
+        .map(|mention| (mention.owner, mention.object_use))
+        .collect()
+}
+
+const PATHS_TO_MODULE_OBJECTS: &[DefinedPath] = &[
+    (&["OWN"], &["module"]),
+    (&["KIDS"], &["module", "children"]),
+    (&["OUT"], &["exports"]),
+    (&["LOAD"], &["require"]),
+    (&["MAIN"], &["require", "main"]),
+    (&["HOST"], &["process"]),
+    (&["STARTED"], &["process", "mainModule"]),
+];
+
+#[test]
+fn first_name_of_define_hands_on_the_module_object_that_it_reads() {
+    let setup = Setup {
+        defines: PATHS_TO_MODULE_OBJECTS,
+        ..SCRIPT
+    };
+    let own = (ModuleObjectOwner::OwnFile, ModuleObjectUse::HandedOn);
+    let main = (ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn);
+    let holder = (
+        ModuleObjectOwner::EntryPoint,
+        ModuleObjectUse::HolderHandedOn,
+    );
+    // A direct eval comes to the module object of the file by itself.
+    let beside_eval = (ModuleObjectOwner::OwnFile, ModuleObjectUse::Object);
+    let cases = [
+        ("OWN.id = 1;", vec![own]),
+        ("KIDS.length;", vec![own]),
+        ("f(OWN); f(KIDS);", vec![own]),
+        ("OUT.a = 1;", vec![]),
+        ("LOAD.main;", vec![main]),
+        ("f(MAIN);", vec![main]),
+        ("if (false) OWN;", vec![]),
+        // `bun run` removes a statement of the file whose value nothing uses, and the build does not read `module` in a statement that `bun run` removes.
+        ("OWN; KIDS;", vec![]),
+        (
+            "function f(s) { eval(s); return HOST; }",
+            vec![beside_eval, holder],
+        ),
+        (
+            "function f(s) { eval(s); return STARTED; }",
+            vec![beside_eval, main],
+        ),
+    ];
+    for (source, expected) in cases {
+        with_case(setup, source, |case| {
+            let found = module_objects_without_expression(case);
+            assert_eq!(found, expected, "{source}");
+        });
+    }
 }

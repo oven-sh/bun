@@ -21,6 +21,7 @@
 //
 // A program may begin with comment lines that say how it is built and run:
 //   // Flags: --aot-validate           more flags for the build. A word that begins with ./ or ../ is a path from the folder of the program
+//                                      Plain Bun runs the file with the --define flags among them (--define K=V or --define=K=V) and with no other: both runs define the same names
 //                                      With --aot-log-type-mismatches what the executable logs about the files of the program counts as printed: plain Bun logs nothing
 //   // Entry points: ./child.cjs       further entry points, for what the program loads under a computed name. The program is built alone and starts
 //   // Alone: <why>                    what it prints depends on what else the executable holds: it is built alone
@@ -365,7 +366,7 @@ function noteProcess(cmd: string[], cwd: string, startsAt: string | undefined, m
   const entryPoints = cmd.filter(word => /^\.\.?\//.test(word) || word.startsWith(root));
   const what = isBuild
     ? `${entryPoints.length} entry points from ${relative(root, resolve(cwd, entryPoints[0] ?? "."))}`
-    : (startsAt ?? relative(root, cmd[0] === process.execPath ? cmd[1] : cwd));
+    : (startsAt ?? relative(root, cmd[0] === process.execPath ? cmd.at(-1)! : cwd));
   const kind = processes[isBuild ? "builds" : cmd[0] === process.execPath ? "references" : "executables"];
   kind.count++;
   kind.ms += ms;
@@ -642,6 +643,10 @@ function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string)
     );
 }
 
+/** The defines among the flags of a build, as they are written: `--define K=V` is two words, `--define=K=V` one. */
+const definesOf = (flags: string[]) =>
+  flags.filter((flag, index) => flag.startsWith("--define=") || flag === "--define" || flags[index - 1] === "--define");
+
 /** Both ways to build a file are held to one run of the reference. */
 const references = new Map<string, ReturnType<typeof start>>();
 
@@ -749,7 +754,8 @@ async function run(programs: Program[]): Promise<void> {
         const cwd = dirname(program.path);
         const stored = program.way === "erased" && program.erasedIsAsPlain ? undefined : program.output;
         const runReference = async () => {
-          if (!program.comparesWithCompiled) return withSlot(() => start([process.execPath, program.path], cwd, env));
+          if (!program.comparesWithCompiled)
+            return withSlot(() => start([process.execPath, ...definesOf(program.flags), program.path], cwd, env));
           const other = nextExecutable("reference");
           let remove = () => {};
           try {

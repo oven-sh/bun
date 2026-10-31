@@ -1,4 +1,6 @@
-use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters};
+use bun_sema::bind::{
+    Binding, Bound, Decl, ImplicitReferenceKind, ScopeId, ScopeKind, SymbolId, is_among_parameters,
+};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ClassId, DecoratorOwner, ExprId, FnId, NodeData, ParamId};
 
@@ -69,6 +71,13 @@ pub(super) fn collect_implicit_uses(
 ) -> (Vec<(ExprId, Binding)>, Vec<(ClassId, Binding)>) {
     let (mut jsx_uses, mut metadata_uses) = (Vec::new(), Vec::new());
     for reference in bound.runtime.implicit_references() {
+        match reference.kind {
+            // The walk takes the first name of a define from the decision of the expression where the fold applied the define.
+            ImplicitReferenceKind::DefineHead => continue,
+            ImplicitReferenceKind::JsxFactory
+            | ImplicitReferenceKind::JsxFragment
+            | ImplicitReferenceKind::DecoratorMetadata(_) => {}
+        }
         let binding = match reference.binding {
             Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => reference.binding,
             Binding::Free => continue,

@@ -1,6 +1,6 @@
 use super::{FileAnalysis, FileInputs, FoldedAgain, has_live_top_level_await};
 use crate::atom::Interner;
-use crate::bind::{BindOptions, Bound, bind};
+use crate::bind::{BindOptions, Bound, bind_with_define_heads};
 use crate::fold::{FoldError, FoldInputs, FoldResult, fold_file};
 use crate::hir::{File, FileKind};
 use crate::import_sites::{ImportScan, ScanInputs, collect_import_sites};
@@ -20,7 +20,7 @@ pub(super) fn run<'s>(
     debug_assert!(options.runtime.is_some());
     debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
     hir.reset_strict();
-    let mut bound = bind(hir, options, atoms, arena);
+    let mut bound = bind_with_define_heads(hir, options, inputs.define_heads(), atoms, arena);
     if bound.ran_out_of_stack {
         return (bound, FileAnalysis::default());
     }
@@ -31,7 +31,7 @@ pub(super) fn run<'s>(
         hir.set_strict();
         if bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
-            bound = bind(hir, options, atoms, arena);
+            bound = bind_with_define_heads(hir, options, inputs.define_heads(), atoms, arena);
             if bound.ran_out_of_stack {
                 return (bound, FileAnalysis::default());
             }

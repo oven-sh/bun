@@ -26,7 +26,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let root = match self.file.decisions().decision(expression) {
             Decision::Data(value) => values::create_node(self.file, Part::Value(value)),
             Decision::DeferredData => self.file.create_deferred_node(),
-            Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => {
+            Decision::Unknown
+            | Decision::Constant(_)
+            | Decision::GlobalPath(_)
+            | Decision::NamedPath(_) => {
                 debug_assert!(
                     self.file.decisions().is_data_literal(expression),
                     "an expression without a data decision is a data literal"
@@ -60,7 +63,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let root = match self.decisions().decision(expression) {
             Decision::Data(value) => values::create_node(self, Part::Value(value)),
             Decision::DeferredData => self.create_deferred_node(),
-            Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => return None,
+            Decision::Unknown
+            | Decision::Constant(_)
+            | Decision::GlobalPath(_)
+            | Decision::NamedPath(_) => return None,
         };
         Some(add_record(self, expression, root))
     }

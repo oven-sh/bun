@@ -99,13 +99,17 @@ pub(super) fn find_values_passed_for(
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
-    for callee in find_written(text) {
-        let is_mention = bound.is_evaluated_ident(callee)
-            && !decisions.is_dead_expr(callee)
-            && bound.binding(callee) == Binding::Symbol(name);
-        if !is_mention {
-            continue;
-        }
+    let is_mention = |callee: &ExprId| {
+        bound.is_evaluated_ident(*callee)
+            && !decisions.is_dead_expr(*callee)
+            && bound.binding(*callee) == Binding::Symbol(name)
+    };
+    let written = find_written(text).into_iter().filter(is_mention).map(Some);
+    // The value of a define that is the name alone is a mention. A value with members behind the name hands the function on.
+    let defined = decisions.applied_define_heads();
+    let defined = defined.filter(|head| head.binding() == Binding::Symbol(name));
+    for callee in written.chain(defined.map(|head| head.name_site())) {
+        let callee = callee?;
         let Parent::Expr(above) = bound.parent_of_expr(callee) else {
             return None;
         };

@@ -208,7 +208,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => None,
             },
             PatternNode::Assignment(target) => {
-                let (identifier, _) = self.identifier_target(target)?;
+                let (identifier, ..) = self.identifier_target(target)?;
                 let ExprKind::Ident(written) = self.hir[identifier].kind else {
                     return None;
                 };
@@ -225,11 +225,21 @@ impl FileLowering<'_, '_, '_, '_> {
                 Some((binding, name, self.hir[pattern].pos))
             }
             PatternNode::Assignment(target) => {
-                let (identifier, name) = self.identifier_target(target)?;
-                let binding = self.bound.binding(identifier);
+                let (identifier, name, defined) = self.identifier_target(target)?;
+                let binding = self.stored_binding(identifier, defined);
                 Some((binding, name, self.hir[identifier].pos))
             }
         }
+    }
+
+    // What a store to `target` goes to, a name with no `[` and no `{` around it. `name` is the target without its type syntax.
+    pub(super) fn lone_target_binding(&self, target: ExprId, name: ExprId) -> Binding {
+        if self.decisions().is_named_path(name)
+            && let Some((_, _, Some(defined))) = self.identifier_target(target)
+        {
+            return defined;
+        }
+        self.bound.binding(target)
     }
 
     pub(super) fn property_name(&self, property: &PatternProperty) -> Option<Atom> {
@@ -260,9 +270,13 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn identifier_target(&self, target: ExprId) -> Option<(ExprId, Atom)> {
+    fn identifier_target(&self, target: ExprId) -> Option<(ExprId, Atom, Option<Binding>)> {
         match self.classify_assignment_target(target) {
-            AssignmentTarget::Identifier { identifier, name } => Some((identifier, name)),
+            AssignmentTarget::Identifier {
+                identifier,
+                name,
+                defined,
+            } => Some((identifier, name, defined)),
             _ => None,
         }
     }

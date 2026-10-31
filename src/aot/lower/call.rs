@@ -8,10 +8,11 @@ mod number_questions;
 mod written_operands;
 
 use bun_sema::bind::Binding;
+use bun_sema::fold::Decision;
 use bun_sema::hir::{Call, ExprId, ExprKind, IdList};
 use smallvec::SmallVec;
 
-use super::expression::{Evaluation, Tail, TailCast};
+use super::expression::{DefineStop, Evaluation, Tail, TailCast};
 use super::positions::SiteOrigin;
 use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
@@ -112,6 +113,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let exit = evaluation.chain_exit;
         let inner = self.file.skip_type_syntax(site.callee);
         if bound.eval_scope(call).is_some() {
+            // `bun run` writes the value of a define in place of the name `eval`, so the call evaluates no text among the variables of the caller.
+            let decisions = self.file.decisions();
+            if decisions.is_named_path(inner)
+                && let Decision::NamedPath(named) = decisions.decision(inner)
+            {
+                self.report_define_without_support(inner, named, DefineStop::Called);
+                self.lower_arguments(site.args);
+                return self.builder.undefined();
+            }
             return scope::lower_direct_eval(self, call);
         }
         if matches!(hir[site.callee].kind, ExprKind::Super) {

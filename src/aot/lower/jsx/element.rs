@@ -31,6 +31,7 @@ fn find_jsx_reference(
 ) -> ImplicitReference {
     let found = references.binary_search_by(|reference| {
         let recorded_root = match reference.kind {
+            ImplicitReferenceKind::DefineHead => return Ordering::Less,
             ImplicitReferenceKind::JsxFactory => JsxRoot::Factory,
             ImplicitReferenceKind::JsxFragment => JsxRoot::Fragment,
             ImplicitReferenceKind::DecoratorMetadata(_) => return Ordering::Greater,
@@ -296,6 +297,27 @@ mod tests {
                 references[index]
             );
         }
+    }
+
+    #[test]
+    fn finds_roots_behind_define_heads() {
+        let record = |index, kind| ImplicitReference {
+            node: NodeData::Expr(ExprId(index)),
+            kind,
+            name: known::React,
+            binding: Binding::Free,
+        };
+        // A define head lies in front of the root of an element whichever of the two expressions comes first.
+        let references = [
+            record(1, ImplicitReferenceKind::DefineHead),
+            record(6, ImplicitReferenceKind::DefineHead),
+            record(8, ImplicitReferenceKind::DefineHead),
+            record(2, ImplicitReferenceKind::JsxFactory),
+            record(2, ImplicitReferenceKind::JsxFragment),
+        ];
+        let find = |root| find_jsx_reference(&references, ExprId(2), root);
+        assert_eq!(find(JsxRoot::Factory), references[3]);
+        assert_eq!(find(JsxRoot::Fragment), references[4]);
     }
 
     #[test]

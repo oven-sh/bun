@@ -14,10 +14,11 @@ pub use closed_module::specifiers_of_closed_module;
 pub use parents::{bind_for_format_in, try_bind_for_format_in};
 pub use runtime::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
-    CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateMembers, PrivateName,
-    PrivateNameId, RuntimeBindOptions, RuntimeBindings, RuntimeBindingsIn, RuntimeTablesIn,
-    StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list, is_among_parameters,
+    CommonJsVariable, DynamicLookup, EarlyRedeclaration, EvalScope, FunctionFlags,
+    ImplicitReference, ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateMembers,
+    PrivateName, PrivateNameId, RuntimeBindOptions, RuntimeBindings, RuntimeBindingsIn,
+    RuntimeTablesIn, StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list,
+    is_among_parameters,
 };
 pub use static_referent::{
     LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
@@ -26,6 +27,7 @@ pub use static_referent::{
 };
 
 use crate::atom::{Atom, known};
+use crate::fold::DefineHead;
 use crate::hir::*;
 use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
@@ -3055,8 +3057,19 @@ pub fn bind<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
+    bind_with_define_heads(file, options, &[], atoms, arena)
+}
+
+/// `bind` for a file that is folded with defines. `define_heads` are those of the `FoldInputs`: `Bound::define_head` then answers for them.
+pub fn bind_with_define_heads<'s>(
+    file: &File,
+    options: BindOptions,
+    define_heads: &[DefineHead],
+    atoms: &dyn crate::atom::Intern,
+    arena: &'s Arena,
+) -> Bound<'s> {
     let mut buffers = binder::take_buffers();
-    let mut built = binder::Binder::run_in(file, options, atoms, &mut buffers);
+    let mut built = binder::Binder::run_in(file, options, define_heads, atoms, &mut buffers);
     let bound = built.move_to_arena(arena);
     buffers.b = built;
     binder::return_buffers(buffers);

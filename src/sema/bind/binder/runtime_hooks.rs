@@ -100,7 +100,9 @@ impl Binder<'_, '_> {
             hir: self.f,
             bound: &mut self.b,
             idents: &idents,
+            import_metas: &self.import_metas,
             options,
+            define_heads: self.define_heads,
             atoms: self.atoms,
         };
         runtime::compute(input, private_references);

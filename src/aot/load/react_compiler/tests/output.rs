@@ -1,10 +1,12 @@
 use bun_ast::runtime::ReactCompilerMode;
-use bun_sema::hir::{BinOp, ExprKind, FnBody, FnKind, StmtId, StmtKind};
-use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings};
+use bun_sema::bind::Parent;
+use bun_sema::fold::Decision;
+use bun_sema::hir::{BinOp, ExprId, ExprKind, FnBody, FnKind, StmtId, StmtKind};
+use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings, TreeChange};
 
 use super::{
     CACHE_FUNCTION, CACHE_IMPORT, COMPILER_RUNTIME, DEVELOPMENT_RUNTIME, HELLO, PRODUCTION_RUNTIME,
-    RULE, production_settings, settings_with_jsx, with_compiled_tree, with_tree,
+    RULE, production_settings, settings_with_jsx, with_compiled_tree, with_defines, with_tree,
     with_tree_and_settings,
 };
 
@@ -184,6 +186,52 @@ fn local_never_shares_a_name_with_an_outside_variable() {
                     _ => None,
                 });
             assert_eq!(targets.collect::<Vec<_>>(), [outside], "{name}");
+        });
+    }
+}
+
+#[test]
+fn local_never_shares_a_name_with_the_first_name_of_a_define() {
+    let temporary = "declare const NAME: string;\n\
+                     export function View({ title }: { title: string }) {\n\
+                     return <p>{NAME}{title}</p>;\n\
+                     }\n";
+    let block_scoped = "declare const NAME: string;\n\
+                        export function View({ title }: { title: string }) {\n\
+                        let text = '';\n\
+                        {\n\
+                        const count = title.length * 2;\n\
+                        text = 'twice ' + count;\n\
+                        }\n\
+                        return <p>{NAME}{text}</p>;\n\
+                        }\n";
+    // The output calls the parameter `t0` and the cache `$`. Where `NAME` is written, nothing declares the name that the define gives it.
+    for (name, text) in [("t0", temporary), ("count", block_scoped), ("$", temporary)] {
+        with_defines(text, &[("NAME", name)], |bench| {
+            let (bound, analysis) = bench.analyze(&[]);
+            let (change, _) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+            assert_eq!(change, TreeChange::Changed, "{name}");
+
+            let (bound, analysis) = bench.analyze(&[]);
+            let (hir, atoms) = (&bench.tree, &bench.atoms);
+            let written = |spelled: &[u8]| {
+                let spelled = atoms.intern(spelled);
+                let is_written = |it: &ExprId| {
+                    matches!(hir[*it].kind, ExprKind::Ident(found) if found == spelled)
+                        && bound.parent_of_expr(*it) != Parent::None
+                };
+                let expressions = (0..hir.exprs.len() as u32).map(ExprId);
+                expressions.filter(is_written).collect::<Vec<_>>()
+            };
+            let local = [&b"%react:local:"[..], name.as_bytes()].concat();
+            assert!(!written(&local).is_empty(), "{name}");
+            let first_name_at = |it: ExprId| match analysis.decisions.decision(it) {
+                Decision::GlobalPath(path) => path.first().copied(),
+                _ => None,
+            };
+            let mut first_names: Vec<_> = written(b"NAME").into_iter().map(first_name_at).collect();
+            first_names.dedup();
+            assert_eq!(first_names, [Some(atoms.intern(name.as_bytes()))], "{name}");
         });
     }
 }

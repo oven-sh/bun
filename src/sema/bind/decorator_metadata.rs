@@ -164,7 +164,9 @@ pub fn find_metadata_binding(
 ) -> Option<Binding> {
     let found = references.binary_search_by_key(&Some(reference), |entry| match entry.kind {
         ImplicitReferenceKind::DecoratorMetadata(recorded) => Some(recorded),
-        ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => None,
+        ImplicitReferenceKind::DefineHead
+        | ImplicitReferenceKind::JsxFactory
+        | ImplicitReferenceKind::JsxFragment => None,
     });
     found.ok().map(|index| references[index].binding)
 }

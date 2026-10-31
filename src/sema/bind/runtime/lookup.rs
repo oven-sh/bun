@@ -5,7 +5,7 @@ use super::namespace_exports::is_block_binding;
 use super::queries::{find_symbol, is_among_parameters};
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
 use crate::atom::{Atom, known};
-use crate::bind::{BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
+use crate::bind::{BoundBuilder, Decl, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
 use crate::hir::*;
 use crate::module_format::{ModuleFormat, find_marked_format};
 
@@ -70,6 +70,52 @@ impl Lookup<'_, '_> {
             entered_from: from,
             dynamic_scope,
         }
+    }
+
+    /// `find` for a name that `bun build` writes into the code. It steps over what is no variable of the code that runs, and says whether it did.
+    pub(super) fn find_variable(&self, start: ScopeId, name: Atom, pos: u32) -> (Found, bool) {
+        let mut found = self.find(start, name, pos);
+        let mut has_stepped_over = false;
+        while self.is_no_variable(found.binding) {
+            has_stepped_over = true;
+            let outside = self.bound.runtime_parent_scope(self.hir, found.scope);
+            let outer = self.find(outside, name, pos);
+            // A file, a namespace or an enum declares what is stepped over, and no list of parameters lies right inside the scope of one.
+            let dynamic_scope = if found.dynamic_scope.is_some() {
+                found.dynamic_scope
+            } else if self.has_visible_eval_variables(found.scope, found.entered_from, pos) {
+                found.scope
+            } else {
+                outer.dynamic_scope
+            };
+            found = Found {
+                dynamic_scope,
+                ..outer
+            };
+        }
+        (found, has_stepped_over)
+    }
+
+    // A member of a namespace or of an enum is a property when the code runs, and an import of a macro or from "bun:bundle" is no part of that code.
+    fn is_no_variable(&self, binding: Binding) -> bool {
+        let Binding::Symbol(symbol) = binding else {
+            return false;
+        };
+        let (hir, bound) = (self.hir, self.bound);
+        let symbol = &bound.symbols[symbol.idx()];
+        let is_member = symbol.parent.is_some() && symbol.parent != bound.file_symbol;
+        is_member
+            || symbol.decls.iter().any(|&decl| {
+                let import = match decl {
+                    Decl::ImportDefault(import) | Decl::ImportNamespace(import) => import,
+                    Decl::ImportSpec(specifier) => hir[specifier].import,
+                    _ => return false,
+                };
+                let import = hir[import];
+                import.spec == known::bun_bundle
+                    || hir.import_attribute(import.attributes, known::r#type)
+                        == Some(known::r#macro)
+            })
     }
 
     // Code among the parameters of a function does not see the variables of text evaluated in the body. Code in the body sees the variables of both texts.

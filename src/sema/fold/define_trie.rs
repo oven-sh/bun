@@ -1,5 +1,6 @@
 use super::inputs::{
-    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState, TrieNode,
+    DefineHead, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState,
+    TrieNode,
 };
 use super::{Constant, slice_in};
 use crate::atom::Atom;
@@ -9,8 +10,21 @@ impl<'s> FoldInputs<'s> {
     #[allow(clippy::large_types_passed_by_value)] // made for this call
     pub fn new(options: FoldOptions<'s>, arena: &'s Arena) -> FoldInputs<'s> {
         let mut trie = TrieBuilder::default();
+        let mut heads: Vec<DefineHead> = Vec::new();
         for define in options.defines {
             trie.ensure_path(define.path).value = Some(define.value);
+            let root = define.path.root;
+            if let DefineValue::GlobalPath(&[head, ..]) = define.value
+                && !heads
+                    .iter()
+                    .any(|listed| listed.root == root && listed.head == head)
+            {
+                heads.push(DefineHead {
+                    root,
+                    head,
+                    renames_root: false,
+                });
+            }
         }
         for &path in options.dropped_calls {
             trie.ensure_path(path).ends_dropped_path = true;
@@ -28,10 +42,18 @@ impl<'s> FoldInputs<'s> {
             DefineRoot::Global(name) => filter | root_filter_bit(name),
             DefineRoot::ImportMeta => filter,
         });
+        // The trie holds what the last define of a root itself gives it.
+        for listed in &mut heads {
+            let node = find_node(&trie.roots, listed.root);
+            let at_root = node.and_then(|node| trie.nodes[node as usize].value);
+            listed.renames_root =
+                matches!(at_root, Some(DefineValue::GlobalPath(&[name])) if name == listed.head);
+        }
         FoldInputs {
             nodes: slice_in(&nodes, arena),
             roots: slice_in(&trie.roots, arena),
             root_filter,
+            heads: slice_in(&heads, arena),
             features: options.features,
             preserves_unused_imports: options.preserves_unused_imports,
             minifies_syntax: options.minifies_syntax,
@@ -50,6 +72,12 @@ impl<'s> FoldInputs<'s> {
     #[inline]
     pub(super) fn is_empty(&self) -> bool {
         self.roots.is_empty()
+    }
+
+    /// The first names of the paths that the defines give. The binder looks each up where the root of its define is written.
+    #[inline]
+    pub fn define_heads(&self) -> &'s [DefineHead] {
+        self.heads
     }
 
     #[inline]

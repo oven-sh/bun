@@ -1,5 +1,7 @@
-use bun_sema::bind::{Bound, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters};
-use bun_sema::hir::{self, FnKind};
+use bun_sema::bind::{
+    Bound, CodeUnit, Decl, ImplicitReference, ScopeId, ScopeKind, SymbolId, is_among_parameters,
+};
+use bun_sema::hir::{self, FnKind, NodeData};
 
 use super::{BindingRef, ScopeSlot};
 
@@ -54,6 +56,30 @@ pub(super) struct ScopeObjectSearch {
     pub(super) declaring_scope: ScopeId,
     /// The position of the code that searches.
     pub(super) pos: u32,
+}
+
+impl ScopeObjectSearch {
+    /// The search for the first name of a define path. `None`: neither a `with` object nor evaluated text may declare the name there.
+    pub(super) fn of_define_head(
+        hir: &hir::File<'_>,
+        bound: &Bound<'_>,
+        head: &ImplicitReference,
+        declaring_scope: ScopeId,
+    ) -> Option<ScopeObjectSearch> {
+        let lookup = bound.dynamic_scope_of(head)?;
+        let NodeData::Expr(root) = head.node else {
+            unreachable!("a define head is recorded at the root of its define");
+        };
+        Some(ScopeObjectSearch {
+            start: lookup.scope,
+            until: match lookup.is_behind_eval_variables {
+                true => bound.scopes[declaring_scope.idx()].parent,
+                false => declaring_scope,
+            },
+            declaring_scope,
+            pos: hir[root].pos,
+        })
+    }
 }
 
 // A function has two objects. The inner one takes the variables of text evaluated in its body, the outer one those of text evaluated among its parameters. The parameters lie between the two.

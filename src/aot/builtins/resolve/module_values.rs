@@ -60,14 +60,14 @@ impl Resolver<'_, '_> {
         let has_direct_eval = direct_evals
             .iter()
             .any(|&(call, _)| !input.decisions.is_dead_expr(call));
-        let uses_arguments = input
-            .bound
-            .ident_bindings()
-            .iter()
-            .any(|&(ident, binding)| {
-                binding == Binding::Arguments(CodeUnit::File)
-                    && !input.decisions.is_dead_expr(ident)
-            });
+        let arguments = Binding::Arguments(CodeUnit::File);
+        let names_arguments = |&(ident, binding): &(ExprId, Binding)| {
+            binding == arguments && !input.decisions.is_dead_expr(ident)
+        };
+        // A define whose value begins with `arguments` reads them where no identifier spells the name.
+        let mut define_heads = input.decisions.applied_define_heads();
+        let uses_arguments = input.bound.ident_bindings().iter().any(names_arguments)
+            || define_heads.any(|head| head.binding() == arguments);
         let is_mapped = uses_arguments && has_mapped_arguments(input.hir, CodeUnit::File);
         for (variable, is_stored) in [
             (CommonJsVariable::Module, stores_module),

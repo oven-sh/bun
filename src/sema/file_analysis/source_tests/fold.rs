@@ -63,6 +63,51 @@ const GLOBAL_PATH: Fold<'static> = Fold {
     defines: &[(Path::Global(&["ALIAS"]), Defined::GlobalPath(&["a", "b"]))],
     ..Fold::NONE
 };
+const NAMES_OF_BINDINGS: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["ALIAS"]), Defined::GlobalPath(&["target"])),
+        (
+            Path::Global(&["ALIAS", "known"]),
+            Defined::Value(Data::Number(5.0)),
+        ),
+        (
+            Path::Global(&["ROOT"]),
+            Defined::GlobalPath(&["holder", "value"]),
+        ),
+        (
+            Path::Global(&["process", "env", "ALIAS"]),
+            Defined::GlobalPath(&["target"]),
+        ),
+        (
+            Path::ImportMeta(&["env", "ALIAS"]),
+            Defined::GlobalPath(&["target"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+const PATH_BELOW_A_PATH: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::ImportMeta(&["env"]),
+            Defined::GlobalPath(&["settings"]),
+        ),
+        (
+            Path::ImportMeta(&["env", "MODE"]),
+            Defined::GlobalPath(&["target", "mode"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+const NAMES_OF_COMMONJS: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["M"]), Defined::GlobalPath(&["module"])),
+        (
+            Path::Global(&["ME"]),
+            Defined::GlobalPath(&["module", "exports"]),
+        ),
+    ],
+    ..Fold::NONE
+};
 const CONFIG: Fold<'static> = Fold {
     defines: &[(
         Path::Global(&["CONFIG"]),
@@ -135,6 +180,61 @@ const UNMATCHED_DEFINES: &[(&str, &str)] = &[
     ("a.mjs", "process.env[k];"),
     ("a.mjs", "process.env.OTHER;"),
     ("a.mjs", "process.env.NODE_ENV.length;"),
+];
+
+const DEFINE_VALUES_THAT_ARE_BINDINGS: &[(&str, &str)] = &[
+    ("a.mjs", "var target; ALIAS;"),
+    ("a.mjs", "ALIAS; let target;"),
+    ("a.mjs", "function target() {} ALIAS;"),
+    ("a.mjs", "class target {} ALIAS;"),
+    ("a.mjs", "try {} catch (target) { ALIAS; }"),
+    ("a.mjs", "(function target() { ALIAS; });"),
+    ("a.mjs", "import target from 'm'; ALIAS;"),
+    ("a.mjs", "import { target } from 'm'; ALIAS;"),
+    ("a.mjs", "import * as target from 'm'; ALIAS;"),
+    ("a.mjs", "export const target = 1; ALIAS;"),
+    ("a.mjs", "class C { static { var target; ALIAS; } }"),
+    ("a.mjs", "let target; ALIAS = 1;"),
+    ("a.mjs", "let target; ALIAS++;"),
+    ("a.mjs", "let target; [ALIAS] = a;"),
+    ("a.ts", "declare const ALIAS: any; const target = 1; ALIAS;"),
+    (
+        "a.ts",
+        "const target = 0; namespace N { export const target = 1; ALIAS; }",
+    ),
+];
+
+const DEFINE_VALUES_THAT_ARE_GLOBALS: &[(&str, &str)] = &[
+    ("a.mjs", "function f() { var target; } ALIAS;"),
+    ("a.mjs", "function f(other = ALIAS) { var target; }"),
+    ("a.mjs", "({ target: 1 }); target: ALIAS;"),
+    ("a.mjs", "class C { target; field = ALIAS; }"),
+    ("a.ts", "declare const target: number; ALIAS;"),
+    ("a.ts", "interface target {} type other = target; ALIAS;"),
+    ("a.ts", "import type { target } from 'm'; ALIAS;"),
+    (
+        "a.ts",
+        "namespace N { export const target = 1; ALIAS; } namespace N { ALIAS; }",
+    ),
+    ("a.ts", "enum E { target = 1, other = ALIAS }"),
+    (
+        "a.mjs",
+        "import { target } from './m' with { type: 'macro' }; ALIAS;",
+    ),
+];
+
+const PLACES_WHERE_NO_DEFINE_HEAD_IS_READ: &[(&str, &str)] = &[
+    ("a.mjs", "const target = 1; function f(ALIAS) { ALIAS; }"),
+    ("a.cjs", "const target = 1; with (o) { ALIAS; }"),
+    ("a.cjs", "var target; delete ALIAS;"),
+    ("a.mjs", "const target = 1; process.env.OTHER;"),
+    ("a.mjs", "const target = 1; process.env.ALIAS = 2;"),
+    ("a.mjs", "const target = 1; process?.env.ALIAS;"),
+    ("a.mjs", "const target = 1; if (false) ALIAS;"),
+    (
+        "a.mjs",
+        "const target = 1; let off = false; if (off) ALIAS;",
+    ),
 ];
 
 const DROPPED_CALLS: &[(&str, &str)] = &[
@@ -1485,6 +1585,310 @@ fn kinds_of_define_values() {
     folded("a.mjs", "import.meta.env.MODE;", IMPORT_META, |s| {
         assert_eq!(decision(s, last_member(s)), string(s, "test"));
     });
+}
+
+fn global_path<'s>(s: &Analyzed<'s>, names: &[&str]) -> Decision<'s> {
+    let names: Vec<Atom> = names.iter().map(|name| s.workspace.atom(name)).collect();
+    Decision::GlobalPath(s.workspace.arena.alloc_slice_copy(&names))
+}
+
+#[track_caller]
+fn named_path<'s>(s: &Analyzed<'s>, site: ExprId) -> &'s NamedPath<'s> {
+    match decision(s, site) {
+        Decision::NamedPath(named) => named,
+        found => panic!("{found:?} is no path with a recorded first name"),
+    }
+}
+
+fn define_heads<'a>(s: &'a Analyzed<'_>) -> impl Iterator<Item = &'a ImplicitReference> {
+    let references = s.bound.runtime.implicit_references().iter();
+    references.filter(|reference| reference.kind == ImplicitReferenceKind::DefineHead)
+}
+
+fn reads_define_head(s: &Analyzed<'_>, root: ExprId, head: &str) -> bool {
+    let reference = s.bound.define_head(root, s.workspace.atom(head));
+    reference.is_some_and(|reference| s.analysis.decisions.reads_define_head(reference))
+}
+
+fn first_import(s: &Analyzed<'_>) -> SymbolId {
+    s.bound.declared_symbol(Decl::ImportSpec(ImportSpecId(0)))
+}
+
+#[track_caller]
+fn decisions_of_another_fold<'s>(
+    s: &Analyzed<'s>,
+    path: &str,
+    inputs: &FoldInputs<'s>,
+) -> Decisions<'s> {
+    let file = FileInputs {
+        declared_module_type: declared_module_type_of(path),
+        import_meta_main: None,
+        is_library: false,
+        host_values: &[],
+        jsx: JsxMode::Classic,
+    };
+    let w = &s.workspace;
+    let folded = fold_file_again(
+        &s.hir,
+        &s.bound,
+        inputs,
+        file,
+        &s.analysis,
+        &w.atoms,
+        w.arena,
+    );
+    folded.expect("the same tree is folded").analysis.decisions
+}
+
+#[track_caller]
+fn import_meta(s: &Analyzed<'_>) -> ExprId {
+    last_expr(s, |kind| matches!(kind, ExprKind::ImportMeta))
+}
+
+#[test]
+fn define_value_is_the_binding_in_scope_where_it_is_written() {
+    let text = "function f(target) { ALIAS; } ALIAS;";
+    folded("a.mjs", text, NAMES_OF_BINDINGS, |s| {
+        let target = s.workspace.atom("target");
+        let inside = s.ident("ALIAS", 0);
+        let named = named_path(s, inside);
+        assert_eq!(s.bound.define_head(inside, target), Some(&named.head));
+        let parameter = Binding::Symbol(s.variable("target", 0));
+        assert_eq!(named.head.binding, parameter);
+        assert_eq!(named.names, [target]);
+        let outside = s.ident("ALIAS", 1);
+        assert_eq!(decision(s, outside), global_path(s, &["target"]));
+        assert_eq!(kinds(s), []);
+    });
+    for &(path, text) in DEFINE_VALUES_THAT_ARE_BINDINGS {
+        folded(path, text, NAMES_OF_BINDINGS, |s| {
+            let site = s.ident("ALIAS", 0);
+            let head = named_path(s, site).head;
+            assert_eq!(head.node, NodeData::Expr(site), "{text}");
+            assert!(matches!(head.binding, Binding::Symbol(_)), "{text}");
+            assert!(s.analysis.decisions.reads_define_head(&head), "{text}");
+            assert_eq!(kinds(s), [], "{text}");
+        });
+    }
+    for &(path, text) in DEFINE_VALUES_THAT_ARE_GLOBALS {
+        folded(path, text, NAMES_OF_BINDINGS, |s| {
+            let alias = s.workspace.atom("ALIAS");
+            let is_alias =
+                |kind: &ExprKind| matches!(*kind, ExprKind::Ident(name) if name == alias);
+            let sites = find_exprs(&s.hir, is_alias);
+            assert!(!sites.is_empty(), "{text}");
+            for site in sites {
+                let expected = global_path(s, &["target"]);
+                assert_eq!(decision(s, site), expected, "{text}");
+            }
+            assert_eq!(define_heads(s).count(), 0, "{text}");
+            assert_eq!(kinds(s), [], "{text}");
+        });
+    }
+}
+
+#[test]
+fn define_path_is_read_below_the_binding_at_its_root() {
+    folded(
+        "a.mjs",
+        "const target = 1; process.env.ALIAS;",
+        NAMES_OF_BINDINGS,
+        |s| {
+            let head = named_path(s, last_member(s)).head;
+            assert_eq!(head.node, NodeData::Expr(s.ident("process", 0)));
+            assert_eq!(head.binding, Binding::Symbol(s.variable("target", 0)));
+        },
+    );
+    folded(
+        "a.mjs",
+        "function f(target) { import.meta.env.ALIAS; }",
+        NAMES_OF_BINDINGS,
+        |s| {
+            let head = named_path(s, last_member(s)).head;
+            assert_eq!(head.node, NodeData::Expr(import_meta(s)));
+            assert_eq!(head.binding, Binding::Symbol(s.variable("target", 0)));
+        },
+    );
+    folded(
+        "a.ts",
+        "declare const ROOT: any; const holder = {}; ROOT;",
+        NAMES_OF_BINDINGS,
+        |s| {
+            let named = named_path(s, s.ident("ROOT", 0));
+            let path = ["holder", "value"].map(|name| s.workspace.atom(name));
+            assert_eq!(named.names, path);
+            assert_eq!(named.head.name, path[0]);
+            assert_eq!(named.head.binding, Binding::Symbol(s.variable("holder", 0)));
+        },
+    );
+}
+
+#[test]
+fn define_head_is_read_where_the_define_is_applied_to_code_that_runs() {
+    folded(
+        "a.mjs",
+        "const target = 1; ALIAS; if (false) ALIAS;",
+        NAMES_OF_BINDINGS,
+        |s| {
+            assert!(reads_define_head(s, s.ident("ALIAS", 0), "target"));
+            assert!(!reads_define_head(s, s.ident("ALIAS", 1), "target"));
+        },
+    );
+    folded(
+        "a.mjs",
+        "const target = {}; ALIAS.known; ALIAS.other;",
+        NAMES_OF_BINDINGS,
+        |s| {
+            let known = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Dot { .. }))[0];
+            assert_eq!(
+                decision(s, known),
+                Decision::Constant(Constant::Number(5.0))
+            );
+            assert!(!reads_define_head(s, s.ident("ALIAS", 0), "target"));
+            assert!(reads_define_head(s, s.ident("ALIAS", 1), "target"));
+        },
+    );
+    folded(
+        "a.mjs",
+        "function f(settings, target) { import.meta.env.MODE; }",
+        PATH_BELOW_A_PATH,
+        |s| {
+            let named = named_path(s, last_member(s));
+            assert_eq!(named.head.name, s.workspace.atom("target"));
+            assert!(reads_define_head(s, import_meta(s), "target"));
+            assert!(!reads_define_head(s, import_meta(s), "settings"));
+        },
+    );
+    for &(path, text) in PLACES_WHERE_NO_DEFINE_HEAD_IS_READ {
+        folded(path, text, NAMES_OF_BINDINGS, |s| {
+            for reference in define_heads(s) {
+                let is_read = s.analysis.decisions.reads_define_head(reference);
+                assert!(!is_read, "{text}");
+            }
+        });
+    }
+}
+
+#[test]
+fn define_head_is_a_use_of_an_import_as_the_name_written_there_is() {
+    folded(
+        "a.ts",
+        "import { target } from 'm'; declare const ALIAS: any; console.log(ALIAS);",
+        NAMES_OF_BINDINGS,
+        |s| assert!(!s.analysis.unused_import_symbols.contains(&first_import(s))),
+    );
+    folded(
+        "a.ts",
+        "import { target } from 'm'; declare const ALIAS: any; if (false) ALIAS;",
+        NAMES_OF_BINDINGS,
+        |s| {
+            let only_in_dead_code = s.analysis.imports_used_only_in_dead_code;
+            assert!(only_in_dead_code.contains(&first_import(s)));
+        },
+    );
+    // `bun run` removes each of these statements whole and forgets the name with it: the import statement stays, without its binding.
+    let in_a_removed_statement = [
+        "import { target } from 'm'; declare const ALIAS: any; ALIAS;",
+        "import { target } from 'm'; declare const ALIAS: any; if (ALIAS) {}",
+    ];
+    for text in in_a_removed_statement {
+        folded("a.ts", text, NAMES_OF_BINDINGS, |s| {
+            let analysis = &s.analysis;
+            assert!(
+                analysis.unused_import_symbols.contains(&first_import(s)),
+                "{text}"
+            );
+            let only_in_dead_code = analysis.imports_used_only_in_dead_code;
+            assert!(only_in_dead_code.contains(&first_import(s)), "{text}");
+            assert_eq!(analysis.import_sites.len(), 1, "{text}");
+        });
+    }
+    let without_a_use = [
+        "import { target } from 'm'; function f(ALIAS: any) { ALIAS; }",
+        "import { target } from 'm'; declare const ALIAS: any; ALIAS.known;",
+    ];
+    for text in without_a_use {
+        folded("a.ts", text, NAMES_OF_BINDINGS, |s| {
+            let analysis = &s.analysis;
+            assert!(
+                analysis.unused_import_symbols.contains(&first_import(s)),
+                "{text}"
+            );
+            let only_in_dead_code = analysis.imports_used_only_in_dead_code;
+            assert!(!only_in_dead_code.contains(&first_import(s)), "{text}");
+        });
+    }
+}
+
+#[test]
+fn define_path_below_a_name_that_a_direct_eval_may_declare() {
+    let text = r#"function f() { eval(""); ALIAS; }"#;
+    folded("a.cjs", text, NAMES_OF_BINDINGS, |s| {
+        let head = named_path(s, s.ident("ALIAS", 0)).head;
+        assert_eq!(head.binding, Binding::Free);
+        assert!(s.bound.dynamic_scope_of(&head).is_some());
+        assert!(s.analysis.decisions.reads_define_head(&head));
+    });
+    folded("a.js", text, NAMES_OF_BINDINGS, |s| {
+        assert!(s.hir.is_strict && !s.hir.is_strict_by_syntax);
+        let found = decision(s, s.ident("ALIAS", 0));
+        assert_eq!(found, global_path(s, &["target"]));
+    });
+}
+
+#[test]
+fn file_bound_again_as_strict_code_looks_the_define_heads_up_again() {
+    let text = r#"function f(target) { eval(""); ALIAS; }"#;
+    folded("a.js", text, NAMES_OF_BINDINGS, |s| {
+        assert!(s.hir.is_strict && !s.hir.is_strict_by_syntax);
+        let head = named_path(s, s.ident("ALIAS", 0)).head;
+        assert_eq!(head.binding, Binding::Symbol(s.variable("target", 0)));
+        assert_eq!(s.bound.dynamic_scope_of(&head), None);
+    });
+}
+
+#[test]
+fn folding_again_decides_define_paths_by_the_same_bindings() {
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&NAMES_OF_BINDINGS);
+        let source = Source::new("a.mjs", "function f(target) { if (FLAG) ALIAS; }");
+        let s = w.analyze(&source, &inputs);
+        let site = s.ident("ALIAS", 0);
+        let named = named_path(&s, site);
+        assert!(s.analysis.decisions.reads_define_head(&named.head));
+        let called_first = inputs.for_file_called_before_it_runs();
+        let same = decisions_of_another_fold(&s, source.path, &called_first);
+        assert_eq!(same.decision(site), Decision::NamedPath(named));
+        assert!(same.reads_define_head(&named.head));
+        let defines = [NAMES_OF_BINDINGS.defines, FLAG.defines].concat();
+        let flag_is_false = Fold {
+            defines: &defines,
+            ..NAMES_OF_BINDINGS
+        };
+        let other_inputs = w.fold_inputs(&flag_is_false);
+        let other = decisions_of_another_fold(&s, source.path, &other_inputs);
+        assert!(other.is_dead_expr(site));
+        assert!(!other.reads_define_head(&named.head));
+    });
+}
+
+#[test]
+fn one_name_of_commonjs_that_a_define_puts_in_a_file_decides_its_format() {
+    let rows = [
+        ("console.log(typeof M);", ModuleFormat::CommonJs),
+        (
+            "let verbose = false; if (verbose) console.log(M);",
+            ModuleFormat::CommonJs,
+        ),
+        ("if (false) console.log(M);", ModuleFormat::Esm),
+        ("console.log(typeof ME);", ModuleFormat::Esm),
+        ("function f(module) { M; }", ModuleFormat::Esm),
+    ];
+    for (text, expected) in rows {
+        folded("a.js", text, NAMES_OF_COMMONJS, |s| {
+            assert_eq!(s.analysis.module_format, expected, "{text}");
+        });
+    }
 }
 
 #[test]

@@ -487,16 +487,24 @@ impl Follower<'_, '_, '_> {
         Some(vec![Held::List(places)])
     }
 
+    // Where the value of a define names the variable. `None`: the value has members behind the name, and nobody looks at what the code does there to what the variable holds.
+    fn mentions_by_defines(&self, symbol: SymbolId) -> impl Iterator<Item = Option<ExprId>> {
+        let heads = self.inputs.decisions.applied_define_heads();
+        let heads = heads.filter(move |head| head.binding() == Binding::Symbol(symbol));
+        heads.map(|head| head.name_site())
+    }
+
     fn mentions_of(&self, symbol: SymbolId) -> Vec<ExprId> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         let written = self.written_names.find(hir, bound.symbol(symbol).name);
         let written = written.iter().map(|it| it.1);
+        let written = written.filter(|&e| {
+            bound.is_evaluated_ident(e)
+                && bound.binding(e) == Binding::Symbol(symbol)
+                && !self.is_dead(e)
+        });
         written
-            .filter(|&e| {
-                bound.is_evaluated_ident(e)
-                    && bound.binding(e) == Binding::Symbol(symbol)
-                    && !self.is_dead(e)
-            })
+            .chain(self.mentions_by_defines(symbol).flatten())
             .collect()
     }
 
@@ -945,7 +953,11 @@ impl Follower<'_, '_, '_> {
     fn is_kept_as_written(&mut self, symbol: SymbolId) -> bool {
         let bound = self.inputs.bound;
         let mentions = self.mentions_of(symbol);
+        let is_named_alone = self
+            .mentions_by_defines(symbol)
+            .all(|mention| mention.is_some());
         !self.is_exported(symbol)
+            && is_named_alone
             && mentions.into_iter().all(|mention| {
                 bound.is_store_target(mention)
                     || self.find_push(mention).is_some() && self.is_initialized_with_list(symbol)

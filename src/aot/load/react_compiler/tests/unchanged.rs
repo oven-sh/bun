@@ -8,7 +8,7 @@ use bun_sema::resolve::TreeChange;
 
 use super::{
     COMPILER_RUNTIME, HELLO, MAIN_PATH, RULE, Tree, UNTYPED_HELLO, with_compiled_tree,
-    with_project, with_tree, with_workbench,
+    with_defines, with_project, with_tree, with_workbench,
 };
 use crate::compile::testing::default_settings;
 use crate::diagnostics::{Diagnostics, LoadMessages};
@@ -215,6 +215,32 @@ fn rule_violation_leaves_the_function_as_written() {
         assert_eq!(tree.count_jsx_elements(), 1);
     });
     with_compiled_tree(broken, |tree| assert!(!tree.has_compiled_components()));
+}
+
+#[test]
+fn binding_read_through_a_define_leaves_the_function_as_written() {
+    let local = "declare const NAME: string;\n\
+                 export function Local(props: { title: string }) {\n\
+                 const target = props.title;\n\
+                 return <p>{NAME}</p>;\n\
+                 }\n";
+    let parameter = "declare const NAME: string;\n\
+                     export function Prop({ target }: { target: string }) {\n\
+                     return <p>{NAME}</p>;\n\
+                     }\n";
+    for text in [local, parameter] {
+        // Nothing declares `other`: the define reads a global there, and the compiler writes the function.
+        for (value, expected) in [
+            ("target", TreeChange::Unchanged),
+            ("other", TreeChange::Changed),
+        ] {
+            with_defines(text, &[("NAME", value)], |bench| {
+                let (bound, analysis) = bench.analyze(&[]);
+                let (change, _) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+                assert_eq!(change, expected, "NAME={value} {text}");
+            });
+        }
+    }
 }
 
 #[test]

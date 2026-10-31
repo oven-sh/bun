@@ -1,12 +1,13 @@
 use bun_sema::atom::Atom;
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{Chain, ExprId, ExprKind, MemberKey};
 
 use super::PropertyName;
 use crate::ir::generated::{NullishAccess, RuntimeErrorKind};
 use crate::ir::{TypeTable, ValueId, VariableId};
+use crate::lower::expression::{self, DefineStop};
 use crate::lower::scope::{self, IdentifierTarget};
-use crate::lower::{FunctionLowering, commonjs, expression};
+use crate::lower::{FunctionLowering, commonjs};
 
 pub(in crate::lower) enum Reference {
     Identifier {
@@ -67,6 +68,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         None => Reference::FreeName(member.name),
                     }
                 }
+                Decision::NamedPath(named) => self.lower_named_path_reference(target, named),
                 Decision::Unknown
                 | Decision::Constant(_)
                 | Decision::Data(_)
@@ -130,6 +132,45 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_throw_runtime_error(RuntimeErrorKind::UnresolvableReference, None);
                 Reference::Invalid
             }
+        }
+    }
+
+    // `bun run` prints the name or the path of a define in place of `root`, so a store at `root` goes where a store to that text goes there.
+    fn lower_named_path_reference(&mut self, root: ExprId, named: &NamedPath<'_>) -> Reference {
+        let stop = self.find_define_stop_at_target(root, named, DefineStop::StoredTo);
+        if stop.is_some() {
+            self.report_define_without_support(root, named, DefineStop::StoredTo);
+            return Reference::Invalid;
+        }
+        let member = self.lower_named_path_holder(named);
+        if let Some(object) = member.holder {
+            return Reference::Property {
+                object,
+                name: PropertyName::Constant(self.file.atom_key(member.name)),
+                access: None,
+            };
+        }
+        let target = match self.resolve_dynamic_define_head_target(&named.head) {
+            Some(target) => target,
+            None => self.resolve_binding_target(root, named.head.binding, member.name),
+        };
+        Reference::Identifier {
+            target,
+            identifier: root,
+        }
+    }
+
+    /// `find_define_stop` for a store to `site` or its `delete`. Both read the holder of the last name of a path, so what stops a read stops them.
+    pub(in crate::lower) fn find_define_stop_at_target(
+        &self,
+        site: ExprId,
+        named: &NamedPath<'_>,
+        usage: DefineStop,
+    ) -> Option<DefineStop> {
+        let stop = self.find_define_stop(site, named, usage);
+        match named.names {
+            [_] => stop,
+            _ => stop.or_else(|| self.find_define_stop(site, named, DefineStop::Read)),
         }
     }
 

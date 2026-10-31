@@ -27,6 +27,15 @@ struct Removal {
 /// The rules are those of `s_if`, `simplify_unused_expr` and `should_keep_stmt_in_dead_control_flow` in `js_parser`.
 impl Folder<'_, '_> {
     pub(super) fn push_statements_removed_by_bun_run(&self, roots: &mut DeadRoots) {
+        // A file where no define is applied to a name that the binder recorded pays this one test, and its scan looks no value up among the applied heads.
+        if self.applied_heads.is_empty() {
+            self.push_removed_statements::<false>(roots);
+        } else {
+            self.push_removed_statements::<true>(roots);
+        }
+    }
+
+    fn push_removed_statements<const HAS_APPLIED_HEADS: bool>(&self, roots: &mut DeadRoots) {
         let mut removal = Removal::default();
         for statement in self.hir.ids(self.hir.body) {
             let kind = self.hir[statement].kind;
@@ -39,7 +48,7 @@ impl Folder<'_, '_> {
             removal.parts.clear();
             (removal.parts).push((TreeNode::Stmt(statement), Rule::UnusedValue));
             removal.reads_module_or_exports = false;
-            if !self.removes_all(&mut removal) {
+            if !self.removes_all::<HAS_APPLIED_HEADS>(&mut removal) {
                 continue;
             }
             roots.in_bun_run.push(TreeNode::Stmt(statement));
@@ -50,13 +59,16 @@ impl Folder<'_, '_> {
         }
     }
 
-    fn removes_all(&self, removal: &mut Removal) -> bool {
+    fn removes_all<const HAS_APPLIED_HEADS: bool>(&self, removal: &mut Removal) -> bool {
         while let Some((part, rule)) = removal.parts.pop() {
             let can_be_removed = match part {
                 TreeNode::Stmt(statement) => {
                     self.push_parts_of_statement(statement, &mut removal.parts)
                 }
-                TreeNode::Expr(e) => self.push_parts_of_unused_value(e, rule, removal),
+                TreeNode::Expr(e) => {
+                    (HAS_APPLIED_HEADS && self.removes_applied_head(e, removal))
+                        || self.push_parts_of_unused_value(e, rule, removal)
+                }
                 TreeNode::Function(_) | TreeNode::Class(_) | TreeNode::Pattern(_) => false,
             };
             if !can_be_removed {
@@ -66,7 +78,23 @@ impl Folder<'_, '_> {
         true
     }
 
+    // `bun run` prints the name or the path that a define puts at `e` as one name, and leaves that name out where nothing uses its value.
+    fn removes_applied_head(&self, e: ExprId, removal: &mut Removal) -> bool {
+        let e = self.hir.skip_type_assertions(e);
+        let Ok(applied) = self.applied_heads.binary_search_by_key(&e, |entry| entry.0) else {
+            return false;
+        };
+        let head = self.applied_heads[applied].1.head.binding;
+        removal.reads_module_or_exports |= matches!(
+            head,
+            Binding::CommonJs(CommonJsVariable::Module | CommonJsVariable::Exports)
+        );
+        true
+    }
+
     /// The statement is removed if this is true and everything it pushes is removed.
+    // Inlined by force. `removes_all` has two copies, and with two callers this would be a call in the one that a file without an applied head runs.
+    #[inline(always)]
     fn push_parts_of_statement(
         &self,
         statement: StmtId,
@@ -102,6 +130,8 @@ impl Folder<'_, '_> {
     }
 
     /// The value is removed if this is true and everything it pushes is removed.
+    // Inlined by force, as `push_parts_of_statement` is.
+    #[inline(always)]
     fn push_parts_of_unused_value(&self, e: ExprId, rule: Rule, removal: &mut Removal) -> bool {
         let hir = self.hir;
         let e = hir.skip_type_assertions(e);

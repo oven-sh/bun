@@ -3,7 +3,7 @@
 pub(crate) use bun_sema::atom::{Atom, Interner, known};
 pub(crate) use bun_sema::bind::*;
 pub(crate) use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
-pub(crate) use bun_sema::fold::{FoldInputs, FoldOptions};
+pub(crate) use bun_sema::fold::{DefineHead, DefineRoot, FoldInputs, FoldOptions};
 pub(crate) use bun_sema::hir::*;
 pub(crate) use bun_sema::import_sites::JsxMode;
 pub(crate) use bun_sema::module_format::DeclaredModuleType;
@@ -286,6 +286,17 @@ impl<'s> Workspace<'s> {
 
     pub(crate) fn bind_for_check(&self, hir: &File<'s>) -> Bound<'s> {
         bind(hir, bind_options(None), &self.atoms, self.arena)
+    }
+
+    pub(crate) fn bind_with_heads(
+        &self,
+        source: &Source<'_>,
+        heads: &[DefineHead],
+    ) -> (File<'s>, Bound<'s>) {
+        let hir = self.parse(source);
+        let options = bind_options(Some(source.runtime));
+        let bound = bind_with_define_heads(&hir, options, heads, &self.atoms, self.arena);
+        (hir, bound)
     }
 
     #[track_caller]

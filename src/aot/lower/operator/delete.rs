@@ -1,11 +1,13 @@
 use bun_sema::atom::Atom;
-use bun_sema::fold::Decision;
+use bun_sema::bind::{Binding, BindingKind, CodeUnit, FunctionFlags, has_mapped_arguments};
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{BlockId, ValueId};
-use crate::lower::expression::ShortCircuit;
+use crate::lower::expression::{DefineStop, ShortCircuit};
 use crate::lower::member::PropertyName;
+use crate::lower::scope::{ArgumentsObject, BindingForm};
 use crate::lower::{FileLowering, FunctionLowering};
 
 pub(super) fn lower_delete(
@@ -19,6 +21,7 @@ pub(super) fn lower_delete(
             return lowering.builder.boolean(true);
         }
         Decision::GlobalPath(path) => return lowering.delete_global_path(path),
+        Decision::NamedPath(named) => return lowering.delete_named_path(target, named),
         Decision::Unknown => {}
     }
     if matches!(hir[target].kind, ExprKind::Ident(_)) {
@@ -51,6 +54,40 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         closing.unwrap_or_else(|| self.last_mapped_position(access))
     }
+
+    // JSC keeps the parameters of sloppy code in a mapped arguments object where nothing captures one. `delete` of such a name answers true there.
+    fn deletes_mapped_argument(&self, named: &NamedPath<'_>) -> bool {
+        let (bound, plan) = (self.bound, &self.scopes);
+        let [_] = named.names else {
+            return false;
+        };
+        match named.head.binding {
+            Binding::Symbol(symbol) => {
+                let is_parameter = bound.binding_kind(symbol) == BindingKind::Parameter;
+                let unit = bound.code_unit(bound.symbol_scope(symbol));
+                matches!(plan.form(symbol), BindingForm::MappedArgument { .. })
+                    || (is_parameter && self.may_have_mapped_arguments(unit))
+            }
+            Binding::CommonJs(_) => {
+                plan.arguments_object(CodeUnit::File) == ArgumentsObject::Mapped
+                    || self.may_have_mapped_arguments(CodeUnit::File)
+            }
+            Binding::Arguments(_) | Binding::Free => false,
+        }
+    }
+
+    // JSC makes a mapped arguments object wherever the text that `bun run` keeps names `arguments`, also in code that the build has removed.
+    fn may_have_mapped_arguments(&self, unit: CodeUnit) -> bool {
+        let names_arguments = match unit {
+            CodeUnit::File => self.bound.file_uses_arguments(),
+            CodeUnit::Function(function) => {
+                let flags = self.bound.function_flags(function);
+                flags.contains(FunctionFlags::USES_ARGUMENTS)
+            }
+            CodeUnit::FieldInitializer(_) => false,
+        };
+        names_arguments && has_mapped_arguments(self.hir, unit)
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -58,6 +95,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let last = self.lower_global_path_holder(path);
         let Some(holder) = last.holder else {
             return self.emit_free_name_delete(last.name);
+        };
+        let key = self.file.atom_key(last.name);
+        self.emit_delete(holder, PropertyName::Constant(key))
+    }
+
+    // `bun run` prints the name or the path of a define in place of `target`, so `delete` removes what that text names there.
+    fn delete_named_path(&mut self, target: ExprId, named: &NamedPath<'_>) -> ValueId {
+        let stop = self.find_define_stop_at_target(target, named, DefineStop::Deleted);
+        if stop.is_some() || self.file.deletes_mapped_argument(named) {
+            self.report_define_without_support(target, named, DefineStop::Deleted);
+            return self.builder.boolean(true);
+        }
+        self.set_position(self.file.hir[target].pos);
+        let last = self.lower_named_path_holder(named);
+        let Some(holder) = last.holder else {
+            return self.delete_define_head(&named.head);
         };
         let key = self.file.atom_key(last.name);
         self.emit_delete(holder, PropertyName::Constant(key))

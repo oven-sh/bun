@@ -1,0 +1,1 @@
+OWN.answer = 42;

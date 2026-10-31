@@ -231,6 +231,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 holder: found.holder,
             };
         }
+        self.resolve_binding_target(identifier, binding, name)
+    }
+
+    /// The target of a store at `identifier` to `binding` under `name`, which no `with` object or evaluated text may declare there. A define may give the identifier that name.
+    pub(crate) fn resolve_binding_target(
+        &mut self,
+        identifier: ExprId,
+        binding: Binding,
+        name: Atom,
+    ) -> IdentifierTarget {
         let is_dead_zone_tested = match binding {
             Binding::Symbol(symbol) if self.file.is_plain_assignment_target(symbol, identifier) => {
                 self.test_dead_zone_before_value(symbol, name)
@@ -280,6 +290,7 @@ pub(crate) fn find_tested_local(
     if dynamic_lookup.is_some() {
         return None;
     }
+    // The local that the identifier itself names. An identifier that a define gives another name is stored to through the binding of that name, and names no local itself.
     let symbol = match file.bound.binding(tested) {
         Binding::Symbol(symbol) => symbol,
         Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return None,

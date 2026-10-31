@@ -15,8 +15,10 @@ use bun_lint_react_compiler::code_generation::{
     GenerationError, GenerationOptions, find_candidates, generate_function,
     has_module_scope_opt_out,
 };
-use bun_sema::atom::Interner;
-use bun_sema::hir::{self, FileBuilder};
+use bun_sema::atom::{Atom, Interner};
+use bun_sema::bind::{Binding, CodeUnit, ImplicitReference};
+use bun_sema::fold::Decision;
+use bun_sema::hir::{self, ExprId, FileBuilder};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{JsxRuntime, TransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -30,6 +32,57 @@ use crate::load::sources::{ParsedSource, SourceKind};
 pub(crate) const DECLARATIONS_PATH: &[u8] = b"/$bun/react-compiler/runtime.d.ts";
 pub(crate) const DECLARATIONS: &[u8] =
     b"declare module \"react/compiler-runtime\" {\n  export function c(size: number): any[];\n}\n";
+
+/// An expression in whose place the fold put the path of a define. The compiler reads the file as it is written: it sees the expression, and nothing of the first name of the path.
+struct DefineSite {
+    position: u32,
+    head: Atom,
+    /// Code that runs reads `head` from a binding below the top level of the file, or looks the name up when it runs.
+    reads_below_top_level: bool,
+}
+
+fn is_read_below_top_level(request: &TransformRequest<'_, '_>, head: &ImplicitReference) -> bool {
+    let bound = request.bound;
+    let is_at_top_level = match head.binding {
+        Binding::Symbol(symbol) => {
+            bound.symbol_scope(symbol) == bound.top_scope(request.hir, CodeUnit::File)
+        }
+        Binding::Arguments(unit) => unit == CodeUnit::File,
+        Binding::CommonJs(_) => true,
+        // A `with` object or evaluated text may declare the name.
+        Binding::Free => false,
+    };
+    !is_at_top_level && request.analysis.decisions.reads_define_head(head)
+}
+
+/// A file in which no define puts a name or a path has no site: it pays one test, and no expression of it is looked at.
+fn find_define_sites(request: &TransformRequest<'_, '_>) -> Vec<DefineSite> {
+    let tree: &hir::File<'_> = request.hir;
+    let decisions = &request.analysis.decisions;
+    if !decisions.has_define_paths() {
+        return Vec::new();
+    }
+    let expressions = (0..tree.exprs.len() as u32).map(ExprId);
+    let sites = expressions.filter_map(|expression| {
+        let (head, reads_below_top_level) = match decisions.decision(expression) {
+            Decision::GlobalPath(path) => (*path.first()?, false),
+            Decision::NamedPath(path) => {
+                let head = &path.head;
+                (head.name, is_read_below_top_level(request, head))
+            }
+            Decision::Unknown
+            | Decision::Constant(_)
+            | Decision::Data(_)
+            | Decision::DeferredData => return None,
+        };
+        Some(DefineSite {
+            position: tree[expression].pos,
+            head,
+            reads_below_top_level,
+        })
+    });
+    sites.collect()
+}
 
 pub(crate) struct ReactCompiler<'a> {
     mode: ReactCompilerMode,
@@ -104,12 +157,27 @@ impl<'a> ReactCompiler<'a> {
                 JsxRuntime::Automatic => false,
             },
         };
+        let define_sites = find_define_sites(request);
         let mut writer = TreeWriter::new(FileBuilder::from_file(tree), atoms, file_jsx);
         let mut has_compiled_function = false;
         for candidate in &candidates {
             let function = candidate.function.id();
+            // A file without a site asks nothing of the function.
+            let define_heads: Vec<Atom> = match define_sites.is_empty() {
+                true => Vec::new(),
+                false => {
+                    let span = candidate.function.estree_span();
+                    let sites = define_sites.iter();
+                    let sites = sites.filter(|site| span.contains_offset(site.position));
+                    // The compiler sees no read of such a binding: it may remove the binding, or keep what it made of an earlier value. The function stays as it is written.
+                    if sites.clone().any(|site| site.reads_below_top_level) {
+                        continue;
+                    }
+                    sites.map(|site| site.head).collect()
+                }
+            };
             let written = generate_function(&file, candidate, &options, |generated| {
-                writer.replace_function(function, generated)
+                writer.replace_function(function, generated, &define_heads)
             });
             match written {
                 Ok(None) => {}

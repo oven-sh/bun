@@ -1,11 +1,11 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CommonJsVariable, ScopeId};
+use bun_sema::bind::{Binding, CommonJsVariable, ImplicitReference, ScopeId};
 use bun_sema::hir::{ExprId, NodeData, PatId};
 use smallvec::SmallVec;
 
 use super::identifiers::BindingRead;
 use super::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
-use super::{BindingRef, ScopeSlot, bindings};
+use super::{BindingRef, IdentifierTarget, ScopeSlot, bindings};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::ECMAMode;
 use crate::ir::{BlockId, Edge, LocalVariable, TypeTable, ValueId};
@@ -47,6 +47,84 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             pos: self.file.hir[written].pos,
         };
         Some(self.search_scope_objects(search, name))
+    }
+
+    fn resolve_dynamic_define_head(&mut self, head: &ImplicitReference) -> Option<DynamicBinding> {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let declaring_scope = self.find_declaring_scope(head.binding);
+        let search = ScopeObjectSearch::of_define_head(hir, bound, head, declaring_scope)?;
+        Some(self.search_scope_objects(search, head.name))
+    }
+
+    /// The value of the first name of a define path, where a `with` object or the text of a direct eval may declare that name. `None`: neither may, and the name is read through its binding.
+    pub(in crate::lower) fn get_dynamic_define_head(
+        &mut self,
+        head: &ImplicitReference,
+    ) -> Option<ValueId> {
+        let found = self.resolve_dynamic_define_head(head)?;
+        Some(self.get_dynamic_head(head, found.holder, BindingRead::Value))
+    }
+
+    /// `is_name`: the defined name is an identifier. For a member `bun run` may write `typeof (0, name)`, which throws as a read of the name does.
+    pub(in crate::lower) fn get_define_head_for_typeof(
+        &mut self,
+        head: &ImplicitReference,
+        is_name: bool,
+    ) -> ValueId {
+        let is_declared = bindings::normalize_binding(self.file, head.binding) != Binding::Free;
+        let read = match is_name || is_declared {
+            true => BindingRead::TypeOf,
+            false => BindingRead::Value,
+        };
+        match self.resolve_dynamic_define_head(head) {
+            Some(found) => self.get_dynamic_head(head, found.holder, read),
+            None => self.read_binding(head.binding, head.name, read),
+        }
+    }
+
+    /// `get_dynamic_define_head` for a call of the name: the function and its `this`, which is the `with` object that has the name and undefined where none has.
+    pub(in crate::lower) fn lower_dynamic_define_head_callee(
+        &mut self,
+        head: &ImplicitReference,
+    ) -> Option<(ValueId, ValueId)> {
+        let found = self.resolve_dynamic_define_head(head)?;
+        let function = self.get_dynamic_head(head, found.holder, BindingRead::Value);
+        Some((function, found.with_base))
+    }
+
+    /// The target of a store to the first name of a define path. `None`: neither a `with` object nor the text of a direct eval may declare that name.
+    pub(in crate::lower) fn resolve_dynamic_define_head_target(
+        &mut self,
+        head: &ImplicitReference,
+    ) -> Option<IdentifierTarget> {
+        let found = self.resolve_dynamic_define_head(head)?;
+        Some(IdentifierTarget::Dynamic {
+            binding: head.binding,
+            name: head.name,
+            holder: found.holder,
+        })
+    }
+
+    /// `delete` of the one name of `head` in sloppy code: from the object that has the name when the code runs, and else only a free name is deleted.
+    pub(in crate::lower) fn delete_define_head(&mut self, head: &ImplicitReference) -> ValueId {
+        match self.resolve_dynamic_define_head(head) {
+            Some(found) => self.delete_dynamic_binding(head.binding, head.name, found.holder),
+            None => self.delete_binding(head.binding, head.name),
+        }
+    }
+
+    fn get_dynamic_head(
+        &mut self,
+        head: &ImplicitReference,
+        holder: ValueId,
+        read: BindingRead,
+    ) -> ValueId {
+        let dynamic = self.emit_object_path_get(head.name, holder);
+        let value = match read {
+            BindingRead::Value => self.get_binding_without_expression(head.binding, head.name),
+            BindingRead::TypeOf => self.read_binding(head.binding, head.name, read),
+        };
+        self.finish_binding_path(dynamic, value)
     }
 
     // The function and the receiver of `module.require(..)`, of which Bun's transpiler prints `require(..)`.
@@ -185,10 +263,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn delete_identifier(&mut self, identifier: ExprId) -> ValueId {
         let name = self.file.identifier_name(identifier);
         let binding = self.file.bound.binding(identifier);
-        let Some(found) = self.resolve_dynamic_binding(identifier) else {
-            return self.delete_binding(binding, name);
-        };
-        let (object, dynamic) = self.begin_dynamic_use(found.holder);
+        match self.resolve_dynamic_binding(identifier) {
+            Some(found) => self.delete_dynamic_binding(binding, name, found.holder),
+            None => self.delete_binding(binding, name),
+        }
+    }
+
+    fn delete_dynamic_binding(&mut self, binding: Binding, name: Atom, holder: ValueId) -> ValueId {
+        let (object, dynamic) = self.begin_dynamic_use(holder);
         let key = self.file.name_key(name);
         let deleted = self
             .builder

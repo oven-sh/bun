@@ -80,6 +80,16 @@ pub(crate) fn decide_module_format(
     }
 }
 
+/// Where a define puts a name alone in code that runs, with what the name is bound to there. `bun run` counts a use of that.
+fn find_names_put_by_defines(
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+) -> impl Iterator<Item = (ExprId, Binding)> {
+    let heads = decisions.applied_define_heads();
+    let heads = heads.filter(move |head| !bound.is_define_head_behind_member(&head.path.head));
+    heads.filter_map(|head| Some((head.name_site()?, head.binding())))
+}
+
 fn find_variable_uses(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -87,7 +97,9 @@ fn find_variable_uses(
     scan: &ImportScan<'_>,
 ) -> VariableUses {
     let mut uses = VariableUses::default();
-    for &(ident, binding) in bound.ident_bindings() {
+    let spelled = bound.ident_bindings().iter().copied();
+    // `find_main_module_comparison` and `module_require_objects` know `module` only where an identifier spells it, so the name is evidence wherever a define puts it.
+    for (ident, binding) in spelled.chain(find_names_put_by_defines(bound, decisions)) {
         let Binding::CommonJs(variable) = binding else {
             continue;
         };
@@ -123,12 +135,12 @@ fn find_redeclared_variable_evidence(
     if redeclared.is_empty() || file_esm_syntax(hir) != EsmSyntax::None {
         return evidence;
     }
-    for index in 0..hir.exprs.len() {
-        let ident = ExprId(index as u32);
-        if !bound.is_evaluated_ident(ident) || decisions.is_dead_expr(ident) {
-            continue;
-        }
-        let Binding::Symbol(symbol) = bound.binding(ident) else {
+    let idents = (0..hir.exprs.len() as u32).map(ExprId);
+    let idents = idents.filter(|&it| bound.is_evaluated_ident(it) && !decisions.is_dead_expr(it));
+    let named = idents.map(|it| bound.binding(it));
+    let defined = find_names_put_by_defines(bound, decisions).map(|entry| entry.1);
+    for binding in named.chain(defined) {
+        let Binding::Symbol(symbol) = binding else {
             continue;
         };
         let Ok(found) = redeclared.binary_search_by_key(&symbol, |entry| entry.0) else {

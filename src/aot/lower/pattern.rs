@@ -101,9 +101,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // A target that no `[` and no `{` stands around: a name, or the member in the head of a loop, which is stored to as by `=`.
     fn set_position_of_lone_target(&mut self, target: ExprId) {
         let file = &*self.file;
-        match file.hir.member_key(file.skip_type_syntax(target)) {
+        let name = file.skip_type_syntax(target);
+        match file.hir.member_key(name) {
             Some((object, _)) => self.set_position(file.member_position(object)),
-            None if self.is_kept_in_register(file.bound.binding(target)) => {}
+            None if self.is_kept_in_register(file.lone_target_binding(target, name)) => {}
             None => self
                 .builder
                 .record_position(file.recorded_name_position(target)),

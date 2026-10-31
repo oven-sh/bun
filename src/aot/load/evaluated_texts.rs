@@ -111,7 +111,10 @@ fn has_replaced_expression(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
             ExprKind::Ident(name) => !is_constant_global(name, value),
             _ => true,
         },
-        Decision::GlobalPath(_) | Decision::Data(_) | Decision::DeferredData => true,
+        Decision::GlobalPath(_)
+        | Decision::NamedPath(_)
+        | Decision::Data(_)
+        | Decision::DeferredData => true,
     })
 }
 

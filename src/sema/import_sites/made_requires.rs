@@ -239,9 +239,11 @@ fn is_only_called_or_read(
         Parent::VarInit(declaration) if bindings_left > 0 => {
             let pattern = hir[declaration].pat;
             let holder = bound.declared_symbol(Decl::Var(pattern));
+            let mut define_heads = bound.define_heads().iter();
             return matches!(hir[pattern].kind, PatKind::Ident(_))
                 && bound.binding_stability(holder) == BindingStability::Stable
                 && !is_exported(bound, holder)
+                && !define_heads.any(|head| head.binding == Binding::Symbol(holder))
                 && (0..hir.exprs.len() as u32).map(ExprId).all(|e| {
                     !bound.is_evaluated_ident(e)
                         || bound.binding(e) != Binding::Symbol(holder)
@@ -268,8 +270,11 @@ fn is_only_called_or_read(
 pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     let own_require = Binding::CommonJs(CommonJsVariable::Require);
     let mut names = bound.ident_bindings().iter();
+    // Nobody looks at what the code around a define does with the name that the value of the define begins with.
+    let mut define_heads = bound.define_heads().iter();
     bound.import_meta_may_be_modified()
         || !bound.runtime.eval_scopes().is_empty()
+        || define_heads.any(|head| head.binding == own_require)
         || names.any(|&(name, binding)| {
             binding == own_require
                 && !is_only_called_or_read(hir, bound, name, LONGEST_CHAIN_OF_BINDINGS)

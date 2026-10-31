@@ -88,3 +88,64 @@ fn direct_eval_in_other_function() {
         assert_builtin(case, "Math.floor", BuiltinId::MathFloor);
     });
 }
+
+const BUILTIN_PATHS: &[DefinedPath] = &[
+    (&["PROBE_FLOOR"], &["Math", "floor"]),
+    (&["PROBE_SYMBOL"], &["Symbol"]),
+    (&["process", "env", "PROBE"], &["Symbol"]),
+    (&["settle"], &["Symbol", "for"]),
+];
+
+#[test]
+fn defined_path_of_a_builtin_below_a_binding_is_no_builtin() {
+    let setup = Setup {
+        defines: BUILTIN_PATHS,
+        ..SCRIPT
+    };
+    let sites = [
+        ("function f(Math) { return PROBE_FLOOR; }", "PROBE_FLOOR"),
+        (
+            "function f(Symbol) { return typeof PROBE_SYMBOL; }",
+            "PROBE_SYMBOL",
+        ),
+        (
+            "function f(Symbol) { return process.env.PROBE; }",
+            "process.env.PROBE",
+        ),
+        ("function f(Symbol) { return settle(1); }", "settle"),
+    ];
+    for (source, site) in sites {
+        with_case(setup, source, |case| {
+            assert_unresolved(case, site);
+            assert!(case.resolved.mentioned().is_empty(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn defined_name_after_a_direct_eval_resolves_as_the_name_written_there() {
+    let setup = Setup {
+        defines: BUILTIN_PATHS,
+        ..SCRIPT
+    };
+    let source = "function f(s) { eval(s); return [PROBE_SYMBOL, process.env.PROBE, Symbol]; }";
+    with_case(setup, source, |case| {
+        let written = case.dynamic_global_at(case.expr("Symbol"));
+        assert_eq!(written.map(|path| path.id), Some(BuiltinId::Symbol));
+        for defined in ["PROBE_SYMBOL", "process.env.PROBE"] {
+            let site = case.expr(defined);
+            assert_eq!(case.dynamic_global_at(site), written, "{defined}");
+        }
+    });
+    // The text of the eval may declare `Math`, so nothing is known of a member below that name.
+    let source = "function f(s) { eval(s); return PROBE_FLOOR; }";
+    with_case(setup, source, |case| {
+        assert_unresolved(case, "PROBE_FLOOR");
+        assert!(case.mentions(BuiltinId::Math));
+    });
+    // The text of an eval in strict code declares nothing in the function.
+    let source = r#""use strict"; function f(s) { eval(s); return PROBE_FLOOR; }"#;
+    with_case(setup, source, |case| {
+        assert_builtin(case, "PROBE_FLOOR", BuiltinId::MathFloor);
+    });
+}

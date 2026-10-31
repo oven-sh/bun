@@ -90,7 +90,8 @@ impl ReferencePass<'_, '_> {
         pending.shared_sort_unstable_by_key(|entry: &PendingReference| entry.reference);
         for entry in pending {
             let kind = ImplicitReferenceKind::DecoratorMetadata(entry.reference);
-            self.add_implicit_reference(entry.scope, entry.name, entry.node, kind);
+            let found = self.lookup.find(entry.scope, entry.name, u32::MAX);
+            self.add_implicit_reference(&found, entry.name, entry.node, kind);
         }
     }
 

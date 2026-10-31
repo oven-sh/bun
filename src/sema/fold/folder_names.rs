@@ -2,7 +2,7 @@ use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::inputs::{DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind};
 use super::run_order::{ReadOrder, RunOrder};
-use super::{Constant, Decision, FoldedValue};
+use super::{Constant, Decision, FoldedValue, NamedPath};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, ScopeKind, SymbolId,
@@ -224,7 +224,18 @@ impl<'s> Folder<'_, 's> {
         }
         Some(match value {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),
-            DefineValue::GlobalPath(path) => self.decide(e, Decision::GlobalPath(path)),
+            DefineValue::GlobalPath(path) => {
+                let root = self.find_path_root(e);
+                let head = path.first().copied();
+                let head = head.and_then(|head| self.bound.define_head(root, head));
+                let decision = match head {
+                    Some(&head) => {
+                        Decision::NamedPath(self.arena.alloc(NamedPath { head, names: path }))
+                    }
+                    None => Decision::GlobalPath(path),
+                };
+                self.decide(e, decision)
+            }
             DefineValue::Data(data) => self.decide(e, Decision::of_data(data)),
             DefineValue::RuntimeValue(_) => {
                 let folded = self.note_loader_value(e);
@@ -236,6 +247,15 @@ impl<'s> Folder<'_, 's> {
                 Folded::new(Value::from(constant), self.effects_of_path(e))
             }
         })
+    }
+
+    // The identifier or the `import.meta` that the path begins with.
+    fn find_path_root(&self, path: ExprId) -> ExprId {
+        let mut root = path;
+        while let Some((object, _)) = self.hir.member_key(root) {
+            root = self.hir.skip_type_assertions(object);
+        }
+        root
     }
 
     fn effects_of_path(&self, path: ExprId) -> Effects {

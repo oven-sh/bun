@@ -1,11 +1,11 @@
 use super::bits::has_bit;
 use super::declaration_kinds::declaration_symbol;
-use super::storage::RuntimeDeclarationsIn;
+use super::storage::{RuntimeDeclarationsIn, implicit_reference_order};
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
-    CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    StoreKind, SymbolStore, stability,
+    CommonJsVariable, DynamicLookup, EarlyRedeclaration, EvalScope, FunctionFlags,
+    ImplicitReference, ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName,
+    PrivateNameId, RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -26,6 +26,35 @@ pub(super) const IDENTS_IN_RUN: usize = 16;
 #[inline]
 pub(super) fn find_symbol<K: Ord + Copy>(list: &[(K, SymbolId)], key: K) -> Option<SymbolId> {
     find_entry(list, key).copied()
+}
+
+/// The entry of `reference` in `RuntimeReferencesIn::dynamic_implicit_lookups`. What the name is bound to is no part of what tells two references apart.
+pub(super) fn find_reference_lookup(
+    lookups: &[(ImplicitReference, DynamicLookup)],
+    reference: &ImplicitReference,
+) -> Option<DynamicLookup> {
+    if lookups.is_empty() {
+        return None;
+    }
+    let order = implicit_reference_order(reference);
+    let first = lookups.partition_point(|entry| implicit_reference_order(&entry.0) < order);
+    let mut in_place = lookups[first..]
+        .iter()
+        .take_while(|entry| implicit_reference_order(&entry.0) == order);
+    let found = in_place.find(|entry| entry.0.name == reference.name)?;
+    Some(found.1)
+}
+
+/// Whether `heads` has the root and the name of the define head `reference`. `heads` is in the order of the roots, as `RuntimeReferencesIn::define_heads_behind_members` is.
+fn has_define_head(heads: &[(ExprId, Atom)], reference: &ImplicitReference) -> bool {
+    let (ImplicitReferenceKind::DefineHead, NodeData::Expr(root)) =
+        (reference.kind, reference.node)
+    else {
+        return false;
+    };
+    let first = heads.partition_point(|entry| entry.0 < root);
+    let mut at_root = heads[first..].iter().take_while(|entry| entry.0 == root);
+    at_root.any(|entry| entry.1 == reference.name)
 }
 
 #[inline]
@@ -291,6 +320,41 @@ impl Bound<'_> {
         }
     }
 
+    /// The record of `head` at `root`. `None`: `root` is not evaluated, or `head` is free and no `with` object or evaluated text may declare it.
+    pub fn define_head(&self, root: ExprId, head: Atom) -> Option<&ImplicitReference> {
+        let references = self.runtime.implicit_references();
+        let root_of = |reference: &ImplicitReference| match (reference.kind, reference.node) {
+            (ImplicitReferenceKind::DefineHead, NodeData::Expr(recorded)) => Some(recorded),
+            _ => None,
+        };
+        // The define heads are the first records, in the order of their roots.
+        let first = references.partition_point(|reference| {
+            root_of(reference).is_some_and(|recorded| recorded < root)
+        });
+        let mut at_root = references[first..]
+            .iter()
+            .take_while(|&reference| root_of(reference) == Some(root));
+        at_root.find(|reference| reference.name == head)
+    }
+
+    /// The records that `define_head` answers with, whether or not the fold applies a define where each is recorded. `Decisions::applied_define_heads` answers with those it applied.
+    pub(crate) fn define_heads(&self) -> &[ImplicitReference] {
+        let references = self.runtime.implicit_references();
+        let is_define_head =
+            |reference: &ImplicitReference| reference.kind == ImplicitReferenceKind::DefineHead;
+        // The define heads are the first records, so a file without one is known by its first record and searches nothing.
+        if !references.first().is_some_and(is_define_head) {
+            return &[];
+        }
+        &references[..references.partition_point(is_define_head)]
+    }
+
+    /// Whether the lookup of `reference` stepped over a namespace or enum member or the import of a macro: `bun run` counts the use for that.
+    pub fn is_define_head_behind_member(&self, reference: &ImplicitReference) -> bool {
+        let behind = &self.runtime.references.define_heads_behind_members;
+        has_define_head(behind, reference)
+    }
+
     pub fn declared_symbol(&self, decl: Decl) -> SymbolId {
         self.declared_binding_symbol(decl)
             .unwrap_or_else(|| self.symbol_of_declaration(decl))
@@ -374,6 +438,11 @@ impl Bound<'_> {
             true => self.scopes[declaring_scope.idx()].parent,
             false => declaring_scope,
         }
+    }
+
+    /// Where the name of a define head is looked for when the program runs. `None`: no `with` object or evaluated text may declare it there.
+    pub fn dynamic_scope_of(&self, reference: &ImplicitReference) -> Option<DynamicLookup> {
+        find_reference_lookup(&self.runtime.references.dynamic_implicit_lookups, reference)
     }
 
     pub fn own_scope(&self, stmt: StmtId) -> ScopeId {
@@ -531,8 +600,11 @@ impl Bound<'_> {
             return false;
         }
         let own_name = Binding::Symbol(self.declared_symbol(Decl::Fn(function)));
+        // A define whose value begins with the name reads it where no identifier spells it.
+        let mut define_heads = self.define_heads().iter();
         let mut idents = (0..hir.exprs.len() as u32).map(ExprId);
-        idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
+        define_heads.any(|head| head.binding == own_name)
+            || idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
     }
 
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {
@@ -543,5 +615,43 @@ impl Bound<'_> {
 
     pub fn ident_bindings(&self) -> &[(ExprId, Binding)] {
         &self.runtime.references.ident_bindings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Binding, ImplicitReference, ImplicitReferenceKind, RuntimeTablesIn};
+    use super::has_define_head;
+    use crate::atom::known;
+    use crate::hir::*;
+
+    #[test]
+    fn define_head_behind_a_member_is_found_by_its_root_and_name() {
+        let reference = |root, kind, name| ImplicitReference {
+            node: NodeData::Expr(ExprId(root)),
+            kind,
+            name,
+            binding: Binding::Free,
+        };
+        let define_head = |root, name| reference(root, ImplicitReferenceKind::DefineHead, name);
+        let mut tables = RuntimeTablesIn::<Growable>::default();
+        // The binder looks at every `import.meta` after the identifiers, so it does not add the roots in their order.
+        tables.references.define_heads_behind_members = vec![
+            (ExprId(9), known::Object),
+            (ExprId(6), known::React),
+            (ExprId(6), known::Object),
+        ];
+        assert!(!tables.is_sorted());
+        tables.sort();
+        assert!(tables.is_sorted());
+        let behind = &tables.references.define_heads_behind_members[..];
+        let is_behind = |wanted: ImplicitReference| has_define_head(behind, &wanted);
+        assert!(is_behind(define_head(9, known::Object)));
+        assert!(is_behind(define_head(6, known::React)));
+        assert!(is_behind(define_head(6, known::Object)));
+        assert!(!is_behind(define_head(9, known::React)));
+        assert!(!is_behind(define_head(7, known::Object)));
+        let factory = reference(6, ImplicitReferenceKind::JsxFactory, known::React);
+        assert!(!is_behind(factory));
     }
 }

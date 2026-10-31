@@ -193,7 +193,7 @@ impl FileLowering<'_, '_, '_, '_> {
         match decisions.decision(expression) {
             Decision::Constant(constant) => return Some(self.create_leaf(constant)),
             Decision::Data(value) => return Some(create_node(self, Part::Value(value))),
-            Decision::DeferredData | Decision::GlobalPath(_) => {
+            Decision::DeferredData | Decision::GlobalPath(_) | Decision::NamedPath(_) => {
                 debug_assert!(
                     false,
                     "every part of a data literal has its value at build time"

@@ -181,6 +181,7 @@ impl FileLowering<'_, '_, '_, '_> {
             Decision::Constant(constant) => return KnownPrimitive::of_constant(constant),
             Decision::Unknown
             | Decision::GlobalPath(_)
+            | Decision::NamedPath(_)
             | Decision::Data(_)
             | Decision::DeferredData => {}
         }

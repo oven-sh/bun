@@ -3,6 +3,7 @@ mod bits;
 mod block_functions;
 mod declaration_kinds;
 mod declarations;
+mod define_heads;
 mod direct_evals;
 mod duplicate_names;
 mod implicit_references;
@@ -28,6 +29,7 @@ pub use self::storage::RuntimeTablesIn;
 use super::decorator_metadata::MetadataReference;
 use super::{BoundBuilder, Decl, ScopeId, SymbolId};
 use crate::atom::{Atom, Intern, known};
+use crate::fold::DefineHead;
 use crate::hir::*;
 use crate::util::FxHashMap;
 use smallvec::SmallVec;
@@ -166,6 +168,8 @@ pub enum ImplicitReferenceKind {
     JsxFactory,
     JsxFragment,
     DecoratorMetadata(MetadataReference),
+    /// The first name of the path that a define gives the node or a path below it. Its binding is what the lookup found, before the module goal.
+    DefineHead,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -218,6 +222,15 @@ pub struct ImplicitReference {
     pub kind: ImplicitReferenceKind,
     pub name: Atom,
     pub binding: Binding,
+}
+
+/// Where the name of an `ImplicitReference` is looked for when the program runs. `Bound::dynamic_lookup_scope` and `Bound::dynamic_lookup_end` say the same of a name that an identifier spells.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct DynamicLookup {
+    /// The scope in which the search starts: the innermost one whose `with` object or evaluated text may declare the name.
+    pub scope: ScopeId,
+    /// The binding lies outside the variables that evaluated text declares in the scope of the binding, so that scope is searched too.
+    pub is_behind_eval_variables: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -279,6 +292,7 @@ impl<S: Storage> std::ops::DerefMut for RuntimeBindingsIn<S> {
 }
 
 const _: () = assert!(size_of::<(ExprId, Binding)>() <= 12 && size_of::<CodeUnit>() <= 8);
+const _: () = assert!(size_of::<ImplicitReference>() == 28);
 const _: () = assert!(size_of::<Option<Decl>>() == size_of::<Decl>());
 const _: () = assert!(size_of::<RuntimeBindings<'static>>() == size_of::<usize>());
 
@@ -286,7 +300,9 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
     pub hir: &'a File<'s>,
     pub bound: &'a mut BoundBuilder,
     pub idents: &'a [(ExprId, ScopeId)],
+    pub import_metas: &'a [(ExprId, ScopeId)],
     pub options: RuntimeBindOptions,
+    pub define_heads: &'a [DefineHead],
     pub atoms: &'a dyn Intern,
 }
 

@@ -1084,6 +1084,44 @@ fn const_read_excludes_arm() {
     });
 }
 
+const NAME_OF_A_FUNCTION: Fold<'static> = Fold {
+    defines: &[(Path::Global(&["RUN"]), Defined::GlobalPath(&["start"]))],
+    ..Fold::NONE
+};
+
+/// The value of the define is the name of the function, so the function may run where the define is applied. Each with whether every read of `on` comes behind `var on = true`.
+const READS_IN_A_FUNCTION_THAT_A_DEFINE_NAMES: &[(&str, bool)] = &[
+    (
+        "var on = true; function start() { return on ? a() : b(); } RUN();",
+        true,
+    ),
+    (
+        "RUN(); var on = true; function start() { return on ? a() : b(); }",
+        false,
+    ),
+    (
+        "const held = RUN; held(); var on = true; function start() { return on ? a() : b(); } start();",
+        false,
+    ),
+    (
+        "function early() { RUN(); } early(); var on = true; function start() { return on ? a() : b(); }",
+        false,
+    ),
+];
+
+#[test]
+fn function_that_a_define_names_may_run_where_the_define_is_applied() {
+    for &(text, is_behind) in READS_IN_A_FUNCTION_THAT_A_DEFINE_NAMES {
+        folded("a.mjs", text, NAME_OF_A_FUNCTION, |s| {
+            let [b] = calls_of(s, "b")[..] else {
+                panic!("calls of b");
+            };
+            let is_arm_excluded = s.analysis.decisions.is_dead_expr(b);
+            assert_eq!(is_arm_excluded, is_behind, "{text}");
+        });
+    }
+}
+
 #[test]
 fn library_decides_file_scope_const_reads() {
     for &(text, decided, expected) in LIBRARY_READS {

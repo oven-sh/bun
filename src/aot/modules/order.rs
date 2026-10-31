@@ -489,15 +489,19 @@ impl<'a, 's> FileText<'a, 's> {
             let binding = Binding::CommonJs(CommonJsVariable::Require);
             let mut stores = bound.runtime.unbound_name_stores().iter();
             let mut evals = bound.runtime.eval_scopes().iter();
+            let arguments = Binding::Arguments(CodeUnit::File);
             let mut idents = bound.ident_bindings().iter();
+            // A define whose value begins with `arguments` reads them where no identifier spells the name.
+            let mut define_heads = decisions.applied_define_heads();
+            let names_arguments = |&(ident, binding): &(ExprId, Binding)| {
+                binding == arguments && !decisions.is_dead_expr(ident)
+            };
             stores.any(|&(target, _)| {
                 bound.binding(target) == binding && !decisions.is_dead_expr(target)
             }) || evals.any(|&(call, _)| !decisions.is_dead_expr(call))
                 || (has_mapped_arguments(hir, CodeUnit::File)
-                    && idents.any(|&(ident, binding)| {
-                        binding == Binding::Arguments(CodeUnit::File)
-                            && !decisions.is_dead_expr(ident)
-                    }))
+                    && (idents.any(names_arguments)
+                        || define_heads.any(|head| head.binding() == arguments)))
         })
     }
 

@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
-use bun_sema::fold::{Decision, TreeNode};
+use bun_sema::fold::{Decision, NamedPath, TreeNode};
 use bun_sema::hir::{
     Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind, PropId,
     PropKey, PropKind, Span, is_proto_setter,
@@ -50,6 +50,10 @@ impl Walker<'_, '_> {
         }
         match self.decisions.decision(expression) {
             Decision::Unknown => {}
+            Decision::NamedPath(named) => {
+                self.visit_define_head(expression, named, context);
+                return;
+            }
             _ => return,
         }
         match self.hir[expression].kind {
@@ -150,12 +154,8 @@ impl Walker<'_, '_> {
     // The binding is read, or stored to, where `identifier` stands.
     fn visit_name(&mut self, identifier: ExprId, binding: Binding, context: Context) {
         let (bound, function) = (self.bound, context.function);
-        if let (Binding::Symbol(symbol), true) = (binding, bound.is_store_target(identifier)) {
-            self.walk.symbol_stores.push((symbol, identifier, function));
-            self.walk.last_store_times[symbol.idx()] = u32::MAX;
-            self.pending_stores.push(symbol);
-        }
-        self.record_binding_use(context, binding, bound.is_store_target(identifier));
+        let is_store = bound.is_store_target(identifier);
+        self.record_binding_use_at(context, identifier, binding, is_store);
         if let Some(start) = bound.dynamic_lookup_scope(NodeData::Expr(identifier)) {
             let declaring_scope = self.declaring_scope(binding);
             let search = ScopeObjectSearch {
@@ -166,6 +166,35 @@ impl Walker<'_, '_> {
             };
             self.record_scope_objects(function, search);
         }
+    }
+
+    // The first name of a define at `site` is read there, and stored to only where the path is that name alone: a longer path sets a member.
+    fn visit_define_head(&mut self, site: ExprId, named: &NamedPath<'_>, context: Context) {
+        let head = &named.head;
+        let is_store = named.names.len() == 1 && self.bound.is_store_target(site);
+        self.record_binding_use_at(context, site, head.binding, is_store);
+        let declaring_scope = self.declaring_scope(head.binding);
+        let search = ScopeObjectSearch::of_define_head(self.hir, self.bound, head, declaring_scope);
+        if let Some(search) = search {
+            self.record_scope_objects(context.function, search);
+        }
+    }
+
+    // A store is listed at `site`, the identifier at which the binder lists it too (`Bound::stores_to`).
+    fn record_binding_use_at(
+        &mut self,
+        context: Context,
+        site: ExprId,
+        binding: Binding,
+        is_store: bool,
+    ) {
+        if let (Binding::Symbol(symbol), true) = (binding, is_store) {
+            let store = (symbol, site, context.function);
+            self.walk.symbol_stores.push(store);
+            self.walk.last_store_times[symbol.idx()] = u32::MAX;
+            self.pending_stores.push(symbol);
+        }
+        self.record_binding_use(context, binding, is_store);
     }
 
     pub(super) fn record_binding_use(

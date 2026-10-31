@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, PatParent};
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{
     BinOp, ExprFlags, ExprId, ExprKind, Flags, IdList, MemberKey, PropId, Span, UnOp, end_of_expr,
 };
@@ -17,7 +17,12 @@ use crate::lower::{FileLowering, FunctionLowering};
 #[derive(Copy, Clone, Debug)]
 pub(in crate::lower) enum AssignmentTarget {
     Elision,
-    Identifier { identifier: ExprId, name: Atom },
+    Identifier {
+        identifier: ExprId,
+        name: Atom,
+        /// Where a define gives the identifier this name: the binding that the name has there. A store at the identifier goes to it.
+        defined: Option<Binding>,
+    },
     ArrayPattern(IdList<ExprId>),
     ObjectPattern(Span<PropId>),
     Expression,
@@ -59,17 +64,34 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn classify_identifier_target(&self, identifier: ExprId, name: Atom) -> AssignmentTarget {
-        match self.decisions().decision(identifier) {
-            Decision::GlobalPath(&[defined_name]) => AssignmentTarget::Identifier {
-                identifier,
-                name: defined_name,
-            },
-            Decision::GlobalPath(_) => AssignmentTarget::Expression,
+        let (name, defined) = match self.decisions().decision(identifier) {
+            Decision::GlobalPath(&[defined_name]) => (defined_name, None),
+            Decision::NamedPath(&NamedPath {
+                head,
+                names: &[defined_name],
+            }) => (defined_name, Some(head.binding)),
+            Decision::GlobalPath(_) | Decision::NamedPath(_) => {
+                return AssignmentTarget::Expression;
+            }
             Decision::Unknown
             | Decision::Constant(_)
             | Decision::Data(_)
-            | Decision::DeferredData => AssignmentTarget::Identifier { identifier, name },
+            | Decision::DeferredData => (name, None),
+        };
+        AssignmentTarget::Identifier {
+            identifier,
+            name,
+            defined,
         }
+    }
+
+    // The binding that a store at the identifier of an `AssignmentTarget::Identifier` goes to.
+    pub(in crate::lower) fn stored_binding(
+        &self,
+        identifier: ExprId,
+        defined: Option<Binding>,
+    ) -> Binding {
+        defined.unwrap_or_else(|| self.bound.binding(identifier))
     }
 
     // Where JSC records, and where it reports, the operator of `name += value` and `name++`. The source map takes the first back to the name and the second to the start of the expression.
@@ -225,8 +247,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn set_position_of_updated_read(&mut self, expression: ExprId, target: ExprId) {
         let has_no_record = match self.file.classify_assignment_target(target) {
-            AssignmentTarget::Identifier { identifier, .. } => {
-                let is_in_register = self.is_kept_in_register(self.file.bound.binding(identifier));
+            AssignmentTarget::Identifier {
+                identifier,
+                defined,
+                ..
+            } => {
+                let binding = self.file.stored_binding(identifier, defined);
+                let is_in_register = self.is_kept_in_register(binding);
                 if !is_in_register {
                     let position = self.file.updated_read_position(expression, identifier);
                     self.builder.record_position(position);
@@ -264,9 +291,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn set_update_position(&mut self, expression: ExprId, target: ExprId) {
         match self.file.classify_assignment_target(target) {
-            AssignmentTarget::Identifier { identifier, .. }
-                if !self.is_kept_in_register(self.file.bound.binding(identifier)) =>
-            {
+            AssignmentTarget::Identifier {
+                identifier,
+                defined,
+                ..
+            } if !self.is_kept_in_register(self.file.stored_binding(identifier, defined)) => {
                 let (recorded, reported) = self.file.update_positions(expression, identifier);
                 self.builder.record_position(recorded);
                 self.set_position(reported);
@@ -298,8 +327,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_assigned_value(&mut self, target: ExprId, value: ExprId) -> ValueId {
         match self.file.classify_assignment_target(target) {
-            AssignmentTarget::Identifier { identifier, name } => {
-                let binding = self.file.bound.binding(identifier);
+            AssignmentTarget::Identifier {
+                identifier,
+                name,
+                defined,
+            } => {
+                let binding = self.file.stored_binding(identifier, defined);
                 let key = self
                     .file
                     .function_name_key(binding, name, self.file.hir[identifier].pos);
@@ -340,11 +373,15 @@ fn lower_logical_assignment(
     let assigned = lowering.lower_assigned_value(target, value);
     let position = lowering.file.updating_store_position(target);
     lowering.set_position(position);
-    if let AssignmentTarget::Identifier { identifier, .. } =
-        lowering.file.classify_assignment_target(target)
+    if let AssignmentTarget::Identifier {
+        identifier,
+        defined,
+        ..
+    } = lowering.file.classify_assignment_target(target)
         && lowering.file.runs_as_written()
     {
-        lowering.record_store_behind_value(lowering.file.bound.binding(identifier), position);
+        let binding = lowering.file.stored_binding(identifier, defined);
+        lowering.record_store_behind_value(binding, position);
     }
     let stored = lowering.put_reference(&reference, assigned, Some(value));
     if let Some(result) = result {

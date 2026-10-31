@@ -563,6 +563,17 @@ fn is_evaluated_behind(
 
 fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     let (hir, bound) = (text.hir, text.bound);
+    // The value of a define may begin with either name where no identifier spells it, and nobody looks at where that is evaluated.
+    let mut define_heads = text.decisions.applied_define_heads();
+    let names_object = define_heads.any(|head| {
+        matches!(
+            head.binding(),
+            Binding::CommonJs(CommonJsVariable::Exports | CommonJsVariable::Module)
+        )
+    });
+    if names_object {
+        return false;
+    }
     let mut statements = hir.ids(hir.body);
     let Some(replacement) = statements.find_map(|statement| find_replacement(text, statement))
     else {

@@ -180,7 +180,9 @@ impl<'s> DataReader<'_, '_, 's> {
                     return Some(Visited::Value(constant.to_data_value()));
                 }
                 Decision::Data(data) => return Some(Visited::Value(*data)),
-                Decision::GlobalPath(_) | Decision::DeferredData => return None,
+                Decision::GlobalPath(_) | Decision::NamedPath(_) | Decision::DeferredData => {
+                    return None;
+                }
                 Decision::Unknown => {}
             }
             match self.decisions.constant(self.hir, e) {

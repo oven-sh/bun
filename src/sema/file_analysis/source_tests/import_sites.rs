@@ -1292,3 +1292,79 @@ fn name_that_a_loop_takes_out_of_an_object_is_known_by_its_start_and_end() {
         assert_eq!(describe_alternatives(s, site), ["./lib/*.js"], "{text}");
     });
 }
+
+const NAMES_OF_THE_FILE: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["LOAD"]), Defined::GlobalPath(&["load"])),
+        (
+            Path::Global(&["process", "env", "LOAD"]),
+            Defined::GlobalPath(&["load"]),
+        ),
+        (
+            Path::Global(&["CALL"]),
+            Defined::GlobalPath(&["load", "call"]),
+        ),
+        (Path::Global(&["SELF"]), Defined::GlobalPath(&["inner"])),
+        (Path::Global(&["LIST"]), Defined::GlobalPath(&["names"])),
+        (
+            Path::Global(&["PUSH"]),
+            Defined::GlobalPath(&["names", "push"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// The value of the define is the name alone: the function is called there, or the list is pushed to, as where the name is spelled.
+const NAMES_BEHIND_A_DEFINE_THAT_IS_A_NAME: &[(&str, &[&str])] = &[
+    (
+        "function load(name) { return require(name); } LOAD('./a');",
+        &["./a"],
+    ),
+    (
+        "function load(name) { return require(name); } LOAD('./a'); load('./b');",
+        &["./a", "./b"],
+    ),
+    (
+        "function load(name) { return require(name); } process.env.LOAD('./a');",
+        &["./a"],
+    ),
+    (
+        "const names = ['./a']; LIST.push('./b'); for (const name of names) require(name);",
+        &["./a", "./b"],
+    ),
+];
+
+/// The value of the define hands the function or the list to code that nobody follows.
+const NAMES_BEHIND_A_DEFINE_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "function load(name) { return require(name); } const held = LOAD; held('./a');",
+    "function load(name) { return require(name); } CALL(null, './a');",
+    "const load = function inner(name, again) { return again ? require(name) : SELF('./a', true); }; load('./b');",
+    "const names = ['./a']; PUSH('./b'); for (const name of names) require(name);",
+    "const names = ['./a']; change(LIST); for (const name of names) require(name);",
+];
+
+fn with_last_site_behind_a_define(
+    text: &str,
+    test: impl for<'s> FnOnce(&Analyzed<'s>, &ImportSite) + Send,
+) {
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&NAMES_OF_THE_FILE);
+        let s = w.analyze(&Source::new("a.cjs", text), &inputs);
+        let site = s.analysis.import_sites.last();
+        test(&s, site.unwrap_or_else(|| panic!("{text}: no import site")));
+    });
+}
+
+#[test]
+fn name_of_the_file_that_a_define_spells_is_followed_as_the_name_is() {
+    for &(text, names) in NAMES_BEHIND_A_DEFINE_THAT_IS_A_NAME {
+        with_last_site_behind_a_define(text, |s, site| {
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+    for &text in NAMES_BEHIND_A_DEFINE_THAT_ARE_NOT_FOLLOWED {
+        with_last_site_behind_a_define(text, |_, site| {
+            assert_eq!(site.specifier, ImportSpecifier::Unknown, "{text}");
+        });
+    }
+}

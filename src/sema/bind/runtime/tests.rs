@@ -1,12 +1,12 @@
-use super::queries::find_entry;
+use super::queries::{find_entry, find_reference_lookup};
 use super::storage::RuntimeDeclarationsIn;
 use super::{
-    Binding, BindingKind, BindingStability, ImplicitReference, ImplicitReferenceKind,
-    PrivateMembers, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    RuntimeTablesIn, StoreKind, SymbolStore,
+    Binding, BindingKind, BindingStability, DynamicLookup, ImplicitReference,
+    ImplicitReferenceKind, PrivateMembers, PrivateName, PrivateNameId, RuntimeBindings,
+    RuntimeBindingsIn, RuntimeTablesIn, StoreKind, SymbolStore,
 };
 use crate::atom::known;
-use crate::bind::decorator_metadata::MetadataReference;
+use crate::bind::decorator_metadata::{MetadataReference, find_metadata_binding};
 use crate::bind::{Decl, ScopeId, SymbolId};
 use crate::hir::*;
 use crate::session::Arena;
@@ -206,6 +206,91 @@ fn jsx_references_precede_decorator_metadata() {
         tables.references.implicit_references.swap(first, second);
         assert!(!tables.is_sorted(), "{first} and {second}");
     }
+}
+
+#[test]
+fn define_heads_are_sorted_by_root_in_front_of_jsx_references() {
+    let reference = |node, kind, name| ImplicitReference {
+        node,
+        kind,
+        name,
+        binding: Binding::Free,
+    };
+    let define_head = |root, name| {
+        let node = NodeData::Expr(ExprId(root));
+        reference(node, ImplicitReferenceKind::DefineHead, name)
+    };
+    let element = NodeData::Expr(ExprId(4));
+    let factory = reference(element, ImplicitReferenceKind::JsxFactory, known::React);
+    let recorded = MetadataReference::TypeName(TypeNodeId(1));
+    let kind = ImplicitReferenceKind::DecoratorMetadata(recorded);
+    let type_name = reference(NodeData::File, kind, known::Object);
+    let mut tables = RuntimeTablesIn::<Growable>::default();
+    // The binder adds the define heads last. The two roots have the same names in opposite orders, so at one of them the names are not in the order of their atoms.
+    tables.references.implicit_references = vec![
+        factory,
+        type_name,
+        define_head(9, known::Object),
+        define_head(9, known::React),
+        define_head(6, known::React),
+        define_head(6, known::Object),
+    ];
+    assert!(!tables.is_sorted());
+    tables.sort();
+    assert!(tables.is_sorted());
+    let sorted = [
+        define_head(6, known::React),
+        define_head(6, known::Object),
+        define_head(9, known::Object),
+        define_head(9, known::React),
+        factory,
+        type_name,
+    ];
+    assert_eq!(tables.references.implicit_references, sorted);
+    let found = find_metadata_binding(&tables.references.implicit_references, recorded);
+    assert_eq!(found, Some(type_name.binding));
+}
+
+#[test]
+fn dynamic_lookup_of_a_define_head_is_found_by_its_root_and_name() {
+    let reference = |root, kind, name| ImplicitReference {
+        node: NodeData::Expr(ExprId(root)),
+        kind,
+        name,
+        binding: Binding::Free,
+    };
+    let define_head = |root, name| reference(root, ImplicitReferenceKind::DefineHead, name);
+    let lookup = |scope, is_behind_eval_variables| DynamicLookup {
+        scope: ScopeId(scope),
+        is_behind_eval_variables,
+    };
+    let mut tables = RuntimeTablesIn::<Growable>::default();
+    // The two roots have the same names in opposite orders, so at one of them the names are not in the order of their atoms.
+    tables.references.dynamic_implicit_lookups = vec![
+        (define_head(9, known::Object), lookup(1, false)),
+        (define_head(9, known::React), lookup(2, true)),
+        (define_head(6, known::React), lookup(3, false)),
+        (define_head(6, known::Object), lookup(4, false)),
+    ];
+    assert!(!tables.is_sorted());
+    tables.sort();
+    assert!(tables.is_sorted());
+    let lookups = &tables.references.dynamic_implicit_lookups[..];
+    let find = |wanted: ImplicitReference| find_reference_lookup(lookups, &wanted);
+    assert_eq!(find(define_head(9, known::Object)), Some(lookup(1, false)));
+    assert_eq!(find(define_head(9, known::React)), Some(lookup(2, true)));
+    assert_eq!(find(define_head(6, known::React)), Some(lookup(3, false)));
+    assert_eq!(find(define_head(6, known::Object)), Some(lookup(4, false)));
+    let bound = ImplicitReference {
+        binding: Binding::Symbol(SymbolId(0)),
+        ..define_head(6, known::React)
+    };
+    assert_eq!(find(bound), Some(lookup(3, false)));
+    assert_eq!(find(define_head(6, known::value)), None);
+    assert_eq!(find(define_head(7, known::React)), None);
+    let factory = reference(6, ImplicitReferenceKind::JsxFactory, known::React);
+    assert_eq!(find(factory), None);
+    assert_eq!(find_reference_lookup(&[], &factory), None);
 }
 
 #[test]

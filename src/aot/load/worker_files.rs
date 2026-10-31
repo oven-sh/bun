@@ -479,6 +479,18 @@ impl Walk<'_, '_> {
         if !kinds.all(is_followed) || exported.any(is_import) {
             return false;
         }
+        // The value of a define may begin with the name of the constructor, or of what holds the module, where no identifier spells it, and nobody follows what the code does with it there.
+        let mut define_heads = analysis.decisions.applied_define_heads();
+        let names_constructor = define_heads.any(|head| match head.binding() {
+            Binding::Symbol(symbol) => {
+                self.is_worker_member(self.find_member_held_by(file, symbol))
+                    || is_threads(self.find_module_held_by(file, symbol))
+            }
+            _ => false,
+        });
+        if names_constructor {
+            return false;
+        }
         let is_global = |expression| {
             let id = match source.builtins.of_expr(expression) {
                 Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => path.id,
@@ -540,10 +552,13 @@ impl Walk<'_, '_> {
 
     // `import { Worker } from "node:worker_threads"`, `const { Worker } = require("node:worker_threads")` and `threads.Worker`
     fn is_worker_of_node(&self, file: FileId, callee: ExprId) -> bool {
-        self.find_member_of_module(file, callee)
-            .is_some_and(|(module, name)| {
-                Some(module) == self.modules[0] && self.files.atoms.bytes(name) == b"Worker"
-            })
+        self.is_worker_member(self.find_member_of_module(file, callee))
+    }
+
+    fn is_worker_member(&self, member: Option<(RuntimeModule, Atom)>) -> bool {
+        member.is_some_and(|(module, name)| {
+            Some(module) == self.modules[0] && self.files.atoms.bytes(name) == b"Worker"
+        })
     }
 
     /// The module of Bun's own and the name of its export that the expression reads.
@@ -556,24 +571,31 @@ impl Walk<'_, '_> {
                 let Binding::Symbol(symbol) = bound.binding(member) else {
                     return None;
                 };
-                if let &[Decl::ImportSpec(specifier)] = bound.symbol(symbol).decls {
-                    let specifier = hir[specifier];
-                    let kind = ImportSiteKind::Import(specifier.import);
-                    let site = files.analysis(file).import_site_index(kind);
-                    return Some((self.find_module_answered(file, site)?, specifier.imported));
-                }
-                match bound.binding_initializer(hir, symbol) {
-                    BindingInitializer::PatternProperty { source, path } => match path[..] {
-                        [name] => Some((self.find_module(file, source)?, name)),
-                        _ => None,
-                    },
-                    BindingInitializer::Expression(source) => {
-                        let source = hir.skip_type_assertions(source);
-                        match hir[source].kind {
-                            ExprKind::Dot { .. } => self.find_member_of_module(file, source),
-                            _ => None,
-                        }
-                    }
+                self.find_member_held_by(file, symbol)
+            }
+            _ => None,
+        }
+    }
+
+    /// `find_member_of_module` of an identifier that names the variable.
+    fn find_member_held_by(&self, file: FileId, symbol: SymbolId) -> Option<(RuntimeModule, Atom)> {
+        let files = self.files;
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        if let &[Decl::ImportSpec(specifier)] = bound.symbol(symbol).decls {
+            let specifier = hir[specifier];
+            let kind = ImportSiteKind::Import(specifier.import);
+            let site = files.analysis(file).import_site_index(kind);
+            return Some((self.find_module_answered(file, site)?, specifier.imported));
+        }
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::PatternProperty { source, path } => match path[..] {
+                [name] => Some((self.find_module(file, source)?, name)),
+                _ => None,
+            },
+            BindingInitializer::Expression(source) => {
+                let source = hir.skip_type_assertions(source);
+                match hir[source].kind {
+                    ExprKind::Dot { .. } => self.find_member_of_module(file, source),
                     _ => None,
                 }
             }
@@ -594,21 +616,28 @@ impl Walk<'_, '_> {
                 let Binding::Symbol(symbol) = bound.binding(module) else {
                     return None;
                 };
-                if let &[Decl::ImportNamespace(import) | Decl::ImportDefault(import)] =
-                    bound.symbol(symbol).decls
-                {
-                    let kind = ImportSiteKind::Import(import);
-                    let site = files.analysis(file).import_site_index(kind);
-                    return self.find_module_answered(file, site);
-                }
-                match bound.binding_initializer(hir, symbol) {
-                    BindingInitializer::Expression(source) => {
-                        let source = hir.skip_type_assertions(source);
-                        match hir[source].kind {
-                            ExprKind::Call(_) => self.find_module(file, source),
-                            _ => None,
-                        }
-                    }
+                self.find_module_held_by(file, symbol)
+            }
+            _ => None,
+        }
+    }
+
+    /// `find_module` of an identifier that names the variable.
+    fn find_module_held_by(&self, file: FileId, symbol: SymbolId) -> Option<RuntimeModule> {
+        let files = self.files;
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        if let &[Decl::ImportNamespace(import) | Decl::ImportDefault(import)] =
+            bound.symbol(symbol).decls
+        {
+            let kind = ImportSiteKind::Import(import);
+            let site = files.analysis(file).import_site_index(kind);
+            return self.find_module_answered(file, site);
+        }
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::Expression(source) => {
+                let source = hir.skip_type_assertions(source);
+                match hir[source].kind {
+                    ExprKind::Call(_) => self.find_module(file, source),
                     _ => None,
                 }
             }

@@ -1,5 +1,6 @@
 // The flags of `bun build` that change what the program does. Each program is built with `--compile` and with `--compile --aot` under the same
 // flags, and both executables print what is written here. A flag that --aot does not support stops the build with an error.
+// A program with a `build.ts` is built by that script, which calls `Bun.build`.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -204,10 +205,57 @@ console.log(evaluated, tools.keep("kept"));`,
     files: { "main.ts": `console.log("ran");` },
     prints: "ran\n",
   },
+  "--define of a name or a path that begins at a binding where the defined name is written": {
+    flags: [
+      "--define=BOUND=bound",
+      "--define=COUNTED=counted",
+      "--define=ROOT=holder.value",
+      "--define=SHOW=holder.show",
+    ],
+    files: {
+      "main.js": `globalThis.bound = "the global";
+globalThis.counted = "the global";
+globalThis.holder = { value: "the global", show: () => "the global" };
+function read(bound) { return BOUND; }
+let counted = 0;
+function count() { return ++COUNTED; }
+const holder = { value: "the member", show() { return this === holder ? "called on its holder" : "called without it"; } };
+console.log(read("the parameter"), BOUND, typeof BOUND, count(), count(), counted, globalThis.counted, ROOT, SHOW(), Object.keys(holder).length);`,
+    },
+    prints: "the parameter the global string 1 2 2 the global the member called on its holder 2\n",
+  },
+  "[define] of bunfig.toml with a name and a path that begin at a binding": {
+    flags: [],
+    files: {
+      "bunfig.toml": `[define]\nFROM_BUNFIG = "configured"\n"process.env.FROM_BUNFIG" = "settings.mode"\n`,
+      "main.js": `globalThis.configured = "the global";
+globalThis.settings = { mode: "the global" };
+function read(configured) { return FROM_BUNFIG; }
+const settings = { mode: "the member" };
+console.log(read("the parameter"), FROM_BUNFIG, process.env.FROM_BUNFIG, Object.keys(settings).length);`,
+    },
+    prints: "the parameter the global the member 1\n",
+  },
+  "Bun.build with a define of a name and of a path that begin at a binding": {
+    flags: [],
+    files: {
+      "build.ts": `const [outfile, how] = process.argv.slice(2);
+const built = await Bun.build({ entrypoints: ["./main.js"], define: { WIDTH: "width", "import.meta.env.DEPTH": "box.depth" }, compile: { outfile, aot: how === "aot" }, throw: false });
+for (const log of built.logs) console.error(String(log));
+process.exit(built.success ? 0 : 1);`,
+      "main.js": `globalThis.width = "the global";
+globalThis.box = { depth: "the global" };
+function read(width) { return WIDTH; }
+const box = { depth: "the member" };
+console.log(read("the parameter"), WIDTH, import.meta.env.DEPTH, Object.keys(box).length);`,
+    },
+    prints: "the parameter the global the member 1\n",
+  },
 };
 
 // These change every file of the build, or what another of them asks. The others are given to one build of one program.
-const alone = /brackets|^--(format|jsx-runtime|minify|production|drop=console)/;
+// A build with a --define flag takes no [define] of bunfig.toml.
+const alone = /brackets|bunfig|^Bun\.build|^--(format|jsx-runtime|minify|production|drop=console)/;
 const together = Object.entries(honored).filter(([name]) => !alone.test(name));
 for (const [name] of together) delete honored[name];
 const mains = together.map(([, { files }], index) =>
@@ -249,7 +297,9 @@ describe.concurrent("compile/aot/flags of bun build", () => {
           for (const how of [[], ["--aot"]]) {
             const executable = join(folder, "program" + how.length + (isWindows ? ".exe" : ""));
             const built = await spawned(
-              [bunExe(), "build", "--compile", ...how, ...flags, main, "--outfile", executable],
+              "build.ts" in files
+                ? [bunExe(), "build.ts", executable, how.length ? "aot" : "plain"]
+                : [bunExe(), "build", "--compile", ...how, ...flags, main, "--outfile", executable],
               folder,
               bunEnv,
             );

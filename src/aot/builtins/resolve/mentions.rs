@@ -1,12 +1,13 @@
 use super::mention_use::MentionUse;
 use super::resolver::{ExprState, ResolvedValue, Resolver};
+use super::{ModuleObjectMention, ModuleObjectOwner, ModuleObjectUse, ResolveInput, SourceDialect};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
 };
 use bun_sema::atom::Atom;
 use bun_sema::bind::decorator_metadata::{MetadataReference, entity_names};
 use bun_sema::bind::{Binding, ImplicitReference, ImplicitReferenceKind, SymbolId};
-use bun_sema::hir::{self, CallId, ExportSpecId, ExprId, ExprKind, PatId, PatKind, PropKey};
+use bun_sema::hir::{CallId, ExportSpecId, ExprId, ExprKind, PatId, PatKind, PropKey};
 use bun_sema::import_sites::ImportSiteKind;
 use smallvec::{SmallVec, smallvec};
 
@@ -39,16 +40,51 @@ pub(super) fn mentioned_id(state: ExprState) -> Option<BuiltinId> {
     }
 }
 
-// A JSX factory and the type names of decorator metadata are read where no expression stands.
+// The binder records the first name of a define wherever the fold may apply the define. Code reads the name only where the fold did, outside dead code.
+fn is_read(input: &ResolveInput<'_, '_>, reference: &ImplicitReference) -> bool {
+    match reference.kind {
+        ImplicitReferenceKind::DefineHead => input.decisions.reads_define_head(reference),
+        ImplicitReferenceKind::JsxFactory
+        | ImplicitReferenceKind::JsxFragment
+        | ImplicitReferenceKind::DecoratorMetadata(_) => true,
+    }
+}
+
+// A JSX factory, the type names of decorator metadata and the value of a define are read where no expression spells them.
 fn implicit_reference_path(
-    hir: &hir::File<'_>,
+    input: &ResolveInput<'_, '_>,
     reference: &ImplicitReference,
 ) -> SmallVec<[Atom; 4]> {
+    let hir = input.hir;
     match reference.kind {
         ImplicitReferenceKind::DecoratorMetadata(MetadataReference::TypeName(node)) => {
             hir.texts(entity_names(hir, node)).collect()
         }
-        _ => smallvec![reference.name],
+        ImplicitReferenceKind::DefineHead => {
+            let applied = input.decisions.site_of_define_head(reference);
+            let (_, named) = applied.expect("is_read found where the fold applied the define");
+            SmallVec::from_slice(named.names)
+        }
+        ImplicitReferenceKind::JsxFactory
+        | ImplicitReferenceKind::JsxFragment
+        | ImplicitReferenceKind::DecoratorMetadata(MetadataReference::Global(..)) => {
+            smallvec![reference.name]
+        }
+    }
+}
+
+// `--define MOD=module`, `--define HOST=process`: the object that code gets there has no expression, so nobody follows it.
+fn find_way_that_define_head_reads(id: BuiltinId) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
+    match table::canonical_id(id) {
+        BuiltinId::ModuleObject => Some((ModuleObjectOwner::OwnFile, ModuleObjectUse::HandedOn)),
+        BuiltinId::ModuleRequire | BuiltinId::ProcessMainModule => {
+            Some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
+        }
+        BuiltinId::Process => Some((
+            ModuleObjectOwner::EntryPoint,
+            ModuleObjectUse::HolderHandedOn,
+        )),
+        _ => None,
     }
 }
 
@@ -65,6 +101,7 @@ impl Resolver<'_, '_> {
         });
         let exported = exported.map(|spec| input.bound.exported_binding(spec));
         let implicit = input.bound.runtime.implicit_references().iter();
+        let implicit = implicit.filter(|reference| is_read(input, reference));
         for binding in exported.chain(implicit.map(|reference| reference.binding)) {
             match binding {
                 Binding::Symbol(symbol) => {
@@ -77,18 +114,50 @@ impl Resolver<'_, '_> {
 
     pub(super) fn visit_implicit_references(&mut self) {
         let input = self.input;
-        for reference in input.bound.runtime.implicit_references() {
-            match reference.binding {
+        let implicit = input.bound.runtime.implicit_references().iter();
+        let mut ways: SmallVec<[(ModuleObjectOwner, ModuleObjectUse); 3]> = SmallVec::new();
+        for reference in implicit.filter(|reference| is_read(input, reference)) {
+            let read = match reference.binding {
                 Binding::Free => {
-                    let path = implicit_reference_path(input.hir, reference);
-                    if let ExprState::Builtin(value) = self.resolve_global_path(&path) {
-                        self.expose(value.path.id);
+                    let path = implicit_reference_path(input, reference);
+                    match self.resolve_global_path(&path) {
+                        ExprState::Builtin(value) => {
+                            self.expose(value.path.id);
+                            Some(value.path.id)
+                        }
+                        _ => None,
                     }
                 }
-                Binding::CommonJs(variable) => self.expose_commonjs_variable(variable),
-                Binding::Symbol(_) | Binding::Arguments(_) => {}
+                Binding::CommonJs(variable) => {
+                    self.expose_commonjs_variable(variable);
+                    self.commonjs.get(variable).map(|path| path.id)
+                }
+                Binding::Symbol(_) | Binding::Arguments(_) => None,
+            };
+            let way = match reference.kind {
+                ImplicitReferenceKind::DefineHead => read.and_then(find_way_that_define_head_reads),
+                ImplicitReferenceKind::JsxFactory
+                | ImplicitReferenceKind::JsxFragment
+                | ImplicitReferenceKind::DecoratorMetadata(_) => None,
+            };
+            if let Some(way) = way
+                && !ways.contains(&way)
+            {
+                ways.push(way);
             }
         }
+        if input.dialect != SourceDialect::Program {
+            return;
+        }
+        // `run` has collected the mentions of the expressions by now, in the order of the expressions. These have no expression and come last.
+        let unspelled = ways
+            .into_iter()
+            .map(|(owner, object_use)| ModuleObjectMention {
+                expr: ExprId::NONE,
+                owner,
+                object_use,
+            });
+        self.output.module_object_mentions.extend(unspelled);
     }
 
     pub(super) fn expose(&mut self, id: BuiltinId) {

@@ -10,14 +10,14 @@ use crate::link::ModuleOrigin;
 use crate::load::read_file_bytes;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, Resolution, ResolveRequest, SourceFile,
-    WithoutServices,
+    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
+    SourceFile, WithoutServices,
 };
 use crate::statistics::LimitId;
 use bstr::{BStr, ByteSlice};
 use bun_ast::{Kind, Loader};
 use bun_builtin_sources::Archive;
-use bun_sema::fold::FoldOptions;
+use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
 use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::program::FileRole;
 use bun_sema::session::Arena;
@@ -1193,4 +1193,82 @@ fn build_that_compiles_refuses_the_whole_program() {
     let project = TestProject::with_entry_points(&files, 2, &default_settings());
     let (result, _) = link_project(&project, &WithoutServices);
     assert_eq!(expect_failure(result).refused_entry_points, None);
+}
+
+/// `--define W=Worker`
+struct WorkerByDefine;
+
+impl SourceProvider for WorkerByDefine {
+    fn fold_options<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> FoldOptions<'s> {
+        let define = Define {
+            path: DefinePath {
+                root: DefineRoot::Global(atoms.intern(b"W")),
+                members: &[],
+            },
+            value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"Worker")])),
+        };
+        FoldOptions {
+            defines: arena.alloc_slice_copy(&[define]),
+            ..WithoutServices.fold_options(arena, atoms, log)
+        }
+    }
+
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn has_resolve_plugins(&self) -> bool {
+        WithoutServices.has_resolve_plugins()
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
+        WithoutServices.has_load_plugin(module)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn parse_data<'s>(
+        &self,
+        file: &SourceFile<'_>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<DataModule<'s>, Failed> {
+        WithoutServices.parse_data(file, arena, atoms, log)
+    }
+
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+// What the load says about the code that Workers start from, for a file that imports the constructor of node:worker_threads in front of `statements`.
+fn code_of_workers(statements: &str) -> CodeOfWorkers {
+    let main = format!("import {{ Worker }} from \"node:worker_threads\";\n{statements}\n");
+    let files = [("main.mjs", main.as_str()), ("w.mjs", "export {};")];
+    let project = TestProject::new(&files, &default_settings());
+    run_build(&project, BUNDLED_LIBS, &WorkerByDefine, |build| {
+        build.with_loaded_projects(|build, _| Ok(build.started_workers.code))
+    })
+}
+
+#[test]
+fn constructor_of_workers_that_a_define_names_may_start_code_nobody_has_compiled() {
+    let compiled = code_of_workers("new Worker(\"./w.mjs\");");
+    assert_eq!(compiled, CodeOfWorkers::Compiled);
+    let held_by_name = code_of_workers("const C = Worker; new C(\"./w.mjs\");");
+    assert_eq!(held_by_name, CodeOfWorkers::Unseen);
+    let held_by_define = code_of_workers("const C = W; new C(\"./w.mjs\");");
+    assert_eq!(held_by_define, CodeOfWorkers::Unseen);
 }

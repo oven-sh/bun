@@ -286,6 +286,17 @@ impl Finder<'_, '_, '_> {
                 self.classify_mention(candidate, mention);
             }
         }
+        // The value of a define may begin with the name of a collection where no identifier spells it.
+        let decisions = self.decisions;
+        for head in decisions.applied_define_heads() {
+            let Binding::Symbol(symbol) = head.binding() else {
+                continue;
+            };
+            let candidates = &self.candidates;
+            if let Ok(candidate) = candidates.binary_search_by_key(&symbol, |it| it.symbol) {
+                self.candidates[candidate].has_other_mention = true;
+            }
+        }
     }
 
     fn classify_mention(&mut self, candidate: usize, mention: ExprId) {

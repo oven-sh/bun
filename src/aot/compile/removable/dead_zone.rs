@@ -189,17 +189,34 @@ impl Removable<'_, '_> {
     }
 
     pub(super) fn reads_only_initialized_names(&self, expression: ExprId) -> bool {
+        // A file in which no define puts a name or a path pays this one test for the question, and asks for no decision below `expression`.
+        match self.analysis.decisions.has_define_paths() {
+            true => self.finds_every_name_initialized::<true>(expression),
+            false => self.finds_every_name_initialized::<false>(expression),
+        }
+    }
+
+    fn finds_every_name_initialized<const HAS_DEFINE_PATHS: bool>(
+        &self,
+        expression: ExprId,
+    ) -> bool {
         let hir = self.hir;
+        let decisions = &self.analysis.decisions;
+        // What a define reads in place of an expression may not be initialized yet, and a member below the name may run code.
+        let is_named_path = |site: ExprId| HAS_DEFINE_PATHS && decisions.is_named_path(site);
         if matches!(hir[expression].kind, ExprKind::Ident(_)) {
-            return self.is_name_initialized(expression);
+            return !is_named_path(expression) && self.is_name_initialized(expression);
         }
         let mut stack = vec![TreeNode::Expr(expression)];
         while let Some(node) = stack.pop() {
             let TreeNode::Expr(expression) = node else {
                 continue;
             };
-            if self.analysis.decisions.is_dead_expr(expression) {
+            if decisions.is_dead_expr(expression) {
                 continue;
+            }
+            if is_named_path(expression) {
+                return false;
             }
             let is_initialized = match hir[expression].kind {
                 ExprKind::Ident(_) => {

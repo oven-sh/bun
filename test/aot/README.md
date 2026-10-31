@@ -69,7 +69,7 @@ that runs and is red for a file that nothing reaches.
   or `exports`, an ES module has an `import` or an `export`, and a program about what a file is taken for has the line
   `// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0`.
 - **What changes code is a flag.** No environment variable changes the code that a build generates. A program asks for a flag, hidden
-  `--aot-<word>` flags included, with `// Flags:`.
+  `--aot-<word>` flags included, with `// Flags:`. Plain Bun is started with the `--define` flags of that line, and with no other.
 - **A declaration file anywhere under `parallel/` is read for every program there**, because `parallel/tsconfig.json` includes it, as
   a project's `tsconfig.json` would. What a `.d.ts` of a test declares needs names of its own: no `declare function require`, no
   class with a method `m`.

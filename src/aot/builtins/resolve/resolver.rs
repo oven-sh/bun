@@ -10,10 +10,11 @@ use crate::builtins::table::{
     BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
 use bun_sema::atom::known;
-use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
-use bun_sema::fold::Decision;
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, Parent, SymbolId};
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatKind, StmtKind, VarKind};
 use bun_sema::import_sites::find_module_printed_as_require;
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::cell::OnceCell;
 use core::ops::Range;
@@ -534,10 +535,34 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Data(_)
                 | Decision::DeferredData => ExprState::Unresolved,
                 Decision::GlobalPath(path) => self.resolve_global_path(path),
+                Decision::NamedPath(named) => self.resolve_named_path(named),
             };
             self.set_state(expr, state);
         }
         self.evaluated = evaluated;
+    }
+
+    // A define path is a path of globals only where nothing declares its first name, as nothing declares `arguments` at the top of an ES module.
+    fn resolve_named_path(&mut self, named: &NamedPath<'_>) -> ExprState {
+        let input = self.input;
+        let is_free = match named.head.binding {
+            Binding::Free => true,
+            Binding::Arguments(CodeUnit::File) => input.module_format == ModuleFormat::Esm,
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => false,
+        };
+        if !is_free {
+            return ExprState::Unresolved;
+        }
+        let is_dynamic = input.bound.dynamic_scope_of(&named.head).is_some();
+        if is_dynamic && named.names.len() > 1 {
+            return ExprState::Unresolved;
+        }
+        match self.resolve_global_path(named.names) {
+            ExprState::Builtin(global) if is_dynamic => {
+                ExprState::DynamicGlobal(global.predicted().path)
+            }
+            state => state,
+        }
     }
 
     pub(super) fn evaluated_calls(&self) -> &[ExprId] {

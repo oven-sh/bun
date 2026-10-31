@@ -145,6 +145,8 @@ fn filled<T: Clone>(mut list: Vec<T>, len: usize, value: T) -> Vec<T> {
 pub(super) struct Binder<'f, 's> {
     f: &'f File<'s>,
     options: BindOptions,
+    /// `bind_with_define_heads`
+    define_heads: &'f [DefineHead],
     atoms: &'f dyn crate::atom::Intern,
     b: BoundBuilder,
     tables: Vec<Table>,
@@ -155,6 +157,8 @@ pub(super) struct Binder<'f, 's> {
     statement_lists: Vec<IdList<StmtId>>,
     /// Identifiers to resolve once everything is declared.
     idents: Vec<(ExprId, ScopeId)>,
+    /// Each `import.meta`, where a define head is looked up.
+    import_metas: Vec<(ExprId, ScopeId)>,
     /// Identifiers that are assigned to.
     assigned: Vec<ExprId>,
 
@@ -259,12 +263,13 @@ impl<'f, 's> Binder<'f, 's> {
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
-        Self::run_in(f, options, atoms, &mut Buffers::default())
+        Self::run_in(f, options, &[], atoms, &mut Buffers::default())
     }
 
     pub(super) fn run_in(
         f: &'f File<'s>,
         options: BindOptions,
+        define_heads: &'f [DefineHead],
         atoms: &'f dyn crate::atom::Intern,
         buffers: &mut Buffers,
     ) -> BoundBuilder {
@@ -337,6 +342,7 @@ impl<'f, 's> Binder<'f, 's> {
         let mut this = Self {
             f,
             options,
+            define_heads,
             atoms,
             b,
             tables: std::mem::take(&mut buffers.tables),
@@ -344,6 +350,7 @@ impl<'f, 's> Binder<'f, 's> {
             scope: ScopeId::NONE,
             statement_lists: std::mem::take(&mut buffers.statement_lists),
             idents: std::mem::take(&mut buffers.idents),
+            import_metas: Vec::new(),
             assigned: std::mem::take(&mut buffers.assigned),
             expando_assignments: std::mem::take(&mut buffers.expando_assignments),
             flow: UNREACHABLE,
@@ -4570,6 +4577,14 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    /// Notes an `import.meta` where a define head is looked up, which only a file that is folded with such a define has.
+    #[cold]
+    fn note_import_meta(&mut self, id: ExprId) {
+        if !self.define_heads.is_empty() {
+            self.import_metas.push((id, self.scope));
+        }
+    }
+
     /// The first part of `expr`, which doesn't depend on flow or on the enclosing expression.
     #[inline(always)]
     fn enter_expr(&mut self, id: ExprId, parent: Parent) {
@@ -4667,8 +4682,8 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
             | ExprKind::JsxText(_)
-            | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
+            ExprKind::ImportMeta => self.note_import_meta(id),
             ExprKind::Ident(_) => {
                 self.idents.push((id, self.scope));
                 let name = self.associated_declaration;

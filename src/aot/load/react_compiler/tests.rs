@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{BindOptions, Bound, Parent, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
-use bun_sema::fold::{FoldInputs, FoldOptions};
+use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions};
 use bun_sema::hir::{
     BinOp, CallId, ExprId, ExprKind, File, FnBody, FnId, PatId, PatKind, StmtId, StmtKind, VarDecl,
 };
@@ -394,6 +394,15 @@ impl<'s> Workbench<'s> {
 }
 
 fn with_workbench<R>(text: &str, then: impl for<'s> FnOnce(&mut Workbench<'s>) -> R) -> R {
+    with_defines(text, &[], then)
+}
+
+/// Each of `defines` is a name and the one name that a define gives it.
+fn with_defines<R>(
+    text: &str,
+    defines: &[(&str, &str)],
+    then: impl for<'s> FnOnce(&mut Workbench<'s>) -> R,
+) -> R {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
     let parse_options = CompileParseOptions {
@@ -406,7 +415,20 @@ fn with_workbench<R>(text: &str, then: impl for<'s> FnOnce(&mut Workbench<'s>) -
     };
     let mut tree = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     tree.text = Cow::Borrowed(text.as_bytes());
+    let defines: Vec<Define<'_>> = defines
+        .iter()
+        .map(|&(name, value)| Define {
+            path: DefinePath {
+                root: DefineRoot::Global(atoms.intern(name.as_bytes())),
+                members: &[],
+            },
+            value: DefineValue::GlobalPath(
+                arena.alloc_slice_copy(&[atoms.intern(value.as_bytes())]),
+            ),
+        })
+        .collect();
     let fold_options = FoldOptions {
+        defines: arena.alloc_slice_copy(&defines),
         max_string_bytes: usize::MAX,
         ..FoldOptions::default()
     };

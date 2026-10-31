@@ -256,7 +256,7 @@ function getAzureVmSize(os: Os, arch: Arch, tier: AzureVmTier = "build"): string
  */
 const buildHostPlatform: Platform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
 
-const everyBuildPlatforms: Platform[] = [
+const buildPlatforms: Platform[] = [
   // macOS is cross-compiled from the debian-13 aarch64 host (clang --target +
   // the Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts
   // and scripts/build/flags.ts). There is no native macOS build lane: the mac
@@ -296,7 +296,7 @@ const everyBuildPlatforms: Platform[] = [
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
 
-const everyTestPlatforms: Platform[] = [
+const testPlatforms: Platform[] = [
   // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
   // `latest` (current macOS, 26 today) and one on `previous` (anything older
   // — currently 13/14/15). x64 is NOT tier-targeted: a single entry runs on
@@ -345,9 +345,10 @@ const everyTestPlatforms: Platform[] = [
 ];
 
 // The WebKit that this links is newer than what the other lanes are written for.
-const isOnlyLane = (platform: Platform) => platform.profile === "hardened" && platform.arch === "aarch64";
-const buildPlatforms = everyBuildPlatforms.filter(isOnlyLane);
-const testPlatforms = everyTestPlatforms.filter(isOnlyLane);
+for (const platforms of [buildPlatforms, testPlatforms]) {
+  const onlyLane = platforms.filter(platform => platform.profile === "hardened" && platform.arch === "aarch64");
+  platforms.splice(0, platforms.length, ...onlyLane);
+}
 
 /** Pull requests build and test the other profiles. main does not: nothing ships them. */
 const isInRelease = ({ profile }: Target) => profile !== "asan" && profile !== "hardened";

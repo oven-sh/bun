@@ -84,7 +84,8 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!paddingValue.isUndefined()) {
+        // Node reads `key.padding || defaultPadding`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/cipher.js#L72
+        if (paddingValue.toBoolean(lexicalGlobalObject)) {
             padding = paddingValue.toInt32(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
         }

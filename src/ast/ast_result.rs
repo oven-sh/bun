@@ -10,8 +10,8 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
 use crate::runtime;
 use crate::{
-    CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
-    Ref, Scope, SlotCounts, StoreStr, Target,
+    CharFreq, ExportsKind, Expr, ExprData, InlinedEnumValue, LocRef, LocalKind, NamedExport,
+    NamedImport, Part, Range, Ref, Scope, SlotCounts, StoreStr, Target,
 };
 
 use crate::part::List as PartList;
@@ -256,7 +256,38 @@ pub struct DynamicImportItem {
 }
 pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
-pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
+/// Printed in place of each read of a `const`. A macro object or array is copied per read (#7196).
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct ConstValue(Expr);
+
+impl ConstValue {
+    /// `has_default`: a destructuring leaf with a default binds the default over `undefined`.
+    #[inline]
+    pub fn new(kind: LocalKind, has_default: bool, value: Expr) -> Option<Self> {
+        let admit = kind == LocalKind::KConst
+            && match &value.data {
+                ExprData::ENumber(_)
+                | ExprData::EBoolean(_)
+                | ExprData::EBranchBoolean(_)
+                | ExprData::ENull(_)
+                | ExprData::EInlinedEnum(_) => true,
+                ExprData::EUndefined(_) => !has_default,
+                ExprData::EString(str) => str.next.is_none(),
+                ExprData::EArray(array) => array.was_originally_macro,
+                ExprData::EObject(object) => object.was_originally_macro,
+                _ => false,
+            };
+        admit.then_some(Self(value))
+    }
+
+    #[inline]
+    pub fn expr(self) -> Expr {
+        self.0
+    }
+}
+
+pub type ConstValuesMap = ArrayHashMap<Ref, ConstValue, AutoContext, AstAlloc>;
 pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
 /// `import X ...; X.name` where `X` resolved to a module namespace while

@@ -2410,6 +2410,48 @@ void create_function_with_c_function(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(tmp->GetFunction(context).ToLocalChecked());
 }
 
+// module.js passes PropertyFilter and KeyConversionMode values as numbers.
+static_assert(ALL_PROPERTIES == 0 && ONLY_WRITABLE == 1 &&
+              ONLY_ENUMERABLE == 2 && ONLY_CONFIGURABLE == 4 &&
+              SKIP_STRINGS == 8 && SKIP_SYMBOLS == 16);
+static_assert(static_cast<int>(KeyConversionMode::kConvertToString) == 0 &&
+              static_cast<int>(KeyConversionMode::kKeepNumbers) == 1 &&
+              static_cast<int>(KeyConversionMode::kNoNumbers) == 2);
+
+// perform_get_own_property_names(object[, filter[, conversion]]): returns
+// Object::GetOwnPropertyNames of the object. Calls the one-argument overload
+// when only the object is passed, and relies on the default KeyConversionMode
+// when no conversion is passed. Leaves the exception pending when listing the
+// keys throws, so the JS caller sees it.
+void perform_get_own_property_names(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> object = info[0].As<Object>();
+
+  MaybeLocal<Array> maybe_names;
+  if (info.Length() < 2) {
+    maybe_names = object->GetOwnPropertyNames(context);
+  } else {
+    PropertyFilter filter =
+        static_cast<PropertyFilter>(info[1].As<Int32>()->Value());
+    if (info.Length() < 3) {
+      maybe_names = object->GetOwnPropertyNames(context, filter);
+    } else {
+      KeyConversionMode conversion =
+          static_cast<KeyConversionMode>(info[2].As<Int32>()->Value());
+      maybe_names = object->GetOwnPropertyNames(context, filter, conversion);
+    }
+  }
+
+  Local<Array> names;
+  if (!maybe_names.ToLocal(&names)) {
+    std::cout << "GetOwnPropertyNames returned an empty MaybeLocal"
+              << std::endl;
+    return;
+  }
+  info.GetReturnValue().Set(names);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2527,6 +2569,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "perform_boolean_value", perform_boolean_value);
   NODE_SET_METHOD(exports, "create_function_with_c_function",
                   create_function_with_c_function);
+  NODE_SET_METHOD(exports, "perform_get_own_property_names",
+                  perform_get_own_property_names);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

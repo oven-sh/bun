@@ -585,6 +585,18 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       ]);
     });
   });
+
+  describe("Object::GetOwnPropertyNames", () => {
+    it("returns the keys V8 returns for every PropertyFilter and KeyConversionMode", async () => {
+      const out = await checkSameOutput("test_v8_object_get_own_property_names");
+      // The two calls uWebSockets.js makes: the one-argument overload returns index keys as numbers,
+      // and SKIP_STRINGS alone returns the non-enumerable symbols too.
+      expect(out).toContain('object with a prototype, one-argument overload: 2 [number 8, string "own"]');
+      expect(out).toContain(
+        "mixed, SKIP_STRINGS: 4 [symbol(enumerable), symbol(hidden), symbol(readOnly), symbol(nonConfigurable)]",
+      );
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {

@@ -397,6 +397,338 @@ module.exports = debugMode => {
       const add = nativeModule.create_function_with_c_function();
       console.log("add(40, 2) =", add(40, 2));
     },
+
+    test_v8_object_get_own_property_names() {
+      // v8::PropertyFilter
+      const ALL_PROPERTIES = 0;
+      const ONLY_WRITABLE = 1;
+      const ONLY_ENUMERABLE = 2;
+      const ONLY_CONFIGURABLE = 4;
+      const SKIP_STRINGS = 8;
+      const SKIP_SYMBOLS = 16;
+      const filterBits = { ONLY_WRITABLE, ONLY_ENUMERABLE, ONLY_CONFIGURABLE, SKIP_STRINGS, SKIP_SYMBOLS };
+      // v8::KeyConversionMode
+      const kConvertToString = 0;
+      const kKeepNumbers = 1;
+      const kNoNumbers = 2;
+      const conversionNames = ["kConvertToString", "kKeepNumbers", "kNoNumbers"];
+
+      class TrapError extends Error {}
+
+      const describeFilter = filter =>
+        Object.keys(filterBits)
+          .filter(name => filter & filterBits[name])
+          .join("|") || "ALL_PROPERTIES";
+      const describeKey = key =>
+        typeof key === "symbol" ? `symbol(${key.description})` : `${typeof key} ${JSON.stringify(key)}`;
+
+      // Without a filter the one-argument overload is called, without a conversion the default argument is used.
+      function getNames(object, filter, conversion) {
+        const args = [object];
+        if (filter !== undefined) args.push(filter);
+        if (conversion !== undefined) args.push(conversion);
+        return nativeModule.perform_get_own_property_names(...args);
+      }
+
+      function show(description, object, filter, conversion) {
+        let line = `${description}, ${filter === undefined ? "one-argument overload" : describeFilter(filter)}`;
+        if (conversion !== undefined) line += `, ${conversionNames[conversion]}`;
+        let names;
+        try {
+          names = getNames(object, filter, conversion);
+        } catch (e) {
+          // only the errors thrown by this test have a message that is the same in every engine
+          console.log(`${line}: threw ${e instanceof TrapError ? `TrapError: ${e.message}` : e.constructor.name}`);
+          return;
+        }
+        if (Array.isArray(names)) console.log(`${line}: ${names.length} [${names.map(describeKey).join(", ")}]`);
+        else console.log(`${line}: returned ${typeof names}`);
+      }
+
+      const symbols = {
+        enumerable: Symbol("enumerable"),
+        hidden: Symbol("hidden"),
+        readOnly: Symbol("readOnly"),
+        nonConfigurable: Symbol("nonConfigurable"),
+      };
+      // A getter that runs shows up as an exception: listing the keys must not read any value.
+      const accessor = {
+        get() {
+          throw new TrapError("a getter ran");
+        },
+        set() {
+          throw new TrapError("a setter ran");
+        },
+      };
+      function createMixedObject() {
+        const object = {};
+        object.b = 1;
+        object[7] = 1;
+        object[symbols.enumerable] = 1;
+        object.a = 1;
+        object[2] = 1;
+        const define = (key, descriptor) => Object.defineProperty(object, key, descriptor);
+        define("hidden", { value: 1, writable: true, enumerable: false, configurable: true });
+        define("readOnly", { value: 1, writable: false, enumerable: true, configurable: true });
+        define("nonConfigurable", { value: 1, writable: true, enumerable: true, configurable: false });
+        define("frozen", { value: 1, writable: false, enumerable: false, configurable: false });
+        define("getter", { get: accessor.get, enumerable: true, configurable: true });
+        define("setter", { set: accessor.set, enumerable: true, configurable: true });
+        define("hiddenGetter", { get: accessor.get, enumerable: false, configurable: true });
+        define("fixedAccessor", { ...accessor, enumerable: true, configurable: false });
+        define(symbols.hidden, { value: 1, writable: true, enumerable: false, configurable: true });
+        define(symbols.readOnly, { value: 1, writable: false, enumerable: true, configurable: true });
+        define(symbols.nonConfigurable, { value: 1, writable: true, enumerable: true, configurable: false });
+        define(5, { value: 1, writable: true, enumerable: false, configurable: true });
+        define(4, { value: 1, writable: false, enumerable: true, configurable: true });
+        define(3, { value: 1, writable: true, enumerable: true, configurable: false });
+        define(1, { get: accessor.get, enumerable: true, configurable: true });
+        object.z = 1;
+        return object;
+      }
+
+      console.log("====== every filter on an object with index, string, accessor and symbol keys");
+      const mixed = createMixedObject();
+      show("mixed", mixed);
+      for (let filter = ALL_PROPERTIES; filter <= 31; filter++) show("mixed", mixed, filter);
+
+      console.log("====== key conversion");
+      // kNoNumbers tells V8 to expect no index keys. Only a debug build of V8 checks that: the keys stay numbers.
+      for (const filter of [ALL_PROPERTIES, ONLY_ENUMERABLE | SKIP_SYMBOLS, SKIP_STRINGS]) {
+        for (const conversion of [kConvertToString, kKeepNumbers, kNoNumbers]) show("mixed", mixed, filter, conversion);
+      }
+      show("string keys only", { b: 1, a: 1 }, ALL_PROPERTIES, kNoNumbers);
+
+      console.log("====== which keys are indices");
+      // 4294967294 is the largest array index
+      const limits = { name: 1 };
+      for (const key of "4294967295 4294967294 2147483648 10 9 0 -1 -0 01 1.5 1e3".split(" ")) limits[key] = 1;
+      show("limits", limits);
+      for (const conversion of [kConvertToString, kKeepNumbers, kNoNumbers]) {
+        show("limits", limits, ALL_PROPERTIES, conversion);
+      }
+
+      console.log("====== own keys only");
+      const prototype = { inherited: 1, 3: 1, [Symbol("inherited")]: 1 };
+      const derived = Object.create(prototype);
+      derived.own = 1;
+      derived[8] = 1;
+      show("object with a prototype", derived);
+      show("object with a prototype", derived, ALL_PROPERTIES);
+      class WithPrivateField {
+        #hidden = 1;
+        visible = this.#hidden;
+      }
+      show("class instance with a private field", new WithPrivateField(), ALL_PROPERTIES);
+      show("empty object", {});
+      show("empty object", {}, ALL_PROPERTIES);
+      show("object without a prototype", Object.assign(Object.create(null), { x: 1, 0: 1 }), ALL_PROPERTIES);
+
+      // Not covered: ONLY_WRITABLE and ONLY_CONFIGURABLE on a frozen or sealed object that has index keys. V8 lists
+      // those keys whatever their attributes are, as long as it stores them as fast elements, which JS cannot observe.
+      console.log("====== frozen and sealed objects");
+      const frozen = Object.freeze({ a: 1, [symbols.enumerable]: 1 });
+      const sealed = Object.seal({ a: 1, [symbols.enumerable]: 1 });
+      for (const filter of [ALL_PROPERTIES, ONLY_WRITABLE, ONLY_CONFIGURABLE]) {
+        show("frozen object", frozen, filter);
+        show("sealed object", sealed, filter);
+      }
+      const frozenArray = Object.freeze(["a", "b"]);
+      show("frozen array", frozenArray);
+      show("frozen array", frozenArray, ALL_PROPERTIES);
+
+      console.log("====== arrays");
+      const attributeFilters = [undefined, ALL_PROPERTIES, ONLY_WRITABLE, ONLY_ENUMERABLE, ONLY_CONFIGURABLE];
+      for (const filter of [...attributeFilters, SKIP_STRINGS]) show("array", ["a", "b", "c"], filter);
+      const holey = ["a", , "c"];
+      holey.extra = 1;
+      holey[Symbol("onArray")] = 1;
+      for (const filter of [undefined, ALL_PROPERTIES, SKIP_STRINGS]) {
+        show("array with a hole and a key", holey, filter);
+      }
+      const sparse = [];
+      sparse[1000000] = 1;
+      sparse[3] = 1;
+      show("sparse array", sparse);
+      const elementAttributes = ["a", "b", "c", "d"];
+      Object.defineProperty(elementAttributes, 1, { writable: false });
+      Object.defineProperty(elementAttributes, 2, { enumerable: false });
+      Object.defineProperty(elementAttributes, 3, { configurable: false });
+      for (const filter of attributeFilters) show("array with element attributes", elementAttributes, filter);
+
+      console.log("====== typed arrays");
+      const bytes = new Uint8Array(3);
+      bytes.extra = 1;
+      bytes[Symbol("onTypedArray")] = 1;
+      for (const filter of [...attributeFilters, SKIP_STRINGS]) show("Uint8Array", bytes, filter);
+      show("Uint8Array", bytes, ALL_PROPERTIES, kConvertToString);
+      show("empty Float64Array", new Float64Array(0), ALL_PROPERTIES);
+
+      console.log("====== String objects");
+      const string = new String("ab");
+      string.extra = 1;
+      string[5] = 1;
+      string[Symbol("onString")] = 1;
+      for (const filter of [...attributeFilters, ONLY_WRITABLE | ONLY_ENUMERABLE | ONLY_CONFIGURABLE, SKIP_STRINGS]) {
+        show("String object", string, filter);
+      }
+      show("String object", string, ALL_PROPERTIES, kConvertToString);
+      show("empty String object", new String(""), ALL_PROPERTIES);
+
+      console.log("====== symbols");
+      const symbolKeys = [Symbol.iterator, Symbol.for("registered"), Symbol(), Symbol("")];
+      const withSymbols = { string: 1 };
+      for (const symbol of symbolKeys) withSymbols[symbol] = 1;
+      show("symbol keys", withSymbols, SKIP_STRINGS);
+      const sameSymbols = getNames(withSymbols, SKIP_STRINGS).every((symbol, i) => symbol === symbolKeys[i]);
+      console.log("the same symbols:", sameSymbols);
+
+      console.log("====== the result is a new array every time");
+      const plain = { a: 1, b: 2 };
+      const first = getNames(plain);
+      first.push("pushed");
+      first[0] = "replaced";
+      const second = getNames(plain);
+      console.log("second result:", second.map(describeKey).join(", "));
+      console.log("distinct arrays:", first !== second);
+      console.log("prototype is Array.prototype:", Object.getPrototypeOf(second) === Array.prototype);
+      console.log("Object.keys afterwards:", Object.keys(plain).join(", "));
+
+      console.log("====== many keys");
+      const many = {};
+      for (let i = 0; i < 600; i++) {
+        many[`key${i}`] = i;
+        many[599 - i] = i;
+      }
+      const manyNames = getNames(many);
+      console.log("count:", manyNames.length);
+      const indicesAscend = manyNames.slice(0, 600).every((key, i) => key === i);
+      const stringsInOrder = manyNames.slice(600).every((key, i) => key === `key${i}`);
+      console.log("indices first, ascending:", indicesAscend);
+      console.log("then strings, in insertion order:", stringsInOrder);
+
+      console.log("====== Proxy");
+      const traps = [];
+      const trapKey = key => (typeof key === "symbol" ? `symbol(${key.description})` : key);
+      const logging = new Proxy(createMixedObject(), {
+        ownKeys(target) {
+          traps.push("ownKeys");
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          traps.push(`getOwnPropertyDescriptor ${trapKey(key)}`);
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+        get(target, key) {
+          traps.push(`get ${trapKey(key)}`);
+          return undefined;
+        },
+        has(target, key) {
+          traps.push(`has ${trapKey(key)}`);
+          return Reflect.has(target, key);
+        },
+      });
+      for (const filter of [
+        undefined,
+        ALL_PROPERTIES,
+        ONLY_WRITABLE,
+        ONLY_ENUMERABLE,
+        ONLY_CONFIGURABLE,
+        ONLY_WRITABLE | ONLY_CONFIGURABLE,
+        SKIP_STRINGS,
+        SKIP_SYMBOLS,
+        ONLY_ENUMERABLE | SKIP_STRINGS,
+        SKIP_STRINGS | SKIP_SYMBOLS,
+        ONLY_ENUMERABLE | SKIP_STRINGS | SKIP_SYMBOLS,
+      ]) {
+        traps.length = 0;
+        show("proxy with every trap", logging, filter);
+        console.log("traps:", traps.join(", "));
+      }
+      show("proxy with every trap", logging, ALL_PROPERTIES, kConvertToString);
+
+      const noTraps = new Proxy(createMixedObject(), {});
+      for (const filter of attributeFilters) show("proxy without traps", noTraps, filter);
+      show("proxy of a proxy", new Proxy(noTraps, {}));
+      show("proxy of an array", new Proxy(["a", "b"], {}), ONLY_CONFIGURABLE);
+      show("proxy of a String object", new Proxy(new String("ab"), {}), ONLY_WRITABLE);
+
+      // the trap decides the order, and its keys do not have to exist
+      const invented = ["z", "10", "2", Symbol.for("invented"), "a", "4294967294", "4294967295", "01"];
+      const inventsKeys = new Proxy({}, { ownKeys: () => invented });
+      for (const filter of [undefined, ALL_PROPERTIES, ONLY_ENUMERABLE, SKIP_STRINGS, SKIP_SYMBOLS]) {
+        show("proxy that invents keys", inventsKeys, filter);
+      }
+      show("proxy that invents keys", inventsKeys, ALL_PROPERTIES, kConvertToString);
+      const inventsProperties = new Proxy(
+        {},
+        {
+          ownKeys: () => [...invented, "hidden"],
+          getOwnPropertyDescriptor: (target, key) => ({
+            value: 1,
+            writable: false,
+            enumerable: key !== "hidden",
+            configurable: true,
+          }),
+        },
+      );
+      for (const filter of [...attributeFilters, ONLY_ENUMERABLE | SKIP_STRINGS]) {
+        show("proxy that invents read-only properties", inventsProperties, filter);
+      }
+
+      // Bun only: a collection in the middle of the native call, after some of the keys were chosen
+      const collecting = new Proxy(
+        { a: 1, b: 2, 3: 3, [symbols.enumerable]: 4 },
+        {
+          getOwnPropertyDescriptor(target, key) {
+            if (process.isBun) Bun.gc(true);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        },
+      );
+      show("proxy whose trap collects garbage", collecting, ONLY_ENUMERABLE);
+
+      console.log("====== exceptions");
+      const throwsFromOwnKeys = new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new TrapError("ownKeys threw");
+          },
+        },
+      );
+      for (const filter of [undefined, ALL_PROPERTIES, SKIP_STRINGS, SKIP_STRINGS | SKIP_SYMBOLS]) {
+        show("proxy with a throwing ownKeys trap", throwsFromOwnKeys, filter);
+      }
+      const throwsFromDescriptor = new Proxy(
+        { a: 1, [symbols.enumerable]: 1 },
+        {
+          getOwnPropertyDescriptor() {
+            throw new TrapError("getOwnPropertyDescriptor threw");
+          },
+        },
+      );
+      for (const filter of [
+        undefined,
+        ALL_PROPERTIES,
+        ONLY_WRITABLE,
+        ONLY_ENUMERABLE,
+        ONLY_CONFIGURABLE,
+        SKIP_STRINGS,
+        ONLY_ENUMERABLE | SKIP_STRINGS,
+        ONLY_ENUMERABLE | SKIP_STRINGS | SKIP_SYMBOLS,
+      ]) {
+        show("proxy with a throwing getOwnPropertyDescriptor trap", throwsFromDescriptor, filter);
+      }
+      const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+      revoke();
+      show("revoked proxy", revoked);
+      show("revoked proxy", revoked, ALL_PROPERTIES);
+      show("proxy whose ownKeys trap returns a number", new Proxy({}, { ownKeys: () => [1] }), ALL_PROPERTIES);
+      show("proxy whose ownKeys trap repeats a key", new Proxy({}, { ownKeys: () => ["a", "a"] }), ALL_PROPERTIES);
+      const hidesKey = new Proxy(Object.preventExtensions({ a: 1 }), { ownKeys: () => [] });
+      show("proxy whose ownKeys trap hides a key of a non-extensible target", hidesKey, ALL_PROPERTIES);
+    },
   };
 };
 

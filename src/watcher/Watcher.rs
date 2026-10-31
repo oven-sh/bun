@@ -717,10 +717,9 @@ impl Watcher {
             }
 
             if parent_watch_item.is_none() {
-                let hashes = watchlist_slice.items_hash();
-                if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
+                parent_watch_item = watchlist_slice
+                    .find(parent_dir_hash, parent_dir)
+                    .map(|i| i as WatchItemIndex);
             }
         }
         // Abort on OOM:
@@ -801,7 +800,7 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         // RAII guard; see append_file_maybe_lock.
         let _guard = self.mutex.lock_guard();
-        if let Some(idx) = self.index_of(hash) {
+        if let Some(idx) = self.watchlist.find(hash, file_path) {
             return Ok(idx as WatchItemIndex);
         }
         self.watchlist
@@ -830,7 +829,7 @@ impl Watcher {
         // Check if already watched (with lock to avoid race with removal)
         {
             self.mutex.lock();
-            let already_watched = self.index_of(hash).is_some();
+            let already_watched = self.watchlist.find(hash, file_path).is_some();
             self.mutex.unlock();
 
             if already_watched {
@@ -888,7 +887,7 @@ impl Watcher {
         // This must lock due to concurrent transpiler
         self.mutex.lock();
 
-        if let Some(index) = self.index_of(hash) {
+        if let Some(index) = self.watchlist.find(hash, file_path) {
             let mut ownership = FdOwnership::Caller;
             if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
                 // Upgrade a path-only entry (`add_file_by_path_slow` inserts
@@ -897,8 +896,8 @@ impl Watcher {
                 // is never replaced: the watchlist owns it until eviction,
                 // and the old overwrite leaked it.
                 let fds = self.watchlist.items_fd_mut();
-                if !fds[index as usize].is_valid() {
-                    fds[index as usize] = fd;
+                if !fds[index].is_valid() {
+                    fds[index] = fd;
                     ownership = FdOwnership::Watcher;
                 }
             }
@@ -917,40 +916,13 @@ impl Watcher {
         r
     }
 
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
-        for (i, other) in self.watchlist.items_hash().iter().enumerate() {
-            if hash == *other {
-                return Some(i as u32);
-            }
-        }
-        None
-    }
-
-    // Const-generic
-    // enum params need `adt_const_params` (nightly); the value is only
-    // compared to `.Directory`, so a plain runtime parameter is fine.
-    pub fn remove_at_index<const LOCK: bool>(
-        &mut self,
-        kind: WatchItemKind,
-        index: WatchItemIndex,
-        hash: HashType,
-        parents: &[HashType],
-    ) {
+    pub fn remove_at_index<const LOCK: bool>(&mut self, index: WatchItemIndex) {
         let _guard = LOCK.then(|| self.mutex.lock_guard());
 
         debug_assert!(index != NO_WATCH_ITEM);
 
         self.evict_list[self.evict_list_i as usize] = index;
         self.evict_list_i += 1;
-
-        if kind == WatchItemKind::Directory {
-            for &parent in parents {
-                if parent == hash {
-                    self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
-                    self.evict_list_i += 1;
-                }
-            }
-        }
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
@@ -1093,23 +1065,25 @@ pub enum FdOwnership {
 /// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
 /// Implemented locally so callers can write `watchlist.items_fd()` instead of
 /// the unsafe generic `Slice::items::<F>(field)`.
+/// No accessor gives the `hash` columns: two paths can have one hash, so `find` also compares the path.
 pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
-    fn items_hash(&self) -> &[u32];
     fn items_fd(&self) -> &[Fd];
     fn items_fd_mut(&mut self) -> &mut [Fd];
-    fn items_parent_hash(&self) -> &[u32];
     fn items_kind(&self) -> &[WatchItemKind];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
+
+    /// The position of the item whose `file_path` is `path`. `hash` is `Watcher::get_hash(path)`.
+    fn find(&self, hash: HashType, path: &[u8]) -> Option<usize>;
+
+    /// Whether the `file_path` of the item at `dir` is the directory of the item at `child`.
+    fn is_in_directory(&self, child: usize, dir: usize) -> bool;
 }
 
 impl WatchItemColumns for WatchList {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
-    }
-    fn items_hash(&self) -> &[u32] {
-        self.items::<"hash", u32>()
     }
     fn items_fd(&self) -> &[Fd] {
         self.items::<"fd", Fd>()
@@ -1117,15 +1091,29 @@ impl WatchItemColumns for WatchList {
     fn items_fd_mut(&mut self) -> &mut [Fd] {
         self.items_mut::<"fd", Fd>()
     }
-    fn items_parent_hash(&self) -> &[u32] {
-        self.items::<"parent_hash", u32>()
-    }
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+    fn find(&self, hash: HashType, path: &[u8]) -> Option<usize> {
+        find_item(
+            self.items::<"hash", HashType>(),
+            self.items_file_path(),
+            hash,
+            path,
+        )
+    }
+    fn is_in_directory(&self, child: usize, dir: usize) -> bool {
+        is_item_in_directory(
+            self.items::<"hash", HashType>(),
+            self.items::<"parent_hash", HashType>(),
+            self.items_file_path(),
+            child,
+            dir,
+        )
     }
 }
 
@@ -1133,17 +1121,11 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
     }
-    fn items_hash(&self) -> &[u32] {
-        self.items::<"hash", u32>()
-    }
     fn items_fd(&self) -> &[Fd] {
         self.items::<"fd", Fd>()
     }
     fn items_fd_mut(&mut self) -> &mut [Fd] {
         self.items_mut::<"fd", Fd>()
-    }
-    fn items_parent_hash(&self) -> &[u32] {
-        self.items::<"parent_hash", u32>()
     }
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
@@ -1151,5 +1133,85 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+    fn find(&self, hash: HashType, path: &[u8]) -> Option<usize> {
+        find_item(
+            self.items::<"hash", HashType>(),
+            self.items_file_path(),
+            hash,
+            path,
+        )
+    }
+    fn is_in_directory(&self, child: usize, dir: usize) -> bool {
+        is_item_in_directory(
+            self.items::<"hash", HashType>(),
+            self.items::<"parent_hash", HashType>(),
+            self.items_file_path(),
+            child,
+            dir,
+        )
+    }
+}
+
+fn find_item(
+    hashes: &[HashType],
+    file_paths: &[Cow<'static, [u8]>],
+    hash: HashType,
+    path: &[u8],
+) -> Option<usize> {
+    debug_assert_eq!(hash, Watcher::get_hash(path));
+    for (index, other) in hashes.iter().enumerate() {
+        if *other == hash && has_path(file_paths, index, path) {
+            return Some(index);
+        }
+    }
+    None
+}
+
+/// Not inlined, so the loop of `find_item` reads the `hash` column only.
+#[inline(never)]
+fn has_path(file_paths: &[Cow<'static, [u8]>], index: usize, path: &[u8]) -> bool {
+    file_paths[index].as_ref() == path
+}
+
+fn is_item_in_directory(
+    hashes: &[HashType],
+    parent_hashes: &[HashType],
+    file_paths: &[Cow<'static, [u8]>],
+    child: usize,
+    dir: usize,
+) -> bool {
+    parent_hashes[child] == hashes[dir]
+        && bun_paths::fs::PathName::init(&file_paths[child]).dir_with_trailing_slash()
+            == file_paths[dir].as_ref()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file_paths<const N: usize>(paths: [&'static [u8]; N]) -> [Cow<'static, [u8]>; N] {
+        paths.map(Cow::Borrowed)
+    }
+
+    #[test]
+    fn find_item_skips_an_item_with_the_same_hash_and_another_path() {
+        let paths = file_paths([b"/app/a.js", b"/app/b.js"]);
+        let hash = Watcher::get_hash(b"/app/b.js");
+        assert_eq!(
+            find_item(&[hash, hash], &paths, hash, b"/app/b.js"),
+            Some(1)
+        );
+        assert_eq!(find_item(&[hash], &paths[..1], hash, b"/app/b.js"), None);
+    }
+
+    #[test]
+    fn is_item_in_directory_compares_the_directory_of_the_child() {
+        let paths = file_paths([b"/app/lib/", b"/app/lib/a.js", b"/b.js"]);
+        // Each item has the hash of the folder as its hash and as its `parent_hash`.
+        let hashes = [Watcher::get_hash(b"/app/lib/"); 3];
+        assert!(is_item_in_directory(&hashes, &hashes, &paths, 1, 0));
+        assert!(!is_item_in_directory(&hashes, &hashes, &paths, 2, 0));
+        assert!(!is_item_in_directory(&hashes, &hashes, &paths, 0, 0));
     }
 }

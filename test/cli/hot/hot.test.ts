@@ -5,15 +5,18 @@ import {
   copyFileSync,
   cpSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
+import { folderAndFileWithTheSameWyhash, namesWithTheSameWyhash } from "../install/wyhash-std-collision";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -1331,4 +1334,229 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   writeFileSync(join(String(dir), "main.js"), `console.log("still running");\nprocess.exit();`);
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
+});
+
+// The watcher has a 32-bit hash of each watched path. These tests watch two paths that have the same hash.
+
+/** Expects the process to have an inotify watch on each of `paths`. Only Linux can tell. */
+function expectWatchOnEach(pid: number, paths: string[]) {
+  if (!isLinux) return;
+  const watched = new Set<number>();
+  for (const fd of readdirSync(`/proc/${pid}/fdinfo`)) {
+    let info: string;
+    try {
+      info = readFileSync(`/proc/${pid}/fdinfo/${fd}`, "utf8");
+    } catch {
+      continue;
+    }
+    for (const [, inode] of info.matchAll(/^inotify wd:\S+ ino:([0-9a-f]+)/gm)) watched.add(parseInt(inode, 16));
+  }
+  expect(paths.filter(path => !watched.has(statSync(path).ino))).toEqual([]);
+}
+
+/** Runs a program in `cwd` that loads `first` and then `second`, and saves each of them. */
+async function expectReloadOnEachSave(
+  flag: string,
+  cwd: string,
+  [first, second]: string[],
+  {
+    load = "import" as "import" | "require",
+    beforeLog = "",
+    save = writeFileSync as (path: string, text: string) => void,
+    watchedFolders = [] as string[],
+  } = {},
+) {
+  // Two imports register with the watcher from two threads. Two `require()` calls register in their order.
+  const [from1, from2] = [first, second].map(path => JSON.stringify("./" + path));
+  const [text, loads] =
+    load === "import"
+      ? [(value: number) => `export default ${value};`, `import first from ${from1};\nimport second from ${from2};`]
+      : [
+          (value: number) => `module.exports = ${value};`,
+          `const first = require(${from1}), second = require(${from2});`,
+        ];
+  writeFileSync(join(cwd, first), text(1));
+  writeFileSync(join(cwd, second), text(1));
+  writeFileSync(join(cwd, "main.js"), `${loads}\n${beforeLog}\nconsole.log("run", first, second);\n`);
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1 1")).toBe(true);
+  expectWatchOnEach(
+    runner.pid,
+    ["main.js", first, second, ...watchedFolders].map(path => join(cwd, path)),
+  );
+
+  save(join(cwd, second), text(2));
+  expect(await stdout("run 1 2")).toBe(true);
+  save(join(cwd, first), text(2));
+  expect(await stdout("run 2 2")).toBe(true);
+}
+
+it.each([
+  ["--hot", "import"],
+  ["--hot", "require"],
+  ["--watch", "import"],
+  ["--watch", "require"],
+] as const)("%s reloads on a save of each of two files with the same watcher hash (%s)", async (flag, load) => {
+  using dir = tempDir("hot-same-hash", {});
+  const cwd = realpathSync(String(dir));
+  const names = namesWithTheSameWyhash(cwd, ".js");
+  // On Linux the event of the folder also names a saved file, and that reloads. After a failed import it does not.
+  const beforeLog =
+    load === "import" ? `await import("./missing.js").catch(() => {});` : `try { require("./missing.js"); } catch {}`;
+  await expectReloadOnEachSave(
+    flag,
+    cwd,
+    names.map(name => name + ".js"),
+    { load, beforeLog },
+  );
+});
+
+// The watcher watches no folder outside the cwd. The Windows watcher refuses a file there.
+it.skipIf(isWindows).each(["--hot", "--watch"])(
+  "%s reloads on a save of each of two imports outside the cwd with the same watcher hash",
+  async flag => {
+    using dir = tempDir("hot-same-hash-outside", { "app/main.js": "", "lib/keep": "" });
+    const root = realpathSync(String(dir));
+    const names = namesWithTheSameWyhash(join(root, "lib"), ".js");
+    await expectReloadOnEachSave(
+      flag,
+      join(root, "app"),
+      names.map(name => `../lib/${name}.js`),
+    );
+  },
+);
+
+// Linux reports a file that a rename replaces only on the watch of its folder. On Windows a folder's watch reloads nothing.
+it.skipIf(isWindows).each(["--hot", "--watch"])(
+  "%s reloads when a rename replaces an import in each of two folders with the same watcher hash",
+  async flag => {
+    using dir = tempDir("hot-same-hash-folders", {});
+    const cwd = realpathSync(String(dir));
+    const folders = namesWithTheSameWyhash(cwd, sep);
+    for (const folder of folders) mkdirSync(join(cwd, folder));
+    await expectReloadOnEachSave(
+      flag,
+      cwd,
+      folders.map(folder => `${folder}/mod.js`),
+      { save: writeHotFileAtomicSync, watchedFolders: folders },
+    );
+  },
+);
+
+// The event of a folder names a file that a rename replaced. The reloader then looks for the watch of that file.
+it.skipIf(!isLinux)("--hot reloads an import in a folder that has the watcher hash of a file", async () => {
+  using dir = tempDir("hot-same-hash-folder-and-file", {});
+  const cwd = realpathSync(String(dir));
+  const [folder, file] = folderAndFileWithTheSameWyhash(cwd);
+  mkdirSync(join(cwd, folder));
+  // The folder is watched first, so a lookup by hash alone takes the folder for the file.
+  await expectReloadOnEachSave("--hot", cwd, [`${folder}/mod.js`, file], {
+    load: "require",
+    save: writeHotFileAtomicSync,
+    watchedFolders: [folder],
+  });
+});
+
+// After a failed import, the resolver has the watcher watch the folder of the missing file.
+it.skipIf(!isLinux)("--hot watches the folder of a failed import when it has the watcher hash of a file", async () => {
+  using dir = tempDir("hot-same-hash-failed-import", {});
+  const cwd = realpathSync(String(dir));
+  // The resolver gives the watcher the folder's path with no separator at its end.
+  const [file, folder] = namesWithTheSameWyhash(cwd, ".js").map(name => name + ".js");
+  mkdirSync(join(cwd, folder));
+  writeFileSync(join(cwd, file), "export default 1;");
+  writeFileSync(
+    join(cwd, "main.js"),
+    `import first from ${JSON.stringify("./" + file)};\nawait import(${JSON.stringify(`./${folder}/missing.js`)}).catch(() => {});\nconsole.log("run", first);\n`,
+  );
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  expect(await follow(runner.stdout)("run 1")).toBe(true);
+  expectWatchOnEach(runner.pid, [join(cwd, file), join(cwd, folder)]);
+});
+
+// Only `bun build --watch` watches files in node_modules, and it watches no folder there.
+it("build --watch rebuilds on a save of each of two node_modules files with the same watcher hash", async () => {
+  using dir = tempDir("build-watch-same-hash", { "node_modules/pkg/package.json": `{ "name": "pkg" }` });
+  const cwd = realpathSync(String(dir));
+  const pkg = join(cwd, "node_modules", "pkg");
+  const [first, second] = namesWithTheSameWyhash(pkg, ".js").map(name => name + ".js");
+  // main.js imports `first` and `first` imports `second`, so the bundler watches them in that order.
+  const firstText = (version: number) =>
+    `import second from ${JSON.stringify("./" + second)};\nexport default "first ${version} " + second;`;
+  writeFileSync(join(pkg, second), `export default "second 1";`);
+  writeFileSync(join(pkg, first), firstText(1));
+  writeFileSync(join(cwd, "main.js"), `import first from ${JSON.stringify("pkg/" + first)};\nconsole.log(first);\n`);
+  await using bundler = spawn({
+    cmd: [bunExe(), "build", "--watch", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(bundler.stdout);
+  expect(await stdout(`"second 1"`)).toBe(true);
+  expectWatchOnEach(bundler.pid, [join(pkg, first), join(pkg, second)]);
+
+  writeFileSync(join(pkg, second), `export default "second 2";`);
+  expect(await stdout(`"second 2"`)).toBe(true);
+  writeFileSync(join(pkg, first), firstText(2));
+  expect(await stdout(`"first 2 "`)).toBe(true);
+});
+
+// Only the type checker reads the two files, so the watcher gets them by path and not from the module loader.
+it("--watch --check restarts on a save of each of two type-only imports with the same watcher hash", async () => {
+  using dir = tempDir("watch-check-same-hash", {
+    // The type checker runs three times. With only the ES5 library, a debug build takes half as long.
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        moduleResolution: "bundler",
+        module: "esnext",
+        lib: ["es5"],
+        types: [],
+      },
+    }),
+    "console.d.ts": `declare var console: { log(...args: unknown[]): void };`,
+  });
+  const cwd = realpathSync(String(dir));
+  const [first, second] = namesWithTheSameWyhash(cwd, ".ts");
+  writeFileSync(join(cwd, first + ".ts"), `export type First = number;`);
+  writeFileSync(join(cwd, second + ".ts"), `export type Second = number;`);
+  writeFileSync(
+    join(cwd, "main.ts"),
+    `import type { First } from ${JSON.stringify("./" + first)};\nimport type { Second } from ${JSON.stringify("./" + second)};\nconst first: First = 1;\nconst second: Second = 1;\nconsole.log("run", first, second);\n`,
+  );
+  await using runner = spawn({
+    cmd: [bunExe(), "--watch", "--check", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stderr = follow(runner.stderr);
+  expect(await follow(runner.stdout)("run 1 1")).toBe(true);
+  expectWatchOnEach(runner.pid, [join(cwd, first + ".ts"), join(cwd, second + ".ts")]);
+
+  writeFileSync(join(cwd, second + ".ts"), `export type Second = string;`);
+  expect(await stderr("Found 1 error")).toBe(true);
+  writeFileSync(join(cwd, first + ".ts"), `export type First = string;`);
+  expect(await stderr("Found 2 errors")).toBe(true);
 });

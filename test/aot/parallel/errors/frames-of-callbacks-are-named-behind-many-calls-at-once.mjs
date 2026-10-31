@@ -1,6 +1,6 @@
 // A callback that leaves sight writes down, where it is entered, which function object it was entered through. The names in a stack follow what the function objects are called when the stack is read:
 // behind frames that were left, behind hundreds of such calls at once, for which the list of records grows, and up to the end of the stack.
-const names = error => error.stack.split("\n").slice(1, 6).map(line => line.trim().replace(/\(.*\)|\/.*$/g, "").trim()).join(" < ");
+const names = error => error.stack.split("\n").slice(1, 6).map(line => line.trim().replace(/\(.*\)|(?:[A-Za-z]:)?[\\/].*$/g, "").trim()).join(" < ");
 function overwrite(depth) { const a = [depth, depth + 1, depth + 2]; return depth ? overwrite(depth - 1) + a.length : 0; }
 const kept = [];
 function sync(list) { let seen = 0; list.forEach(function each(item) { seen++; kept.push(new Error("sync " + item)); }); return seen; }

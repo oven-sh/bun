@@ -411,8 +411,12 @@ fn is_pool_thread() -> bool {
 /// whose modules are loaded on that pool. `name`: the prefix of the thread names, before their number.
 pub fn use_dedicated_pool(name: &'static str) {
     DEDICATED_POOL.get_or_init(|| {
+        let max_threads = match cfg!(test) {
+            true => 0x3FFF,
+            false => u32::from(bun_core::get_thread_count()),
+        };
         let pool = bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
-            max_threads: u32::from(bun_core::get_thread_count()),
+            max_threads,
             stack_size: WORKER_STACK_SIZE,
             ..Default::default()
         })

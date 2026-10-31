@@ -85,6 +85,9 @@ pub(crate) mod test {
     #[path = "MemoryOfJob.rs"]
     pub(crate) mod memory_of_job;
 
+    #[path = "ShardsByReach.rs"]
+    pub(crate) mod shards_by_reach;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]

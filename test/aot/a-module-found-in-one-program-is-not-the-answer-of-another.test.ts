@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expectLayers } from "./harness/layers";
 import { run } from "./harness/run";
@@ -39,7 +39,20 @@ const files: Record<string, string> = {
   "tsconfig.json": "",
 };
 
-test.skipIf(!isLinux || !existsSync("/dev/shm"))(
+// Asked ahead of the test, so that a machine where the folder cannot be made reports the test as skipped and not as passed.
+function canStandAtItsPath() {
+  if (!isLinux || !existsSync("/dev/shm")) return false;
+  try {
+    mkdirSync(dirname(dirname(project)), { recursive: true });
+    accessSync(dirname(dirname(project)), constants.W_OK | constants.X_OK);
+    return true;
+  } catch (error) {
+    console.error(`SKIPPED: ${dirname(project)} cannot be made here: ${(error as NodeJS.ErrnoException).code}`);
+    return false;
+  }
+}
+
+test.skipIf(!canStandAtItsPath())(
   "a data file is loaded over layers, at the path where it was not",
   async () => {
     // One run at a time can stand there.
@@ -50,10 +63,7 @@ test.skipIf(!isLinux || !existsSync("/dev/shm"))(
         mkdirSync(claimed);
         break;
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "EACCES" || code === "EPERM" || code === "EROFS")
-          return void console.error(`SKIPPED: ${claimed} cannot be made here: ${code}`);
-        if (code !== "EEXIST" || tries === 240) throw error;
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || tries === 240) throw error;
         await Bun.sleep(500);
       }
     }

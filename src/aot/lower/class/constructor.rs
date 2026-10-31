@@ -35,7 +35,7 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         header.text = SourceRange {
             start: self.type_ranges.map_offset(node.text_start),
-            end: self.type_ranges.map_offset(end),
+            end: self.type_ranges.map_end(end),
         };
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,

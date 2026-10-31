@@ -242,13 +242,15 @@ const environment = {
   TZ: "Etc/UTC",
   BUN_AOT_VERBOSE: "1",
   // Plain Bun transpiles on one thread: the texts are read in the order in which they are asked for. An executable reads nothing, and goes by the variable
-  // where a program can tell when a text comes: what import() asks for.
+  // where a program can tell when a text comes: what a file that runs while a graph is loaded asks for with import().
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
   // A Bun ends with the process that started it, and takes along what it started itself.
   BUN_FEATURE_FLAG_NO_ORPHANS: "1",
   // A Bun that a signal ends starts a command that sends a report. It goes where scripts/runner.node.ts says, or nowhere.
   ...(!inherited.BUN_CRASH_REPORT_URL && { BUN_ENABLE_CRASH_REPORTING: "0" }),
   ...(isASAN && {
+    // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas: it would see no string, Vector or hash table.
+    Malloc: "1",
     // The slow unwinder aborts in a frame of compiled code and cuts the report off.
     ASAN_OPTIONS:
       (inherited.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0") +

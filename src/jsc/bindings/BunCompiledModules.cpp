@@ -286,7 +286,7 @@ static std::optional<AOT::ModuleID> findFormOfModule(JSGlobalObject* globalObjec
     if (pathOfForm.isDead())
         return std::nullopt;
     std::optional<AOT::ModuleID> module = compiledModuleForPath(pathOfForm.transferToWTFString());
-    if (!module && isFormWithoutAttributes && formWithoutAttributes == FormWithoutAttributes::MayAnswer)
+    if (!module && isFormWithoutAttributes && formWithoutAttributes == FormWithoutAttributes::MayAnswer && !Bun__compiledProgramRunsInPlace())
         module = compiledModuleForPath(path);
     if (module && AOT::leavesModuleToHost(globalObject, *module))
         return std::nullopt;
@@ -973,6 +973,9 @@ const AOT::ModuleHost compiledModuleHost = {
     &stampOfFile,
 };
 
+void recordRefusedLoad(JSGlobalObject*, const String& path);
+bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
+
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
 {
     // --disallow-code-generation-from-strings=strict refuses code from the disk in an executable built without --aot too. Whoever set the flag expects its error.
@@ -991,6 +994,8 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
     bool flagWouldHelp = !image || image->findsDataFilesByName() || startsWorker;
     // `bun test --aot` makes no executable and takes no entry points.
     if (compiledModulesRunInPlaceOfFiles())
+        recordRefusedLoad(globalObject, path);
+    if (compiledModulesRunInPlaceOfFiles())
         return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it wasn't compiled with the program, and --aot only runs code that was. Import the file by a constant path"_s, flagWouldHelp ? ", or add --aot-allow-code-from-disk."_s : "."_s));
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point"_s, flagWouldHelp ? ", or build with --aot-allow-code-from-disk."_s : "."_s));
 }
@@ -999,6 +1004,8 @@ JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode
 {
     if (!hasCompiledModules() || isAskingWhyFileFails)
         return {};
+    if (isBunTest && compiledModulesRunInPlaceOfFiles() && isCompiledModule(path))
+        return {};
     bool refusesCode = AOT::refusesCodeOutsideImage(globalObject, path);
     // An executable does not hold the text of a compiled module.
     if (isCompiledModule(path) && (refusesCode || !compiledModulesRunInPlaceOfFiles()))
@@ -1006,6 +1013,13 @@ JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode
     if (!refusesCode)
         return {};
     return createNotInExecutableError(globalObject, code, path);
+}
+
+bool letsTestRunLoadAddon(JSGlobalObject* globalObject, const String& path)
+{
+    if (!hasCompiledModules() || !compiledModulesRunInPlaceOfFiles() || isCompiledModule(path) || !AOT::refusesCodeOutsideImage(globalObject, path))
+        return false;
+    return recordAddonLoadedFromDisk(globalObject, path);
 }
 
 JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)
@@ -1205,6 +1219,11 @@ extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(
     return JSC::JSValue::encode(Bun::errorIfHostObjectOutsideImageIsRefused(globalObject, code, path->toWTFString(BunString::ZeroCopy)));
 }
 
+extern "C" bool Bun__AOT__letsTestRunLoadAddon(JSC::JSGlobalObject* globalObject, const BunString* path)
+{
+    return Bun::letsTestRunLoadAddon(globalObject, path->toWTFString(BunString::ZeroCopy));
+}
+
 #else // ENABLE(AOT)
 
 // The answers of the functions above where no image is registered.
@@ -1230,6 +1249,7 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable."_s));
 }
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
+bool letsTestRunLoadAddon(JSGlobalObject*, const String&) { return false; }
 JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
 String pathInExecutable(const String&) { return {}; }
 JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
@@ -1277,5 +1297,6 @@ extern "C" void Bun__AOT__noteFirstLoadInEarlierProcess(JSC::VM*, BunAOTBytes, b
 extern "C" bool Bun__AOT__imagesHoldFile(const BunAOTBytes*, size_t, BunAOTBytes) { return false; }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
+extern "C" bool Bun__AOT__letsTestRunLoadAddon(JSC::JSGlobalObject*, const BunString*) { return false; }
 
 #endif // ENABLE(AOT)

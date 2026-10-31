@@ -203,6 +203,15 @@ pub struct FirstProgramBelow<'a> {
     pub offset: u64,
 }
 
+fn write_into_program_below(
+    first: &FirstProgramBelow<'_>,
+    bytes: &[u8],
+    offset: u64,
+) -> crate::Result<()> {
+    let offset = (first.offset + offset) as i64;
+    Ok(bun_sys::File::borrow(&first.file).pwrite_all(bytes, offset)?)
+}
+
 pub fn to_graph_bytes(
     request: &GraphRequest<'_>,
     place: Option<&PlaceOfProgram<'_>>,
@@ -219,8 +228,7 @@ pub fn to_graph_bytes(
             && let Some((offset, headers)) =
                 bun_aot::engine::place_of_string_headers_behind(first.image, written)
         {
-            let offset = (first.offset + offset as u64) as i64;
-            let _ = bun_sys::File::borrow(&first.file).pwrite_all(&written[headers], offset);
+            write_into_program_below(first, &written[headers], offset as u64)?;
         }
     }
     let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
@@ -253,4 +261,34 @@ pub fn write_executable(request: &mut ExecutableRequest<'_>) -> crate::Result<Ex
     )?;
     let details = matches!(result, CompileResult::Success).then_some(additions.details);
     Ok(ExecutableOutcome { result, details })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiled_program::tests::TemporaryFolder;
+
+    #[test]
+    fn a_write_into_the_program_below_that_is_refused_fails_the_build() {
+        let folder = TemporaryFolder::create("program-below");
+        let path = folder.write("program", &[0; 64]);
+        let write_through = |flags| {
+            let file = bun_sys::File::open(&path, flags, 0).unwrap();
+            let first = FirstProgramBelow {
+                image: &[],
+                file: file.handle,
+                offset: 8,
+            };
+            let result = write_into_program_below(&first, b"headers", 4);
+            let _ = file.close();
+            result
+        };
+        assert!(write_through(bun_sys::O::RDWR).is_ok());
+        let written = bun_sys::File::read_from(Fd::cwd(), path.as_bytes()).unwrap();
+        assert_eq!(&written[12..19], b"headers");
+        assert!(matches!(
+            write_through(bun_sys::O::RDONLY),
+            Err(crate::Error::Sys(_))
+        ));
+    }
 }

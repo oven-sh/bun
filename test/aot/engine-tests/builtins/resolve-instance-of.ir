@@ -47,8 +47,7 @@ function f1 name="primitive" parameters=[{type=number}] results=[{type=anything}
 # CHECK-LABEL: function f1 name="primitive"
 # CHECK-NOT: InstanceOf
 # CHECK: v3: false = Boolean
-# CHECK-NEXT: v5: false = AssumeType v3 provenType=false
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: Return v3
 
 function f2 name="pristineArray" results=[{type=anything}] {
   b0():

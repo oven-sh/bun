@@ -111,8 +111,7 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;
-    const env = { ...bunEnv, WebKitMallocForceEnabled: "1" };
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB } = JSON.parse(stdout);

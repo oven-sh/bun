@@ -417,6 +417,7 @@ impl<'s> Workspace<'s> {
             is_library: source.is_library,
             host_values: self.arena.alloc_slice_copy(host_values),
             jsx: source.jsx,
+            own_name: b"",
         };
         analyze_file(hir, options, fold, file, &self.atoms, self.arena)
     }

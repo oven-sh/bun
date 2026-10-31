@@ -3,11 +3,21 @@
 // As one program the build follows the object and the names into the helper. Over layers the run has to know which members its tests replace before the first build, from a look at each file
 // by itself. That look took a text beside a built-in for the name of a member, `stub(Date, "now")`, and not the keys of a literal beside one:
 // "TypeError: Cannot assign to Date.now because built-in objects are read-only in compiled code, and the build didn't see a test replace this one".
+// And where only the run knows the names, `silence(console, levels())`: a file that writes on what a parameter holds under a name which nothing in it spells, and a file that passes it a
+// built-in, open every member of that built-in, as a loop in the test file itself does. A spy in such a helper was refused as one program too.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
 const helpers = `
+import { spyOn } from "bun:test";
+export function silence(target, names) {
+  for (const name of names) target[name] = () => "silent";
+}
+export const spyAll = (target, wanted) => Object.keys(target).filter(wanted).map(name => spyOn(target, name));
+export function defineUnder(target, key, value) {
+  Object.defineProperty(target, key, { value, writable: true, configurable: true });
+}
 export function swap(target, members) {
   const saved = {};
   for (const name in members) {
@@ -34,6 +44,8 @@ export const parsed = text => JSON.parse(text);
 export const folder = () => process.cwd();
 export const keys = object => Object.keys(object);
 export const joined = list => list.join("-");
+export const largest = (a, b) => Math.max(a, b);
+export const report = text => console.debug(text);
 `;
 
 const ways = {
@@ -64,6 +76,25 @@ const ways = {
     console.error("OUT", now());
     assign(Date, { now: before });
     console.error("OUT", now() === 6);`,
+  "names that only the run knows": `
+    const saved = { max: Math.max, min: Math.min };
+    silence(Math, (process.env.NO_SUCH_SETTING ?? "max,min").split(","));
+    console.error("OUT", largest(1, 2), Math.min(1, 2));
+    Object.assign(Math, saved);
+    console.error("OUT", largest(1, 2), Math.min(1, 2));`,
+  "spies under names that the helper works out": `
+    const spies = spyAll(console, name => name === "debug" || name === "table");
+    for (const spy of spies) spy.mockImplementation(() => {});
+    report("a");
+    console.error("OUT", spies.map(spy => spy.mock.calls.length).join());
+    for (const spy of spies) spy.mockRestore();
+    console.error("OUT", spies.length);`,
+  "defined under a name that only the run knows": `
+    const before = Date.now;
+    defineUnder(Date, (process.env.NO_SUCH_SETTING ?? "now,x").split(",")[0], () => 8);
+    console.error("OUT", now());
+    defineUnder(Date, "now", before);
+    console.error("OUT", now() === 8);`,
   "a class of the helpers": `
     const stub = new Stub(Date, { now: () => 7 });
     console.error("OUT", now());
@@ -78,8 +109,8 @@ async function linesOf(body: string, flags: string[]) {
     "test/helpers.js": helpers,
     "test/a.test.js": `
       import { test } from "bun:test";
-      import { assign, Stub, swap } from "./helpers.js";
-      import { folder, joined, keys, now, parsed, random } from "../src/app.js";
+      import { assign, defineUnder, silence, spyAll, Stub, swap } from "./helpers.js";
+      import { folder, joined, keys, largest, now, parsed, random, report } from "../src/app.js";
       test("t", () => {${body}
       });`,
     "test/b.test.js": `import { test } from "bun:test";\nimport { now } from "../src/app.js";\ntest("u", () => { console.error("OUT", typeof now()); });`,

@@ -415,6 +415,7 @@ pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
     pending_members: SmallVec<[Atom; 4]>,
     entered_calls: SmallVec<[EnteredCall; 2]>,
     open_calls: SmallVec<[(FileId, CallId); 4]>,
+    followed_stores: SmallVec<[(FileId, ExprId); 4]>,
     certainty: ReferentCertainty,
     follows_stored_members: bool,
     session: PhantomData<&'s ()>,
@@ -428,6 +429,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             pending_members: SmallVec::new(),
             entered_calls: SmallVec::new(),
             open_calls: SmallVec::new(),
+            followed_stores: SmallVec::new(),
             certainty: ReferentCertainty::Proven,
             follows_stored_members: false,
             session: PhantomData,
@@ -494,6 +496,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             pending_members: self.pending_members.clone(),
             entered_calls: self.entered_calls.clone(),
             open_calls: self.open_calls.clone(),
+            followed_stores: self.followed_stores.clone(),
             certainty: self.certainty,
             follows_stored_members: self.follows_stored_members,
             session: PhantomData,
@@ -978,7 +981,11 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.certainty = ReferentCertainty::Expected;
         self.visited.clear();
         match stored {
-            Some((file, value)) => Step::Expression(file, value),
+            Some(store) if self.followed_stores.contains(&store) => unknown(UnknownReferent::Cycle),
+            Some((file, value)) => {
+                self.followed_stores.push((file, value));
+                Step::Expression(file, value)
+            }
             None => unknown(UnknownReferent::MissingMember),
         }
     }

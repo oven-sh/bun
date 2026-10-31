@@ -119,7 +119,6 @@ fn build_records(
         definitions: &prepared.definitions,
         numbering,
         progress: RecordProgress::default(),
-        in_parallel: &|count, work| (0..count).for_each(work),
     };
     build_module_records(&mut prepared.units, &input, strings)
 }

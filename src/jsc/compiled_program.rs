@@ -87,6 +87,10 @@ unsafe extern "C" {
         code: crate::ErrCode,
         path: &bun_core::String,
     ) -> JSValue;
+    safe fn Bun__AOT__letsTestRunLoadAddon(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+    ) -> bool;
 }
 
 #[cfg(bun_locked_environment)]
@@ -420,6 +424,10 @@ pub fn error_if_code_outside_image_is_refused(
     compiled_program()?;
     let error = Bun__AOT__errorIfCodeOutsideImageIsRefused(global, code, path);
     (!error.is_empty()).then_some(error)
+}
+
+pub fn lets_test_run_load_addon(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    compiled_program().is_some() && Bun__AOT__letsTestRunLoadAddon(global, path)
 }
 
 pub(crate) fn refuses_code_at(global: &JSGlobalObject, path: &[u8]) -> bool {

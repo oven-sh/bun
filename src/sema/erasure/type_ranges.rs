@@ -77,7 +77,20 @@ impl TypeRanges {
     }
 
     pub fn map_offset(&self, offset: u32) -> u32 {
-        let before = self.ranges.partition_point(|range| range.start < offset);
+        self.map(
+            offset,
+            self.ranges.partition_point(|range| range.start < offset),
+        )
+    }
+
+    pub fn map_end(&self, offset: u32) -> u32 {
+        self.map(
+            offset,
+            self.ranges.partition_point(|range| range.start <= offset),
+        )
+    }
+
+    fn map(&self, offset: u32, before: usize) -> u32 {
         match before.checked_sub(1).map(|last| self.ranges[last]) {
             Some(last) => {
                 let in_range = i64::from(last.end.min(offset) - last.start) - i64::from(last.added);
@@ -175,15 +188,17 @@ pub fn find_type_ranges(file: &File<'_>) -> TypeRanges {
     find_type_ranges_beside(file, Vec::new())
 }
 
-pub fn find_type_ranges_beside(file: &File<'_>, replaced: Vec<ReplacedText>) -> TypeRanges {
+pub fn find_type_ranges_beside(file: &File<'_>, mut replaced: Vec<ReplacedText>) -> TypeRanges {
     let mut finder = Finder {
         file,
         text: &file.text,
         found: Vec::new(),
+        replaced: Vec::new(),
     };
     if !file.is_js {
         finder.run();
     }
+    replaced.append(&mut finder.replaced);
     for part in &replaced {
         finder.add(part.start + part.text.len() as u32, part.end);
     }
@@ -243,6 +258,11 @@ struct Finder<'a, 's> {
     file: &'a File<'s>,
     text: &'a [u8],
     found: Vec<(u32, u32)>,
+    replaced: Vec<ReplacedText>,
+}
+
+fn is_part_of_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || byte >= 0x80
 }
 
 fn is_space(byte: u8) -> bool {
@@ -595,8 +615,31 @@ impl Finder<'_, '_> {
             return self.add(end_of_expr(self.file, operand), expression.end);
         }
         let close_end = self.skip_trivia_back(operand_start as usize);
-        if self.byte_before(close_end) == b'>' {
-            self.add(expression.pos, close_end as u32);
+        if self.byte_before(close_end) != b'>' {
+            return;
+        }
+        let rest = &self.text[operand_start as usize..];
+        let begins_statement = [&b"{"[..], b"function", b"class", b"async"]
+            .iter()
+            .any(|start| rest.starts_with(start));
+        let joins_names = close_end == operand_start as usize
+            && is_part_of_name(self.byte_before(expression.pos as usize))
+            && rest.first().is_some_and(|&byte| is_part_of_name(byte));
+        if !begins_statement && !joins_names {
+            return self.add(expression.pos, close_end as u32);
+        }
+        self.replaced.push(ReplacedText {
+            start: expression.pos,
+            end: close_end as u32,
+            text: Box::new([if begins_statement { b'(' } else { b' ' }]),
+        });
+        if begins_statement {
+            let end = end_of_expr(self.file, operand);
+            self.replaced.push(ReplacedText {
+                start: end,
+                end,
+                text: Box::new(*b")"),
+            });
         }
     }
 

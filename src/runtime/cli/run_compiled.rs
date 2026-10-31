@@ -213,7 +213,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         independent_count -= refused.len();
         // With no file left to run there is no program to build. Each file fails by itself, as under `bun test`.
         if checks_only || independent_count == 0 {
-            let check_result = write_check_result(&refused_files, watched);
+            let check_result = write_check_result(&refused_files, watched, &[]);
             let handover = Handover {
                 flag: CHECKED_FLAG,
                 bytes: Some(&check_result),
@@ -239,8 +239,13 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
     {
         print_log(ctx.log_ref());
     }
-    let mut check_result = (watched.is_some() || !refused_files.is_empty())
-        .then(|| write_check_result(&refused_files, watched));
+    let names_added: &[(u32, Vec<u8>)] = match outcome.graph_bytes {
+        Some(_) => &[],
+        None => &outcome.replaced_builtins.names_added_to_builtins,
+    };
+    let mut check_result =
+        (watched.is_some() || !refused_files.is_empty() || !names_added.is_empty())
+            .then(|| write_check_result(&refused_files, watched, names_added));
     if builds_what_test_parts_share() && outcome.graph_bytes.is_some() {
         // The build ends with more built-ins than it was told of. The exports and modules are those that it was told of.
         let told = ctx
@@ -1369,6 +1374,66 @@ impl TestPartKind {
     }
 }
 
+static WORKERS_THAT_WERE_TYPED: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn note_workers_that_were_typed(count: u32) {
+    WORKERS_THAT_WERE_TYPED.store(count, Ordering::Relaxed);
+}
+
+pub(crate) fn workers_that_were_typed() -> u32 {
+    WORKERS_THAT_WERE_TYPED.load(Ordering::Relaxed)
+}
+
+struct WordsThatNameTestFiles {
+    paths_and_filters: Vec<&'static [u8]>,
+    lists: Vec<&'static [u8]>,
+}
+
+static WORDS_THAT_NAME_TEST_FILES: Guarded<WordsThatNameTestFiles> =
+    Guarded::new(WordsThatNameTestFiles {
+        paths_and_filters: Vec::new(),
+        lists: Vec::new(),
+    });
+
+pub(crate) fn note_words_that_name_test_files(
+    positionals: &[&'static [u8]],
+    lists: &[&'static [u8]],
+) {
+    *WORDS_THAT_NAME_TEST_FILES.lock() = WordsThatNameTestFiles {
+        paths_and_filters: positionals.iter().skip(1).copied().collect(),
+        lists: lists.to_vec(),
+    };
+}
+
+fn leave_out_words_that_name_test_files(
+    typed: impl Iterator<Item = &'static [u8]>,
+    words: &WordsThatNameTestFiles,
+) -> Vec<&'static [u8]> {
+    let mut paths_and_filters = words.paths_and_filters.iter().peekable();
+    let mut kept: Vec<&'static [u8]> = Vec::new();
+    for word in typed {
+        if paths_and_filters
+            .next_if(|it| core::ptr::eq(it.as_ptr(), word.as_ptr()))
+            .is_some()
+        {
+            continue;
+        }
+        let place = word.as_ptr_range();
+        let Some(list) = words
+            .lists
+            .iter()
+            .find(|list| place.contains(&list.as_ptr()))
+        else {
+            kept.push(word);
+            continue;
+        };
+        if core::ptr::eq(list.as_ptr(), word.as_ptr()) {
+            kept.pop();
+        }
+    }
+    kept
+}
+
 /// `below`: the numbers, in the process that builds, of the descriptors of the programs that it is built above, the lowest first.
 /// `is_above_library`: the first of them is the library that this Bun holds compiled.
 /// `threads`: how many the build may use, unless it may use every processor.
@@ -1384,6 +1449,7 @@ pub(crate) fn test_part_arguments(
     let typed = bun_core::argv()
         .into_iter()
         .skip(1 + bun_core::bun_options_argc());
+    let typed = leave_out_words_that_name_test_files(typed, &WORDS_THAT_NAME_TEST_FILES.lock());
     let mut flag = [TEST_PART_FLAG, descriptor.to_string().as_bytes()].concat();
     if kind != TestPartKind::TestFiles {
         flag.extend([b",", SHARED_BY_TEST_PARTS].concat());
@@ -1423,7 +1489,7 @@ pub(crate) fn test_part_arguments(
         flag.extend(format!(",{word}:{number}").into_bytes());
     }
     let mut arguments = vec![flag];
-    arguments.extend(typed.map(<[u8]>::to_vec));
+    arguments.extend(typed.into_iter().map(<[u8]>::to_vec));
     arguments
 }
 
@@ -1553,7 +1619,11 @@ fn exit_or_wait_for_change(watched: Option<&'static WatchedFiles>) -> ! {
     }
 }
 
-fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> Vec<u8> {
+fn write_check_result(
+    refused_files: &[u8],
+    watched: Option<&WatchedFiles>,
+    names_added: &[(u32, Vec<u8>)],
+) -> Vec<u8> {
     let mut result = refused_files.to_vec();
     result.push(0);
     let mut paths = watched.map_or_else(Vec::new, |watched| {
@@ -1563,6 +1633,13 @@ fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> V
     paths.dedup();
     for path in paths {
         result.extend_from_slice(&path);
+        result.push(0);
+    }
+    result.push(0);
+    for (holder, name) in names_added {
+        result.extend_from_slice(holder.to_string().as_bytes());
+        result.push(b' ');
+        result.extend_from_slice(name);
         result.push(0);
     }
     result
@@ -2200,12 +2277,19 @@ fn remember_check_result(list: &[u8]) {
     let mut paths = bun_core::strings::split(list, b"\0");
     let refused = paths.by_ref().take_while(|path| !path.is_empty());
     let _ = REFUSED_FILES.set(refused.map(Box::from).collect());
-    let _ = FILES_OF_CHECK.set(
-        paths
-            .filter(|path| !path.is_empty())
-            .map(Box::from)
-            .collect(),
-    );
+    let watched = paths.by_ref().take_while(|path| !path.is_empty());
+    let _ = FILES_OF_CHECK.set(watched.map(Box::from).collect());
+    for added in paths.filter(|added| !added.is_empty()) {
+        let Some(space) = bun_core::strings::index_of_char_usize(added, b' ') else {
+            continue;
+        };
+        let holder = core::str::from_utf8(&added[..space]).ok();
+        if let Some(holder) = holder.and_then(|holder| holder.parse().ok()) {
+            let name = &added[space + 1..];
+            // SAFETY: the bytes are copied before the call returns.
+            unsafe { Bun__AOT__openNameWithoutImage(holder, name.as_ptr(), name.len()) };
+        }
+    }
 }
 
 pub(crate) fn watch_files_of_check(vm: &VirtualMachine) {
@@ -2240,6 +2324,7 @@ pub(crate) fn is_checked() -> bool {
 
 unsafe extern "C" {
     safe fn Bun__AOT__listRefusedChanges();
+    fn Bun__AOT__openNameWithoutImage(holder: u32, name: *const u8, length: usize);
     safe fn Bun__AOT__takesImagesAboveOthers() -> bool;
     safe fn Bun__AOT__peakResidentMegabytesOfProcess() -> usize;
 }

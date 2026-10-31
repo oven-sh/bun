@@ -27,7 +27,6 @@ import {
   normalizeBunSnapshot,
   pack,
   runBunInstall,
-  runCommandMaxRSS,
   substDrive,
   tempDir,
   unprivilegedSpawnOptions,
@@ -1401,21 +1400,25 @@ test.concurrent("peak memory does not grow with the size of the tarball", async 
 
   async function peakMemory(size: number) {
     await truncate(join(dir, "zeroes.bin"), size);
-    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    await using proc = spawn({
       cmd: [bunExe(), "pm", "pack", "--quiet", "--gzip-level=0"],
       cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
     });
-    expect(stderr).toBe("");
-    expect(stdout).toBe("pack-memory-1.0.0.tgz\n");
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(out).toBe("pack-memory-1.0.0.tgz\n");
     expect(exitCode).toBe(0);
     expect(file(join(dir, "pack-memory-1.0.0.tgz")).size).toBeGreaterThan(size);
-    return maxRSS;
+    return proc.resourceUsage()!.maxRSS;
   }
 
   const MiB = 1024 * 1024;
   const small = await peakMemory(1 * MiB);
-  // Under ASAN the process that runCommandMaxRSS spawns from peaks some 50 MiB above `bun pm pack`, and hides that much.
-  const large = await peakMemory((isASAN || isDebug ? 128 : 32) * MiB);
+  const large = await peakMemory(32 * MiB);
   // A release build grows by under 1 MiB. One that holds the tarball in memory grew by 36 to 54 MiB, never under 31.
   expect(large - small).toBeLessThan((isASAN || isDebug ? 16 : 8) * MiB);
   expect(await sortedNames(dir)).toEqual(["pack-memory-1.0.0.tgz", "package.json", "zeroes.bin"]);

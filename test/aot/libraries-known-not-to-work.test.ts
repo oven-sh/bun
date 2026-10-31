@@ -26,7 +26,7 @@ const anchors = new Set(
 );
 
 // Where the table cuts a TypeError short with `...`, it ends like the one that the section prints in full.
-const whole = /```txt\n(TypeError: Cannot assign to Function\.prototype\.call\$0)( because .*)\n```/.exec(section)!;
+const whole = /```txt\n(TypeError: Cannot assign to Promise\.prototype\.then)( because .*)\n```/.exec(section)!;
 const ending = whole[2];
 
 const codeIn = (cell: string) => Array.from(cell.matchAll(/`([^`]+)`/g), ([, code]) => code.replaceAll("\\|", "|"));
@@ -60,13 +60,6 @@ type Program = {
 };
 
 const programs: Record<string, Program> = {
-  "sass": {
-    files: {
-      "main.js":
-        inSteps("Function.prototype.call$0 = function () { return this(); };") + `console.log((() => 1).call$0());`,
-    },
-    plain: "1\n",
-  },
   "private": {
     files: {
       "main.js": `
@@ -210,8 +203,10 @@ const programs: Record<string, Program> = {
   "url-polyfill": {
     files: {
       "main.js": `
-        const proto = URLSearchParams.prototype;
-        if (typeof proto._fromString !== "function") Object.defineProperty(proto, "_fromString", { value(text) { return text; } });
+        (function (global) {
+          var proto = global.URLSearchParams.prototype;
+          if (typeof proto._fromString !== "function") Object.defineProperty(proto, "_fromString", { value(text) { return text; } });
+        })(typeof global !== "undefined" ? global : globalThis);
         console.log(new URLSearchParams()._fromString("a"));`,
     },
     plain: "a\n",
@@ -244,14 +239,6 @@ const programs: Record<string, Program> = {
         console.log(Symbol[symbol] === symbol);`,
     },
     plain: "true\n",
-  },
-  "promise": {
-    files: {
-      "main.js":
-        inSteps("Promise.prototype.done = function (a, b) { this.then(a, b); };") +
-        `Promise.resolve(1).done(console.log);`,
-    },
-    plain: "1\n",
   },
   "timezone-mock": {
     files: {

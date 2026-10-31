@@ -20,14 +20,12 @@
 // covered separately by setTimeout-clear-in-callback-leak-fixture.js (#30058).
 
 import { heapStats } from "bun:jsc";
-import { describe, expect } from "bun:test";
-import { isASAN, isDebug, rss, testThatMeasuresOwnMemory, tls as tlsCerts } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug, rss, tls as tlsCerts } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { Transform } from "node:stream";
 import tls from "node:tls";
-
-const test = testThatMeasuresOwnMemory(import.meta.path);
 
 // 4-byte big-endian length prefix → emits the body. Same shape as mongodb's
 // SizedMessageTransform, just without BSON.

@@ -104,6 +104,10 @@ pub struct FoundInFile {
     pub texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
     /// `ResolvedBuiltins::builtins_handed_out`, by their numbers.
     pub builtins_handed_out: Vec<u32>,
+    /// `ResolvedBuiltins::writes_on_parameters_under_any_name`
+    pub writes_on_parameters_under_any_name: bool,
+    /// The built-in objects that it passes to what it imports from another file: the file as it writes it, and the number. `silence(console, names)`.
+    pub builtins_passed: Vec<(Vec<u8>, u32)>,
     /// `ResolvedBuiltins::writes_on_imports`: the file as this one writes it, the path and the key.
     pub writes_on_imports: Vec<(Vec<u8>, Vec<Vec<u8>>, Vec<u8>)>,
     /// `export { a as b } from "./c"`, `import { a } from "./c"; export { a as b }`: b, "./c", a.
@@ -223,6 +227,7 @@ impl<'s> Look<'s> {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         let (mut bound, mut analysis) =
             analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
@@ -436,6 +441,7 @@ impl<'s> Look<'s> {
         (found.holders_named_from_outside).extend(holders.map(|&holder| holder as u32));
         let holders = resolved.builtins_handed_out().iter();
         (found.builtins_handed_out).extend(holders.map(|&holder| holder as u32));
+        found.writes_on_parameters_under_any_name |= resolved.writes_on_parameters_under_any_name();
         for write in resolved.writes_on_imports() {
             let file = hir[write.import].spec;
             if file.is_some() && find_module_named(atoms.bytes(file)).is_none() {
@@ -557,6 +563,9 @@ impl<'s> Look<'s> {
                     {
                         found.texts_passed.push((file.to_vec(), bytes_of(text)));
                     }
+                    if let Some(holder) = resolved.builtin_of_expression(operand) {
+                        found.builtins_passed.push((file.to_vec(), holder as u32));
+                    }
                 }
             }
         }
@@ -587,7 +596,7 @@ impl<'s> Look<'s> {
         };
         // "Write `using spy = spyOn(...)`": the parser goes on behind a syntax error, and nothing runs such a text. What it writes on built-ins is kept all the same: it costs
         // little, and a message often spells what the code beside it does under a name that is made.
-        let mut read_with_syntax_error: Option<FoundInFile> = None;
+        let mut read_with_syntax_error: Vec<FoundInFile> = Vec::new();
         for filler in fillers {
             let text = texts.join(*filler);
             // The body of a function, which may return.
@@ -607,29 +616,40 @@ impl<'s> Look<'s> {
                     continue;
                 }
                 if inner.has_syntax_error {
-                    read_with_syntax_error.get_or_insert(inner);
+                    read_with_syntax_error.push(inner);
                     continue;
                 }
-                found.members.extend(inner.members);
-                found.names_added.extend(inner.names_added);
-                // Where that code runs says nothing about the folder it is in: of a module that it imports, the name is what is known.
-                let names = inner.exports.into_iter().map(|(_, name)| name);
-                found.names_spied_in_text.extend(names);
-                (found.names_spied_in_text).extend(inner.names_spied_on_unknown_objects);
-                found.names_spied_in_text.extend(inner.names_spied_in_text);
-                found.text_spies_under_any_name |= inner.spies_on_unknown_objects
-                    || inner.spies_under_names_from_outside
-                    || inner.any_module
-                    || inner.text_spies_under_any_name;
-                found.modules_replaced_in_text.extend(inner.modules);
-                (found.modules_replaced_in_text).extend(inner.modules_replaced_in_text);
-                return;
+                return found.take_what_code_in_text_does(inner);
             }
         }
-        if let Some(inner) = read_with_syntax_error {
+        // A substitution may stand for what no filler is, a name or a keyword: `lib.${method}()`. Then no way parses, and the text that is made may run: each
+        // way is read as far as the parser gets behind its errors.
+        if texts.len() > 1 {
+            for inner in read_with_syntax_error {
+                found.take_what_code_in_text_does(inner);
+            }
+        } else if let Some(inner) = read_with_syntax_error.into_iter().next() {
             found.members.extend(inner.members);
             found.names_added.extend(inner.names_added);
         }
+    }
+}
+
+impl FoundInFile {
+    fn take_what_code_in_text_does(&mut self, inner: FoundInFile) {
+        self.members.extend(inner.members);
+        self.names_added.extend(inner.names_added);
+        // Where that code runs says nothing about the folder it is in: of a module that it imports, the name is what is known.
+        let names = inner.exports.into_iter().map(|(_, name)| name);
+        self.names_spied_in_text.extend(names);
+        (self.names_spied_in_text).extend(inner.names_spied_on_unknown_objects);
+        self.names_spied_in_text.extend(inner.names_spied_in_text);
+        self.text_spies_under_any_name |= inner.spies_on_unknown_objects
+            || inner.spies_under_names_from_outside
+            || inner.any_module
+            || inner.text_spies_under_any_name;
+        self.modules_replaced_in_text.extend(inner.modules);
+        (self.modules_replaced_in_text).extend(inner.modules_replaced_in_text);
     }
 }
 
@@ -668,6 +688,26 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         names
+    }
+
+    #[test]
+    fn a_spy_in_a_template_that_parses_under_no_filler_is_found() {
+        let spied = |text: &str| {
+            let found = look_at_file(b"/project/a.test.ts", text.as_bytes());
+            found.names_spied_in_text.contains(&b"total".to_vec())
+        };
+        let head = r#"import { spyOn } from "bun:test"; import * as lib from "./lib"; spyOn(lib, "total");"#;
+        for tail in [
+            "lib.other();",
+            "lib.other(${value});",
+            "lib.${method}();",
+            "function ${name}() {}",
+            "${keyword} held = 1;",
+        ] {
+            assert!(spied(&format!("write(`{head} {tail}`);")), "{tail}");
+        }
+        // Nothing runs a text that is no code, and it has no part that the run fills in.
+        assert!(!spied(&format!("write('{head} lib.();');")));
     }
 
     #[test]

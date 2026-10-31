@@ -199,7 +199,7 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
 
   const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
   // Resolving the name has thrown in an executable that refuses native addons.
-  if (CAN_LOAD_CODE_AT_RUN_TIME) {
+  if (CAN_LOAD_ADDONS_AT_RUN_TIME) {
     process.dlopen(module, filename);
   }
   $requireMap.$set(id, module);

@@ -42,6 +42,7 @@ fn with_scan<R>(text: &str, then: impl FnOnce(&ExportScan<'_, '_>) -> R) -> R {
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, _) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     then(&ExportScan {

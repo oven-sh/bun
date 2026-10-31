@@ -19,7 +19,7 @@ use crate::fold::{
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, MemberKey,
-    NodeData, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp, is_proto_setter,
+    MemberKind, NodeData, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp, is_proto_setter,
 };
 use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
@@ -110,6 +110,10 @@ enum Held {
     /// What `node:os` exports, and a function of it.
     Os,
     FunctionOfOs(Atom),
+    PlainPattern {
+        letters: Vec<u8>,
+        is_at_end: bool,
+    },
     Data {
         specifier: Atom,
         path: Vec<u8>,
@@ -438,6 +442,9 @@ impl Follower<'_, '_, '_> {
                 ..Text::whole(b".")
             })]);
         }
+        if let Some(own_file) = self.find_own_file(e) {
+            return Some(vec![Held::Text(own_file)]);
+        }
         if is_process(hir, bound, e, &[known::globalThis, known::global]) {
             return Some(vec![Held::Process]);
         }
@@ -478,6 +485,21 @@ impl Follower<'_, '_, '_> {
             ExprKind::Array(items) => self.values_of_list(items),
             ExprKind::Object(_) => Some(vec![Held::Object(e)]),
             ExprKind::Fn(function) => Some(vec![Held::Function(function)]),
+            ExprKind::Regex { pattern, flags } if atoms.bytes(flags).is_empty() => {
+                Some(vec![find_plain_pattern(atoms.bytes(pattern))?])
+            }
+            ExprKind::Unary {
+                op: UnOp::Minus,
+                operand,
+            } => {
+                let negate = |value: Held| match value {
+                    Held::Primitive(Constant::Number(number)) => {
+                        Some(Held::Primitive(Constant::Number(-number)))
+                    }
+                    _ => None,
+                };
+                self.values_of(operand)?.into_iter().map(negate).collect()
+            }
             _ => None,
         }
     }
@@ -512,6 +534,48 @@ impl Follower<'_, '_, '_> {
             if (name == known::meta_dir || name == known::meta_dirname)
                 && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
             && !bound.import_meta_may_be_modified()
+    }
+
+    fn find_own_file(&self, e: ExprId) -> Option<Text> {
+        let &ScanInputs {
+            hir, bound, file, ..
+        } = self.inputs;
+        let is_kept =
+            |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_');
+        if file.own_name.is_empty() || !file.own_name.iter().all(is_kept) {
+            return None;
+        }
+        let is_file_url = if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
+            if may_be_modified(hir, bound, CommonJsVariable::Filename) {
+                return None;
+            }
+            false
+        } else {
+            let Some(ExprKind::Dot {
+                obj,
+                name,
+                chain: Chain::No,
+                ..
+            }) = expr_kind(hir, e)
+            else {
+                return None;
+            };
+            let is_of_import_meta = matches!(
+                expr_kind(hir, hir.skip_type_assertions(obj)),
+                Some(ExprKind::ImportMeta)
+            );
+            let is_own_file =
+                name == known::url || name == known::meta_filename || name == known::path;
+            if !is_of_import_meta || !is_own_file || bound.import_meta_may_be_modified() {
+                return None;
+            }
+            name == known::url
+        };
+        Some(Text {
+            starts_at_own_directory: true,
+            is_file_url,
+            ..Text::whole(&[b"./", file.own_name].concat())
+        })
     }
 
     /// Every text that is made of one value of each part.
@@ -1265,8 +1329,139 @@ impl Follower<'_, '_, '_> {
         Some(Some(keys))
     }
 
+    fn values_of_field_of_class_written_here(
+        &mut self,
+        object: ExprId,
+        key: MemberKey,
+    ) -> Option<Values> {
+        let &ScanInputs {
+            hir,
+            decisions,
+            atoms,
+            ..
+        } = self.inputs;
+        let (class, is_static) = match expr_kind(hir, hir.skip_type_assertions(object))? {
+            ExprKind::Class(class) => (class, true),
+            ExprKind::New(call) if hir[call].args.is_empty() => {
+                match expr_kind(hir, hir.skip_type_assertions(hir[call].callee))? {
+                    ExprKind::Class(class) => (class, false),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let class = hir[class];
+        if class.extends.is_some() || !hir.decorators.is_empty() {
+            return None;
+        }
+        let keys = self.keys_of(key)??;
+        let [key] = &keys[..] else {
+            return None;
+        };
+        let mut value = None;
+        for member in class.members.iter().map(|id| hir[id]) {
+            let PropKey::Name(name) = member.key else {
+                return None;
+            };
+            let is_asked_for =
+                atoms.bytes(name) == &key[..] && member.flags.contains(Flags::STATIC) == is_static;
+            let constant = match member.kind {
+                MemberKind::Method if !is_asked_for => continue,
+                MemberKind::Property if member.init.is_none() => Constant::Undefined,
+                MemberKind::Property => match decisions.constant(hir, member.init) {
+                    FoldedValue::Constant(constant) => constant,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            if is_asked_for {
+                value = Some(self.held_constant(constant));
+            }
+        }
+        Some(vec![value?])
+    }
+
+    fn values_of_entry_of_map_written_here(
+        &mut self,
+        callee: ExprId,
+        call: Call,
+    ) -> Option<Values> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let (map, MemberKey::Name(known::get)) = hir.member_key(callee)? else {
+            return None;
+        };
+        let ExprKind::New(made) = expr_kind(hir, hir.skip_type_assertions(map))? else {
+            return None;
+        };
+        let made = hir[made];
+        if !is_free_name(
+            hir,
+            bound,
+            hir.skip_type_assertions(made.callee),
+            &[known::Map],
+        ) {
+            return None;
+        }
+        let (mut made_of, mut asked_for) = (hir.ids(made.args), hir.ids(call.args));
+        let (Some(entries), None, Some(asked_for), None) = (
+            made_of.next(),
+            made_of.next(),
+            asked_for.next(),
+            asked_for.next(),
+        ) else {
+            return None;
+        };
+        let ExprKind::Array(entries) = expr_kind(hir, hir.skip_type_assertions(entries))? else {
+            return None;
+        };
+        let mut written: Vec<(Vec<u8>, ExprId)> = Vec::new();
+        for entry in hir.ids(entries) {
+            let ExprKind::Array(entry) = expr_kind(hir, hir.skip_type_assertions(entry))? else {
+                return None;
+            };
+            let mut entry = hir.ids(entry);
+            let (Some(key), Some(value), None) = (entry.next(), entry.next(), entry.next()) else {
+                return None;
+            };
+            let [Held::Text(key)] = &self.values_of(key)?[..] else {
+                return None;
+            };
+            let key = whole_ascii(key)?.to_vec();
+            written.retain(|earlier| earlier.0 != key);
+            written.push((key, value));
+        }
+        let asked_for = self.values_apart_from_itself(asked_for);
+        let keys: Option<Vec<Vec<u8>>> = asked_for.and_then(|asked_for| {
+            let whole = |value: &Held| match value {
+                Held::Text(text) => whole_ascii(text).map(<[u8]>::to_vec),
+                _ => None,
+            };
+            asked_for.iter().map(whole).collect()
+        });
+        let Some(keys) = keys else {
+            let mut values = self.values_of_any(written.iter().map(|it| it.1))?;
+            add(&mut values, Held::Primitive(Constant::Undefined));
+            return Some(values);
+        };
+        let mut values = Values::new();
+        for key in keys {
+            match written.iter().find(|it| it.0 == key) {
+                Some(&(_, value)) => {
+                    for value in self.values_of(value)? {
+                        add(&mut values, value);
+                    }
+                }
+                None => add(&mut values, Held::Primitive(Constant::Undefined)),
+            }
+        }
+        Some(values)
+    }
+
     fn values_of_member(&mut self, member: ExprId, chain: Chain) -> Option<Values> {
         let (object, key) = self.inputs.hir.member_key(member)?;
+        if let Some(values) = self.values_of_field_of_class_written_here(object, key) {
+            return Some(values);
+        }
         let objects = self.values_of(object)?;
         let keys = self.keys_of(key)?;
         self.read_member(&objects, keys.as_deref(), chain)
@@ -1304,6 +1499,12 @@ impl Follower<'_, '_, '_> {
                     }
                     [key] if key == b"pathname" => {
                         vec![Held::Resolved(name.clone(), ResolvedForm::Path)]
+                    }
+                    _ => return None,
+                },
+                Held::Text(text) => match (whole_ascii(text), keys?) {
+                    (Some(text), [key]) if key == b"length" => {
+                        vec![Held::Primitive(Constant::Number(text.len() as f64))]
                     }
                     _ => return None,
                 },
@@ -1477,6 +1678,9 @@ impl Follower<'_, '_, '_> {
             return Some(values);
         }
         if let Some(values) = self.values_of_method_of_text(callee, call.args) {
+            return Some(values);
+        }
+        if let Some(values) = self.values_of_entry_of_map_written_here(callee, call) {
             return Some(values);
         }
         if let Some(function) = self.find_path_joining_function(callee) {
@@ -1718,6 +1922,15 @@ impl Follower<'_, '_, '_> {
             let Held::Text(text) = text else {
                 return None;
             };
+            if text.starts_at_own_directory {
+                add(
+                    &mut values,
+                    Held::Text(call_method_of_path_below_own_directory(
+                        text, method, &arguments,
+                    )?),
+                );
+                continue;
+            }
             let made = call_method_of_text(whole_ascii(text)?, method, &arguments)?;
             add(&mut values, Held::Text(Text::whole(&made)));
         }
@@ -2070,7 +2283,19 @@ fn call_method_of_text(text: &[u8], method: &[u8], arguments: &[&Held]) -> Optio
         (b"toLowerCase", 0) => Some(text.to_ascii_lowercase()),
         (b"toUpperCase", 0) => Some(text.to_ascii_uppercase()),
         (b"replace" | b"replaceAll", 2) => {
-            let (pattern, replacement) = (text_at(0)?, text_at(1)?);
+            let replacement = text_at(1)?;
+            let pattern = match arguments[0] {
+                Held::PlainPattern { letters, is_at_end } if method == b"replace" => {
+                    if *is_at_end && !strings::contains_char(replacement, b'$') {
+                        return Some(match text.strip_suffix(&letters[..]) {
+                            Some(kept) => [kept, replacement].concat(),
+                            None => text.to_vec(),
+                        });
+                    }
+                    &letters[..]
+                }
+                _ => text_at(0)?,
+            };
             // `$&` and its like in the replacement stand for parts of the text.
             if pattern.is_empty() || strings::contains_char(replacement, b'$') {
                 return None;
@@ -2103,6 +2328,57 @@ fn call_method_of_text(text: &[u8], method: &[u8], arguments: &[&Held]) -> Optio
         }
         _ => None,
     }
+}
+
+fn call_method_of_path_below_own_directory(
+    text: &Text,
+    method: &[u8],
+    arguments: &[&Held],
+) -> Option<Text> {
+    let below_folder = text.start.strip_prefix(b".")?;
+    if text.end.is_some() || !below_folder.starts_with(b"/") || !below_folder.is_ascii() {
+        return None;
+    }
+    let cuts_end_alone = method == b"slice"
+        && matches!(
+            arguments,
+            [
+                Held::Primitive(Constant::Number(start)),
+                Held::Primitive(Constant::Number(end))
+            ] if *start == 0.0 && *end < 0.0
+        );
+    if !cuts_end_alone && !matches!(method, b"replace" | b"replaceAll") {
+        return None;
+    }
+    let made = call_method_of_text(below_folder, method, arguments)?;
+    if !made.starts_with(b"/") || made == below_folder {
+        return None;
+    }
+    Some(Text {
+        start: [b".", &made[..]].concat(),
+        ..text.clone()
+    })
+}
+
+fn find_plain_pattern(pattern: &[u8]) -> Option<Held> {
+    let (written, is_at_end) = match pattern.strip_suffix(b"$") {
+        Some(written) if !written.ends_with(b"\\") => (written, true),
+        _ => (pattern, false),
+    };
+    let mut letters = Vec::with_capacity(written.len());
+    let mut bytes = written.iter().copied();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'\\' => match bytes.next()? {
+                escaped @ (b'.' | b'/' | b'-') => letters.push(escaped),
+                _ => return None,
+            },
+            b'-' | b'_' => letters.push(byte),
+            _ if byte.is_ascii_alphanumeric() => letters.push(byte),
+            _ => return None,
+        }
+    }
+    (!letters.is_empty()).then_some(Held::PlainPattern { letters, is_at_end })
 }
 
 fn is_changed_by_trim(text: &Text) -> bool {

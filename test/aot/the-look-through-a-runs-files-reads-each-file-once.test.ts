@@ -9,7 +9,10 @@ const files = {
   "package.json": `{ "name": "p" }`,
   "node_modules/tools/package.json": `{ "name": "tools", "main": "index.js" }`,
   "node_modules/tools/index.js": `exports.now = () => Date.now();\n`,
-  "src/a.ts": `import { b } from "./b";\nimport { c } from "./c.js";\nimport { d } from "./d";\nexport const a = () => [b(), c(), d()].join();\n`,
+  "src/a.ts": `import { b } from "./b";\nimport { c } from "./further";\nimport { d } from "./d";\nexport const a = () => [b(), c(), d()].join();\n`,
+  // A file that exports names again is kept under the spelling that it was asked for by. "./again.js" and again.ts differ in the extension alone.
+  "src/again.ts": `export * from "./c";\n`,
+  "src/further.ts": `export * from "./again.js";\n`,
   "src/b.ts": `import tools from "tools";\nexport const b = () => typeof tools.now();\n`,
   "src/c.ts": `export const c = () => "c";\n`,
   "src/d/index.ts": `export const d = () => "d";\n`,
@@ -40,8 +43,9 @@ test("in the build of the packages' layer", async () => {
   expect(plain).toEqual({ printed: ["OUT number,c,d true 7"], looks: [], exitCode: 0 });
   const layers = await run(["--aot", "--isolate"], "TestRunLayers:2");
   expect({ ...layers, looks: [] }).toEqual(plain);
-  // The test file and the five files of the project, once each. Bun's own library is looked at apart.
+  // The test file and the seven files of the project, once each, and src/d/index.ts once more as "src/d": what is kept by spelling is looked up
+  // without the extension, and that spelling differs in more. Bun's own library is looked at apart.
   expect(layers.looks[0]).toBe(
-    "AOT test run | the scan looked at 6 texts | 5 names led to a file that it had looked at under another",
+    "AOT test run | the scan looked at 9 texts | 6 names led to a file that it had looked at under another",
   );
 }, 240_000);

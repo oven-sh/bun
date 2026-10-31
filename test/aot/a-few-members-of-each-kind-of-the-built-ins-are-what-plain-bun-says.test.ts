@@ -48,10 +48,3 @@ async function expectTheAnswersOfPlainBun(program: string) {
 
 for (const { family, program } of families)
   test.concurrent(family, async () => expect(await expectTheAnswersOfPlainBun(program)).toBeGreaterThan(20), 170_000);
-
-test.todo("a getter of Buffer.prototype, read on a SlowBuffer", () =>
-  expectTheAnswersOfPlainBun(`
-    import { SlowBuffer } from "node:buffer";
-    console.log(new SlowBuffer(4).offset);
-  `),
-);

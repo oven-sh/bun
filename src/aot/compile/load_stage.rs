@@ -314,6 +314,8 @@ fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
         && a.imports_cluster == b.imports_cluster
         && a.imports_uncompiled_code == b.imports_uncompiled_code
         && a.loads_by_unknown_path == b.loads_by_unknown_path
+        && a.leaves_compiled_files == b.leaves_compiled_files
+        && a.files_of_tests_may_leave == b.files_of_tests_may_leave
         && a.keeps_code_without_names == b.keeps_code_without_names
         && a.holds_guessed_code == b.holds_guessed_code
 }
@@ -1110,10 +1112,16 @@ impl<'a> Build<'a> {
                     holds_test_files_alone: super::holds_test_files_alone(options),
                     working_directory_of_test_run: (options.load.runs_tests)
                         .then_some(&request.code.working_directory[..]),
+                    only_tests_load_code_from_disk: options.aot.only_tests_load_code_from_disk,
                 };
                 collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
             .collect();
+        self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
+            && !options.aot.is_part_of_test_run
+            && !options.can_load_code_at_run_time()
+            && !options.aot.host_runs_files_from_disk
+            && (roots.iter()).all(|it| !it.files_of_tests_may_leave && !it.imports_uncompiled_code);
         let mut groups: Vec<Vec<usize>> = Vec::new();
         for (index, asked) in roots.iter().enumerate() {
             match (groups.iter_mut()).find(|group| asks_the_same(&roots[group[0]], asked)) {
@@ -1301,7 +1309,7 @@ impl<'a> Build<'a> {
         // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
         let loads_code_by_unknown_names_alone =
-            !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
+            !is_told_of_code && roots.leaves_compiled_files && options.aot.loads_code_from_disk;
         let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
         RuntimeLoadInputs {
             fold: create_runtime_fold_inputs(
@@ -1313,6 +1321,9 @@ impl<'a> Build<'a> {
                 self.platform,
                 ProgramFacts {
                     can_load_code_at_run_time,
+                    can_load_addons_at_run_time: can_load_code_at_run_time
+                        || (options.aot.only_tests_load_code_from_disk
+                            && roots.loads_by_unknown_path),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                     can_replace_builtins: !options.load.replaced_builtins.is_empty(),
                 },

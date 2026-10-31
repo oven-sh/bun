@@ -19,11 +19,11 @@
 // `--collects 100` runs each executable a second time in an environment in which it collects at every few allocations and overwrites what it frees: a program that prints something else there, or ends by a signal, is kept.
 // `--ends-early 100` runs each executable three times more, and the runner ends the Worker of each program at a moment drawn from a few milliseconds. What is printed doesn't count: a process that ends by a signal is kept.
 // `--minifies 25`: one run of this file in four builds everything with --minify-syntax --minify-whitespace, which change the shape of the code and keep its names, so `bun run` stays the yardstick.
-// `--checks-proofs 25`: one run of this file in four builds everything with --aot-testing=CheckProofsAtRunTime: the executable checks while it runs each place that the compiler took for unreachable and each type that it assumed, and ends with a line "AOT validation: .." where one doesn't hold.
+// `--checks-proofs 25`: one run of this file in four builds everything with --aot-testing=CheckProofsAtRunTime --aot-check=ClaimsOfFlow: the executable checks while it runs each place that the compiler took for unreachable and each belief of the flow analysis where it is made (a type, the receivers and the callees of a call, "runs at most once"), and ends with a line "AOT validation: .." where one doesn't hold, also where the output happens to be right.
 // `--beside-an-external 50` lets 50 processes of 100 build everything with `--external` for a package that every entry point imports, so the executable also runs code that the compiler hasn't seen.
 // `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 // `--draws ts` needs no `--programs`: the driver makes the programs of a batch itself. Each starts empty, and the options above write its scenes.
-// `--families 30` draws 30 programs of 100 from the sources of ../sources.ts instead. Those stay as they are drawn.
+// `--families 30` draws 30 programs of 100 from the sources of ../sources.ts instead. Those stay as they are drawn. `--family switch-over-any-value` draws them from that source alone.
 // `--together 32`, with `--group 1`, first builds a batch with 32 programs to an entry point, which imports them with `import` statements: one program for the compiler, and a Worker runs the 32 one behind the other.
 // Only a program that prints something else there than under `bun run` goes on into a batch as above, and so does one that doesn't end by itself and without an error.
 // `--throwers 20`, with `--together`, takes 20 of 100 programs that end in an error. Such a program is the last of its entry point, and an entry point costs a build as much as twenty programs.
@@ -99,6 +99,7 @@ const { values: options } = parseArgs({
     "beside-an-external": { type: "string", default: "0" },
     draws: { type: "string", default: "" },
     families: { type: "string", default: "0" },
+    family: { type: "string", default: "" },
     together: { type: "string", default: "1" },
     throwers: { type: "string", default: "100" },
     slow: { type: "string", default: "100" },
@@ -148,11 +149,14 @@ const alsoKept = [
   ...options["also-keep"].split(",").filter(Boolean),
   ...(options["keeps-what-compile-shares"] ? ["as an executable without --aot"] : []),
 ];
+const checksProofs = Math.random() * 100 < Number(options["checks-proofs"]);
+// A build takes those two words only with this variable. Both runs get it too, as the tests of this repository do.
+if (checksProofs) process.env.BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING = "1";
 const buildFlags = [
   ...options.flags.split(" ").filter(Boolean),
   ...(hidesFunctionText ? ["--no-compile-function-source"] : []),
   ...(Math.random() * 100 < Number(options.minifies) ? ["--minify-syntax", "--minify-whitespace"] : []),
-  ...(Math.random() * 100 < Number(options["checks-proofs"]) ? ["--aot-testing=CheckProofsAtRunTime"] : []),
+  ...(checksProofs ? ["--aot-testing=CheckProofsAtRunTime", "--aot-check=ClaimsOfFlow"] : []),
 ];
 /** A package that stays outside the executable. Beside it the compiler counts on code that it hasn't seen, which can reach every built-in module. */
 const packageOutside = Math.random() * 100 < Number(options["beside-an-external"]) ? "a-package-outside" : "";
@@ -413,6 +417,8 @@ type Built = {
   reasons?: string;
   stopped?: { reason: string; culprit: number | undefined; stderr: string; machine?: string };
 };
+/** A build that verifies each pass takes seven times as long where much of the library is in it: 70 processor-seconds for 10. */
+const patienceWith = (mode: string[]) => (mode.some(word => word.includes("verify-each-pass")) ? 4 : 1);
 /** Builds the executable. Returns the programs that the errors name, or how the compiler stopped. */
 async function build(
   folder: string,
@@ -445,7 +451,7 @@ async function build(
     folder,
     {},
     // Each entry point is a program, which holds the part of the library that it uses.
-    60 + programCount + 3 * groups.length + moreSeconds,
+    (60 + programCount + 3 * groups.length + moreSeconds) * patienceWith(mode),
   );
   // "error: .." or "warn: ..", and below it "at <file>:<line>:<column>".
   const [refused, writesToBuiltins] = [new Set<number>(), new Set<number>()];
@@ -840,7 +846,7 @@ function keepFind(kind: string, summary: string, files: Record<string, string>) 
   for (const [file, text] of Object.entries(files))
     writeFileSync(
       join(finds, name, file),
-      /^(program|neighbors)/.test(file) ? text : text.slice(0, 64 << 10),
+      /^(all-programs|program|neighbors)/.test(file) ? text : text.slice(0, 64 << 10),
       "latin1",
     );
   appendFileSync(join(finds, "index.txt"), name + "\n");
@@ -1060,13 +1066,17 @@ function stoppedAtAnUnusedLiteral(text: string, { stderr }: Ended) {
 const wordsOf = (reason: string) => reason.replace(/[0-9a-f]/gi, "");
 
 /**
- * The fewest of `texts`, found by halves, whose build stops with the words of `reason`. For a build that stopped and named no program.
- * Returns their indexes, or none when neither the kernel's nor the clock's end of a build can be asked again.
+ * The fewest of `texts`, found by halves, whose build stops. For a build that stopped and named no program. First the halves that stop with the words of `reason` are followed.
+ * In other company a stop can have other words, and a second program that stops the build with words of its own can stand in front of the first. So where that search ends
+ * at several programs, any half that stops is followed: whatever stops a build has to leave before the rest can be built.
+ * Returns their indexes and how the build of them alone stopped, or no index when neither the kernel's nor the clock's end of a build can be asked again.
  */
 async function programsThatStopTheBuild(texts: string[], extension: string, reason: string, mode?: string[]) {
-  if (/^SIG(?:KILL|TERM): /.test(reason)) return [];
+  type Stopped = NonNullable<Built["stopped"]>;
+  let alone: Stopped | undefined;
+  if (/^SIG(?:KILL|TERM): /.test(reason)) return { indexes: [] as number[], alone };
   const subset = join(work, `stops-${process.pid}`);
-  const stops = async (indexes: number[]) => {
+  const buildOf = async (indexes: number[]) => {
     const inGroup = Math.min(groupSize, indexes.length);
     layOut(
       subset,
@@ -1074,19 +1084,26 @@ async function programsThatStopTheBuild(texts: string[], extension: string, reas
       extension,
       inGroup,
     );
-    const { stopped } = await build(subset, indexes.length, extension, inGroup, mode);
-    return stopped !== undefined && wordsOf(stopped.reason) === wordsOf(reason);
+    return (await build(subset, indexes.length, extension, inGroup, mode)).stopped;
   };
   let suspects = texts.map((_, index) => index);
-  while (suspects.length > 1) {
-    const halves = [suspects.slice(0, suspects.length >> 1), suspects.slice(suspects.length >> 1)];
-    let kept: number[] | undefined;
-    for (const half of halves) if (!kept && (await stops(half))) kept = half;
-    if (!kept) break;
-    suspects = kept;
-  }
+  for (const isFollowed of [
+    (stopped: Stopped) => wordsOf(stopped.reason) === wordsOf(reason),
+    (stopped: Stopped) => !/^SIG(?:KILL|TERM): /.test(stopped.reason),
+  ])
+    while (suspects.length > 1) {
+      const halves = [suspects.slice(0, suspects.length >> 1), suspects.slice(suspects.length >> 1)];
+      let kept: number[] | undefined;
+      for (const half of halves) {
+        if (kept) break;
+        const stopped = await buildOf(half);
+        if (stopped && isFollowed(stopped)) [kept, alone] = [half, stopped];
+      }
+      if (!kept) break;
+      suspects = kept;
+    }
   rmSync(subset, { recursive: true, force: true });
-  return suspects;
+  return { indexes: suspects, alone };
 }
 
 /** Waits until it has `count` programs. A rename decides which of several processes gets a file. */
@@ -1171,9 +1188,19 @@ function rewritten(text: string, extension: string) {
 type Family = (
   seed: number,
   bed: unknown,
-) => { text: string; extension: string; flags?: string[]; standsAlone?: true } | undefined;
+) =>
+  | {
+      text: string;
+      extension: string;
+      flags?: string[];
+      standsAlone?: true;
+      meant?: (plain: string, compiled: string) => string | undefined;
+    }
+  | undefined;
 /** The sources of ../sources.ts. */
 let families: [string, Family][] | undefined;
+/** A source knows the lines in which plain Bun deviates from the specification, and says whether a difference of its program is only that. */
+const meantBy = new Map<string, (plain: string, compiled: string) => string | undefined>();
 const bedThatTakesEverything = { name: "product", binary: "", accepts: () => true, allows: () => true, batch: 1 };
 
 const isAModule = (text: string) => /^(?:import|export)\b/m.test(text);
@@ -1184,11 +1211,12 @@ async function drawPrograms(extension: string) {
   const share = Number(options.families);
   if (share > 0 && !families) {
     const { allSources } = await import("../sources.ts");
-    families = Object.entries(await allSources(join(import.meta.dir, "..", "..", "parallel"), new Set())) as [
-      string,
-      Family,
-    ][];
+    families = (
+      Object.entries(await allSources(join(import.meta.dir, "..", "..", "parallel"), new Set())) as [string, Family][]
+    ).filter(([name]) => !options.family || name === options.family);
+    if (!families.length) throw new Error(`no source is called ${options.family}`);
   }
+  let drawnInVain = 0;
   while (texts.length < count) {
     const seed = Math.floor(Math.random() * 2 ** 48);
     if (Math.random() * 100 >= share) {
@@ -1200,11 +1228,16 @@ async function drawPrograms(extension: string) {
     try {
       drawn = family(seed % 2 ** 31, bedThatTakesEverything);
     } catch {}
-    if (!drawn || "." + drawn.extension !== extension || drawn.flags?.length || drawn.standsAlone) continue;
+    if (!drawn || "." + drawn.extension !== extension || drawn.flags?.length || drawn.standsAlone) {
+      if (options.family && ++drawnInVain > 10_000)
+        throw new Error(`${options.family} draws no ${extension} program that can share a build`);
+      continue;
+    }
     // As the bed of those sources does: a text is a module unless it says that it stays a script.
     const isAScript = !isAModule(drawn.text) && !drawn.text.startsWith("// stays a script\n");
     const text = `${drawn.text}\n${isAScript ? "export {};\n" : ""}// ${name} ${seed % 2 ** 31}\n`;
     texts.push(launders ? launderValues(text, extension.endsWith("ts"), randomFrom("laundered" + text)) : text);
+    if (drawn.meant) meantBy.set(texts.at(-1)!, drawn.meant);
   }
   return texts;
 }
@@ -1905,7 +1938,7 @@ for (
     if (
       stopped &&
       /^SIGKILL: the errors name no program$/.test(stopped.reason) &&
-      secondsOfTheBuild >= 30 * texts.length &&
+      secondsOfTheBuild >= 30 * texts.length * patienceWith(buildFlags) &&
       texts.every(text => text.length < 200_000)
     )
       keepFind("build-does-not-end", "its bound ended the build", {
@@ -1915,15 +1948,22 @@ for (
       });
     if (stopped) {
       // Halves of the batch say which programs it takes.
-      const enough =
-        stopped.culprit === undefined ? await programsThatStopTheBuild(texts, extension, stopped.reason) : [];
-      if (enough.length === 1) stopped.culprit = enough[0];
+      const { indexes: enough, alone } =
+        stopped.culprit === undefined
+          ? await programsThatStopTheBuild(texts, extension, stopped.reason)
+          : { indexes: [], alone: undefined };
+      // The find goes by the words that the program stops the build with alone: whoever builds the kept program sees those.
+      const saidAmongTheOthers = stopped.reason;
+      if (enough.length === 1) {
+        stopped.culprit = enough[0];
+        if (alone) [stopped.reason, stopped.stderr] = [alone.reason, alone.stderr];
+      }
       const listedPrograms =
         enough.length > 1 && enough.length < texts.length ? enough : texts.map((_, index) => index);
       keepFind("build-stopped", stopped.reason, {
         ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
         "programs.txt": listedPrograms.map((index, offset) => `// ---- ${offset}\n${texts[index]}`).join("\n"),
-        "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds ${listedPrograms.length} of the ${texts.length} programs of the build, in groups of ${groupSize}${enough.length > 1 ? ", which are enough to stop it" : enough.length ? ", of which one alone stops it" : ""}, and the program is number ${Math.max(0, listedPrograms.indexOf(stopped.culprit ?? -1))} in it\n`,
+        "report.txt": `${stopped.reason}\n${wordsOf(saidAmongTheOthers) === wordsOf(stopped.reason) ? "" : `the build of all ${texts.length} programs said: ${saidAmongTheOthers}\n`}${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds ${listedPrograms.length} of the ${texts.length} programs of the build, in groups of ${groupSize}${enough.length > 1 ? ", which are enough to stop it" : enough.length ? ", of which one alone stops it" : ""}, and the program is number ${Math.max(0, listedPrograms.indexOf(stopped.culprit ?? -1))} in it\n`,
         "compiler.stderr": stopped.stderr,
         ...(stopped.machine === undefined ? {} : { "machine.txt": stopped.machine }),
       });
@@ -1938,6 +1978,7 @@ for (
         break;
       }
       for (const index of stopped.culprit === undefined ? enough : [stopped.culprit]) refused.add(index);
+      if (stopped.culprit === undefined) add("left with others that stop a build only together", enough.length);
     }
     if (refused.size) {
       if (!stopped) add("refused", refused.size);
@@ -2058,6 +2099,8 @@ for (
                     (second.end === referenceAgain.end &&
                       withoutNamesOfFunctions(second.stdout) === withoutNamesOfFunctions(referenceAgain.stdout) &&
                       hasALiteralAsComputedKey.test(texts[index])) ||
+                    (second.end === referenceAgain.end &&
+                      meantBy.get(texts[index])?.(referenceAgain.stdout, second.stdout) !== undefined) ||
                     writesToBuiltins.has(index)
                   ? "documented difference"
                   : referenceAgain.stdout === "" && isRefusedByBunRun(texts[index], referenceAgain.stderr)

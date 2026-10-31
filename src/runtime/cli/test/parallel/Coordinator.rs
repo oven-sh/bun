@@ -123,6 +123,15 @@ struct GroupOfWorker {
     highest: u64,
 }
 
+/// What a process holds and shares with nobody, out of its /proc/<pid>/statm: "size resident shared ..", counted in pages, which are 4, 16 or
+/// 64 KB by the kernel.
+fn own_kilobytes_in(statm: &[u8], page_size: usize) -> Option<u64> {
+    let mut pages = bun_core::strings::split(statm, b" ")
+        .map(|field| bun_core::fmt::parse_int::<u64>(field, 10).ok());
+    let (resident, shared) = (pages.nth(1)??, pages.next()??);
+    Some(resident.saturating_sub(shared) * (page_size as u64 / 1024))
+}
+
 impl ChildrenOfWorkers {
     pub(crate) const MS_BETWEEN_LOOKS: i64 = 200;
 
@@ -160,14 +169,10 @@ impl ChildrenOfWorkers {
             let Some(at) = self.groups.iter().position(is_its_group) else {
                 continue;
             };
-            // "size resident shared ..", in pages.
             let Some(statm) = read(name, b"statm") else {
                 continue;
             };
-            let mut pages = bun_core::strings::split(&statm, b" ");
-            if let (Some(resident), Some(shared)) = (number(pages.nth(1)), number(pages.next())) {
-                sums[at] += (resident - shared).max(0) as u64 * 4;
-            }
+            sums[at] += own_kilobytes_in(&statm, bun_sys::page_size()).unwrap_or(0);
         }
         for (group, sum) in self.groups.iter_mut().zip(sums) {
             group.highest = group.highest.max(sum);
@@ -1949,5 +1954,20 @@ pub(crate) mod abort_handler {
                 bun_sys::windows::FALSE,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_kilobytes_in;
+
+    #[test]
+    fn pages_are_counted_at_the_size_that_the_kernel_has() {
+        let statm = b"30000 1500 500 10 0 900 0\n";
+        assert_eq!(own_kilobytes_in(statm, 4 << 10), Some(4_000));
+        assert_eq!(own_kilobytes_in(statm, 16 << 10), Some(16_000));
+        assert_eq!(own_kilobytes_in(statm, 64 << 10), Some(64_000));
+        assert_eq!(own_kilobytes_in(b"30000 500 1500", 4 << 10), Some(0));
+        assert_eq!(own_kilobytes_in(b"", 4 << 10), None);
     }
 }

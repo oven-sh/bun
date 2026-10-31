@@ -209,7 +209,7 @@ impl Parts {
         self.list.iter().any(|part| !part.range.is_empty())
     }
 
-    /// `time_of`: with `--timings`, what the files of a part take together. The part that takes longest is built first.
+    /// `time_of`: with `--timings`, what files take together. The part whose slowest file takes longest is built first.
     pub(crate) fn next_to_build(
         &self,
         free_workers: u32,
@@ -246,7 +246,14 @@ impl Parts {
                 .filter(move |(_, part)| {
                     part.state == PartState::Waiting && (part.heavy_growth > 0) == is_heavy
                 })
-                .map(|(index, part)| (index as u32, part.range))
+                // It is the first of the part.
+                .map(|(index, part)| {
+                    let slowest = FileRange {
+                        lo: part.range.lo,
+                        hi: part.range.hi.min(part.range.lo + 1),
+                    };
+                    (index as u32, slowest)
+                })
         };
         first_of_the_largest(waiting(true), time_of)
             .or_else(|| first_of_the_largest(waiting(false), time_of))
@@ -364,31 +371,25 @@ impl Parts {
     }
 }
 
-/// Deals `files`, the slowest first, into `count` parts that take about as long as one another: each file goes to the part that has
-/// the least so far. Puts the files of a part side by side, its slowest first. The part with the slowest file of all is the first.
-pub(crate) fn cut_by_time<File: Copy>(
-    files: &mut [File],
-    costs: &[u64],
-    count: u32,
-) -> Vec<FileRange> {
-    use core::cmp::Reverse;
-    let mut totals: std::collections::BinaryHeap<Reverse<(u64, u32)>> =
-        (0..count).map(|part| Reverse((0, part))).collect();
-    let mut dealt: Vec<Vec<File>> = vec![Vec::new(); count as usize];
-    for (&file, &cost) in files.iter().zip(costs) {
-        let Reverse((total, part)) = totals.pop().expect("there is a part");
-        dealt[part as usize].push(file);
-        totals.push(Reverse((total + cost, part)));
+/// Cuts a list of files, the slowest first, into parts in that order: a run that takes the parts as they come begins with its slowest
+/// files and ends with its quickest, so that its workers end together. `costs`: what each file takes.
+/// A part is full when it takes what each of `count` parts would take that all took the same, or when it holds `most_files`.
+pub(crate) fn cut_by_time(costs: &[u64], count: u32, most_files: u32) -> Vec<FileRange> {
+    let full = (costs.iter().sum::<u64>() / u64::from(count.max(1))).max(1);
+    let mut ranges = Vec::new();
+    let (mut lo, mut time) = (0, 0);
+    for (file, &cost) in (0u32..).zip(costs) {
+        time += cost;
+        if time >= full || file + 1 - lo >= most_files {
+            ranges.push(FileRange { lo, hi: file + 1 });
+            (lo, time) = (file + 1, 0);
+        }
     }
-    let mut ranges = Vec::with_capacity(dealt.len());
-    let mut at = 0;
-    for part in dealt.iter().filter(|part| !part.is_empty()) {
-        files[at..at + part.len()].copy_from_slice(part);
+    if (lo as usize) < costs.len() {
         ranges.push(FileRange {
-            lo: at as u32,
-            hi: (at + part.len()) as u32,
+            lo,
+            hi: costs.len() as u32,
         });
-        at += part.len();
     }
     ranges
 }

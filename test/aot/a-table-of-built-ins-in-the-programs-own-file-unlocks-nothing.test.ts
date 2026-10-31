@@ -81,7 +81,8 @@ async function operationsOfLists(hasTable: boolean) {
     }
   };
   await build("packages", "3,shared,packages", [], {});
-  const packages = openSync(at("packages"), "r");
+  // As the run hands it over: the build above lays the headers of its texts into the lowest program.
+  const packages = openSync(at("packages"), "r+");
   try {
     await build("shared", "3,shared,below:4", [packages], { BUN_JSC_aotMapFilePath: at("map") });
   } finally {

@@ -1,5 +1,6 @@
 // A rest list or a literal that is made for one call has no name: behind the call nothing can read it. What it held is collected while the function that made the call still runs: once the last name is set to null or its block has ended.
 // Prints what the compiler saves: objects that are collected earlier
+// Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;
 let watched: WeakRef<Thing> | undefined;

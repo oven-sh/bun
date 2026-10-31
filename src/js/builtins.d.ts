@@ -42,6 +42,8 @@ declare function $isPromisePending(promise: Promise<any>): boolean;
 declare const IS_BUN_DEVELOPMENT: boolean;
 /** False in an executable that was compiled ahead of time without `--compile-inspector` and without `--external`. */
 declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
+/** Or it is a test run, which loads a native addon wherever the call stands. */
+declare const CAN_LOAD_ADDONS_AT_RUN_TIME: boolean;
 /** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
 declare const CAN_BE_CLUSTER_WORKER: boolean;
 /** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function. Where it is false no program can tell which built-in functions Bun's own code calls. */

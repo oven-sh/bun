@@ -19,6 +19,7 @@ use crate::statistics::{LimitId, LimitValues};
 #[derive(Copy, Clone)]
 pub(crate) struct ProgramFacts {
     pub can_load_code_at_run_time: bool,
+    pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
 }
@@ -74,6 +75,10 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         define_fact(
             b"CAN_LOAD_CODE_AT_RUN_TIME",
             facts.can_load_code_at_run_time,
+        ),
+        define_fact(
+            b"CAN_LOAD_ADDONS_AT_RUN_TIME",
+            facts.can_load_addons_at_run_time,
         ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
         define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
@@ -231,6 +236,7 @@ mod tests {
 
     const NO_FACTS: ProgramFacts = ProgramFacts {
         can_load_code_at_run_time: false,
+        can_load_addons_at_run_time: false,
         can_be_cluster_worker: false,
         can_replace_builtins: false,
     };
@@ -292,6 +298,7 @@ mod tests {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         analyze_file(&mut hir, bind_options, fold, file, atoms, arena).1
     }

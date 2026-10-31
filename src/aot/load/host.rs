@@ -46,7 +46,7 @@ use crate::load::loaders::{
 use crate::load::macros;
 use crate::load::modules_with_queries::ModulesWithQueries;
 use crate::load::named_loads::{
-    find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
+    FilesOfTests, find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
 };
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
@@ -127,6 +127,7 @@ pub(crate) struct LoadHost<'a> {
     evaluated_texts: EvaluatedTexts,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    files_of_tests: Option<FilesOfTests>,
     /// As `entry_point_paths`, of `begin_at`.
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
@@ -224,6 +225,13 @@ impl<'a> LoadHost<'a> {
         let options = input.options;
         let load = &options.load;
         let entry_point_paths = collect_entry_point_paths(disk, options, &options.entry_points);
+        let files_of_tests = options.aot.only_tests_load_code_from_disk.then(|| {
+            let listed = match load.files_of_tests.is_empty() {
+                true => &options.entry_points,
+                false => &load.files_of_tests,
+            };
+            FilesOfTests::new(collect_entry_point_paths(disk, options, listed))
+        });
         let is_binary = |path: &&Vec<u8>| {
             loader_named_by_path(&load.loaders, path).is_none()
                 && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
@@ -253,6 +261,7 @@ impl<'a> LoadHost<'a> {
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_point_paths,
+            files_of_tests,
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             found_entry_texts: Guarded::new(Vec::new()),
@@ -340,6 +349,12 @@ impl<'a> LoadHost<'a> {
     fn runs_despite_its_name(&self, path: &[u8]) -> bool {
         is_declaration_file_name(path)
             && self.is_among(&self.entry_points_that_run_despite_their_names, path)
+    }
+
+    fn is_of_tests(&self, path: &[u8]) -> bool {
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
+        (self.files_of_tests.as_ref()).is_some_and(|files| files.holds(&path))
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
@@ -1250,7 +1265,7 @@ impl CodeHost for LoadHost<'_> {
             platform: self.input.platform,
             replaced: &self.input.options.load.replaced_builtins,
             replaced_members_sought: match self.input.options.load.runs_tests {
-                false => ReplacedMembersSought::None,
+                false => ReplacedMembersSought::NamesAdded,
                 true if is_in_node_modules(request.path) => ReplacedMembersSought::Written,
                 true => ReplacedMembersSought::WrittenOrNamed,
             },
@@ -1284,6 +1299,7 @@ impl CodeHost for LoadHost<'_> {
             source.library_modules_written_as_values = named.written_as_values;
         }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
+        source.is_of_tests = self.is_of_tests(request.path);
         source.unknown_names_at = named.unknown_names_at;
         // Without the option the run time refuses code that is not in the program.
         if self.input.options.aot.loads_code_from_disk {

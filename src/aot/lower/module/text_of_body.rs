@@ -42,7 +42,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 return;
             }
             let start = self.type_ranges.map_offset(start);
-            let end = self.type_ranges.map_offset(end);
+            let end = match begins_statement {
+                true => start,
+                false => self.type_ranges.map_end(end),
+            };
             if (start < end || begins_statement) && start >= end_of_last {
                 push_number(&mut packed, start - end_of_last);
                 push_number(&mut packed, end - start);

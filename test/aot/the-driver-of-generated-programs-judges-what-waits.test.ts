@@ -10,9 +10,12 @@
 // a generator lays statements into the body of a method as they are, and the `this` of such a method is not the module's.
 //
 // The two runs spell the text of a function differently, and the driver passes over that. A program that prints the word "function", as `typeof` does, shows no such text.
+//
+// A build can stop without naming a program, and then the driver looks for the program by halves. What the compiler says can depend on the company: of two programs that stop it,
+// one is reported among many and the other among few. A script stands in for such a compiler. The driver finds both, and the six programs beside them are judged.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, spawned, withoutCoreDump, withoutCrashReport } from "./harness/commands";
 import { describe, test } from "./supported";
@@ -68,6 +71,25 @@ const printsTheTextOfAFunction = `const printValue = console.log;
 const record = { method() { return 1; } };
 printValue("text", String(record.method));
 export {};
+`;
+
+const stopsTheBuild = (words: string) =>
+  `const printValue = console.log;\n// stops the build with the ${words} words\nprintValue("never built");\nexport {};\n`;
+/** Bun, but for a build with --aot of a folder that holds a program with such a comment. Among more than four programs the first words win, among fewer the second. */
+const aCompilerThatStops = `#!/bin/sh
+case " $* " in
+*" build "*" --aot "*)
+  if grep -q -s "with the first words" programs/* && { [ "$(ls programs | wc -l)" -gt 4 ] || ! grep -q -s "with the second words" programs/*; }; then
+    echo "error: internal compiler error (Stage): the first words" >&2
+    exit 1
+  fi
+  if grep -q -s "with the second words" programs/*; then
+    echo "error: internal compiler error (Stage): the second words" >&2
+    exit 1
+  fi
+  ;;
+esac
+exec "${bunExe()}" "$@"
 `;
 
 describe("compile/aot/the driver of generated programs", () => {
@@ -242,4 +264,62 @@ describe("compile/aot/the driver of generated programs", () => {
     expect(read("program.ts")).toBe(aNumberChangesBesideAPrintedTypeof);
     expect(run.exitCode).toBe(0);
   }, 300_000);
+
+  test.skipIf(process.platform === "win32")(
+    "finds two programs that stop a build with words that depend on the company, and judges the rest",
+    async () => {
+      using folder = tempDir("aot-the-driver-finds-what-stops-a-build", {
+        ...Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`programs/p${index}.ts`, plain(index)])),
+        "programs/p1.ts": stopsTheBuild("first"),
+        "programs/p2.ts": stopsTheBuild("second"),
+        "work/.keep": "",
+        "stand-in": aCompilerThatStops,
+      });
+      const within = (name: string) => join(String(folder), name);
+      chmodSync(within("stand-in"), 0o755);
+      const run = await slot(() =>
+        spawned(
+          [
+            bunExe(),
+            join(import.meta.dir, "fuzz", "fuzzilli", "run-batch.ts"),
+            ...[
+              "--bun",
+              within("stand-in"),
+              "--programs",
+              within("programs"),
+              "--work",
+              within("work"),
+              "--finds",
+              within("finds"),
+            ],
+            ...["--count", "8", "--group", "1", "--batches", "1"],
+            ...["--milliseconds", "5000"],
+            "--flags=--aot-threads=1",
+          ],
+          String(folder),
+          bunEnv,
+          280_000,
+        ),
+      );
+      expect(run.stdout).toContain(`"taken":8,`);
+      expect(run.stdout).toContain(`"stopped the build":2,`);
+      expect(run.stdout).toContain(`"same":6`);
+      const kept = readdirSync(within("finds")).filter(name => !/^(?:counters-|index\.txt$)/.test(name));
+      expect(kept).toEqual([
+        expect.stringMatching(/^build-stopped-[0-9a-f]{8}$/),
+        expect.stringMatching(/^build-stopped-[0-9a-f]{8}$/),
+      ]);
+      const programs = kept.map(name => {
+        const [size] = readdirSync(within(join("finds", name)));
+        const read = (file: string) => readFileSync(within(join("finds", name, size, file)), "utf8");
+        return `${/the (?:first|second) words/.exec(read("report.txt"))?.[0]}: ${read("program.ts")}`;
+      });
+      expect(programs.sort()).toEqual([
+        `the first words: ${stopsTheBuild("first")}`,
+        `the second words: ${stopsTheBuild("second")}`,
+      ]);
+      expect(run.exitCode).toBe(0);
+    },
+    300_000,
+  );
 });

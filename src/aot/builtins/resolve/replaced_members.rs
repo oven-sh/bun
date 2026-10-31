@@ -12,7 +12,7 @@ use crate::builtins::table::{
     Prototype, RuntimeModule, Scope,
 };
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Parent, SymbolId};
+use bun_sema::bind::{Binding, BindingInitializer, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     BinOp, ExprId, ExprKind, MemberKey, NodeData, PropKey, StmtId, StmtKind, UnOp,
@@ -82,6 +82,21 @@ pub fn find_member_written_behind<'a>(
 }
 
 // The objects above `holder`, its `prototype`, and the objects above that.
+/// Nobody can read the name: `for (const name of Object.keys(Math)) spyOn(Math, name)`, `function setGlobal(name, value) { globalThis[name] = value; }`.
+/// Of the global object only what is tested where it is used anyway, fetch and the timers: Map and Array are too much to give up for it.
+pub fn members_written_under_any_name(holder: BuiltinId) -> impl Iterator<Item = BuiltinId> {
+    table::members(holder)
+        .iter()
+        .copied()
+        .filter(move |&member| {
+            let entry = table::entry(member);
+            let is_cheap = entry.mutability == Mutability::ConstantUnlessWritten;
+            entry.mutability != Mutability::ChangesOnItsOwn
+                && entry.scope == Scope::Realm
+                && (is_cheap || holder != BuiltinId::GlobalThis)
+        })
+}
+
 fn find_builtins_around(holder: BuiltinId) -> Vec<BuiltinId> {
     let prototype =
         table::find_name(b"prototype").and_then(|name| match table::member(holder, name) {
@@ -469,6 +484,14 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn is_parameter(&self, value: ExprId) -> bool {
+        let bound = self.input.bound;
+        match bound.binding(self.input.hir.skip_type_assertions(value)) {
+            Binding::Symbol(symbol) => matches!(*bound.symbol(symbol).decls, [Decl::Param(_)]),
+            _ => false,
+        }
+    }
+
     /// The keys of an object literal, which may stand in a constant: `const members = { now: () => 0 }`.
     fn push_keys_of_literal(&self, value: ExprId, keys: &mut Vec<Atom>) {
         let hir = self.input.hir;
@@ -666,6 +689,7 @@ impl Resolver<'_, '_> {
         let mut keys_partly_read = Vec::new();
         let mut named_from_outside = Vec::new();
         let mut writes_on_imports = Vec::new();
+        let mut writes_on_parameters_under_any_name = false;
         for expr in evaluated {
             if sought == ReplacedMembersSought::WrittenOrNamed {
                 self.find_members_named_by(expr, &mut found);
@@ -687,6 +711,7 @@ impl Resolver<'_, '_> {
                 continue;
             };
             let holders = self.find_builtins_spelled_for(write.object);
+            let is_computed = matches!(write.key, KeyOfWrite::Computed(_));
             let written = match write.key {
                 KeyOfWrite::Name(name) => vec![name],
                 KeyOfWrite::Computed(key) => self.find_keys_spelled_for(key),
@@ -796,21 +821,21 @@ impl Resolver<'_, '_> {
                     }));
                 }
             }
+            // What another file passes for the parameter: who reads all the files puts the two together.
+            if holders.is_empty()
+                && written.is_empty()
+                && symbols.is_empty()
+                && is_computed
+                && self.is_parameter(write.object)
+            {
+                writes_on_parameters_under_any_name = true;
+            }
             for &holder in holders.iter().chain(&unnamed) {
-                // Nobody can read the name: `for (const name of Object.keys(Math)) spyOn(Math, name)`, `function setGlobal(name, value) { globalThis[name] = value; }`.
-                // Of the global object only what is tested where it is used anyway, fetch and the timers: Map and Array are too much to give up for it.
                 if written.is_empty() && symbols.is_empty() {
                     if Self::takes_no_names(holder) {
                         named_from_outside.push(holder);
                     }
-                    let members = table::members(holder).iter();
-                    found.members.extend(members.filter(|&&member| {
-                        let entry = table::entry(member);
-                        let is_cheap = entry.mutability == Mutability::ConstantUnlessWritten;
-                        entry.mutability != Mutability::ChangesOnItsOwn
-                            && entry.scope == Scope::Realm
-                            && (is_cheap || holder != BuiltinId::GlobalThis)
-                    }));
+                    (found.members).extend(members_written_under_any_name(holder));
                 }
                 for &key in &written {
                     self.note_write(holder, key, &mut found);
@@ -819,6 +844,13 @@ impl Resolver<'_, '_> {
                 (found.members)
                     .extend(members.filter_map(|&name| self.find_locked_member(holder, name)));
             }
+        }
+        if sought == ReplacedMembersSought::NamesAdded {
+            let mut seen = FxHashSet::default();
+            // Every object inherits from Object.prototype: one name there, and no miss and no `for in` of the program is known any more.
+            (found.names).retain(|&name| name.0 != BuiltinId::ObjectPrototype && seen.insert(name));
+            self.output.names_added = found.names;
+            return;
         }
         keys_spelled.shared_sort_by_key(|entry: &(ExprId, Atom)| entry.0);
         self.output.keys_spelled_on_other_objects = keys_spelled;
@@ -844,6 +876,7 @@ impl Resolver<'_, '_> {
         self.output.replaced_members = found.members;
         self.output.names_added = found.names;
         self.output.holders_named_from_outside = named_from_outside;
+        self.output.writes_on_parameters_under_any_name = writes_on_parameters_under_any_name;
         self.output.writes_on_imports = writes_on_imports;
         self.output.builtins_handed_out = self.find_builtins_handed_out();
         self.output.builtins_exported = self.find_builtins_exported();

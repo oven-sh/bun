@@ -59,6 +59,7 @@ JSC::JSValue createNotInExecutableError(JSC::JSGlobalObject*, ErrorCode, const W
 // The compiled program asks the loader why a module fails to load, and runs nothing of it.
 bool isAskingWhyFileFailsToLoad();
 JSC::JSValue errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
+bool letsTestRunLoadAddon(JSC::JSGlobalObject*, const WTF::String& path);
 // The same for a file that loads as a database or a page, under a name the compiler could not follow.
 JSC::JSValue errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
 // What process.mainModule and require.main answer in an ahead-of-time executable: the module object of the file at `Bun.main`.

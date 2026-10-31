@@ -95,6 +95,7 @@ fn with_finished_file<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     assert!(!hir.has_errors, "syntax error in: {text}");

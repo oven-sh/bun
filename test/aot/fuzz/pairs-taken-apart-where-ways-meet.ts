@@ -1,7 +1,11 @@
 // `[b, a] = [a, b]`: a list or an object that lives for one statement. A compiler need not allocate it: it can follow each part to where
 // it is read. That is simple in a straight line. Each function here makes it hard: a part is null, undefined, true or false on one way
 // and a value of unknown kind on another, the ways meet before the pair is taken apart, and a loop or a branch beside it, which may
-// never run, can put another fresh list or object into the same variable. The functions are called with values of every kind.
+// never run, can put another fresh list or object into the same variable. A parameter can be one of the variables. Half of the functions
+// are called with values of every kind and half with one kind alone, which lets a compiler decide some of the tests. Some hand back a text
+// about their variables, the others a variable from the middle of a branch and a fresh object, a constant or a variable at their end.
+// One variable may stay out of every pair: a constant, or by a parameter a fresh object, which is only compared and handed back.
+// That parameter comes out of a list in some callers and is written out at each call in others, where a compiler knows it.
 // `v !== v` holds for NaN alone, which unary plus makes of most values, so a loop under that test ends by what it stores.
 import type { Random } from "./random";
 
@@ -23,6 +27,16 @@ const values = [
   '""',
   "-0",
 ];
+const valuesOfOneKind = [
+  ["2", "1"],
+  ["2", "1"],
+  ["2", "1", "0", "-1"],
+  ['"ab"', '""'],
+  ["{}", "[]", "{ v: 1 }"],
+  ["null", "undefined"],
+  ["true", "false"],
+  ["1.5", "NaN"],
+];
 
 export function generate(random: Random, typed: boolean): string {
   const as = (type: string) => (typed ? `: ${type}` : "");
@@ -30,7 +44,13 @@ export function generate(random: Random, typed: boolean): string {
   const functions: string[] = [];
   const total = random.between(8, 14);
   for (let number = 0; number < total; number++) {
-    const names = random.chance(0.6) ? ["a", "b"] : ["a", "b", "c"];
+    // The faults of this kind that came from outside were all of one build: a constant, something that may replace it by a fresh object,
+    // and a branch that swaps it with the parameter and leaves. Four functions of ten are of that build, with each place drawn.
+    const isOfThatBuild = random.chance(0.4);
+    const returnsAValue = random.chance(isOfThatBuild ? 0.85 : 0.6);
+    const locals = random.chance(0.6) ? ["a", "b"] : ["a", "b", "c"];
+    const names = isOfThatBuild ? ["y", "b"] : random.chance(0.5) ? ["y", ...locals.slice(1)] : locals;
+    const lone = random.chance(isOfThatBuild ? 0.6 : 0.5) ? "lone" : "";
     const some = () => random.pick(names);
     /** Two or three different variables. */
     const different = (count: number) => random.shuffled(names).slice(0, count);
@@ -43,6 +63,9 @@ export function generate(random: Random, typed: boolean): string {
         `${v} !== ${v}`,
         `${v} != ${w}`,
         `${v} == ${w}`,
+        `${v} === ${w}`,
+        `${v} !== ${w}`,
+        ...(lone ? [`lone === ${v}`, `lone !== ${v}`, `${v} === lone`, "lone == null"] : []),
         `${v} == null`,
         `${v} !== null`,
         `typeof ${v} === "object"`,
@@ -91,9 +114,32 @@ export function generate(random: Random, typed: boolean): string {
         `${v} = !${v};`,
         `${v} = ${fresh(v, w)};`,
         `${v} = ${constant()};`,
-        `said += typeof ${v} + ",";`,
+        `${v} = ${w} === ${u} ? ${w} : 1;`,
+        `${v} = ${w} !== ${u} ? ${constant()} : ${w};`,
+        ...(returnsAValue ? [] : [`said += typeof ${v} + ",";`]),
       ]);
     };
+    const result = () => {
+      const [v, w] = different(2);
+      return random.pick([
+        v,
+        v,
+        v,
+        `${v} === ${w} ? ${v} : 1`,
+        `${v} !== ${w} ? ${constant()} : ${w}`,
+        ...(lone
+          ? [
+              `lone === ${v} ? lone : 1`,
+              `lone === ${v} ? lone : 1`,
+              `lone !== ${v} ? 1 : lone`,
+              `${v} === lone ? ${v} : 0`,
+              "lone",
+            ]
+          : []),
+        constant(),
+      ]);
+    };
+    const leave = () => (returnsAValue ? `return ${result()};` : `return said + "early " + typeof ${some()};`);
     const several = (most: number) => Array.from({ length: random.between(1, most) }, simple).join(" ");
     const statement = (): string => {
       const [v, w] = different(2);
@@ -131,7 +177,7 @@ export function generate(random: Random, typed: boolean): string {
         ],
         [1, () => `if (Array.isArray(${v})) ${v} = ${v}[${random.below(2)}];`],
         [1, () => `if (${v} !== null && typeof ${v} === "object" && "v" in ${v}) ${v} = ${v}.v;`],
-        [2, () => `if (${test()}) { ${several(3)} return said + "early " + typeof ${some()}; }`],
+        [2, () => `if (${test()}) { ${several(3)} ${leave()} }`],
       ])();
     };
     /** The three together, on one variable: a part of a short-lived pair comes to where ways meet, and on one of those ways the variable gets a fresh object. */
@@ -154,28 +200,94 @@ export function generate(random: Random, typed: boolean): string {
       ]);
       const reads = random.pick([
         `[${v}, ${w}] = [${w}, ${v}];`,
-        `if (${v} != ${w}) { [${w}, ${v}] = [${v}, ${w}]; ${v} = +${v}; return said + "early " + typeof ${w}; }`,
+        `if (${v} != ${w}) { [${w}, ${v}] = [${v}, ${w}]; ${random.chance(0.4) ? `${v} = +${v}; ` : ""}${leave()} }`,
+        `if (${v} != ${w}) { [${w}, ${v}] = [${v}, ${w}]; ${leave()} }`,
         `if (${test()}) { [${v}, ${w}] = [${w}, ${v}]; ${simple()} } else { ${simple()} }`,
         `{ const held = [${v}, ${w}]; ${w} = held[0]; ${v} = held[1]; }`,
-        `said += typeof ${v} + ",";`,
+        ...(returnsAValue ? [] : [`said += typeof ${v} + ",";`]),
       ]);
-      return (random.chance(0.5) ? [enters, meets, reads] : [meets, enters, reads]).join("\n  ");
+      const parts = (random.chance(0.5) ? [enters, meets, reads] : [meets, enters, reads]).filter(() =>
+        random.chance(0.8),
+      );
+      return (parts.length ? parts : [reads]).join("\n  ");
     };
-    const body = Array.from({ length: random.between(2, 5) }, () => (random.chance(0.55) ? motif() : statement()));
-    functions.push(`function go${number}(y${as("any")}, z${as("any")}, turns${as("number")})${as("string")} {
-  let ${names.map(name => `${name}${as("any")} = ${random.pick(starts)}`).join(", ")};
-  let rest${as("any[]")} = [];
-  let said = "";
-  let spins = 0;
-  ${body.join("\n  ")}
-  return said + [${names.join(", ")}, rest.length].map(describe).join(" ");
+    const ofThatBuild = () =>
+      [
+        random.pick([
+          `while (b !== b) b = ${fresh("b", "y")};`,
+          `while (b !== b) b = ${fresh("b", "y")};`,
+          "while (b !== b) b = [b];",
+          `if (${random.pick(["z", "!z", "turns"])}) b = ${fresh("b", "y")};`,
+          `for (let k = 0; k < turns; k++) b = ${fresh("b", "y")};`,
+          "",
+        ]),
+        `if (${random.pick(["y != b", "y != b", "y != b", "y !== b", "y == b", "b == null", "typeof y !== typeof b", "z"])}) {`,
+        "  " +
+          random.pick([
+            "[b, y] = [y, b];",
+            "[b, y] = [y, b];",
+            "[b, y] = [y, b];",
+            "({ p: b, q: y } = { p: y, q: b });",
+            "{ const held = [y, b]; b = held[0]; y = held[1]; }",
+            `[b, y] = [y, ${constant()}];`,
+          ]),
+        ...(random.chance(0.3) ? ["  " + random.pick(["y = +y;", "b = +b;", simple()])] : []),
+        "  " + leave(),
+        "}",
+      ]
+        .filter(Boolean)
+        .join("\n  ");
+    const body = isOfThatBuild
+      ? ofThatBuild()
+      : Array.from({ length: random.between(1, 5) }, () => (random.chance(0.55) ? motif() : statement())).join("\n  ");
+    const last = returnsAValue
+      ? random.pick([
+          "{ v: 1.5 }",
+          "{ v: 1.5 }",
+          "[1.5]",
+          "[true]",
+          "{ v: y }",
+          "0",
+          "1",
+          constant(),
+          result(),
+          result(),
+        ])
+      : `said + [${[...names, ...(body.includes("rest") ? ["rest.length"] : [])].join(", ")}].map(describe).join(" ")${lone && ' + " " + typeof lone'}`;
+    const isCalledWithEveryKind = random.chance(isOfThatBuild ? 0.3 : 0.5);
+    const others = isCalledWithEveryKind
+      ? ["null", "true", "value"]
+      : random.pick([["0", "2"], ["0", "2"], ["0", "2"], ["value"], ["null", "value"]]);
+    const writesTheOthersOut = random.chance(isOfThatBuild ? 0.7 : 0.4);
+    const called = (other: string) => {
+      const call = `go${number}(value, ${other}, lines.length % 3)`;
+      return `lines.push(${returnsAValue ? `describe(${call})` : call});`;
+    };
+    const start = constant();
+    functions.push(`function go${number}(y${as("any")}, z${as("any")}, turns${as("number")})${as(returnsAValue ? "any" : "string")} {
+  ${[
+    `let ${names
+      .filter(name => name !== "y")
+      .map(name => `${name}${as("any")} = ${isOfThatBuild ? start : random.pick(starts)}`)
+      .join(", ")};`,
+    ...(lone
+      ? [
+          `let lone${as("any")} = ${random.chance(0.6) ? start : constant()}; if (${random.pick(["z", "z", "!z", "turns", "y"])}) lone = ${random.pick(["{ k: 1.5 }", "{ k: 1.5 }", "{ k: 1.5 }", "{ k: y }", "{ k: y }", "[1.5]", "[y]"])};`,
+        ]
+      : []),
+    ...(body.includes("rest") ? [`let rest${as("any[]")} = [];`] : []),
+    ...(returnsAValue ? [] : ['let said = "";']),
+    ...(body.includes("spins") ? ["let spins = 0;"] : []),
+  ].join("\n  ")}
+  ${body}
+  return ${last};
 }
 {
   const lines${as("string[]")} = [];
-  for (const value of values)
-    for (const other of [null, true, value]) {
+  for (const value of ${isCalledWithEveryKind ? "values" : `[${random.pick(valuesOfOneKind).join(", ")}]`})
+    ${writesTheOthersOut ? "" : `for (const other of [${others.join(", ")}]) `}{
       try {
-        lines.push(go${number}(value, other, lines.length % 3));
+        ${writesTheOthersOut ? others.map(called).join("\n        ") : called("other")}
       } catch (error) {
         lines.push("threw " + ${failure});
       }

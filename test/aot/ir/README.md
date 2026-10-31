@@ -50,7 +50,7 @@ cargo test -p bun_aot --test ir_tests lower
 | `AOT_IR_FILTER=<text>` | runs only the files whose path contains the text |
 | `AOT_IR_OUTPUT=<folder>` | writes what each run printed to `<folder>/<path below test/aot/ir>.<PREFIX>.txt`, followed by its diagnostics and statistics as `DIAGNOSTIC:` and `STATISTIC:` lines. A run that failed outright writes `FAILED: <why>` |
 | `AOT_IR_JOBS=<n>` | runs n files at a time. The default is one per core |
-| `AOT_IR_UPDATE=1` | writes the check lines below each `GENERATED` line anew from what the runs print, then judges the file as it stands then |
+| `AOT_IR_UPDATE=1` | where the check lines of a file no longer hold, or none are written yet, writes the lines below its `GENERATED` line anew from what the runs print, then judges the file as it stands then. A file whose lines hold is left as it is |
 
 What the tests print:
 
@@ -184,8 +184,9 @@ The engine's tests have the same check lines and patterns. `aot/tests/README.md`
 - **To hold a whole function to what is printed today**, write the source, the `RUN` and `// GENERATED: add` as the last line, and run
   `AOT_IR_UPDATE=1 AOT_IR_FILTER=<file> cargo test -p bun_aot --test ir_tests`. A generated block enters the function with a label and
   has a `-NEXT` for every line. Positions in the source are left out, and an id that is counted over the whole program (`f7`, `g1`, `m1`,
-  `L3`, `w2`) is a variable, so the block does not move when the library grows. When the front end prints something else, the same
-  command writes the blocks anew, and the diff is what to read.
+  `L3`, `w2`) is a variable, so the block does not move when the library grows. The folder of the tests and the temporary folder of a
+  tree are `{{*}}`: they are others on the next machine and in the next run. When the front end prints something else, the same command,
+  also without a filter, writes anew the blocks that no longer hold, and the diff is what to read.
 - **Bind ids** in a line written by hand, never write `v12`, `b3` or `f7`.
 - **The printer omits a field that has its zero value** (`role=Source`, `kind=Plain`). A pattern cannot name one: a positive line with it
   never matches, and a `-NOT` with it always passes.

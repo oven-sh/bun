@@ -79,8 +79,9 @@ async function ordersThatBreak(program: string, orders: number) {
 /** Declares the tests of the rows that are dealt to one file. */
 export function askTheRowsOfFile(file: number) {
   // A Bun that checks itself takes many times as long, and flow analysis is the same in it.
-  const where = test.skipIf(!isLinux || isASAN || isDebug);
-  const asked = { held: where, broken: where, seldom: where.todo };
+  const isSkipped = !isLinux || isASAN || isDebug;
+  const where = test.skipIf(isSkipped);
+  const asked = { held: where, broken: where, seldom: isSkipped ? where : where.todo };
   for (const [, state, orders, program, whatHappens] of rows.filter(row => row[0] === file))
     asked[state](
       `${state === "broken" ? "an" : "no"} order of the first ${orders} breaks ${program}${state === "held" ? "" : ` (${whatHappens})`}`,

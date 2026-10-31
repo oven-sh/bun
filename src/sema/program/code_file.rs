@@ -234,6 +234,7 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         is_library: context.host.is_library_file(key.path),
         host_values: previous.host_values,
         jsx: previous.jsx_mode,
+        own_name: arena.alloc_slice_copy(bun_paths::basename_posix(key.path)),
     };
     let FoldedAgain {
         analysis,
@@ -419,6 +420,7 @@ fn analyze<'s, 'r>(
         is_library: host.is_library_file(path),
         host_values: tree.host_values,
         jsx: jsx_mode,
+        own_name: arena.alloc_slice_copy(bun_paths::basename_posix(path)),
     };
     let fold = fold_inputs_of(context, arena, is_called_before_it_runs, stored_by_mocks);
     let (bound, analysis, host_values) =

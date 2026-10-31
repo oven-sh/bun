@@ -208,7 +208,9 @@ impl Build<'_> {
                 && self.options.aot.entry_points_run_again,
             typescript_drops_absent_exports: project == ProjectId::Application
                 && self.options.aot.typescript_drops_absent_exports,
-            loads_code_from_disk: self.options.aot.loads_code_from_disk,
+            loads_code_from_disk: self.options.aot.loads_code_from_disk
+                && !self.stays_in_compiled_files,
+            only_tests_load_code_from_disk: self.options.aot.only_tests_load_code_from_disk,
             host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
             stand_in_for_files_from_disk,
             application: application.map(|application| &application.graph),
@@ -286,6 +288,7 @@ impl Build<'_> {
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                     any_file_is_named_at_run_time: code_on_disk_names_files
                         || (!self.options.aot.host_runs_files_from_disk
+                            && !self.stays_in_compiled_files
                             && (self.options.aot.loads_code_from_disk
                                 || self.options.load.runs_tests)),
                     code_on_disk_names_files,

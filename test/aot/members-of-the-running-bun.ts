@@ -51,8 +51,6 @@ const membersOfTheRun = /\.(isStandaloneExecutable|embeddedFiles)$/;
 // `bun:test` answers outside a test run with functions that throw. The others start something when they are loaded, or print a warning.
 const modulesLeftOut =
   /^(bun:test|bun:main|bun:wrap|bun:internal-for-testing|node:test|node:repl|node:cluster|node:_.*|node:sys|node:punycode)$/;
-// TODO: it has a test of its own, marked todo, in the test file.
-const knownToDiffer = /SlowBuffer/;
 const deepest = 2;
 
 function walk(
@@ -82,7 +80,7 @@ function walk(
         answer = typeof object[key];
       } catch {}
       const read = spellMember(text, key);
-      if (membersOfTheRun.test(read) || knownToDiffer.test(read + setup)) continue;
+      if (membersOfTheRun.test(read)) continue;
       found.push({
         read,
         base: text,
@@ -196,7 +194,7 @@ async function walkModule(name: string, number: number): Promise<Record<string, 
   );
   const bind = (form: string, holder: any, spell: (key: string, bound: string) => string) =>
     Object.keys(holder)
-      .filter(key => isIdentifier(key) && key !== "default" && !neverRead.test(key) && !knownToDiffer.test(key))
+      .filter(key => isIdentifier(key) && key !== "default" && !neverRead.test(key))
       .forEach((key, index) => {
         const bound = `${form[0]}${number}_${index}`;
         const setup = spell(key, bound);

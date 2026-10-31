@@ -26,6 +26,7 @@ pub struct FileInputs<'s> {
     pub is_library: bool,
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub jsx: JsxMode,
+    pub own_name: &'s [u8],
 }
 
 #[derive(Copy, Clone, Default, Debug)]

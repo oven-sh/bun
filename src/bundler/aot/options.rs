@@ -62,6 +62,11 @@ pub(crate) fn options_from_bundler<'r>(
     if input.aot.host_runs_files_from_disk {
         load.stand_in_for_files_from_disk = entry_points.last().cloned();
     }
+    if !input.aot.main_modules_beside_entry_points.is_empty() {
+        let test_files = input.aot.main_modules_beside_entry_points.iter();
+        let listed = test_files.chain(&input.aot.preloads_of_test_run);
+        load.files_of_tests = listed.chain(entry_points.last()).cloned().collect();
+    }
     Some(Options {
         aot: input.aot,
         executable_identity: input.executable_identity,
@@ -362,6 +367,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: Vec::new(),
         stand_in_for_files_from_disk: None,
+        files_of_tests: Vec::new(),
     }
 }
 

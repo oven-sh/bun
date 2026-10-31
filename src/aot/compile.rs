@@ -66,7 +66,9 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::loaders::loader_by_path;
 use crate::load::plugin_modules::is_path_of_entry_text;
-use crate::load::replaced_by_tests::{ReadsLibrary, scan_files_of_tests};
+use crate::load::replaced_by_tests::{
+    ReadsLibrary, find_what_starting_worker_writes, scan_files_of_tests,
+};
 use crate::load::source_provider::SourceProvider;
 use crate::load::worker_files::{WorkerFile, may_start_workers};
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
@@ -307,6 +309,8 @@ pub(crate) struct Build<'a> {
     pub(crate) started_workers: StartedWorkers,
     /// `Compilation::replaced_builtins`, of the programs linked so far.
     pub(crate) replaced_builtins: ReplacedByTests,
+    /// A test run in which no file of the tests can load what was not compiled.
+    pub(crate) stays_in_compiled_files: bool,
     pub(crate) brings_bun_types: bool,
     pub(crate) has_withdrawn_trust: bool,
 }
@@ -801,6 +805,23 @@ fn find_library_code_lacked(
         ..RuntimeUses::default()
     });
     held.find_lacked(&needed)
+}
+
+fn log_unseen_code(engine: &EngineResult) {
+    if !logs_stages() {
+        return;
+    }
+    let records = engine.unseen_code();
+    let count = |cause| records.iter().filter(|it| it.cause == cause).count();
+    bun_core::print_errorln!(
+        "AOT flow | code that the build does not see | loads code by name {} | loads compiled files by name {} | evaluates text {} | imports uncompiled code {} | runs unseen code {} | an option admits code {}",
+        count(UnseenCodeCause::LoadsCodeByName),
+        count(UnseenCodeCause::LoadsModuleByName),
+        count(UnseenCodeCause::EvaluatesText),
+        count(UnseenCodeCause::ImportsUncompiledModule),
+        count(UnseenCodeCause::RunsUnseenCode),
+        count(UnseenCodeCause::OptionAdmitsCode),
+    );
 }
 
 // The engine did not analyze the program, so its lists of what is used are empty and say nothing.
@@ -1310,6 +1331,24 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     Some(options)
 }
 
+fn with_builtins_that_starting_worker_writes<'a>(options: &Options<'a>) -> Option<Options<'a>> {
+    let runs_unseen_code = options.aot.loads_code_from_disk || options.can_load_code_at_run_time();
+    if !runs_unseen_code || options.load.runs_tests || options.aot.checks_only {
+        return None;
+    }
+    let mut members = find_what_starting_worker_writes();
+    members.extend_from_slice(&options.load.replaced_builtins);
+    members.shared_sort_unstable();
+    members.dedup();
+    if members == options.load.replaced_builtins {
+        return None;
+    }
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.replaced_builtins = members;
+    Some(options)
+}
+
 /// The entry points of the last test build of the process that started over, and what it started over with.
 static LEARNED_BY_TEST_BUILD: Guarded<Option<(Vec<Vec<u8>>, LoadOptions)>> = Guarded::new(None);
 
@@ -1379,6 +1418,11 @@ pub fn compile(
     SharedByLoads::begin_build();
     let mut changed: Option<Options<'_>> = with_builtins_that_entry_points_replace(options);
     if let Some(options) = with_what_test_build_learned(changed.as_ref().unwrap_or(options)) {
+        changed = Some(options);
+    }
+    if let Some(options) =
+        with_builtins_that_starting_worker_writes(changed.as_ref().unwrap_or(options))
+    {
         changed = Some(options);
     }
     let mut compiled = loop {
@@ -2277,6 +2321,9 @@ fn compile_programs<'a>(
         if options.aot.checks_only {
             engine_options.check_only();
         }
+        if build.stays_in_compiled_files {
+            engine_options.refuse_code_outside_image();
+        }
         let own = match (place, programs) {
             (ProgramPlace::OneOfSeveral(index), Some(all)) => {
                 let position = all.indexes.iter().position(|&it| it == index);
@@ -2574,6 +2621,7 @@ impl<'a> Build<'a> {
             took_in_too_much: false,
             started_workers: StartedWorkers::default(),
             replaced_builtins: ReplacedByTests::default(),
+            stays_in_compiled_files: false,
             brings_bun_types: false,
             has_withdrawn_trust: false,
         }
@@ -2875,6 +2923,7 @@ impl<'a> Build<'a> {
         WHOLE_ENGINE_RUNS.set(WHOLE_ENGINE_RUNS.get() + u64::from(!has_ended_behind_flow_analysis));
 
         let returned = Instant::now();
+        log_unseen_code(&engine);
         self.statistics.add_values(engine.statistics());
         self.diagnostics.add_engine_records(
             &engine,

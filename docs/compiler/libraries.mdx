@@ -14,7 +14,6 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 | Package               | Use instead                                   |
 | --------------------- | --------------------------------------------- |
 | `core-js` 2           | `core-js` 3                                   |
-| `sass`                | Compile your stylesheets before the build     |
 | `asciidoctor` 2 and 3 | `asciidoctor` 4                               |
 | `zone.js`             | Zoneless change detection in Angular          |
 | `chai.should()`       | `expect` or `assert`                          |
@@ -25,7 +24,7 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 | `private`             | `recast` 0.20.4 or Babel 7, which dropped it  |
 
 - The `/auto` and `shim()` entry points of `array.prototype.map`, `set.prototype.union`, `string.prototype.matchall` and similar packages replace a method. Call what the package exports instead, as in `map(list, f)`.
-- Remove `es5-shim`, `es6-shim`, `url-polyfill`, `harmony-reflect` and `promise/polyfill`. Bun has what they add.
+- Remove `es5-shim`, `es6-shim`, `url-polyfill` and `harmony-reflect`. Bun has what they add.
 - `collections` and `prototype` replace functions of `Object`, and have no replacement.
 - `@js-temporal/polyfill` works if you leave out the `Date.prototype.toTemporalInstant = ...` line from its README.
 - `next` works. It logs a line that begins with `Failed to install` when it starts.

@@ -14,10 +14,7 @@ use crate::builtins::{RuntimeModule, table};
 use crate::ir::generated::{
     self, ModuleExportKind, ModuleFlags, RuntimeFunctionEntry, WebAssemblyModule,
 };
-use crate::ir::parallel::map_each;
-use crate::ir::{
-    FunctionId, Id, InParallel, ModuleId, StringId, StringTable, VariableId, VariableKey,
-};
+use crate::ir::{FunctionId, Id, ModuleId, StringId, StringTable, VariableId, VariableKey};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
 use crate::module_keys::type_attribute_of;
@@ -43,7 +40,6 @@ pub(super) struct RecordInput<'a, 's> {
     pub definitions: &'a Definitions,
     pub numbering: &'a Numbering,
     pub progress: RecordProgress,
-    pub in_parallel: InParallel<'a>,
 }
 
 #[derive(Default)]
@@ -70,6 +66,14 @@ impl RecordInput<'_, '_> {
         let first = self.progress.error.take();
         self.progress.error.set(first.or(Some(error)));
         ModuleId::new(0)
+    }
+
+    fn exported_variable(&self, project: ProjectId, key: VariableKey) -> VariableId {
+        let key = key_context(self.projects, project).variable_key(key);
+        let merged = self.variables.find(&key);
+        let merged = merged.expect("the mark reports an export without a variable");
+        self.numbering.variables[merged as usize]
+            .expect("link dropped the variable of an export that is read")
     }
 
     fn body_of(&self, module: ProgramModule) -> FunctionId {
@@ -103,12 +107,9 @@ pub(super) fn build_module_records(
         synthetic_exports: collect_synthetic_exports(input),
         is_named_at_run_time: find_modules_named_at_run_time(input),
         ambiguous_exports: Vec::new(),
-        record_being_built: 0,
-        exported_variables: Vec::new(),
     };
-    let mut modules = builder.build_modules(units);
+    let modules = builder.build_modules(units);
     input.progress.current.set(None);
-    fill_exported_variables(input, &builder.exported_variables, &mut modules);
     let module_failures = builder.build_failures();
     let ambiguous_exports = core::mem::take(&mut builder.ambiguous_exports);
     if let Some(error) = input.progress.error.take() {
@@ -122,42 +123,6 @@ pub(super) fn build_module_records(
         runtime_functions: collect_runtime_functions(input),
         web_assembly_modules: collect_web_assembly_modules(input),
     })
-}
-
-/// An export whose variable is still to be looked up.
-#[derive(Copy, Clone)]
-struct ExportedVariable {
-    /// Among the records, and among the exports of the record.
-    place: (u32, u32),
-    project: ProjectId,
-    key: VariableKey,
-}
-
-// The records are built one after the other: a string gets its number where a record first names it. The variable of an export is
-// a look into a table of all the variables of the program, asks nothing of the strings, and there is one for every name that a
-// module exports: they are looked up together, on all threads.
-fn fill_exported_variables(
-    input: &RecordInput<'_, '_>,
-    exported: &[ExportedVariable],
-    modules: &mut [generated::Module],
-) {
-    const LOOKED_UP_TOGETHER: usize = 4096;
-    let (projects, variables, numbering) = (input.projects, input.variables, input.numbering);
-    let find = |export: &ExportedVariable| -> VariableId {
-        let key = key_context(projects, export.project).variable_key(export.key);
-        let merged = variables.find(&key);
-        let merged = merged.expect("the mark reports an export without a variable");
-        numbering.variables[merged as usize]
-            .expect("link dropped the variable of an export that is read")
-    };
-    let lots: Vec<&[ExportedVariable]> = exported.chunks(LOOKED_UP_TOGETHER).collect();
-    let found = map_each(lots, input.in_parallel, &|lot: &[ExportedVariable]| {
-        lot.iter().map(find).collect::<Vec<VariableId>>()
-    });
-    for (export, variable) in exported.iter().zip(found.into_iter().flatten()) {
-        let (record, position) = export.place;
-        modules[record as usize].exports[position as usize].variable = Some(variable);
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -224,8 +189,6 @@ struct RecordBuilder<'b, 'a, 's> {
     synthetic_exports: Vec<Vec<MergedSyntheticExport>>,
     is_named_at_run_time: Vec<bool>,
     ambiguous_exports: Vec<generated::AmbiguousExport>,
-    record_being_built: u32,
-    exported_variables: Vec<ExportedVariable>,
 }
 
 impl RecordBuilder<'_, '_, '_> {
@@ -246,7 +209,6 @@ impl RecordBuilder<'_, '_, '_> {
             };
             debug_assert_eq!(id.index(), records.len());
             input.progress.current.set(Some(module));
-            self.record_being_built = records.len() as u32;
             records.push(match module {
                 ProgramModule::File(file) => self.build_file_record(units, index, file),
                 ProgramModule::Inner { file, .. }
@@ -497,6 +459,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.is_changed_on_disk_by_run(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::IS_CHANGED_ON_DISK_BY_RUN;
         }
+        if graph.loads_compiled_files_alone(module) {
+            flags |= ModuleFlags::LOADS_COMPILED_FILES_ALONE;
+        }
         if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
             flags |= ModuleFlags::RUNS_AGAIN;
         }
@@ -536,12 +501,11 @@ impl RecordBuilder<'_, '_, '_> {
         project: ProjectId,
         exports: &[modules::ModuleExport],
     ) -> Vec<generated::ModuleExport> {
-        let mut built = Vec::new();
-        for export in exports.iter().filter(|export| export.is_read_from_object) {
-            let place = (self.record_being_built, built.len() as u32);
-            built.extend(self.build_export(project, export, place));
-        }
-        built
+        exports
+            .iter()
+            .filter(|export| export.is_read_from_object)
+            .filter_map(|export| self.build_export(project, export))
+            .collect()
     }
 
     fn fill_export_table_record(&mut self, file: ProgramFile, record: &mut generated::Module) {
@@ -666,7 +630,6 @@ impl RecordBuilder<'_, '_, '_> {
         &mut self,
         project: ProjectId,
         export: &modules::ModuleExport,
-        place: (u32, u32),
     ) -> Option<generated::ModuleExport> {
         let input = self.input;
         let (project, binding) = self.find_binding_in_other_project(project, export.binding)?;
@@ -688,13 +651,9 @@ impl RecordBuilder<'_, '_, '_> {
                     ExportBinding::Synthetic(copy) => commonjs.may_stay_empty(copy),
                     _ => false,
                 };
-                self.exported_variables.push(ExportedVariable {
-                    place,
-                    project,
-                    key,
-                });
                 generated::ModuleExport {
                     kind: ModuleExportKind::Variable,
+                    variable: Some(input.exported_variable(project, key)),
                     is_dropped_while_empty,
                     ..unbound
                 }

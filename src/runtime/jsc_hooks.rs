@@ -4281,6 +4281,11 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     } else {
         bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
     };
+    if loader == Loader::Napi
+        && bun_jsc::compiled_program::lets_test_run_load_addon(global, specifier)
+    {
+        return None;
+    }
     let refusal = if loaded == Loaded::Code {
         bun_jsc::compiled_program::error_if_code_outside_image_is_refused(global, code, specifier)
     } else {

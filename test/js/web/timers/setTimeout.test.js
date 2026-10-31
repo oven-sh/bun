@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles, withoutAsanQuarantine } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -581,7 +581,7 @@ for (const mode of ["clear", "refresh", "repeat"]) {
   it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
-      env: withoutAsanQuarantine(bunEnv),
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

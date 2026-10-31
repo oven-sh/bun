@@ -237,13 +237,11 @@ impl Build<'_> {
             .filter_map(|name| Some((BuiltinId::from_wire(name.holder)?, &name.name[..])))
             .collect();
         // The front end asks nothing of these names, so what the files spell goes straight to the engine.
-        if self.options.load.runs_tests {
-            let files = application.loaded.files();
-            let sources = files.compiled_files().iter();
-            let sources = sources.filter_map(|&file| parsed_source(files, file));
-            let spelled = sources.flat_map(|source| source.builtins.names_added().iter());
-            opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
-        }
+        let files = application.loaded.files();
+        let sources = files.compiled_files().iter();
+        let sources = sources.filter_map(|&file| parsed_source(files, file));
+        let spelled = sources.flat_map(|source| source.builtins.names_added().iter());
+        opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
         opened.shared_sort_unstable();
         opened.dedup();
         for (holder, name) in opened {

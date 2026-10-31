@@ -440,23 +440,6 @@ pub fn reaches_unknown_module_loader(
     collector.has_unknown_module_loader
 }
 
-/// Whether code that lets `exposed` out of sight can get at the table of loaded modules: `require.cache`, `Module._cache`.
-pub fn reaches_module_cache(exposed: &[BuiltinId], platform: Platforms) -> bool {
-    let tables = [
-        BuiltinId::ModuleRequireCache,
-        BuiltinId::ModuleRequirePrototypeCache,
-        BuiltinId::NodeModule_cache,
-    ]
-    .map(table::canonical_id);
-    if exposed.is_empty() {
-        return false;
-    }
-    let mut collector = Collector::new(platform);
-    collector.work_stack.extend_from_slice(exposed);
-    collector.add_reachable_entries();
-    (tables.iter()).any(|&id| collector.visited.is_set(id.to_wire() as usize))
-}
-
 /// What a piece of source says of the built-ins.
 #[derive(Copy, Clone, Default)]
 pub struct Mentions<'a> {

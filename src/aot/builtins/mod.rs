@@ -20,7 +20,8 @@ pub use resolve::{
     BuiltinExported, BuiltinPath, BuiltinsOfLoadedFile, EvaluatedText, EvaluatedTextForm,
     FileFacts, ImportTargets, KeyOfModuleCache, ModuleExport, ReplacedMembersSought, ResolveInput,
     Resolved, ResolvedBuiltins, SourceDialect, WriteOnImport, commonjs_variable_builtin,
-    find_member_written_behind, find_module_export, resolve_file, resolve_within,
+    find_member_written_behind, find_module_export, members_written_under_any_name, resolve_file,
+    resolve_within,
 };
 pub use returned_arguments::returns_first_argument;
 pub use runtime_uses::RuntimeUses;

@@ -729,6 +729,7 @@ export const shapes: Shape[] = [
     counted: "calls",
     size: 2000,
     entry: "main.js",
+    isExcludedFromCombinedBuild: true,
     counts: ["StepsToReleaseDeadValues"],
     write: size => ({
       "main.js":

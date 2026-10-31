@@ -262,6 +262,10 @@ impl EngineOptions {
         self.record.action = CompileAction::CheckOnly;
     }
 
+    pub fn refuse_code_outside_image(&mut self) {
+        self.record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
+    }
+
     pub fn makes_image(&self) -> bool {
         self.record.action == CompileAction::Compile
     }

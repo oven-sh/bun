@@ -115,6 +115,8 @@ pub(crate) struct ParsedSource {
     pub library_modules_passed_for_parameters: Vec<RuntimeModule>,
     pub library_modules_written_as_values: Vec<RuntimeModule>,
     pub loads_by_unknown_name: bool,
+    /// `named_loads::FilesOfTests`, where `AotOptions::only_tests_load_code_from_disk`
+    pub is_of_tests: bool,
     pub unknown_names_at: Vec<u32>,
     /// `named_loads::find_loads_of_files_missing_at_build`
     pub files_missing_at_build_at: Vec<u32>,
@@ -149,6 +151,7 @@ impl ParsedSource {
             library_modules_passed_for_parameters: Vec::new(),
             library_modules_written_as_values: Vec::new(),
             loads_by_unknown_name: false,
+            is_of_tests: false,
             unknown_names_at: Vec::new(),
             files_missing_at_build_at: Vec::new(),
             imports_given_unknown_names: Vec::new(),

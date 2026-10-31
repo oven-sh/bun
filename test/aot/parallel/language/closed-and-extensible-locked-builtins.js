@@ -58,7 +58,7 @@ export {};
 /* Output:
 closed entirely
 Object.prototype: a new name TypeError, hasOwnProperty TypeError, index 0 TypeError, extensible false
-Promise.prototype: a new name TypeError, then TypeError, index 0 TypeError, extensible false
+Promise.prototype: a new name stored, then TypeError, index 0 TypeError, extensible true
 the prototype of generators: a new name TypeError, next TypeError, index 0 TypeError, extensible false
 the prototype of async generators: a new name TypeError, next TypeError, index 0 TypeError, extensible false
 members fixed, new names allowed

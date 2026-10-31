@@ -51,6 +51,7 @@ use crate::ir::parallel::map_each;
 use crate::known_helpers::KnownHelpers;
 use crate::link::{Beside, run_beside};
 use crate::load::replaced_by_tests::without_extension;
+use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::options::{
     FilesThatTestsLoad, LoadsBelowFilesLeftToLoader, ReplacedExport, ReplacedModule,
@@ -138,6 +139,8 @@ pub struct BindInput<'a, 's> {
     pub typescript_drops_absent_exports: bool,
     /// `AotOptions::loads_code_from_disk`
     pub loads_code_from_disk: bool,
+    /// `AotOptions::only_tests_load_code_from_disk`
+    pub only_tests_load_code_from_disk: bool,
     /// `AotOptions::host_runs_files_from_disk`
     pub host_runs_files_from_disk: bool,
     /// `LoadOptions::stand_in_for_files_from_disk`
@@ -657,6 +660,13 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     if input.runs_tests {
         plan.set_runs_tests();
+    }
+    if input.only_tests_load_code_from_disk {
+        for &file in input.files.compiled_files() {
+            if parsed_source(input.files, file).is_some_and(|source| !source.is_of_tests) {
+                plan.set_loads_compiled_files_alone(ModuleRef::File(file));
+            }
+        }
     }
     // `require.main` is what the cache holds under the path in `Bun.main`.
     if input.runs_tests || input.stores_path_of_main_module {

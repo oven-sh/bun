@@ -351,6 +351,13 @@ fn find_files_of_packages_reached_from(
     let mut of_packages = Vec::new();
     let mut others = Vec::new();
     let mut level = test_files;
+    let top = FileSystem::get().top_level_dir();
+    for path in &level {
+        let _ = seen.insert(resolve_path::join_abs_string::<bun_path::platform::Auto>(
+            top,
+            &[&path[..]],
+        ));
+    }
     while !level.is_empty() {
         let mut next = Vec::new();
         for path in find_files_imported_by(vm, &level) {
@@ -848,6 +855,167 @@ fn note_files_that_require_loads(paths: &[Box<[u8]>], imports: &[Vec<u32>], ways
         .lock()
         .extend(marked(is_named_otherwise));
     FILES_REQUIRED.lock().extend(marked(is_required));
+}
+
+fn find_all_that_is_reached_from(
+    vm: &mut VirtualMachine,
+    above: Vec<Box<[u8]>>,
+) -> (Vec<Box<[u8]>>, Vec<Vec<u32>>, Vec<u64>) {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+    ];
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut vm.transpiler.resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
+    let mut position_of = bun_collections::StringHashMap::<u32>::default();
+    let mut paths = above;
+    for (position, path) in paths.iter().enumerate() {
+        let _ = position_of.put(path, position as u32);
+    }
+    let mut imports: Vec<Vec<u32>> = Vec::new();
+    while imports.len() < paths.len() {
+        let first = imports.len();
+        let names_of_level = find_names_in(
+            &paths[first..],
+            match first {
+                0 => for_each_name_that_loads,
+                _ => for_each_name_that_build_follows,
+            },
+        );
+        for (file, names) in (first..).zip(names_of_level) {
+            let folder = resolve_path::dirname::<bun_path::platform::Auto>(&paths[file]).to_vec();
+            let mut loaded: Vec<Box<[u8]>> = Vec::new();
+            for marked in names {
+                let name = &marked[1..];
+                if let Some((prefix, suffix)) = strings::split_once_char(name, 0) {
+                    add_files_behind_pattern(&folder, prefix, suffix, &mut loaded);
+                    continue;
+                }
+                let kind = bun_ast::ImportKind::Stmt;
+                let Ok(result) = vm.transpiler.resolver.resolve(&folder, name, kind) else {
+                    continue;
+                };
+                let path = result.path_pair.primary.text();
+                if bun_path::is_absolute(path)
+                    && EXTENSIONS.iter().any(|extension| path.ends_with(extension))
+                {
+                    loaded.push(Box::from(path));
+                }
+            }
+            let mut imported: Vec<u32> = Vec::new();
+            for path in loaded {
+                let position = match position_of.get(&*path) {
+                    Some(&position) => position,
+                    None => {
+                        let position = paths.len() as u32;
+                        let _ = position_of.put(&path, position);
+                        paths.push(path);
+                        position
+                    }
+                };
+                if position as usize != file && !imported.contains(&position) {
+                    imported.push(position);
+                }
+            }
+            imports.push(imported);
+        }
+    }
+    let size_of = |path: &[u8]| {
+        bun_sys::stat(&bun_core::ZBox::from_bytes(path)).map_or(0, |stat| stat.st_size as u64)
+    };
+    let sizes = paths.iter().map(|path| size_of(path)).collect();
+    (paths, imports, sizes)
+}
+
+const MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD: u64 = 8300;
+
+fn select_shard_by_reach(
+    vm: &mut VirtualMachine,
+    ctx: &crate::cli::command::ContextData,
+    test_files: &mut [Interned],
+    shard: bun_options_types::context::Shard,
+    timings: Option<&Timings>,
+) -> usize {
+    use crate::cli::test::shards_by_reach::{Costs, Reach, deal};
+    index_sort::sort_slice_by(test_files, |a, b| {
+        strings::order(a.as_bytes(), b.as_bytes())
+    });
+    let (tests, shards) = (test_files.len(), shard.count as usize);
+    let otherwise: Vec<u32> = match timings {
+        Some(timings) => {
+            let ranges = timings.partition(test_files, shard.count);
+            let shard_of = |test: u32| ranges.iter().position(|it| it.lo <= test && test < it.hi);
+            (0..tests as u32)
+                .map(|test| shard_of(test).unwrap_or(0) as u32)
+                .collect()
+        }
+        None => (0..tests).map(|test| (test % shards) as u32).collect(),
+    };
+    let mut above: Vec<Box<[u8]>> = (test_files.iter())
+        .map(|path| Box::from(path.as_bytes()))
+        .collect();
+    let mut preloads: Vec<u32> = Vec::new();
+    for path in find_files_of_preloads(vm, &ctx.preloads) {
+        let position = above.iter().position(|other| **other == *path);
+        preloads.push(position.unwrap_or(above.len()) as u32);
+        if position.is_none() {
+            above.push(path);
+        }
+    }
+    let (paths, imports, sizes) = find_all_that_is_reached_from(vm, above);
+    run_compiled::log_step_of_test_run(format_args!(
+        "what the test files of all {shards} shards reach is found: {} files",
+        paths.len() - tests
+    ));
+    let of_run: Vec<u64> = match timings {
+        Some(timings) => (timings.costs(test_files).into_iter())
+            .map(|milliseconds| (milliseconds * 1000).max(1))
+            .collect(),
+        None => vec![1; tests],
+    };
+    let costs = Costs {
+        of_run: &of_run,
+        of_thousand_bytes: match timings {
+            Some(_) if ctx.test_options.parallel > 0 => {
+                MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD
+            }
+            _ => 0,
+        },
+        at_once: match timings {
+            Some(_) => u64::from(run_compiled::workers_that_were_typed()),
+            None => 0,
+        },
+    };
+    let reach = Reach {
+        test_count: tests,
+        imports: &imports,
+        sizes: &sizes,
+        preloads: &preloads,
+    };
+    let dealt = deal(&reach, &costs, shards, otherwise);
+    let mine = shard.index - 1;
+    run_compiled::log_step_of_test_run(format_args!(
+        "the shards are dealt by what the test files reach: this one builds {} KB, the others {:?} | the longest takes {}",
+        dealt.bytes_of[mine as usize] / 1000,
+        (dealt.bytes_of.iter().enumerate())
+            .filter(|&(other, _)| other != mine as usize)
+            .map(|(_, bytes)| bytes / 1000)
+            .collect::<Vec<u64>>(),
+        dealt.longest,
+    ));
+    let mut write = 0;
+    for test in 0..tests {
+        if dealt.shard_of[test] == mine {
+            test_files[write] = test_files[test];
+            write += 1;
+        }
+    }
+    write
 }
 
 // Of the files that `above` reach and that no program below holds, the lowest, for a program of their own. No program imports from one
@@ -4260,6 +4428,7 @@ impl TestCommand {
             {
                 aot.main_modules_beside_entry_points =
                     entry_points.iter().map(|path| path.to_vec()).collect();
+                aot.preloads_of_test_run = ctx.preloads.iter().map(|path| path.to_vec()).collect();
             }
             let is_above_what_is_shared = run_compiled::is_above_program_of_run();
             let builds_packages_alone = run_compiled::builds_packages_alone();
@@ -4604,7 +4773,12 @@ impl TestCommand {
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
                 let mut write: usize = 0;
-                if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
+                let timings = reporter.timings.as_ref().filter(|t| !t.is_empty());
+                let is_compiled =
+                    run_compiled::is_requested(ctx) || run_compiled::runs_compiled_code();
+                if is_compiled && shard.count > 1 {
+                    write = select_shard_by_reach(vm, ctx, test_files, *shard, timings);
+                } else if let Some(timings) = timings {
                     write = timings.select_shard(test_files, *shard);
                 } else {
                     index_sort::sort_slice_by(test_files, |a, b| {
@@ -5102,7 +5276,31 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
-        let refused = run_compiled::refused_changes();
+        let (refused_loads, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (run_compiled::refused_changes().into_iter())
+                .partition(|refusal| refusal.starts_with(b"Cannot load "));
+        if !refused_loads.is_empty() {
+            pretty_error!(
+                "<yellow>{} load{} of code that wasn't compiled<r> failed during this run, caught or not. An executable refuses them too, unless the file is built into it. Import the file by a constant path, or add --aot-allow-code-from-disk:\n",
+                refused_loads.len(),
+                if refused_loads.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused_loads {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
+        let (addons, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(b"Loaded "));
+        if !addons.is_empty() {
+            pretty_error!(
+                "<yellow>{} native addon{} that the build didn't find<r> loaded from disk during this run. An executable holds one only if it's given the file as an entry point:\n",
+                addons.len(),
+                if addons.len() == 1 { "" } else { "s" }
+            );
+            for addon in &addons {
+                pretty_error!("  {}\n", bstr::BStr::new(addon));
+            }
+        }
         if !refused.is_empty() {
             pretty_error!(
                 "<yellow>{} write{} to read-only built-ins<r> failed during this run, caught or not. Code that continued after one may have left its work half done:\n",

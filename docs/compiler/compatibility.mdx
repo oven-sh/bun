@@ -26,9 +26,10 @@ Compiled code calls `push` directly. It doesn't check first whether something re
 
 - You can't replace, redefine or delete an existing member of the language's own objects: `Object`, `Array`, `String`, `Map`, `Set`, `Promise`, `RegExp`, `Date`, `Math`, `JSON`, `Buffer`, the typed arrays, and their prototypes.
 - You can add a new member to most of them: `Array.prototype.last`, `Math.tau`, `BigInt.prototype.toJSON`.
-- You can't add anything to `Object.prototype`, `Function.prototype`, `Promise.prototype` or `RegExp.prototype`.
+- `Function.prototype`, `Promise.prototype` and `RegExp.prototype` take a new member only where the build sees its name: `Function.prototype.once = once` works, in your code and in a package. `Function.prototype[name] = f` throws. Compiled code knows that no other name is there, so it doesn't look.
+- You can't add anything to `Object.prototype`.
 - You can't put anything at an index of `Array.prototype`, such as a setter at `Array.prototype[0]`, or change what `Array.prototype` inherits from. A store to `list[0]` never looks for one. A subclass can have one: `class List extends Array {}`.
-- The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are read-only. Write a subclass: `class Upper extends Response {}`.
+- So do the prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams`. What they already have is read-only. Write a subclass: `class Upper extends Response {}`.
 - What a program reads to find out which runtime it is on is read-only: `process.isBun`, `process.versions`, `process.release`, `process.versions.node`, `process.versions.bun` and `process.release.name`. The build replaces those reads with their values, so a branch for another runtime is not compiled. Under `bun test --aot` they are read when the code runs, and a test can replace each of them.
 
 What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. Under [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) a test can replace most other methods too, [but not all](#what-a-test-cant-replace). So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
@@ -143,9 +144,26 @@ bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 
 Code that's loaded from disk is interpreted, and both flags make the executable larger. With `--aot-allow-code-from-disk`, a dynamic path also finds every file that was compiled. A file that's loaded from disk can import your source files by their paths and gets the compiled modules, not second copies, as long as the files keep their places next to the executable: a path is mapped by where your root directory lay, seen from the executable that `bun compile` wrote, or else from the folder where you ran it. Such a file can also import your program and the packages compiled into it by name, like `import "my-app"` or `import "some-package"`, wherever it lies. A package that the disk holds next to that file comes first, as under `bun run`. What such a file imports from disk is found as under `bun run`: the `package.json` and `tsconfig.json` files on disk are read, as with `--compile-autoload-package-json` and `--compile-autoload-tsconfig`.
 
+Code from disk can't change a built-in either, and neither can a `node:` module that only code from disk loads. `mock.timers.enable()` of `node:test` and `createTracing().enable()` of `node:trace_events` replace `setTimeout`, so there they throw `Cannot assign to setTimeout`. Import the module in one of your own files, `import "node:test"`, and the build leaves writable what the module replaces.
+
 Workers follow the same rule. The build finds `new Worker("./worker.ts")`, `new Worker(new URL("./worker.ts", import.meta.url))` and `new Worker("./jobs/" + name + ".ts")` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
 
 Next.js and Angular load your pages by dynamic paths. [Frameworks](/compiler/libraries#frameworks) shows what to pass.
+
+### Under `bun test --aot`
+
+Your tests see the same rule as your executable. A `require()` or `import()` with a computed path can load a file that wasn't compiled only if the call is written in a test file, a preload, or a file in a test file's folder or below it. Written anywhere else, in your source or in a package, it finds compiled files only:
+
+```txt
+error: Cannot load '/home/me/plugins/late.ts': it wasn't compiled with the program, and --aot only runs code that was.
+Import the file by a constant path, or add --aot-allow-code-from-disk.
+```
+
+So a test that passes doesn't hide a plugin that the executable can't load. A test can still write a module and import it. A package may catch that error and carry on without a word, so the run ends with a list of every load that was refused, and where.
+
+A native addon, a `.node` file, loads from disk wherever the call is written: whether your executable holds it depends on how you build it, which a test run can't know. The run lists each addon that the build didn't find. Pass it as an entry point when you build the executable.
+
+If you build with `--aot-allow-code-from-disk`, test with it: `bun test --aot --aot-allow-code-from-disk` loads files from disk wherever the call is written.
 
 ## Loader hooks and the module cache
 
@@ -298,6 +316,20 @@ In a CommonJS file that isn't in strict mode, a function declared inside a block
 console.log(typeof inner); // bun run prints "undefined". An executable prints "function".
 ```
 
+## `fn.caller` and `fn.arguments`
+
+These two properties of a function that isn't in strict mode are always `null`, also while the function runs. Under `bun run` they hold the calling function and the arguments of the running call. They aren't part of the language, and strict mode and ES modules never had them. The `arguments` object inside a function works as usual.
+
+```js caller.cjs icon="/icons/javascript.svg"
+function inner() {
+  return [inner.caller === outer, inner.arguments, arguments.length];
+}
+function outer() {
+  return inner(1, 2, 3);
+}
+console.log(outer()); // bun run prints [ true, [ 1, 2, 3 ], 3 ]. An executable prints [ false, null, 3 ].
+```
+
 ## Error messages
 
 The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
@@ -327,6 +359,22 @@ async function watch(target: object) {
 Keep a `FinalizationRegistry` at module level, or somewhere your program reads it again later.
 
 A variable that nothing in your program can read is removed. So is an object that only that variable held, unless your program could notice that it's gone, for example through a `WeakRef`. A [heap snapshot](/compiler/debugging#profiles) doesn't list what was removed.
+
+## Smaller differences
+
+Few programs notice these.
+
+| What you read                                                                      | `bun run`                                                            | An executable                                           |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------- |
+| `fn.caller` and `fn.arguments` while `fn` runs, outside strict mode                | The calling function and the arguments                               | `null`                                                  |
+| `error.originalColumn`                                                             | The column in the text that the transpiler printed                   | The same as `error.column`                              |
+| The descriptor of `globalAgent` on `node:_http_agent`                              | A data property                                                      | A getter and a setter. The agent is made when it's read |
+| `socket.map`, `.filter`, `.toArray` and the like, without importing `node:stream`  | There once anything has touched `process.stdout` or `process.stderr` | There once `node:stream` is imported                    |
+| The order of two `import()`s of one module, one of them started from a promise job | Varies from run to run                                               | Can be an order that `bun run` doesn't show             |
+| `require()` of an ES module that is still loading, under a name made at run time   | The rest of the graph runs inside the `require()`                    | The CommonJS file finishes first                        |
+| `Bun.deepMatch()`, `toMatchObject()`: objects that differ in a `#private` field    | They differ                                                          | They match, as for `Bun.deepEquals()` and `toEqual()`   |
+
+`process.stdout.write()` and `process.stderr.write()` don't load `node:stream` in an executable, which is why the stream helpers aren't on a `net.Socket` until you import it.
 
 ## Not supported
 

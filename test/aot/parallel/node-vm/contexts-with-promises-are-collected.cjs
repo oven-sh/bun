@@ -140,12 +140,15 @@ async function main() {
       const used = await settle();
       if (round >= 0) after.push(used);
     }
+    // What leaks grows from round to round. What a word on the stack names by chance comes once and stays.
     const early = Math.min(...after.slice(0, 3));
+    const middle = Math.min(...after.slice(3, -3));
     const late = Math.min(...after.slice(-3));
+    const growsOver = (bytes, spans) => Math.round(bytes / (spans * each)) > 2048;
     console.log(
       JSON.stringify({
         name,
-        grows: Math.round((late - early) / ((rounds - 3) * each)) > 2048,
+        grows: growsOver(middle - early, 3) && growsOver(late - middle, rounds - 6),
         holdsTheAnswers: (held ? held - late : 0) > 10_000_000,
       }),
     );

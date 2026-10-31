@@ -130,7 +130,7 @@ pub(crate) fn run_as_coordinator(
                     .iter()
                     .map(growth_of)
                     .collect();
-                let light = &mut sorted[heavy_parts as usize..];
+                let light = &sorted[heavy_parts as usize..];
                 let costs = timings.costs_where_unknown_is_slow(light);
                 let files = crate::cli::run_compiled::test_part_files(ctx).unwrap_or(n);
                 let count = (light.len() as u32).div_ceil(files);
@@ -140,7 +140,8 @@ pub(crate) fn run_as_coordinator(
                         hi: file + 1,
                     })
                     .collect();
-                let of_light = super::parts::cut_by_time(light, &costs, count);
+                // The slow files take parts of their own, so the quick ones stand closer: about as many parts as by number.
+                let of_light = super::parts::cut_by_time(&costs, count, files.saturating_mul(2));
                 ranges_of_parts.extend(of_light.into_iter().map(|range| FileRange {
                     lo: range.lo + heavy_parts,
                     hi: range.hi + heavy_parts,

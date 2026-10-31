@@ -487,7 +487,6 @@ pub struct TestOptions {
     pub timings_files: Vec<Box<[u8]>>,
     /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
     pub update_timings: bool,
-    /// `bun test --aot --aot-memory-limit=<size>`, in bytes.
     pub aot_memory_limit: Option<u64>,
 
     pub reporters: Reporters,

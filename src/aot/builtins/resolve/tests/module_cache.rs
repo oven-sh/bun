@@ -105,7 +105,9 @@ fn every_other_use_gets_at_the_entries() {
         "let cache = require.cache; cache = other; cache[key].exports.member;"
     ));
     assert!(reaches("module.exports = require.cache;"));
-    assert!(reaches("plugin(require);"));
+    assert!(!reaches("plugin(require);"));
+    assert!(!reaches("plugin(module);"));
+    assert!(!reaches("var module = list[0]; plugin(exports, module);"));
 }
 
 #[test]

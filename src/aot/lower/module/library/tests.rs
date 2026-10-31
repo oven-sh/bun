@@ -64,6 +64,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         is_library: true,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     let names = BuiltinNames::new(&atoms);

@@ -363,7 +363,6 @@ pub fn link_while(
                         definitions: &definitions,
                         numbering: &numbering,
                         progress: RecordProgress::default(),
-                        in_parallel,
                     },
                     &mut strings,
                 );

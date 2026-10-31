@@ -190,7 +190,7 @@ function f4 module=m0 position=54 kind=Initializer flags=[HasThis, IsChecked, Is
 # CHECK-NEXT: v0: false = Boolean
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 10 = Integer integer=10
-# CHECK-NEXT: v3: Array<string, Contiguous> = NewArray contents=string capacity=v2 allocationSite=2 arrayStorage=Contiguous [contentsAreProven, isFilledToCapacity]
+# CHECK-NEXT: v3: Array<string, Contiguous> = NewArray contents=string capacity=v2 allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v4: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: v6: L0 = NewObject -, v0, v1 layout=L0 fields=[0, 1] storage=Frame allocationClass=0 [listsOnlyStoredValues]

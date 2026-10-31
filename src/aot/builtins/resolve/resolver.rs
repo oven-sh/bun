@@ -8,7 +8,7 @@ use super::{
     WriteOnImport,
 };
 use crate::builtins::runtime_uses::{
-    MentionedUses, Mentions, RuntimeUses, reaches_module_cache, reaches_unknown_module_loader,
+    MentionedUses, Mentions, RuntimeUses, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
@@ -283,6 +283,7 @@ pub(super) struct ResolverOutput {
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
+    pub(super) writes_on_parameters_under_any_name: bool,
     pub(super) builtins_handed_out: Vec<BuiltinId>,
     pub(super) builtins_exported: Vec<BuiltinExported>,
     pub(super) writes_on_imports: Vec<WriteOnImport>,
@@ -786,10 +787,8 @@ impl<'a, 's> Resolver<'a, 's> {
             ),
             SourceDialect::Runtime => false,
         };
-        let lets_go_of_way_to_module_cache = input.dialect == SourceDialect::Program
-            && reaches_module_cache(&exposed, input.platform);
-        let reaches_module_cache = lets_go_of_way_to_module_cache
-            || (input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache);
+        let reaches_module_cache =
+            input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache;
         let reads_entries_of_module_cache =
             input.dialect == SourceDialect::Program && output.reads_entries_of_module_cache;
         let mut ids = mentioned.iter();
@@ -836,6 +835,7 @@ impl<'a, 's> Resolver<'a, 's> {
             replaced_members: sorted_unique(output.replaced_members),
             names_added: output.names_added.into_boxed_slice(),
             holders_named_from_outside: output.holders_named_from_outside.into_boxed_slice(),
+            writes_on_parameters_under_any_name: output.writes_on_parameters_under_any_name,
             builtins_handed_out: output.builtins_handed_out.into_boxed_slice(),
             builtins_exported: output.builtins_exported.into_boxed_slice(),
             writes_on_imports: output.writes_on_imports.into_boxed_slice(),

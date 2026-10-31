@@ -611,6 +611,18 @@ impl<'a> Comments<'a> {
         self.file_comments.has_ignore_comments
     }
 
+    /// True if `span` has a `prettier-ignore` comment or the `(` of a type cast: both keep parentheses of the source.
+    pub(crate) fn keeps_source_parentheses_in(&self, span: Span) -> bool {
+        let casts = &self.file_comments.cast_parens;
+        let is_cast = |open: &u32| *open < span.end;
+        casts
+            .get(casts.partition_point(|open| *open < span.start))
+            .is_some_and(is_cast)
+            || (self.file_comments.has_ignore_comments
+                && (self.comments_in_span(span).iter())
+                    .any(|comment| comment.is_ignore_comment(self.flavor)))
+    }
+
     #[inline]
     pub(crate) fn is_suppression_comment(&self, comment: Comment<'_>) -> bool {
         self.file_comments.has_ignore_comments && comment.is_ignore_comment(self.flavor)

@@ -417,6 +417,8 @@ pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
                 && !parameter_has_comment(param, f)
         })
         && (f.comments().of_node(arrow.as_ast_nodes()).dangling).is_empty()
+        // Prettier prints `a ? b => ({ c }) : d => (e): T => f`. tsc reads `({ c }): d => (e)` as an arrow function.
+        && !f.context().after_colon.get().keeps_parentheses_of(arrow)
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.

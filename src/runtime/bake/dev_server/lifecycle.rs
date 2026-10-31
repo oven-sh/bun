@@ -102,6 +102,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
         w!(bundling_failures, Default::default());
+        w!(css_link_failures, Vec::new());
         w!(
             assume_perfect_incremental_bundling,
             bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
@@ -549,6 +550,7 @@ impl Drop for DevServer {
                 assets: _,
                 source_maps: _,
                 bundling_failures: _,
+                css_link_failures: _,
                 frontend_only: _,
                 has_tailwind_plugin_hack: _,
                 server_fetch_function_callback: _,

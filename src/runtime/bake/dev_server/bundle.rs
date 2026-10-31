@@ -459,6 +459,7 @@ impl DevServer {
         &self,
         bv2: &BundleV2<'_>,
         to_parse_for_server: &mut Vec<incremental_graph::ServerFileIndex>,
+        standing: &mut Vec<(incremental_graph::ClientFileIndex, bun_ast::Index)>,
     ) -> (
         Vec<(incremental_graph::ClientFileIndex, bun_ast::Index)>,
         Vec<(incremental_graph::ServerFileIndex, bun_ast::Index)>,
@@ -496,6 +497,15 @@ impl DevServer {
             if !bv2.css_import_scan_passes(row) {
                 continue;
             }
+            // A failure that the link step filed stands while the tree of its root has the text that failed.
+            let stands =
+                failed_on_client.filter(|&file| self.css_link_failure_stands(file, bv2, row));
+            if let Some(file) = stands {
+                if !standing.iter().any(|(known, _)| *known == file) {
+                    standing.push((file, row));
+                }
+                continue;
+            }
             // A plugin can load one path as a stylesheet for the browser and as a module for the server.
             let stylesheet_on_server = on_server.filter(|_| {
                 target.bake_graph() != bake::Graph::Client || Self::imported_by_server_row(bv2, row)
@@ -528,6 +538,20 @@ impl DevServer {
             repaired.len(),
         );
         (repaired, server_rows)
+    }
+
+    /// True if the link step filed the failure of `file`, and the tree of its row `root` has the text that failed.
+    fn css_link_failure_stands(
+        &self,
+        file: incremental_graph::ClientFileIndex,
+        bv2: &BundleV2<'_>,
+        root: bun_ast::Index,
+    ) -> bool {
+        let filed = self
+            .css_link_failures
+            .iter()
+            .find(|(known, _)| *known == file);
+        filed.is_some_and(|&(_, fingerprint)| bv2.css_tree_fingerprint(root) == fingerprint)
     }
 
     /// The file that the server graph has at `key`, if it holds a failure that an earlier bundle filed.
@@ -611,8 +635,13 @@ impl DevServer {
         let mut server_files: Vec<incremental_graph::ServerFileIndex> = Vec::new();
         {
             let _lock = self.graph_safety_lock.guard();
+            let mut standing = Vec::new();
             let (repaired, server_rows) =
-                self.stylesheets_repaired_by_current_bundle(bv2, &mut server_files);
+                self.stylesheets_repaired_by_current_bundle(bv2, &mut server_files, &mut standing);
+            // With a chunk of its own the root fails in the link step again: as a child only, it would lose the failure.
+            for (_, root) in standing {
+                bv2.add_css_root_from_dev_server(root);
+            }
             if repaired.is_empty() && server_rows.is_empty() && server_files.is_empty() {
                 return;
             }

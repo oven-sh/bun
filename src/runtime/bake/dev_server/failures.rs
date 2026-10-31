@@ -362,6 +362,10 @@ impl DevServer {
                 }
                 bake::Graph::Client => self.client_graph.insert_failure(key, log)?,
             }
+            // The link step files this error: the scan of a later bundle parses the file with no error.
+            if err.name() == "InvalidCssImport" {
+                self.record_css_chain_too_deep(abs_path, bv2);
+            }
         }
         // `track_resolution_failure` takes the graph lock itself.
         drop(graph_lock);
@@ -376,6 +380,33 @@ impl DevServer {
             )?;
         }
         Ok(())
+    }
+
+    /// Keeps the fingerprint of the tree of `file`, a css root whose failure the link step filed just now.
+    pub(super) fn record_css_link_failure(
+        &mut self,
+        file: incremental_graph::ClientFileIndex,
+        fingerprint: u64,
+    ) {
+        self.css_link_failures.retain(|(known, _)| *known != file);
+        self.css_link_failures.push((file, fingerprint));
+    }
+
+    /// Keeps the fingerprint for the css root at `key` if the link step failed it for a chain that is too deep.
+    fn record_css_chain_too_deep(&mut self, key: &[u8], bv2: &BundleV2<'_>) {
+        let rows = bv2.graph.ast.items_css().iter();
+        let mut rows = rows.zip(bv2.graph.input_files.items_source());
+        let root = rows.position(|(css, source)| {
+            css.is_some() && source.path.key_for_incremental_graph() == key
+        });
+        let (Some(root), Some(file)) = (root, self.client_graph.get_file_index(key)) else {
+            return;
+        };
+        let root = bun_ast::Index::init(root);
+        // An `@import` that is not css fails the import scan of every later bundle: it needs no fingerprint.
+        if bv2.css_import_scan_passes(root) {
+            self.record_css_link_failure(file, bv2.css_tree_fingerprint(root));
+        }
     }
 
     /// Return a log to write resolution failures into.

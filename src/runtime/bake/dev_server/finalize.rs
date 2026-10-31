@@ -402,6 +402,7 @@ fn finalize_bundle_inner(
                 .client_graph
                 .get_file_index(entry_key)
                 .expect("insert_failure registered the entry");
+            dev.record_css_link_failure(file_index, bv2.css_tree_fingerprint(index));
             // Pass 2 needs the index to diff the `@import` edges. Editing an imported
             // file follows those edges to rebundle this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =

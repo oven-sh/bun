@@ -60,6 +60,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             assets: _,
             source_maps: _,
             bundling_failures: _,
+            css_link_failures: _,
             frontend_only: _,
             has_tailwind_plugin_hack: _,
             server_fetch_function_callback: _,
@@ -219,6 +220,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
     }
+    // .css_link_failures
+    other_bytes += memory_cost_array_list(&dev.css_link_failures);
     // All entries are owned by the bundler arena, not DevServer, except for the request lists
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {

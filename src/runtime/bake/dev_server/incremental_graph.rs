@@ -1152,7 +1152,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             return false;
         };
         self.dev_incremental_result().failures_removed.push(kv.1);
+        self.forget_css_link_failure(index);
         true
+    }
+
+    /// A record that is dropped or replaced takes the fingerprint that the link step left for its file with it.
+    fn forget_css_link_failure(&mut self, index: FileIndex<SIDE>) {
+        if matches!(SIDE, Side::Client) {
+            // SAFETY: see `owner()`. `css_link_failures` is disjoint from both graphs.
+            let filed = unsafe { &mut (*self.owner()).css_link_failures };
+            filed.retain(|(file, _)| file.get() != index.get());
+        }
     }
 
     /// The bundle that drops the failure of a stylesheet prints every css root that holds it.
@@ -1964,6 +1974,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     .incremental_result
                     .failures_removed
                     .push(core::mem::replace(fail_gop.value_ptr, failure));
+                self.forget_css_link_failure(FileIndex::<SIDE>::init(idx as u32));
             } else {
                 *fail_gop.value_ptr = failure;
             }

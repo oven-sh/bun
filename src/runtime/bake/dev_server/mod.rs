@@ -523,6 +523,8 @@ pub(crate) struct DevServer {
     /// serialization only happens once.
     /// Keyed by `failure.owner`, stored as `OwnerPacked → SerializedFailure`.
     pub(crate) bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
+    /// The css roots whose failure in `bundling_failures` the link step filed, each with the fingerprint of its tree.
+    pub(crate) css_link_failures: Vec<(incremental_graph::ClientFileIndex, u64)>,
     /// When set, nothing is ever bundled for the server-side,
     /// and DevSever acts purely as a frontend bundler.
     pub(crate) frontend_only: bool,

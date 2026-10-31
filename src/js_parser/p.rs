@@ -9961,9 +9961,6 @@ impl LowerUsingDeclarationsContext {
                         continue;
                     }
                 }
-                js_ast::StmtData::SExportDefault(_) => {
-                    continue; // this prevents re-exporting default since we already have it as an .s_export_clause
-                }
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.
                     exports.extend_from_slice(data.items.slice());
@@ -10006,6 +10003,10 @@ impl LowerUsingDeclarationsContext {
                 _ => {}
             }
 
+            debug_assert!(
+                !matches!(stmt.data, js_ast::StmtData::SExportDefault(_)),
+                "s_export_default must split `export default` into a binding and an export clause before the module body is wrapped"
+            );
             stmts[end as usize] = stmt;
             end += 1;
         }

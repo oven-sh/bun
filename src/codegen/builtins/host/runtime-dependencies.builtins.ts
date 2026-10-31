@@ -674,6 +674,7 @@ const callsOfInspect = b.nativeCalls({
     { file: inBindings("webcore/JSBroadcastChannel.cpp") },
     { file: inBindings("webcore/JSPerformanceEntry.cpp") },
     { file: inBindings("webcore/JSURLSearchParams.cpp") },
+    { file: inBindings("webcore/Worker.cpp") },
     { file: inBindings("webcore/streams/WebStreamsInspectCustom.cpp") },
   ],
   callers: [],

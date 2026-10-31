@@ -64,7 +64,7 @@ const {
   2: _receiveMessageOnPort,
   3: environmentData,
   4: _threadName,
-  5: _isMessagePortActive,
+  5: _inspectMessagePort,
   6: _markAsUntransferable,
   7: _isMarkedAsUntransferable,
   8: _markAsUncloneable,
@@ -84,7 +84,7 @@ const {
   (port: unknown) => unknown,
   Map<unknown, unknown>,
   string,
-  (port: unknown) => boolean,
+  (this: unknown) => unknown,
   (value: unknown) => void,
   (value: unknown) => boolean,
   (value: unknown) => void,
@@ -347,9 +347,7 @@ Object.defineProperty(MessagePort.prototype, "close", {
 // still active). Symbol-keyed so it does not appear in getOwnPropertyNames.
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 Object.defineProperty(MessagePort.prototype, kInspectCustom, {
-  value: function (this: MessagePort, _depth: unknown, _options: unknown) {
-    return `MessagePort [EventTarget] { active: ${_isMessagePortActive(this)}, refed: ${this.hasRef()} }`;
-  },
+  value: _inspectMessagePort,
   writable: true,
   enumerable: false,
   configurable: true,

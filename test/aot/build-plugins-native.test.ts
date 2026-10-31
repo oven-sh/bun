@@ -239,8 +239,8 @@ console.log(JSON.stringify({ ...built, told }));
           { how: "aot", ...yields },
         ]);
       },
-      // As in build-both-ways.ts. spawned() ends each of the four children of a test at its own limit, and the test fails by that.
-      // At this folder's default of 120 s the test would end first, and a child would go on behind it.
+      // The limit that build-both-ways.ts gives its tests, which wait for the same four children. This folder's default of 120 s
+      // is below the 240 s at which spawned() ends one child under a sanitizer: a test could end with its child still running.
       600_000,
     );
   });

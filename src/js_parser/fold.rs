@@ -46,6 +46,14 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     }
 }
 
+/// The import item of `ns.member`, marked where a call has it as its target, for the React Compiler.
+fn member_call_target(is_member_call: bool, mut item: Expr) -> Expr {
+    if is_member_call && let js_ast::ExprData::EImportIdentifier(import) = &mut item.data {
+        import.set_is_member_call_target(true);
+    }
+    item
+}
+
 // File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -233,6 +241,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .put(name, new_item)
                                         .expect("unreachable");
                                     p.is_import_item.insert(new_ref, ());
+                                    if p.options.features.react_compiler.is_enabled() {
+                                        p.react_compiler_namespace_of_item.insert(new_ref, id.ref_);
+                                    }
 
                                     let symbol = &mut p.symbols[new_ref.inner_index() as usize];
 
@@ -283,7 +294,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 
-                            return Some(
+                            let is_member_call = identifier_opts.is_call_target()
+                                && p.options.features.react_compiler.is_enabled();
+                            return Some(member_call_target(
+                                is_member_call,
                                 p.handle_identifier(
                                     name_loc,
                                     E::Identifier {
@@ -302,7 +316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         // sure the value of "this" is preserved.
                                         .with_was_originally_identifier(false),
                                 ),
-                            );
+                            ));
                         }
                     }
 

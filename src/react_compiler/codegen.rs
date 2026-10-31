@@ -458,6 +458,27 @@ impl<'a, 'h> Context<'a, 'h> {
         self.env.record_error(detail)
     }
 
+    /// Whether `id` is the temporary that lowering loaded the `ns` of an `ns.member` in. It is not printed.
+    fn is_namespace_of_member(&self, id: IdentifierId) -> bool {
+        let members = &self.env.namespace_members;
+        !members.is_empty()
+            && members.contains_key(&self.env.identifiers[id.0 as usize].declaration_id)
+    }
+
+    /// The import item that the parser's visit pass made of `ns.member`, for the temporary of that `ns`.
+    #[inline]
+    fn namespace_member(&mut self, namespace: IdentifierId) -> Option<Expr> {
+        if self.env.namespace_members.is_empty() {
+            return None;
+        }
+        let declaration = self.env.identifiers[namespace.0 as usize].declaration_id;
+        let item = *self.env.namespace_members.get(&declaration)?;
+        if let ExprData::EImportIdentifier(import) = item.data {
+            self.cg.host.record_usage(import.ref_);
+        }
+        Some(item)
+    }
+
     fn ref_for_id(&mut self, id: IdentifierId) -> Result<Ref, CompilerError> {
         if let Some(&r) = self.cg.id_to_ref.get(id) {
             self.cg.host.record_usage(r);
@@ -1428,6 +1449,12 @@ fn codegen_instruction_nullable(
             InstructionValue::StartMemoize { .. } | InstructionValue::FinishMemoize { .. } => {
                 return Ok(None);
             }
+            InstructionValue::LoadGlobal { .. }
+                if (instr.lvalue.as_ref())
+                    .is_some_and(|lvalue| cx.is_namespace_of_member(lvalue.identifier)) =>
+            {
+                return Ok(None);
+            }
             InstructionValue::Debugger { .. } => {
                 return Ok(Some(Stmt {
                     loc: convert_loc(instr.loc),
@@ -1943,7 +1970,11 @@ fn codegen_base_instruction_value(
             ..
         } => {
             let member_expr = codegen_place_to_expression(cx, property)?;
-            if !matches!(member_expr.data, ExprData::EDot(_) | ExprData::EIndex(_)) {
+            // An import identifier is the item of `ns.member`: see `Context::namespace_member`.
+            if !matches!(
+                member_expr.data,
+                ExprData::EDot(_) | ExprData::EIndex(_) | ExprData::EImportIdentifier(_)
+            ) {
                 return Err(method_call_property_err(property.loc, member_expr));
             }
             let arguments = codegen_arguments(cx, args)?;
@@ -1997,6 +2028,9 @@ fn codegen_base_instruction_value(
         InstructionValue::PropertyLoad {
             object, property, ..
         } => {
+            if let Some(item) = cx.namespace_member(object.identifier) {
+                return Ok(item);
+            }
             let obj = codegen_place_to_expression(cx, object)?;
             Ok(property_access_expr(obj, property, loc, None))
         }
@@ -3041,6 +3075,12 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
             place.loc,
         ));
     }
+    if cx.is_namespace_of_member(place.identifier) {
+        return Err(invariant_err(
+            "[Codegen] Expected the namespace of an import item to be read for its member only",
+            place.loc,
+        ));
+    }
     let (r, _ident_loc) = convert_identifier(cx, place.identifier)?;
     Ok(Expr::init_identifier(r, convert_loc(place.loc)))
 }
@@ -3082,11 +3122,19 @@ fn codegen_dependency(
     cx: &mut Context,
     dep: &crate::hir::ReactiveScopeDependency,
 ) -> Result<Expr, CompilerError> {
-    let (r, loc) = convert_identifier(cx, dep.identifier)?;
-    let mut object = Expr::init_identifier(r, loc);
-    if !dep.path.is_empty() {
+    let mut path = &dep.path[..];
+    let loc = convert_loc(cx.env.identifiers[dep.identifier.0 as usize].loc);
+    let mut object = match cx.namespace_member(dep.identifier) {
+        // Not in upstream, which compares the namespace where the path is empty: here that is its member.
+        Some(item) => {
+            path = path.get(1..).unwrap_or_default();
+            item
+        }
+        None => Expr::init_identifier(cx.ref_for_id(dep.identifier)?, loc),
+    };
+    if !path.is_empty() {
         let has_optional = dep.path.iter().any(|p| p.optional);
-        for path_entry in &dep.path {
+        for path_entry in path {
             let chain = if has_optional {
                 Some(if path_entry.optional {
                     OptionalChain::Start

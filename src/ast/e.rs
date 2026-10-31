@@ -527,6 +527,16 @@ impl ImportIdentifier {
     pub const fn was_originally_identifier(self) -> bool {
         self.ref_.user_bit(0)
     }
+
+    /// Set for the React Compiler on the `ns.foo` of a call `ns.foo()`, which a folded `(0, ns.foo)()` is not.
+    #[inline]
+    pub const fn is_member_call_target(self) -> bool {
+        self.ref_.user_bit(1)
+    }
+    #[inline]
+    pub fn set_is_member_call_target(&mut self, v: bool) {
+        self.ref_.set_user_bit(1, v);
+    }
 }
 
 /// This is a dot expression on exports, such as `exports.<ref>`. It is given

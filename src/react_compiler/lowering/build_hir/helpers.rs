@@ -1,11 +1,14 @@
 //! Port of build_hir.rs lines 1–662 and 4362–5509 — see mod.rs.
 
-use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
+use crate::diagnostics::{
+    CompilerError, CompilerErrorDetail, ErrorCategory, cold_invariant, cold_todo,
+};
 use crate::hir::*;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, Expr, G, OpCode, OptionalChain, Ref};
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
+use crate::program::NamespaceMember;
 
 use super::expr::lower_reorderable_expression;
 use super::lower_expression;
@@ -397,6 +400,66 @@ pub(super) fn lower_member_expression(
             loc,
         )),
     }
+}
+
+/// `ns.member`, which the parser's visit pass has made the import `item` of: see "Hook placement" in DESIGN.md.
+pub(super) fn lower_namespace_member(
+    builder: &mut HirBuilder,
+    item: &Expr,
+    member: NamespaceMember,
+    loc: Option<SourceLocation>,
+) -> Result<LoweredMemberExpression, CompilerError> {
+    let object = match builder.namespace_kind(&member) {
+        Some(kind) => {
+            let ref_ = member.namespace;
+            let binding = NonLocalBinding { ref_, kind };
+            lower_value_to_temporary(builder, InstructionValue::LoadGlobal { binding, loc })?
+        }
+        None => lower_identifier(builder, member.namespace, loc)?,
+    };
+    let namespace = &builder.environment().identifiers[object.identifier.0 as usize];
+    if namespace.name.is_some() {
+        return Err(cold_invariant(
+            "Expected the namespace of an import item to be bound outside of the function",
+            None,
+            loc,
+        ));
+    }
+    let declaration = namespace.declaration_id;
+    let members = &mut builder.environment_mut().namespace_members;
+    members.insert(declaration, *item);
+    let property = PropertyLiteral::String(member.name);
+    let value = InstructionValue::PropertyLoad {
+        object: object.clone(),
+        property: property.clone(),
+        loc,
+    };
+    Ok(LoweredMemberExpression {
+        object,
+        property: MemberProperty::Literal(property),
+        value,
+    })
+}
+
+/// The callee of a `MethodCall`: a member expression with no optional chain of its own.
+pub(super) fn lower_member_callee(
+    builder: &mut HirBuilder,
+    callee: &Expr,
+) -> Result<Option<LoweredMemberExpression>, CompilerError> {
+    match &callee.data {
+        Data::EDot(d) if d.optional_chain.is_none() => {}
+        Data::EIndex(i) if i.optional_chain.is_none() => {}
+        // `ns.member()`. Of `(0, ns.member)()` the visit pass can leave the same item, with no such bit.
+        Data::EImportIdentifier(item) if item.is_member_call_target() => {
+            let Some(member) = builder.namespace_member(item.ref_) else {
+                return Ok(None);
+            };
+            let loc = convert_loc(callee.loc);
+            return lower_namespace_member(builder, callee, member, loc).map(Some);
+        }
+        _ => return Ok(None),
+    }
+    lower_member_expression(builder, callee, None).map(Some)
 }
 
 // =============================================================================
@@ -1416,20 +1479,21 @@ fn lower_optional_call_expression_impl(
                     property: value,
                 });
             }
-            (Data::EDot(_) | Data::EIndex(_), None) => {
-                let lowered = lower_member_expression(builder, callee, None)?;
-                let property_place = lower_value_to_temporary(builder, lowered.value)?;
-                callee_info = Some(CalleeInfo::MethodCall {
-                    receiver: lowered.object,
-                    property: property_place,
-                });
-            }
-            _ => {
-                let callee_place = lower_expression_to_temporary(builder, callee)?;
-                callee_info = Some(CalleeInfo::CallExpression {
-                    callee: callee_place,
-                });
-            }
+            _ => match lower_member_callee(builder, callee)? {
+                Some(lowered) => {
+                    let property_place = lower_value_to_temporary(builder, lowered.value)?;
+                    callee_info = Some(CalleeInfo::MethodCall {
+                        receiver: lowered.object,
+                        property: property_place,
+                    });
+                }
+                None => {
+                    let callee_place = lower_expression_to_temporary(builder, callee)?;
+                    callee_info = Some(CalleeInfo::CallExpression {
+                        callee: callee_place,
+                    });
+                }
+            },
         }
 
         let test_place = match callee_info.as_ref().unwrap() {

@@ -238,6 +238,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         }
         hmac->m_ctx.reset();
         hmac->m_sizeForGC = 0;
+    } else {
+        // Converting the encoding above finalized this Hmac: the digest is empty, as for a second digest().
+        mdBuffer.len = 0;
     }
 
     // We shouldn't set finalized if coming from _flush, but this

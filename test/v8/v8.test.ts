@@ -719,6 +719,23 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       ]);
     });
   });
+
+  describe("Object::Clone", () => {
+    it("copies the prototype and the own properties of a plain object", async () => {
+      const out = await checkSameOutput("test_v8_object_clone");
+      // both objects, and the accessor property without running its getter
+      expect(out.match(/same as the original's: true/g)).toHaveLength(2);
+      expect(out).toContain("getter calls during Clone(): 0");
+    });
+    it("gives the copy of a template instance internal fields of its own", async () => {
+      const out = await checkSameOutput("test_v8_object_clone_template_instance");
+      // once for ObjectTemplate::NewInstance() and once for FunctionTemplate::GetFunction()->NewInstance()
+      expect(
+        out.match(/copy after writing the original's fields: 2 internal fields: &b, "set on the copy"/g),
+      ).toHaveLength(2);
+      expect(out.match(/copies intact after collecting their originals: 100 of 100/g)).toHaveLength(2);
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any, withDebugAddon = true) {

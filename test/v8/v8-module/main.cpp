@@ -2847,6 +2847,144 @@ void test_v8_backing_store_deleted_by_addon(
   return ok(info);
 }
 
+// Returns Object::Clone() of the first argument.
+void perform_object_clone(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info[0].As<Object>()->Clone());
+}
+
+// What the aligned pointers in the Object::Clone tests point at.
+static int clone_target_a;
+static int clone_target_b;
+static int clone_target_c;
+
+// Describes the internal fields of an object in the Object::Clone tests. It has
+// two, used like those of the object uWebSockets.js clones for every request:
+// field 0 holds an aligned pointer and field 1 a value.
+static std::string describe_internal_fields(Isolate *isolate,
+                                            Local<Object> object) {
+  void *pointer = object->GetAlignedPointerFromInternalField(
+      0, kEmbedderDataTypeTagDefault);
+  const char *target = pointer == &clone_target_a   ? "&a"
+                       : pointer == &clone_target_b ? "&b"
+                       : pointer == &clone_target_c ? "&c"
+                       : pointer == nullptr         ? "nullptr"
+                                                    : "an unknown address";
+  return std::to_string(object->InternalFieldCount()) +
+         " internal fields: " + target + ", " +
+         describe(isolate, object->GetInternalField(1).As<Value>());
+}
+
+// A method of the objects in the Object::Clone tests. Like the methods of
+// uWebSockets.js's response object, it reads the internal fields of the object
+// it is called on.
+static void
+describe_internal_fields_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(
+          isolate, describe_internal_fields(isolate, info.This()).c_str())
+          .ToLocalChecked());
+}
+
+// clone_template_instance(use_function_template): clones an object with two
+// internal fields, made by ObjectTemplate::NewInstance() or, the way
+// uWebSockets.js makes the object it clones for every request, by
+// FunctionTemplate::GetFunction()->NewInstance(). Prints what native code sees
+// of the original and of its copies, and returns [original, copy].
+void clone_template_instance(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<String> method_name =
+      String::NewFromUtf8Literal(isolate, "describeInternalFields");
+  Local<FunctionTemplate> method =
+      FunctionTemplate::New(isolate, describe_internal_fields_callback);
+
+  Local<ObjectTemplate> object_template;
+  Local<Function> constructor;
+  if (info[0]->IsTrue()) {
+    Local<FunctionTemplate> function_template = FunctionTemplate::New(isolate);
+    function_template->InstanceTemplate()->SetInternalFieldCount(2);
+    function_template->PrototypeTemplate()->Set(method_name, method);
+    constructor = function_template->GetFunction(context).ToLocalChecked();
+  } else {
+    object_template = ObjectTemplate::New(isolate);
+    object_template->SetInternalFieldCount(2);
+    object_template->Set(method_name, method);
+  }
+  auto new_instance = [&]() {
+    return constructor.IsEmpty()
+               ? object_template->NewInstance(context).ToLocalChecked()
+               : constructor->NewInstance(context).ToLocalChecked();
+  };
+  auto new_string = [&](const std::string &text) {
+    return String::NewFromUtf8(isolate, text.c_str()).ToLocalChecked();
+  };
+  auto log_fields = [&](const char *label, Local<Object> object) {
+    std::cout << label << ": " << describe_internal_fields(isolate, object)
+              << std::endl;
+  };
+
+  Local<Object> original = new_instance();
+  original->SetAlignedPointerInInternalField(0, &clone_target_a,
+                                             kEmbedderDataTypeTagDefault);
+  original->SetInternalField(1, new_string("set on the original"));
+  original->Set(context, new_string("own"), new_string("set before Clone()"))
+      .Check();
+  log_fields("original", original);
+
+  Local<Object> copy = original->Clone();
+  log_fields("copy", copy);
+
+  copy->SetAlignedPointerInInternalField(0, &clone_target_b,
+                                         kEmbedderDataTypeTagDefault);
+  copy->SetInternalField(1, new_string("set on the copy"));
+  log_fields("original after writing the copy's fields", original);
+  log_fields("copy after writing its fields", copy);
+
+  original->SetAlignedPointerInInternalField(0, &clone_target_c,
+                                             kEmbedderDataTypeTagDefault);
+  original->SetInternalField(1, new_string("set on the original again"));
+  log_fields("copy after writing the original's fields", copy);
+
+  constexpr int count = 100;
+
+  // What uWebSockets.js does for every request: clone the object, store the
+  // request's state in the copy and let go of the copy.
+  for (int i = 0; i < count; i++) {
+    HandleScope scope(isolate);
+    Local<Object> request = original->Clone();
+    request->SetAlignedPointerInInternalField(0, &clone_target_b,
+                                              kEmbedderDataTypeTagDefault);
+    request->SetInternalField(1, new_string("request " + std::to_string(i)));
+  }
+  isolate->LowMemoryNotification();
+  log_fields("original after collecting copies of it", original);
+
+  // The other way around: each copy has to keep what it holds once its
+  // original and the scope that made the value in field 1 are gone.
+  Local<Object> survivors[count];
+  for (int i = 0; i < count; i++) {
+    EscapableHandleScope scope(isolate);
+    Local<Object> temporary = new_instance();
+    temporary->SetAlignedPointerInInternalField(0, &clone_target_a,
+                                                kEmbedderDataTypeTagDefault);
+    temporary->SetInternalField(1, new_string("survivor " + std::to_string(i)));
+    survivors[i] = scope.Escape(temporary->Clone());
+  }
+  isolate->LowMemoryNotification();
+  int intact = 0;
+  for (int i = 0; i < count; i++) {
+    HandleScope scope(isolate);
+    intact += describe_internal_fields(isolate, survivors[i]) ==
+              "2 internal fields: &a, \"survivor " + std::to_string(i) + "\"";
+  }
+  std::cout << "copies intact after collecting their originals: " << intact
+            << " of " << count << std::endl;
+
+  Local<Value> objects[] = {original, copy};
+  info.GetReturnValue().Set(Array::New(isolate, objects, 2));
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2994,6 +3132,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_get_own_property_names);
   NODE_SET_METHOD(exports, "test_v8_backing_store_deleted_by_addon",
                   test_v8_backing_store_deleted_by_addon);
+  NODE_SET_METHOD(exports, "perform_object_clone", perform_object_clone);
+  NODE_SET_METHOD(exports, "clone_template_instance", clone_template_instance);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

@@ -4520,26 +4520,45 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       queryAddressType = isIP(clusterHost) || 4;
     }
 
-    listenInCluster(
-      this,
-      queryAddress,
-      queryPort,
-      queryAddressType,
-      backlog,
-      fd,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      flags,
-      undefined,
-      path,
-      hostname,
-      tls,
-      contexts,
-      onListen,
-    );
+    if (typeof clusterHost === "string" && queryAddress === clusterHost && isIP(clusterHost) === 0) {
+      lookupAndListen(
+        this,
+        port,
+        clusterHost,
+        backlog,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        flags,
+        hostname,
+        tls,
+        contexts,
+        onListen,
+      );
+    } else {
+      listenInCluster(
+        this,
+        queryAddress,
+        queryPort,
+        queryAddressType,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        flags,
+        undefined,
+        path,
+        hostname,
+        tls,
+        contexts,
+        onListen,
+      );
+    }
   } catch (err) {
     const isUnix = path != null;
     process.nextTick(
@@ -4691,6 +4710,89 @@ function emitListeningNextTick(self: $Node.NetServer) {
 
 const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
 let cluster: typeof import("internal/cluster/child").default | undefined;
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2227-L2257
+function isIpv6LinkLocal(ip: string): boolean {
+  if (isIP(ip) !== 6) return false;
+  // fe80::/10. A valid IPv6 string that starts with "::" has a zero first hextet.
+  const firstHextet = ip.startsWith("::") ? 0 : parseInt(ip.slice(0, ip.indexOf(":")), 16);
+  return (firstHextet & 0xffc0) === 0xfe80;
+}
+
+function filterOnlyValidAddress(addresses: LookupAddress[]): LookupAddress {
+  // Return the first non IPV6 link-local address if present
+  for (const address of addresses) {
+    if (!isIpv6LinkLocal(address.address)) {
+      return address;
+    }
+  }
+
+  // Otherwise return the first address
+  return addresses[0];
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
+// Node looks up IP literals too; Bun binds them directly so that listen(port, ip) stays synchronous.
+function lookupAndListen(
+  server: $Node.NetServer,
+  port: number | null | undefined,
+  address: string,
+  backlog: number | undefined,
+  exclusive: boolean,
+  ipv6Only: boolean,
+  reusePort: boolean,
+  readableAll: boolean,
+  writableAll: boolean,
+  flags: number,
+  hostname: string | undefined,
+  tls: ServerTLSOptions | undefined,
+  contexts: Map<string, $Node.SecureContext> | null,
+  onListen: unknown,
+) {
+  // As in listenInCluster: a worker's listen() runs the cluster bootstrap, even when the lookup fails.
+  if (!isPrimary && cluster === undefined) {
+    cluster = loadChild();
+  }
+  const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
+  (require("node:dns").lookup as LookupFunction)(address, { all: true } as LookupOptions, (err, addresses) => {
+    if (listeningId !== server[kClusterListeningId]) return;
+    if (err) {
+      server.emit("error", err);
+      return;
+    }
+    const validAddress = filterOnlyValidAddress(addresses);
+    try {
+      // A setSecureContext() made during the lookup counts.
+      if (tls) {
+        tls = server[bunTlsSymbol]!(port, hostname, false)[0];
+        contexts = tls.contexts;
+      }
+      listenInCluster(
+        server,
+        validAddress.address,
+        port,
+        validAddress?.family || 4,
+        backlog,
+        undefined,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        flags,
+        undefined,
+        undefined,
+        hostname,
+        tls,
+        contexts,
+        onListen,
+      );
+    } catch (err) {
+      process.nextTick(emitErrorNextTick, server, formatListenError(err, validAddress.address, port));
+    }
+  });
+}
+
 function listenInCluster(
   server: $Node.NetServer,
   address: string | null,
@@ -4719,53 +4821,12 @@ function listenInCluster(
     cluster = loadChild();
   }
 
-  if (
-    !isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip as string,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
-  }
-
   if (isPrimary || exclusive) {
     server[kRealListen](
       path,
       port,
-      hostname,
+      // The address dns.lookup resolved; hostname stays the name the TLS options were built from.
+      typeof address === "string" && isIP(address) !== 0 ? address : hostname,
       exclusive,
       ipv6Only,
       reusePort,

@@ -520,7 +520,7 @@ BIOPointer ExportPublicKey(const char* input, size_t length)
     return bio;
 }
 
-Buffer<char> ExportChallenge(const char* input, size_t length)
+DataPointer ExportChallenge(const char* input, size_t length)
 {
 #ifdef OPENSSL_IS_BORINGSSL
     // OpenSSL uses EVP_DecodeBlock, which explicitly removes trailing characters,
@@ -536,10 +536,7 @@ Buffer<char> ExportChallenge(const char* input, size_t length)
     unsigned char* buf = nullptr;
     int buf_size = ASN1_STRING_to_UTF8(&buf, sp->spkac->challenge);
     if (buf_size >= 0) {
-        return {
-            .data = reinterpret_cast<char*>(buf),
-            .len = static_cast<size_t>(buf_size),
-        };
+        return DataPointer(buf, static_cast<size_t>(buf_size));
     }
 
     return {};

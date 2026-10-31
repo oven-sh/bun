@@ -118,6 +118,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     return JSValue::encode(JSC::jsBoolean(result));
 }
@@ -137,6 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto bio = ncrypto::ExportPublicKey(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     if (!bio) {
         return JSValue::encode(jsEmptyString(vm));
@@ -148,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    return JSValue::encode(jsString(vm, String::fromUTF8({ data, static_cast<size_t>(len) })));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(len))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -166,20 +168,13 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    auto challenge = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    if (!challenge) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
-    if (!result) {
-        return JSValue::encode(jsEmptyString(vm));
-    }
-
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(result), 0, cert.len);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(bufferResult);
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, challenge.span())));
 }
 
 // From node.js

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
 import vm from "node:vm";
@@ -1483,5 +1485,52 @@ describe("Certificate spkac argument validation", () => {
   it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
     expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
     expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
+  });
+
+  it("Certificate.exportPublicKey and exportChallenge return Buffers", () => {
+    const spkac = readFileSync(join(import.meta.dir, "..", "test", "fixtures", "keys", "rsa_spkac.spkac"));
+    const publicKey = crypto.Certificate.exportPublicKey(spkac);
+    expect(publicKey).toBeInstanceOf(Buffer);
+    expect(crypto.createPublicKey(publicKey).asymmetricKeyType).toBe("rsa");
+    expect(crypto.Certificate.exportChallenge(spkac)).toEqual(Buffer.from("this-is-a-challenge"));
+  });
+
+  it.concurrent("Certificate.exportChallenge frees the challenge", async () => {
+    // 12.5 MiB of challenges go through the measured part.
+    await expectRssDeltaBelow(
+      [
+        "-e",
+        `
+        const crypto = require("node:crypto");
+        const der = (tag, ...parts) => {
+          const body = Buffer.concat(parts);
+          const length =
+            body.length < 128 ? [body.length] : [0x83, body.length >> 16, (body.length >> 8) & 255, body.length & 255];
+          return Buffer.concat([Buffer.from([tag, ...length]), body]);
+        };
+        const spki = crypto
+          .generateKeyPairSync("ec", { namedCurve: "P-256" })
+          .publicKey.export({ type: "spki", format: "der" });
+        const ecdsaWithSha256 = Buffer.from("06082a8648ce3d040302", "hex");
+        const spkac = der(
+          0x30,
+          der(0x30, spki, der(0x16, Buffer.alloc(256 * 1024, "a"))),
+          der(0x30, ecdsaWithSha256),
+          der(0x03, Buffer.alloc(9)),
+        ).toString("base64");
+        const run = count => {
+          for (let i = 0; i < count; i++) {
+            if (crypto.Certificate.exportChallenge(spkac).length !== 256 * 1024) throw new Error("not parsed");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+        };
+        run(10);
+        const before = process.memoryUsage.rss();
+        run(50);
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      `,
+      ],
+      { release: 6, debug: 8 },
+    );
   });
 });

@@ -97,6 +97,8 @@ pub struct EnvironmentConfig {
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
+    /// `x.y++` and `x.y += 1` print as written (see `MemberUpdate`). Upstream prints `x.y = x.y + 1`.
+    pub member_updates_print_as_written: bool,
     /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
     /// its first instruction, which can be the declaration of a later function that the first one refers to.
     pub unreachable_code_is_reported_at_its_function: bool,
@@ -164,6 +166,7 @@ impl Default for EnvironmentConfig {
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,
             captured_targets_with_keys_force_temporaries: false,
+            member_updates_print_as_written: true,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,

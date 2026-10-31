@@ -153,6 +153,7 @@
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBoolean.h"
+#include "JSDOMException.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertRecord.h"
@@ -1621,8 +1622,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
+            WebCore::JSDOMException::willMaterializeErrorInfo(globalObject, left);
             left->materializeErrorInfoIfNeeded(vm);
             RETURN_IF_EXCEPTION(scope, {});
+            WebCore::JSDOMException::willMaterializeErrorInfo(globalObject, right);
             right->materializeErrorInfoIfNeeded(vm);
             RETURN_IF_EXCEPTION(scope, {});
             JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);

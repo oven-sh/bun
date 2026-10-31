@@ -34,6 +34,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
+#include "JSDOMException.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -481,19 +482,14 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
     PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool hasProperty = obj->getNonIndexPropertySlot(global, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, {});
-    if (hasProperty) {
-        if (slot.isAccessor()) {
-            return {};
-        }
-
-        JSValue value = slot.getValue(global, propertyName);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!value || value.isUndefinedOrNull()) {
-            return {};
-        }
-        return value;
-    }
-    return {};
+    // isValue() also rejects custom getters (DOMException.prototype.code), which isAccessor() does not.
+    if (!hasProperty || !slot.isValue())
+        return {};
+    JSValue value = slot.getValue(global, propertyName);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!value || value.isUndefinedOrNull())
+        return {};
+    return value;
 }
 
 __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
@@ -546,7 +542,10 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         return;
     }
 
-    except.name = Bun::toStringRef(err->sanitizedNameString(global));
+    if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(err))
+        except.name = Bun::toStringRef(domException->displayName(global));
+    else
+        except.name = Bun::toStringRef(err->sanitizedNameString(global));
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
         return;
     }

@@ -31,6 +31,7 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
+#include "JSDOMException.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -44,6 +45,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::HandleScopeImpl>())
     , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
     , m_heapCellTypeForJSModuleGraph(JSC::IsoHeapCellType::Args<Bun::JSModuleGraph>())
+    , m_heapCellTypeForJSDOMException(JSC::IsoHeapCellType::Args<WebCore::JSDOMException>())
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
@@ -222,6 +224,8 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
 
         if (init.hasOutputConstraints)
             heapData.outputConstraintSpaces().append(space);
+        if (init.reconcileWeakReferencesAtGCEnd)
+            heapData.weakReconciliationSpaces().append({ space, init.reconcileWeakReferencesAtGCEnd });
     }
 
     clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space).release();
@@ -281,9 +285,16 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
 }
 
-void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope collectionScope)
 {
     Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
+
+    for (auto& [space, reconcileCell] : m_heapData->weakReconciliationSpaces()) {
+        space->forEachMarkedCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+            RELEASE_ASSERT(kind == JSC::HeapCell::Kind::JSCell);
+            reconcileCell(cell, vm, collectionScope);
+        });
+    }
 }
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)

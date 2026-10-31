@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -47,9 +48,12 @@ describe("2-arg form", () => {
 });
 
 test("print size", () => {
-  expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
-    .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+  // The size is read from the file on disk, so use a fixture with a fixed size
+  // instead of this test file, whose size changes with every edit.
+  using dir = tempDir("response-print-size", { "body.js": "export default 1;\n" });
+  const response = new Response(Bun.file(join(String(dir), "body.js")));
+  expect(normalizeBunSnapshot(Bun.inspect(response), String(dir))).toMatchInlineSnapshot(`
+    "Response (18 bytes) {
       ok: true,
       url: "",
       status: 200,
@@ -59,7 +63,7 @@ test("print size", () => {
       },
       redirected: false,
       bodyUsed: false,
-      FileRef ("<cwd>/test/js/web/fetch/response.test.ts") {
+      FileRef ("<dir>/body.js") {
         type: "text/javascript;charset=utf-8"
       }
     }"
@@ -149,18 +153,28 @@ test("new Response(123, { method: 456 }) does not throw", () => {
   expect(() => new Response("123", { method: 456 })).not.toThrow();
 });
 
-test("handle stack overflow", () => {
-  function f0(a1, a2) {
-    const v4 = new Response();
-    // @ts-ignore
-    const v5 = v4.text(a2, a2, v4, f0, f0);
-    a1(a1); // Recursive call causes stack overflow
-    return v5;
+test("handle stack overflow", async () => {
+  // #23961: a native promise-returning method called with the JS stack
+  // exhausted must still hand back a promise instead of leaking the overflow.
+  // Recurse with cheap frames until the stack runs out, then create the
+  // Responses from the deepest frames on the way back out. Creating one in
+  // every frame instead takes several seconds on a debug build.
+  const overflows: unknown[] = [];
+  const texts: Promise<string>[] = [];
+  function recurse() {
+    try {
+      recurse();
+    } catch (e) {
+      overflows.push(e);
+    }
+    if (texts.length < 32) {
+      texts.push(new Response().text());
+    }
   }
-  expect(() => {
-    // @ts-ignore
-    f0(f0);
-  }).toThrow("Maximum call stack size exceeded.");
+  recurse();
+
+  expect(overflows.map(String)).toEqual(["RangeError: Maximum call stack size exceeded."]);
+  expect(await Promise.all(texts)).toEqual(new Array(32).fill(""));
 });
 
 describe("clone()", () => {

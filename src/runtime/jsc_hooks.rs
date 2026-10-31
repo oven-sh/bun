@@ -4023,6 +4023,8 @@ unsafe fn normalize_specifier_for_loader<'a>(
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
+    /// The importer chose the loader: a `?raw` query, or a `type` attribute that names one.
+    importer_chose_loader: bool,
     virtual_source: Option<&'a bun_ast::Source<'a>>,
     path: Fs::Path<'a>,
     is_main: bool,
@@ -4125,12 +4127,15 @@ unsafe fn get_loader_and_virtual_source<'a>(
         virtual_source = virtual_source_to_use.as_ref();
     }
 
+    let mut importer_chose_loader = false;
     if query == b"?raw" {
         loader = Some(Loader::Text);
+        importer_chose_loader = true;
     }
     if let Some(attr_str) = type_attribute_str {
         if let Some(attr_loader) = Loader::from_string(attr_str) {
             loader = Some(attr_loader);
+            importer_chose_loader = true;
         }
     }
 
@@ -4153,6 +4158,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     Ok(LoaderResult {
         loader,
+        importer_chose_loader,
         virtual_source,
         path,
         is_main,
@@ -4469,12 +4475,13 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         lr.loader = Some(loader_type);
     } else if is_commonjs_require
         // SAFETY: per fn contract.
-        && unsafe { &*jsc_vm }.has_mutated_built_in_extensions > 0
+        && unsafe { &*jsc_vm }.has_commonjs_custom_extensions()
+        && !lr.importer_chose_loader
     {
-        use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
+        use bun_jsc::node_module_module::{CustomLoader, registered_extension_for_require};
         if let Some(entry) =
             // SAFETY: per fn contract.
-            find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
+            registered_extension_for_require(unsafe { &*jsc_vm }, _specifier.slice())
         {
             match entry {
                 CustomLoader::Loader(loader) => lr.loader = Some(*loader),
@@ -4606,9 +4613,6 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     }
 
     // ── Synchronous-loader fallback ────────────────────────────────────────
-    // Note: hoisted out of `unwrap_or_else` into a
-    // labelled block so the `CustomLoader::Custom` arm can write `*ret` and
-    // `return null` — a closure cannot perform a non-local return.
     let synchronous_loader: Loader = 'loader: {
         if let Some(l) = lr.loader {
             break 'loader l;
@@ -4623,32 +4627,6 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
             }
             // Unknown extensions are to be treated as file loader.
             if is_commonjs_require {
-                use bun_jsc::node_module_module::{
-                    CustomLoader, find_longest_registered_extension,
-                };
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if unsafe {
-                    (*jsc_vm).commonjs_custom_extensions.len() > 0
-                        && (*jsc_vm).has_mutated_built_in_extensions == 0
-                } {
-                    if let Some(entry) = find_longest_registered_extension(
-                        // SAFETY: per fn contract.
-                        unsafe { &*jsc_vm },
-                        lr.path.text,
-                    ) {
-                        match entry {
-                            CustomLoader::Loader(loader) => break 'loader *loader,
-                            CustomLoader::Custom(strong) => {
-                                *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                                    cjs_custom_extension_index: strong.get(),
-                                    tag: ResolvedSourceTag::CommonJsCustomExtension,
-                                    ..Default::default()
-                                });
-                                return ptr::null_mut();
-                            }
-                        }
-                    }
-                }
                 // For Node.js compatibility, requiring a file with an unknown
                 // extension is treated as a JS file.
                 break 'loader Loader::Ts;

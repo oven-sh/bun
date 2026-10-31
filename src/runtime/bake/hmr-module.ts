@@ -200,25 +200,28 @@ export class HMRModule {
         this.selfAccept = implicitAcceptFunction;
         return;
       }
-      if (typeof arg1 !== "function") {
+      if (typeof arg1 === "function") {
+        // Self-accept function
+        this.selfAccept = arg1;
+        return;
+      }
+      // A specifier needs no callback, so a lone specifier gets the error below.
+      if (typeof arg1 !== "string" && !Array.isArray(arg1)) {
         throw new Error("import.meta.hot.accept requires a callback function");
       }
-      // Self-accept function
-      this.selfAccept = arg1;
-    } else {
-      throw new Error(
-        '"import.meta.hot.accept" must be directly called with string literals for ' +
-          "the specifiers. This way, the bundler can pre-process the arguments.",
-      );
     }
+    throw new Error(
+      '"import.meta.hot.accept" must be directly called with string literals for ' +
+        "the specifiers. This way, the bundler can pre-process the arguments.",
+    );
   }
 
-  acceptSpecifiers(specifiers: string | readonly string[], cb?: HotAcceptFunction | HotArrayAcceptFunction) {
+  acceptSpecifiers(specifiers: string | readonly string[], cb?: HotAcceptFunction | HotArrayAcceptFunction | null) {
     this.depAccepts ??= {};
     const isArray = Array.isArray(specifiers);
     const accept: HotAccept = {
       modules: isArray ? specifiers : [specifiers],
-      cb: cb as HotAcceptFunction,
+      cb: cb ?? implicitAcceptFunction,
       single: !isArray,
     };
     if (isArray) {
@@ -232,8 +235,8 @@ export class HMRModule {
 
   decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
 
-  dispose(cb: HotDisposeFunction) {
-    (this.onDispose ??= []).push(cb);
+  dispose(cb?: HotDisposeFunction | null) {
+    if (cb != undefined) (this.onDispose ??= []).push(cb);
   }
 
   prune(cb: HotDisposeFunction) {

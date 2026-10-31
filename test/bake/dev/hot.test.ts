@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -360,6 +360,137 @@ devTest("import.meta.hot.accept with a dependency list from a define", {
       `,
     );
     await c.expectMessage("Counter updated: 3");
+  },
+});
+// The callback is optional. Bun patches the importer's bindings and does not evaluate the importer again.
+devTest("import.meta.hot.accept specifier without a callback", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      import { c } from "./c";
+      import { d } from "./d";
+      import { e } from "./e";
+      import { f } from "./f";
+      import "./other";
+      console.log("index: " + [a, b, c, d, e, f]);
+      // The client reports a failed update with console.error, then reloads the page.
+      console.error = () => console.log("console.error");
+      import.meta.hot.accept("./a");
+      import.meta.hot.accept("./b", undefined);
+      import.meta.hot.accept("./c", null);
+      import.meta.hot.accept(["./d", "./e"]);
+      // Not a missing callback: the update of f.ts fails.
+      import.meta.hot.accept("./f", false);
+      import.meta.hot.on("bun:afterUpdate", () => console.log("after update: " + [a, b, c, d, e, f]));
+    `,
+    "other.ts": `
+      import "./a";
+      import.meta.hot.accept("./a", newModule => console.log("other accepted a: " + newModule.a));
+    `,
+    "a.ts": `export const a = 1;`,
+    "b.ts": `export const b = 1;`,
+    "c.ts": `export const c = 1;`,
+    "d.ts": `export const d = 1;`,
+    "e.ts": `export const e = 1;`,
+    "f.ts": `export const f = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index: 1,1,1,1,1,1");
+    await dev.write("a.ts", `export const a = 2;`);
+    // index.ts has no callback for a.ts. The callback of other.ts still runs.
+    await c.expectMessage("other accepted a: 2", "after update: 2,1,1,1,1,1");
+    await dev.write("b.ts", `export const b = 2;`);
+    await c.expectMessage("after update: 2,2,1,1,1,1");
+    await dev.write("c.ts", `export const c = 2;`);
+    await c.expectMessage("after update: 2,2,2,1,1,1");
+    await dev.write("d.ts", `export const d = 2;`);
+    await c.expectMessage("after update: 2,2,2,2,1,1");
+    await dev.write("e.ts", `export const e = 2;`);
+    await c.expectMessage("after update: 2,2,2,2,2,1");
+    await c.expectReload(async () => {
+      await dev.write("f.ts", `export const f = 2;`);
+    });
+    await c.expectMessage("console.error", "index: 2,2,2,2,2,2");
+  },
+});
+devTest("import.meta.hot.accept specifier without a callback on the server", {
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `export const value = 1;`,
+    "routes/index.ts": `
+      import { value } from "../dep";
+      let updates = 0;
+      let errors = 0;
+      // The server reports a failed update with console.error.
+      console.error = () => errors++;
+      import.meta.hot.accept("../dep");
+      import.meta.hot.on("bun:afterUpdate", () => updates++);
+      export default function (req, meta) {
+        return new Response("value: " + value + ", updates: " + updates + ", errors: " + errors);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 1, updates: 0, errors: 0");
+    await dev.write("dep.ts", `export const value = 2;`);
+    await dev.fetch("/").equals("value: 2, updates: 1, errors: 0");
+    await dev.write("dep.ts", `export const value = 3;`);
+    await dev.fetch("/").equals("value: 3, updates: 2, errors: 0");
+  },
+});
+// A lone specifier is a dependency without a callback, which only a literal can name. Anything else needs a function.
+devTest("import.meta.hot.accept with one argument that is not a literal specifier or a function", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./dep";
+      for (const argument of ["./dep", ["./dep"], 123, {}, false]) {
+        try {
+          import.meta.hot.accept(argument);
+          throw "did not throw";
+        } catch (e) {
+          console.log(e?.message ?? e);
+        }
+      }
+    `,
+    "dep.ts": `export {};`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const notLiteral =
+      '"import.meta.hot.accept" must be directly called with string literals for the specifiers. This way, the bundler can pre-process the arguments.';
+    const notFunction = "import.meta.hot.accept requires a callback function";
+    await c.expectMessage(notLiteral, notLiteral, notFunction, notFunction, notFunction);
+  },
+});
+devTest("import.meta.hot.dispose without a callback", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("first");
+      import.meta.hot.dispose();
+      import.meta.hot.dispose(undefined);
+      import.meta.hot.dispose(null);
+      import.meta.hot.dispose(() => console.log("disposed"));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("first");
+    await dev.patch("index.ts", { find: "first", replace: "second" });
+    await c.expectMessage("disposed", "second");
+    await dev.patch("index.ts", { find: "second", replace: "third" });
+    await c.expectMessage("disposed", "third");
   },
 });
 devTest("import.meta.hot.data persistence", {

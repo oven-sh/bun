@@ -2459,9 +2459,9 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     if (!type.isUndefined()) {
         Bun::V::validateString(scope, globalObject, type, "type"_s);
         RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        type = jsString(vm, String("Warning"_s));
     }
+    //   warning.name = String(type || 'Warning');
+    if (!type.toBoolean(globalObject)) type = jsString(vm, String("Warning"_s));
 
     if (code.isCallable()) {
         ctor = code;
@@ -2476,7 +2476,8 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     if (warning.isString()) {
         auto s = warning.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
+        // Not createError(): it asserts that the message is not empty, and `new Error("")` is valid.
+        errorInstance = ErrorInstance::create(vm, globalObject->errorStructure(), s, JSValue());
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();

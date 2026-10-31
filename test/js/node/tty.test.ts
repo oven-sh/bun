@@ -2059,8 +2059,8 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         });
       });
 
-      // libuv cannot reopen a master, and writes to it in place. So nothing of a write is lost to a destroy() behind it.
-      test.skipIf(!exe).concurrent("a pty master writes in place, and destroy() loses nothing", async () => {
+      // libuv cannot reopen a master, and writes to it in place. So all of a write is out before a destroy() behind it.
+      test.skipIf(!exe).concurrent("a pty master takes a write in place, before a destroy() behind it", async () => {
         const script = `
           const master = new tty.ReadStream(3);
           master.on("close", () => say({ closed: true }));

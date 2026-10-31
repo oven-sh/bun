@@ -1100,32 +1100,6 @@ UV_EXTERN uv_handle_type uv_pipe_pending_type(uv_pipe_t* handle)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd)
-{
-    __bun_throw_not_implemented("uv_poll_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_poll_init_socket(uv_loop_t* loop,
-    uv_poll_t* handle,
-    uv_os_sock_t socket)
-{
-    __bun_throw_not_implemented("uv_poll_init_socket");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
-{
-    __bun_throw_not_implemented("uv_poll_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_poll_stop(uv_poll_t* handle)
-{
-    __bun_throw_not_implemented("uv_poll_stop");
-    __builtin_unreachable();
-}
-
 UV_EXTERN void uv_print_active_handles(uv_loop_t* loop, FILE* stream)
 {
     __bun_throw_not_implemented("uv_print_active_handles");

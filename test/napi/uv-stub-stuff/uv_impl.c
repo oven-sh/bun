@@ -1,5 +1,6 @@
 #include <node_api.h>
 
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -8,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <uv.h>
 
@@ -234,11 +236,11 @@ static napi_value test_tty_reset_mode_concurrent(napi_env env,
 
 // ---------------------------------------------------------------------------
 // Tests for the loop-backed functions: uv_default_loop, uv_queue_work, the
-// uv_async_t, uv_idle_t, uv_prepare_t, uv_check_t and uv_timer_t handles, and
-// their header-only helpers. Each test reports events through a JS callback
-// `(event, a, b)` so uv.test.ts can check callback order, thread and loop
-// iteration. uv.test.ts runs them in a child process because a stubbed uv_*
-// function aborts.
+// uv_async_t, uv_idle_t, uv_prepare_t, uv_check_t, uv_timer_t and uv_poll_t
+// handles, and their header-only helpers. Each test reports events through a
+// JS callback `(event, a, b)` so uv.test.ts can check callback order, thread
+// and loop iteration. uv.test.ts runs them in a child process because a
+// stubbed uv_* function aborts.
 // ---------------------------------------------------------------------------
 
 struct reporter {
@@ -1157,6 +1159,338 @@ static napi_value test_timer_unref(napi_env env, napi_callback_info info) {
   return timer_state(env, test);
 }
 
+// --- uv_poll_t ---------------------------------------------------------------
+
+struct poll_test {
+  uv_poll_t poll;
+  struct reporter reporter;
+  // The handle watches fds[0]. The test writes to fds[1] or closes it.
+  int fds[2];
+  int calls;
+};
+
+static void close_fd(int *fd) {
+  if (*fd >= 0)
+    close(*fd);
+  *fd = -1;
+}
+
+static void poll_test_close_cb(uv_handle_t *handle) {
+  struct poll_test *test = handle->data;
+  report(&test->reporter, "close poll", uv_is_closing(handle),
+         uv_is_active(handle));
+  close_fd(&test->fds[0]);
+  close_fd(&test->fds[1]);
+  reporter_destroy(&test->reporter);
+  free(test);
+}
+
+// Makes a pair of connected sockets, or a pipe whose write end is fds[0], and a
+// poll handle on fds[0]. Throws and returns NULL if a call fails.
+static struct poll_test *init_poll(napi_env env, napi_value callback,
+                                   bool use_pipe) {
+  struct poll_test *test = calloc(1, sizeof(*test));
+  int rc;
+  if (use_pipe) {
+    int pipe_fds[2];
+    rc = pipe(pipe_fds);
+    test->fds[0] = pipe_fds[1];
+    test->fds[1] = pipe_fds[0];
+  } else {
+    rc = socketpair(AF_UNIX, SOCK_STREAM, 0, test->fds);
+  }
+  if (rc == 0)
+    rc = uv_poll_init(get_loop(env, false), &test->poll, test->fds[0]);
+  if (rc != 0) {
+    free(test);
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  reporter_init(&test->reporter, env, callback);
+  uv_handle_set_data((uv_handle_t *)&test->poll, test);
+  return test;
+}
+
+static void poll_level_cb(uv_poll_t *handle, int status, int events) {
+  struct poll_test *test = handle->data;
+  test->calls++;
+  report(&test->reporter, "poll", status, events);
+  if (test->calls == 1) {
+    // The byte stays unread, so the next loop iteration reports it again.
+    return;
+  }
+  if (test->calls == 2) {
+    char byte = 0;
+    int count = (int)read(test->fds[0], &byte, 1);
+    report(&test->reporter, "read", count, byte);
+    // A start on a started handle replaces its events.
+    int rc = uv_poll_start(handle, UV_READABLE | UV_WRITABLE, poll_level_cb);
+    report(&test->reporter, "both", rc, uv_is_active((uv_handle_t *)handle));
+    return;
+  }
+  int rc = uv_poll_stop(handle);
+  report(&test->reporter, "stopped", rc, uv_is_active((uv_handle_t *)handle));
+  uv_close((uv_handle_t *)handle, poll_test_close_cb);
+}
+
+// testPoll(callback) watches a socket that has one byte to read. The handle is
+// level-triggered: the callback runs on each loop iteration until it reads the
+// byte. It then watches both directions, and only writable is ready. Events:
+//   poll 0 UV_READABLE / poll 0 UV_READABLE / read 1 'x' / both 0 1
+//   poll 0 UV_WRITABLE / stopped 0 0 / close poll 1 0
+// Returns [fd is non-blocking after init, uv_poll_start, is_active, has_ref].
+static napi_value test_poll(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct poll_test *test = init_poll(env, args[0], false);
+  if (test == NULL)
+    return NULL;
+  int32_t state[4];
+  state[0] = (fcntl(test->fds[0], F_GETFL) & O_NONBLOCK) != 0;
+  state[1] = uv_poll_start(&test->poll, UV_READABLE, poll_level_cb);
+  state[2] = uv_is_active((uv_handle_t *)&test->poll);
+  state[3] = uv_has_ref((uv_handle_t *)&test->poll);
+  if (write(test->fds[1], "x", 1) != 1)
+    napi_throw_error(env, NULL, "write failed");
+  return make_int32_array(env, state, 4);
+}
+
+static void poll_once_cb(uv_poll_t *handle, int status, int events) {
+  struct poll_test *test = handle->data;
+  char byte = 0;
+  int count = (int)read(test->fds[0], &byte, 1);
+  report(&test->reporter, "poll", status, events);
+  report(&test->reporter, "read", count, byte);
+  uv_close((uv_handle_t *)handle, poll_test_close_cb);
+}
+
+static void *write_after_a_while(void *arg) {
+  struct poll_test *test = arg;
+  usleep(30 * 1000);
+  if (write(test->fds[1], "y", 1) != 1)
+    abort();
+  return NULL;
+}
+
+// testPollFromThread(callback) watches a socket that another thread writes to
+// after the script has returned, so only the started handle keeps the process
+// alive. Events: poll 0 UV_READABLE / read 1 'y' / close poll 1 0
+static napi_value test_poll_from_thread(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct poll_test *test = init_poll(env, args[0], false);
+  if (test == NULL)
+    return NULL;
+  pthread_t thread;
+  if (uv_poll_start(&test->poll, UV_READABLE, poll_once_cb) != 0 ||
+      pthread_create(&thread, NULL, write_after_a_while, test) != 0) {
+    napi_throw_error(env, NULL, "start failed");
+    return NULL;
+  }
+  pthread_detach(thread);
+  return NULL;
+}
+
+// testPollHangup(callback) watches a socket and closes its peer. The handle
+// reports readable, and the read returns 0. Events:
+//   poll 0 UV_READABLE / read 0 0 / close poll 1 0
+static napi_value test_poll_hangup(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct poll_test *test = init_poll(env, args[0], false);
+  if (test == NULL)
+    return NULL;
+  if (uv_poll_start(&test->poll, UV_READABLE, poll_once_cb) != 0)
+    napi_throw_error(env, NULL, "start failed");
+  close_fd(&test->fds[1]);
+  return NULL;
+}
+
+static void poll_error_cb(uv_poll_t *handle, int status, int events) {
+  struct poll_test *test = handle->data;
+  test->calls++;
+  report(&test->reporter, "poll", status, events);
+  if (test->calls == 1) {
+    // Close the pipe's read end. The write end then reports an error.
+    close_fd(&test->fds[1]);
+    return;
+  }
+  report(&test->reporter, "active", uv_is_active((uv_handle_t *)handle), 0);
+  uv_close((uv_handle_t *)handle, poll_test_close_cb);
+}
+
+// testPollError(callback) watches the write end of a pipe and closes the read
+// end from the first callback. On Linux the fd then reports EPOLLERR, and
+// libuv stops the handle and reports UV_EBADF. Events:
+//   poll 0 UV_WRITABLE / poll UV_EBADF 0 / active 0 0 / close poll 1 0
+static napi_value test_poll_error(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct poll_test *test = init_poll(env, args[0], true);
+  if (test == NULL)
+    return NULL;
+  if (uv_poll_start(&test->poll, UV_WRITABLE, poll_error_cb) != 0)
+    napi_throw_error(env, NULL, "start failed");
+  return NULL;
+}
+
+static void unused_poll_cb(uv_poll_t *handle, int status, int events) {
+  (void)handle;
+  (void)status;
+  (void)events;
+}
+
+static uv_poll_t unref_poll;
+
+// testPollUnref() starts a handle on a socket that never becomes readable and
+// unrefs it. The handle is never stopped or closed, so the process must still
+// exit. Returns [uv_poll_start, has_ref, has_ref after uv_unref, is_active].
+static napi_value test_poll_unref(napi_env env, napi_callback_info info) {
+  int fds[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0 ||
+      uv_poll_init(get_loop(env, false), &unref_poll, fds[0]) != 0) {
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  int32_t state[4];
+  state[0] = uv_poll_start(&unref_poll, UV_READABLE, unused_poll_cb);
+  state[1] = uv_has_ref((uv_handle_t *)&unref_poll);
+  uv_unref((uv_handle_t *)&unref_poll);
+  state[2] = uv_has_ref((uv_handle_t *)&unref_poll);
+  state[3] = uv_is_active((uv_handle_t *)&unref_poll);
+  return make_int32_array(env, state, 4);
+}
+
+static uv_poll_t errors_poll_a;
+static uv_poll_t errors_poll_b;
+static uv_poll_t errors_poll_c;
+static uv_idle_t errors_poll_idle;
+
+// testPollErrors() returns the result of each call (listed in uv.test.ts). It
+// closes the handles it initializes so the process can exit. They're static
+// because a handle must outlive its close.
+static napi_value test_poll_errors(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  int fds[2];
+  // A high fd number, so that no other thread gets it while this function runs.
+  int closed_fd = -1;
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0 ||
+      (closed_fd = fcntl(fds[1], F_DUPFD, 1000)) < 0 ||
+      uv_idle_init(loop, &errors_poll_idle) != 0) {
+    napi_throw_error(env, NULL, "setup failed");
+    return NULL;
+  }
+  close(closed_fd);
+
+  int32_t results[24];
+  size_t count = 0;
+  results[count++] = uv_poll_init(NULL, &errors_poll_a, fds[0]);
+  results[count++] = uv_poll_init(loop, &errors_poll_a, -1);
+  results[count++] = uv_poll_init(loop, &errors_poll_a, closed_fd);
+  results[count++] = uv_poll_init(loop, &errors_poll_a, fds[0]);
+  results[count++] = uv_poll_init_socket(loop, &errors_poll_b, fds[0]);
+  results[count++] = uv_poll_start(&errors_poll_a, 16, unused_poll_cb);
+  results[count++] =
+      uv_poll_start(&errors_poll_a, UV_PRIORITIZED, unused_poll_cb);
+  results[count++] = uv_poll_start(&errors_poll_a, UV_READABLE, NULL);
+  results[count++] = uv_is_active((uv_handle_t *)&errors_poll_a);
+  results[count++] = uv_poll_start(&errors_poll_a, UV_READABLE | UV_DISCONNECT,
+                                   unused_poll_cb);
+  results[count++] = uv_poll_start(&errors_poll_b, UV_READABLE, unused_poll_cb);
+  results[count++] = uv_poll_init(loop, &errors_poll_c, fds[0]);
+  results[count++] = uv_poll_start(&errors_poll_a, 0, NULL);
+  results[count++] = uv_is_active((uv_handle_t *)&errors_poll_a);
+  results[count++] = uv_poll_start(&errors_poll_b, UV_WRITABLE, unused_poll_cb);
+  results[count++] = uv_poll_stop(&errors_poll_b);
+  results[count++] = uv_poll_start((uv_poll_t *)&errors_poll_idle, UV_READABLE,
+                                   unused_poll_cb);
+  results[count++] = uv_poll_stop((uv_poll_t *)&errors_poll_idle);
+  uv_close((uv_handle_t *)&errors_poll_a, NULL);
+  results[count++] = uv_poll_start(&errors_poll_a, UV_READABLE, unused_poll_cb);
+  results[count++] = uv_poll_stop(&errors_poll_a);
+  results[count++] = uv_is_closing((uv_handle_t *)&errors_poll_a);
+
+  uv_close((uv_handle_t *)&errors_poll_b, NULL);
+  uv_close((uv_handle_t *)&errors_poll_idle, NULL);
+  close(fds[0]);
+  close(fds[1]);
+  return make_int32_array(env, results, count);
+}
+
+// --- uv_close order ----------------------------------------------------------
+
+struct close_order_test {
+  uv_check_t check;
+  uv_async_t async;
+  struct reporter reporter;
+  bool closing;
+  bool check_ran;
+  bool close_cb_ran;
+};
+
+static struct close_order_test *close_order;
+
+static void close_order_check_close_cb(uv_handle_t *handle) {
+  struct close_order_test *test = handle->data;
+  reporter_destroy(&test->reporter);
+  free(test);
+}
+
+static void close_order_async_close_cb(uv_handle_t *handle) {
+  struct close_order_test *test = handle->data;
+  test->close_cb_ran = true;
+  report(&test->reporter, "close", test->check_ran, 0);
+  uv_close((uv_handle_t *)&test->check, close_order_check_close_cb);
+}
+
+static void close_order_check_cb(uv_check_t *handle) {
+  struct close_order_test *test = handle->data;
+  if (!test->closing || test->check_ran)
+    return;
+  test->check_ran = true;
+  report(&test->reporter, "check", test->close_cb_ran, 0);
+}
+
+static void unused_close_order_async_cb(uv_async_t *handle) { (void)handle; }
+
+// testCloseOrder(callback) starts a check handle and an async handle. The
+// script then calls closeOrderClose() from some phase of the loop, which closes
+// the async handle. libuv runs close callbacks after the check handles of the
+// same loop iteration, so for every phase the events are:
+//   closing 1 0    right after uv_close
+//   check 0 0      the next check callback: close_cb has not run
+//   close 1 0      close_cb: a check callback ran since uv_close
+static napi_value test_close_order(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct close_order_test *test = calloc(1, sizeof(*test));
+  uv_loop_t *loop = get_loop(env, false);
+  if (uv_check_init(loop, &test->check) != 0 ||
+      uv_check_start(&test->check, close_order_check_cb) != 0 ||
+      uv_async_init(loop, &test->async, unused_close_order_async_cb) != 0) {
+    free(test);
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  reporter_init(&test->reporter, env, args[0]);
+  uv_handle_set_data((uv_handle_t *)&test->check, test);
+  uv_handle_set_data((uv_handle_t *)&test->async, test);
+  close_order = test;
+  return NULL;
+}
+
+static napi_value close_order_close(napi_env env, napi_callback_info info) {
+  struct close_order_test *test = close_order;
+  close_order = NULL;
+  if (test == NULL)
+    return NULL;
+  test->closing = true;
+  uv_close((uv_handle_t *)&test->async, close_order_async_close_cb);
+  report(&test->reporter, "closing", uv_is_closing((uv_handle_t *)&test->async),
+         0);
+  return NULL;
+}
+
 // testNow() checks that uv_now advances while the process spins for 5ms of
 // uv_hrtime. Returns { nowIsPositive, advancedMs }.
 static napi_value test_now(napi_env env, napi_callback_info info) {
@@ -1210,6 +1544,30 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_timer_unref, NULL, &fn);
   napi_set_named_property(env, exports, "testTimerUnref", fn);
+
+  napi_create_function(env, NULL, 0, test_poll, NULL, &fn);
+  napi_set_named_property(env, exports, "testPoll", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_from_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollFromThread", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_hangup, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollHangup", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_error, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollError", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_unref, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollUnref", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_errors, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollErrors", fn);
+
+  napi_create_function(env, NULL, 0, test_close_order, NULL, &fn);
+  napi_set_named_property(env, exports, "testCloseOrder", fn);
+
+  napi_create_function(env, NULL, 0, close_order_close, NULL, &fn);
+  napi_set_named_property(env, exports, "closeOrderClose", fn);
 
   napi_create_function(env, NULL, 0, test_now, NULL, &fn);
   napi_set_named_property(env, exports, "testNow", fn);

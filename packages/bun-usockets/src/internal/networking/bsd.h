@@ -131,6 +131,15 @@ ssize_t recvmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 ssize_t sendmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 #endif
 
+/* Builds where bsd_recvmmsg can read a batch with one recvmsg(2) per datagram:
+ * macOS below 15.6, and fault-injection builds (see bsd_recvmsg_each). */
+#if defined(__APPLE__) || \
+    (!defined(_WIN32) && defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION)
+#define LIBUS_UDP_RECV_PER_MESSAGE 1
+#else
+#define LIBUS_UDP_RECV_PER_MESSAGE 0
+#endif
+
 struct udp_recvbuf {
 #if defined(_WIN32)
     char *buf;
@@ -142,6 +151,11 @@ struct udp_recvbuf {
     struct iovec iov[LIBUS_UDP_RECV_COUNT];
     struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
     char control[LIBUS_UDP_RECV_COUNT][256];
+#if LIBUS_UDP_RECV_PER_MESSAGE
+    /* Set when bsd_recvmmsg returns -1: the datagrams a per-message batch read
+     * before the recvmsg that failed. They are in msgvec. */
+    int received_before_error;
+#endif
 #endif
 };
 
@@ -160,6 +174,11 @@ struct udp_sendbuf {
 };
 
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
+/* Returns the number of datagrams received, or -1 with errno set. A per-message
+ * batch that fails after some datagrams also sets recvbuf->received_before_error.
+ * Each recvmsg consumes what it returns, so the kernel has already cleared that
+ * error and does not raise it again: the caller delivers those datagrams, then
+ * reports errno. */
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
 int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);

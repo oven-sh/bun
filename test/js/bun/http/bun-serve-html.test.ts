@@ -1414,6 +1414,37 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   expect(exitCode).toBe(0);
 });
 
+// The dev server bundles with its own transpilers. Their resolvers read NODE_PATH, as the production bundle does.
+// A `require` in a `try` block that does not resolve is left to throw at run time: it is bundled when it resolves.
+test.concurrent.each([true, false])("resolves a package from NODE_PATH with development: %p", async development => {
+  using dir = tempDir("bun-serve-html-node-path", {
+    "vendor/dep/index.ts": `export const dep = "import from NODE_PATH";\n`,
+    "vendor/optional-dep/index.ts": `export const optional = "handled require from NODE_PATH";\n`,
+    "index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `import { dep } from "dep";\nlet optional;\ntry {\n  optional = require("optional-dep").optional;\n} catch {}\nconsole.log(dep, optional);\n`,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+      const page = await fetch(server.url);
+      const scriptSrc = (await page.text()).match(/<script[^>]*\\ssrc="([^"]+)"/)?.[1];
+      const script = scriptSrc ? await (await fetch(new URL(scriptSrc, server.url))).text() : "";
+      console.log(
+        JSON.stringify({
+          status: page.status,
+          import: script.includes("import from NODE_PATH"),
+          handledRequire: script.includes("handled require from NODE_PATH"),
+        }),
+      );
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir, { NODE_PATH: join(String(dir), "vendor") });
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ status: 200, import: true, handledRequire: true }),
+    exitCode: 0,
+  });
+});
+
 // A file is marked stale as soon as one of its imports fails to resolve, before the rebuild ends.
 // The plugin pauses the rebuild in onResolve. Imports resolve in order, so "./missing.css" has already failed.
 test.concurrent("serves a page request during a rebuild that fails a linked stylesheet", async () => {

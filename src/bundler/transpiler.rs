@@ -145,11 +145,21 @@ impl<'a> Transpiler<'a> {
         unsafe { &mut *self.log }
     }
 
+    /// `resolver` reads the loader through its own copy of `env`, which `init` made.
+    #[inline]
+    fn debug_assert_resolver_shares_env(&self) {
+        debug_assert!(
+            core::ptr::eq(self.env, self.resolver.env_loader_ptr().as_ptr()),
+            "Transpiler.env was reassigned without the copy in its resolver"
+        );
+    }
+
     /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
     /// [`Self::env_mut`] when only inspecting env vars (e.g. `.get()`), so
     /// call sites can overlap with other `&` borrows of the same loader.
     #[inline]
     pub fn env(&self) -> &'a dot_env::Loader {
+        self.debug_assert_resolver_shares_env();
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. Shared access cannot conflict with the
@@ -164,6 +174,7 @@ impl<'a> Transpiler<'a> {
     /// borrows.
     #[inline]
     pub fn env_mut(&self) -> &'a mut dot_env::Loader {
+        self.debug_assert_resolver_shares_env();
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. No other live `&mut Loader` exists at
@@ -1162,6 +1173,8 @@ impl<'a> Transpiler<'a> {
                 }
             },
         };
+        let env_loader_nn = core::ptr::NonNull::new(env_loader)
+            .expect("Transpiler::init_in_place: env loader is non-null");
 
         if dot_env::instance().is_none() {
             dot_env::set_instance(env_loader);
@@ -1217,6 +1230,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(
                 log_nn,
                 fs,
+                env_loader_nn,
                 resolver_opts,
             ));
             core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());

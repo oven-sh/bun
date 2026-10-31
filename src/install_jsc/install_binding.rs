@@ -2,8 +2,6 @@ use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSValue, StringJsc as _};
 
 pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsResult<JSValue> {
-    use core::ptr::NonNull;
-
     use bstr::BStr;
     use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
         WriteStream, WriteStreamOptions, json_stringify,
@@ -35,15 +33,9 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
 
     let mut lockfile_ = Lockfile::default();
 
-    // `bun_vm()` returns a raw `*mut VirtualMachine`; deref locally so the
-    // env-loader fixup and the package-manager borrow are scoped
-    // independently.
     // SAFETY: `bun_vm()` returns the live VM that owns `global`; this host fn
     // runs on the JS thread so no concurrent `&mut VirtualMachine` exists.
     let vm = global.bun_vm().as_mut();
-    if vm.transpiler.resolver.env_loader.is_none() {
-        vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
-    }
 
     // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
     let manager = vm.package_manager();

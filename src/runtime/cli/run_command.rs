@@ -848,7 +848,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.resolver.opts.install_preference = offline;
         b.options.global_cache = ctx.debug.global_cache;
         b.options.install_preference = offline;
-        b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
         if ctx.runtime_options.eval.reads_configuration {
             b.resolver.opts.packages_require_like_node();
         }

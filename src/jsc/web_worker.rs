@@ -1095,7 +1095,6 @@ impl WebWorker {
         // SAFETY: `vm` is a valid heap-allocated VM ptr (checked above).
         unsafe {
             let b = &mut (*vm).transpiler;
-            b.resolver.env_loader = NonNull::new(b.env);
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 

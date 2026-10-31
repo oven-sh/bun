@@ -502,12 +502,11 @@ pub struct Resolver<'a> {
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
-    // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
-    // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
+    // mutably reborrowed via `Transpiler.env: *mut Loader` (`configure_defines()`
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
-    pub env_loader: Option<NonNull<DotEnv::Loader>>,
+    env_loader: NonNull<DotEnv::Loader>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
@@ -844,14 +843,11 @@ impl<'a> Resolver<'a> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
-        let env: NonNull<DotEnv::Loader> = self
-            .env_loader
-            .expect("Resolver.env_loader must be set before auto-install");
-        // SAFETY: `__bun_resolver_init_package_manager` is defined
-        // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
-        // final binary; `self.log` / `self.opts.install` / `env` point at
-        // process-lifetime storage (Transpiler-owned). The returned pointer
-        // names the `PackageManager` singleton (`'static`).
+        // SAFETY: `__bun_resolver_init_package_manager` is defined `#[no_mangle]`
+        // in `bun_install::auto_installer` and linked into the final binary. The
+        // `PackageManager` singleton it returns (`'static`) keeps `self.log` and
+        // `self.env_loader`, and reads `self.opts.install`: the caller's
+        // transpiler has to own storage that lives as long as the process.
         let pm: NonNull<dyn AutoInstaller> = unsafe {
             bun_removable_features::call_removable!(
                 Install,
@@ -859,7 +855,7 @@ impl<'a> Resolver<'a> {
                 __bun_resolver_init_package_manager,
                 self.log,
                 self.opts.install,
-                env,
+                self.env_loader,
                 self.opts.install_preference
                     == bun_options_types::offline_mode::OfflineMode::Offline,
                 importer_dir,
@@ -931,22 +927,28 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
+    /// Safe read-only accessor for the `DotEnv::Loader` back-reference.
     ///
-    /// Single `unsafe` deref site for the `env_loader: Option<NonNull<_>>`
+    /// Single `unsafe` deref site for the `env_loader: NonNull<_>`
     /// field. The pointee is the Transpiler-owned loader (set from
     /// `transpiler.env`) and strictly outlives the resolver. Only called once
     /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
     /// live concurrently — see the field comment for why this is *not* stored
-    /// as `Option<&'a Loader>`.
+    /// as `&'a Loader`.
     #[inline]
-    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
+    pub(crate) fn env_loader(&self) -> &'a DotEnv::Loader {
         // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
         // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
         // never mutates the env, so no `&mut Loader` overlaps this shared
         // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
         // the env borrow across `&mut self` resolver calls.
-        self.env_loader.map(|p| unsafe { p.as_ref() })
+        unsafe { self.env_loader.as_ref() }
+    }
+
+    /// The pointer that [`init1`](Self::init1) received, for `Transpiler` to compare with its own copy.
+    #[inline]
+    pub fn env_loader_ptr(&self) -> NonNull<DotEnv::Loader> {
+        self.env_loader
     }
 
     #[inline]
@@ -973,9 +975,11 @@ impl<'a> Resolver<'a> {
         self.opts.global_cache.is_enabled()
     }
 
+    /// `env_loader` is the loader of the `Transpiler` that owns this resolver. It outlives the resolver.
     pub fn init1(
         log: NonNull<bun_ast::Log>,
         _fs: *mut Fs::FileSystem,
+        env_loader: NonNull<DotEnv::Loader>,
         opts: options::BundleOptions,
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
@@ -1002,7 +1006,7 @@ impl<'a> Resolver<'a> {
             generation: 0,
             package_manager: None,
             on_wake_package_manager: Default::default(),
-            env_loader: None,
+            env_loader,
             store_fd: false,
             standalone_module_graph: None,
             prefer_module_field: true,
@@ -3132,10 +3136,7 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
-            .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
+        let node_path: &[u8] = self.env_loader().get(b"NODE_PATH").unwrap_or(b"");
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {

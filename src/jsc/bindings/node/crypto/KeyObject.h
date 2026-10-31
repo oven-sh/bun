@@ -110,6 +110,7 @@ public:
     JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
     std::optional<bool> equals(const KeyObject& other) const;
+    static bool cryptoKeysEqual(WebCore::CryptoKey&, WebCore::CryptoKey&);
     JSC::JSValue toCryptoKey(JSC::JSGlobalObject*, JSC::ThrowScope&,
         JSC::JSValue algorithmValue, JSC::JSValue extractableValue, JSC::JSValue keyUsagesValue);
 

@@ -84,6 +84,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
@@ -129,6 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);

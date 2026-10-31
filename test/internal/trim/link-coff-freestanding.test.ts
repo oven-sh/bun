@@ -179,32 +179,32 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   });
 
   // As `??_E..`, the vector deleting destructor, is an alias of `??_G..` in every C++ class with a virtual destructor.
-  testLink("links where a member of bitcode refers to a weak alias, which what is compiled from it does not define", async () => {
-    using dir = tempDir("trim-coff-freestanding", {
-      ...smallSources,
-      "aliased.c": `
+  testLink(
+    "links where a member of bitcode refers to a weak alias, which what is compiled from it does not define",
+    async () => {
+      using dir = tempDir("trim-coff-freestanding", {
+        ...smallSources,
+        "aliased.c": `
         __attribute__((noinline)) int aliased_target(int value) { return value + 1; }
         extern __typeof(aliased_target) aliased_name __attribute__((weak, alias("aliased_target")));
         __attribute__((noinline)) int beside_the_alias(int value) { return value * 3; }
         int (*const volatile aliased_table[])(int) = { aliased_name, beside_the_alias };`,
-      "main.c": mainReturning(
-        "extern int (*const volatile aliased_table[])(int);",
-        "aliased_table[argc & 1](argc)",
-      ),
-    });
-    const objects = ["feature_code", "entry", "table", "embedder", "main", "aliased"];
-    const { addressOf, featuresOf, summary } = await linked(
-      String(dir),
-      optionsWith({
-        objects,
-        archives: { "shelf.lib": objects },
-        compileFlags: Object.fromEntries(objects.map(name => [name, thinLtoFlags])),
-      }),
-    );
-    expect(addressOf("beside_the_alias")).toBeGreaterThan(0);
-    expect(["entered", "main", "aliased_target"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
-    expect(summary.removed).toContain(Extra);
-  });
+        "main.c": mainReturning("extern int (*const volatile aliased_table[])(int);", "aliased_table[argc & 1](argc)"),
+      });
+      const objects = ["feature_code", "entry", "table", "embedder", "main", "aliased"];
+      const { addressOf, featuresOf, summary } = await linked(
+        String(dir),
+        optionsWith({
+          objects,
+          archives: { "shelf.lib": objects },
+          compileFlags: Object.fromEntries(objects.map(name => [name, thinLtoFlags])),
+        }),
+      );
+      expect(addressOf("beside_the_alias")).toBeGreaterThan(0);
+      expect(["entered", "main", "aliased_target"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
+      expect(summary.removed).toContain(Extra);
+    },
+  );
 
   testLink("writes the four review files, the table and the state", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);

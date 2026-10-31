@@ -3,8 +3,8 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -47,7 +47,9 @@ function findNameThatLoadsBitcode(objects: readonly string[], inputs: readonly s
       object?.symbolClass.forEach((storage, symbol) => {
         if (storage === 0) return;
         const isWanted =
-          storage === IMAGE_SYM_CLASS_EXTERNAL && object.symbolSection[symbol] === 0 && object.symbolValue[symbol] === 0;
+          storage === IMAGE_SYM_CLASS_EXTERNAL &&
+          object.symbolSection[symbol] === 0 &&
+          object.symbolValue[symbol] === 0;
         (isWanted ? wanted : defined).add(object.nameOf(symbol));
       });
     } finally {
@@ -176,7 +178,9 @@ export function coff(linker: Linker): LinkerFormat {
     prepareCompiledObjects(objects, first) {
       const name = findNameThatLoadsBitcode(objects, linker.inputs);
       if (name !== undefined) {
-        console.log(`trim: the second link compiles the bitcode again: linked in front of the archives, what the first link compiled would take a member of bitcode for ${name}`);
+        console.log(
+          `trim: the second link compiles the bitcode again: linked in front of the archives, what the first link compiled would take a member of bitcode for ${name}`,
+        );
         relinksSameInputs = true;
         named = objects;
         return undefined;

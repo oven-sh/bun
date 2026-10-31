@@ -75,7 +75,9 @@ const response = await fetch("http://example.com", {
 
 Bun sends the `headers` directly to the proxy in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL.
 
-Without a `proxy` option, Bun reads `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (upper or lower case) each time `fetch` runs, so changes to `process.env` apply to the next request. Bun uses `ALL_PROXY`, for `http:` and `https:` URLs alike, when the scheme-specific variable is unset. It ignores a value that names another kind of proxy, such as `socks5://`. curl reads `ALL_PROXY` too; Node.js does not. A request with the `unix` option never uses the proxy environment.
+The proxy URL can also be `socks5://` or `socks5h://` (default port 1080, optional `username:password@`). Bun sends the target hostname to the SOCKS5 proxy for resolution in both cases; `headers` are not sent to SOCKS5 proxies.
+
+Without a `proxy` option, Bun reads `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (upper or lower case) each time `fetch` runs, so changes to `process.env` apply to the next request. Bun uses `ALL_PROXY`, for `http:` and `https:` URLs alike, when the scheme-specific variable is unset. It ignores a value that names a proxy Bun cannot speak, such as `socks4://`. curl reads `ALL_PROXY` too; Node.js does not. A request with the `unix` option never uses the proxy environment.
 
 `no_proxy` lists hosts that bypass the proxy. Bun reads `NO_PROXY` when `no_proxy` is unset or empty, as curl and Node.js do. Entries are separated by commas or whitespace.
 

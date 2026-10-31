@@ -35,6 +35,80 @@ using namespace WebCore;
 
 namespace Bun {
 
+// `stack` is stored with putDirect(), which asks nothing of the object. The functions below ask what an ordinary define asks,
+// and they read the Structure alone: no trap and no getter runs, and an Error does not format the stack it has yet to read.
+
+struct OwnStack {
+    // Empty: the object has no `stack` of its own.
+    JSC::JSValue value;
+    unsigned attributes { 0 };
+};
+
+static ALWAYS_INLINE OwnStack ownStackOf(JSC::VM& vm, JSC::JSObject* object)
+{
+    OwnStack ownStack;
+    ownStack.value = object->getDirect(vm, vm.propertyNames->stack, ownStack.attributes);
+    return ownStack;
+}
+
+// Whether the object takes new properties. The Structure of a class that answers isExtensible() itself says "not extensible"
+// from the start: globalThis, and the objects and functions of compiled code. A Proxy answers with a trap and is not asked:
+// Error.captureStackTrace takes none, and a store to one lands on its own cell.
+static ALWAYS_INLINE bool isExtensibleWithoutTrap(JSC::JSObject* object)
+{
+    JSC::Structure* structure = object->structure();
+    if (structure->isStructureExtensible()) [[likely]]
+        return true;
+    if (!structure->typeInfo().overridesIsExtensible())
+        return false;
+    return object->type() == JSC::ProxyObjectType || object->methodTable()->isExtensible(object, structure->globalObject());
+}
+
+enum class StackRefusal : bool {
+    NotExtensible,
+    NotConfigurable,
+};
+
+// What V8 says when Error.captureStackTrace refuses its target. A built-in object of a compiled executable is closed with
+// immutable properties, and keeps what every define on it says.
+static NEVER_INLINE JSC::EncodedJSValue throwStackRefusal(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* target, StackRefusal refusal)
+{
+    if (refusal == StackRefusal::NotConfigurable)
+        return JSC::throwVMTypeError(globalObject, scope, "Cannot redefine property: stack"_s);
+    if (target->hasImmutableProperties() && !target->hasFrozenElementsInPlace())
+        return JSC::throwVMTypeError(globalObject, scope, JSC::ImmutablePropertyDefineError);
+    return JSC::throwVMTypeError(globalObject, scope, "Cannot define property stack, object is not extensible"_s);
+}
+
+// With which attributes to store `stack` on `object`, or nothing if Object.preventExtensions(), seal() or freeze() forbids the
+// store. User code runs between the check at the head of Error.captureStackTrace and its store, and after a capture that
+// formats on the first read. V8 stores to an internal slot there and never throws, so a store that is forbidden is left out.
+//
+// Nothing is added to an object that is not extensible. A `stack` that is not configurable keeps its attributes, and takes a
+// value only if it is a writable data property.
+std::optional<unsigned> attributesForStackStore(JSC::VM& vm, JSC::JSObject* object)
+{
+    unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(object);
+    if (!instance && !object->structure()->isNonExtensibleOrHasNonConfigurableProperties()) [[likely]]
+        return attributes;
+
+    OwnStack ownStack = ownStackOf(vm, object);
+    if (!ownStack.value) {
+        // JSC is formatting the stack of this Error for its first read, and adds `stack` when Error.prepareStackTrace returns:
+        // the Error has it from the start.
+        bool isBeingMaterialized = instance && instance->hasMaterializedErrorInfo() && instance->stackTrace();
+        if (!isBeingMaterialized && !isExtensibleWithoutTrap(object))
+            return std::nullopt;
+        return attributes;
+    }
+    if (!(ownStack.attributes & JSC::PropertyAttribute::DontDelete))
+        return attributes;
+    if (ownStack.attributes & JSC::PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+        return std::nullopt;
+    return ownStack.attributes;
+}
+
 // What `.stack` is when the frames do not fit in one string. It cannot throw: `formatStackTrace` also runs in a GC finalizer.
 static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::String& message)
 {
@@ -167,8 +241,11 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
-        RETURN_IF_EXCEPTION(scope, {});
+        // The getters of `name` and `message` ran above.
+        if (auto attributes = attributesForStackStore(vm, errorObject)) {
+            putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, *attributes);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -423,7 +500,9 @@ WTF::String formatStackTrace(
                 showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
 #endif
                 if (showsSourcePosition) {
-                    if (errorInstance) {
+                    // An Error gets the two with its stack, at the first read. Another object got locked since the head of
+                    // Error.captureStackTrace, if it takes no new properties.
+                    if (errorInstance && (errorInstance->type() == JSC::ErrorInstanceType || isExtensibleWithoutTrap(errorInstance))) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     }
@@ -844,11 +923,17 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
             return {};
         }
         result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject);
-        if (!isBeingMaterialized)
-            errorObject->setStackFrames(vm, {});
+        if (!isBeingMaterialized) {
+            // An error that does not take the stack below keeps its frames: the next read formats them again.
+            bool keepsFrames = !scope.exception() && !attributesForStackStore(vm, errorObject);
+            errorObject->setStackFrames(vm, keepsFrames ? WTF::move(*ownedStackTrace) : WTF::Vector<JSC::StackFrame> {});
+        }
     }
     RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+    // Object.seal() and Object.freeze() turn the accessor that called this into one that is not configurable. It stays then,
+    // and formats again at the next read.
+    if (auto attributes = attributesForStackStore(vm, errorObject))
+        errorObject->putDirect(vm, vm.propertyNames->stack, result, *attributes);
     return JSValue::encode(result);
 }
 
@@ -857,7 +942,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     auto& vm = JSC::getVM(globalObject);
     JSValue decodedValue = JSValue::decode(thisValue);
     if (auto* object = decodedValue.getObject()) {
-        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
+        if (auto attributes = attributesForStackStore(vm, object))
+            object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), *attributes);
     }
 
     return true;
@@ -870,13 +956,26 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
-    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
+    // A WebAssembly GC object can't get a property and its Structure has no global object. A Proxy keeps its properties on its
+    // target: a store to it lands on its own cell, where nothing reads it. V8 rejects both.
+    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType || objectArg.asCell()->type() == JSC::JSType::ProxyObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
+
+    // V8 refuses a target before it captures a frame: one that is not extensible, even if it has a `stack`, and then one whose
+    // `stack` is not configurable.
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject);
+    OwnStack ownStack;
+    if (instance || errorObject->structure()->isNonExtensibleOrHasNonConfigurableProperties()) {
+        if (!isExtensibleWithoutTrap(errorObject)) [[unlikely]]
+            return throwStackRefusal(lexicalGlobalObject, scope, errorObject, StackRefusal::NotExtensible);
+        ownStack = ownStackOf(vm, errorObject);
+        if (ownStack.value && (ownStack.attributes & JSC::PropertyAttribute::DontDelete)) [[unlikely]]
+            return throwStackRefusal(lexicalGlobalObject, scope, errorObject, StackRefusal::NotConfigurable);
+    }
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (stackTraceLimit == 0) {
@@ -887,7 +986,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
+    if (instance) {
         if (instance->hasMaterializedErrorInfo()) {
             // Error info was already materialized (e.g. .stack was previously accessed).
             // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
@@ -899,20 +998,25 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             String sourceURL;
             JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
             RETURN_IF_EXCEPTION(scope, {});
-            errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+            // Error.prepareStackTrace ran since the head.
+            if (auto attributes = attributesForStackStore(vm, errorObject))
+                errorObject->putDirect(vm, vm.propertyNames->stack, result, *attributes);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
             instance->setStackFrames(vm, WTF::move(stackTrace));
 
-            {
-                const auto& propertyName = vm.propertyNames->stack;
-                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-                DeletePropertySlot slot;
-                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+            // `ownStack` is what the head found: nothing since then ran JavaScript or changed the Structure of the error. An
+            // error that has the accessor from an earlier capture keeps it.
+            auto* lazyStack = globalObject->m_lazyStackCustomGetterSetter.get(globalObject);
+            unsigned lazyStackAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor;
+            if (ownStack.value != JSC::JSValue(lazyStack) || ownStack.attributes != lazyStackAttributes) {
+                if (ownStack.value) {
+                    DeletePropertySlot slot;
+                    JSObject::deleteProperty(instance, globalObject, vm.propertyNames->stack, slot);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, lazyStack, lazyStackAttributes);
             }
-            RETURN_IF_EXCEPTION(scope, {});
-
-            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
         OrdinalNumber line;
@@ -920,8 +1024,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
-        RETURN_IF_EXCEPTION(scope, {});
+        // With Error.prepareStackTrace set, it and the getters of `name` and `message` ran since the head.
+        if (auto attributes = attributesForStackStore(vm, errorObject)) {
+            putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, *attributes);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

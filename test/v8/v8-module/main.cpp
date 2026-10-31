@@ -2848,6 +2848,16 @@ void perform_uint32_value(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(maybe.FromJust());
 }
 
+// Like perform_uint32_value, with an exception already pending. V8 converts a
+// number without running JS, so an addon that reads a number argument after
+// throwing does not expect Nothing.
+void perform_uint32_value_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+  perform_uint32_value(info);
+}
+
 // Prints NumberValue of the first argument with every digit of the double.
 // Leaves the exception pending when the conversion throws, so the JS caller
 // sees it.
@@ -3412,6 +3422,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
                   test_v8_cpu_profiler_title_api);
   NODE_SET_METHOD(exports, "perform_uint32_value", perform_uint32_value);
+  NODE_SET_METHOD(exports, "perform_uint32_value_with_pending_exception",
+                  perform_uint32_value_with_pending_exception);
   NODE_SET_METHOD(exports, "perform_number_value", perform_number_value);
   NODE_SET_METHOD(exports, "perform_boolean_value", perform_boolean_value);
   NODE_SET_METHOD(exports, "create_function_with_c_function",

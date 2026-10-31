@@ -639,10 +639,16 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   });
 
   describe("Value::Uint32Value", () => {
+    // one "value | line printed for it | ..." per value that the driver converted
+    const casesOf = (out: string) =>
+      out
+        .split("====== ")
+        .slice(1)
+        .map(section => section.trim().split(/\r?\n/).join(" | "));
+
     it("converts values like the JS ToUint32 operation", async () => {
       const out = await checkSameOutput("test_v8_value_uint32_value");
-      const cases = out.split("====== ").map(section => section.trim().split(/\r?\n/).join(" | "));
-      expect(cases).toEqual(
+      expect(casesOf(out)).toEqual(
         expect.arrayContaining([
           // uWebSockets.js: app.listen(host, "3000", callback)
           "'3000' | maybe.IsNothing() = 0 | maybe.FromJust() = 3000",
@@ -654,6 +660,15 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
           "object with throwing valueOf | maybe.IsNothing() = 1 | threw the valueOf error",
         ]),
       );
+    });
+
+    it("converts a number while an exception is pending", async () => {
+      const out = await checkSameOutput("test_v8_value_uint32_value_with_pending_exception");
+      expect(casesOf(out)).toEqual([
+        "3000 | maybe.IsNothing() = 0 | maybe.FromJust() = 3000 | caught pending",
+        "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295 | caught pending",
+        "1.5 | maybe.IsNothing() = 0 | maybe.FromJust() = 1 | caught pending",
+      ]);
     });
   });
 

@@ -860,6 +860,18 @@ module.exports = debugMode => {
       logNumberConversions(nativeModule.perform_uint32_value);
     },
 
+    test_v8_value_uint32_value_with_pending_exception() {
+      for (const number of [3000, -1, 1.5]) {
+        console.log(`====== ${number}`);
+        try {
+          nativeModule.perform_uint32_value_with_pending_exception(number);
+          console.log("did not throw");
+        } catch (e) {
+          console.log("caught", e.message);
+        }
+      }
+    },
+
     test_v8_value_boolean_value() {
       const cases = [
         ["0", 0],

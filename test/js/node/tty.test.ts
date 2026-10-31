@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, nodeExe, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, openSync, readFileSync } from "node:fs";
@@ -227,6 +227,8 @@ async function runInPty(
   });
   await using spawnedTerminal = ownTerminal ? null : proc.terminal!;
   const terminal = (ownTerminal ?? spawnedTerminal)!;
+  // Nothing that is typed is echoed (ECHO is 0x8): an echo can land inside a line that the child prints.
+  terminal.localFlags = terminal.localFlags & ~0x8;
   const entry = { proc, output: () => buffer };
   unfinished.add(entry);
   // A failing child rejects the marker waits instead of hanging them. A clean
@@ -927,7 +929,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     }
 
     // Every row is what Node v26.3.0 answers, and where CI has a Node the rows run under it too.
-    describe.each(runtimes)("as in Node (%s)", (_name, exe) => {
+    describe.each(runtimes)("as in Node (%s)", (runtime, exe) => {
       test.skipIf(!exe).concurrent("streams on fd 0", async () => {
         const rows = {
           // A stream that never left normal mode writes nothing.
@@ -964,7 +966,11 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       });
 
       // The handle sets the mode through a descriptor of its own, so the caller can close the one that it passed.
-      test.skipIf(!exe).concurrent("streams on descriptors of their own that the program closes first", async () => {
+      // Not under Node on macOS: libuv reads /dev/tty through select() there, and its close compares the descriptor
+      // of that fallback with the one that took the snapshot, so no close of such a stream puts the terminal back.
+      // https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/stream.c#L339-L366
+      const skip = !exe || (runtime === "node" && isMacOS);
+      test.skipIf(skip).concurrent("streams on descriptors of their own that the program closes first", async () => {
         const rows = {
           "A raw, A closeFd, A destroy, end": ["raw", "raw", "cooked", "cooked"],
           "A raw, B raw, A closeFd, A destroy, B destroy, end": ["raw", "raw", "raw", "cooked", "cooked", "cooked"],
@@ -1376,7 +1382,6 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         [
           async (terminal, _output, seen) => {
             for (const [index, text] of typed.entries()) {
-              // With its line end: what is typed is echoed, and must not land inside the line of the marker.
               await seen(new RegExp(`(?:^%READY%\\r?\\n[^]*?){${index + 1}}`, "m"));
               terminal.write(text);
             }
@@ -1384,7 +1389,6 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         ],
         { markers: ["%READY%", "exit with code"], exitCode },
       );
-      // What is typed is echoed: the lines of the fixture are the ones that it alone prints.
       const lines = Bun.stripANSI(output())
         .split(/\r?\n/)
         .filter(line => /^(%READY%$|got |beforeExit |exit with )/.test(line));
@@ -1734,11 +1738,16 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
 
   // https://github.com/oven-sh/bun/issues/33580: Node emits errnoException(err,
   // "setRawMode"), so code/errno/syscall are set. A pipe is accepted by
-  // uv_tty_init. Closing fd 0 under the handle makes tcgetattr fail with EBADF
-  // on every platform (a pipe alone gives ENOTTY on Linux, EOPNOTSUPP on macOS).
+  // uv_tty_init and has no mode to set: tcgetattr answers ENOTTY. The pipe is
+  // one that the shell makes. The stdin of Bun.spawn is a socket pair, which
+  // answers EOPNOTSUPP on macOS, and libuv has no name for that.
   test("setRawMode failure emits an ErrnoException", async () => {
     await using proc = Bun.spawn({
       cmd: [
+        "sh",
+        "-c",
+        ': | "$@"',
+        "sh",
         bunExe(),
         "-e",
         `
@@ -1748,12 +1757,11 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
             console.log(JSON.stringify({ code: err.code, errno: err.errno, syscall: err.syscall, message: err.message, isRaw: s.isRaw }));
             s.destroy();
           });
-          // A pipe has no mode to set.
           s.setRawMode(true);
         `,
       ],
       env: bunEnv,
-      stdin: "pipe",
+      stdin: "ignore",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

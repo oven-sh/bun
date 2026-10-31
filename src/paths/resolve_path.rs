@@ -2764,6 +2764,28 @@ mod tests {
         h.iter().filter(|&&b| b == c).count()
     }
 
+    /// Null when `nd` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memmem(
+        h: *const u8,
+        n: usize,
+        nd: *const u8,
+        k: usize,
+    ) -> *const u8 {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (hay, nd) = unsafe {
+            (
+                core::slice::from_raw_parts(h, n),
+                core::slice::from_raw_parts(nd, k),
+            )
+        };
+        let first = n
+            .checked_sub(k)
+            .and_then(|end| (0..=end).find(|&i| hay[i..i + k] == *nd));
+        // SAFETY: `i` is an index into `hay`.
+        first.map_or(core::ptr::null(), |i| unsafe { h.add(i) })
+    }
+
     /// `usize::MAX` when `nd` does not occur, like the kernel.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn highway_memrmem16(

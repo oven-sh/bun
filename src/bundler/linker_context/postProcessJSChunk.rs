@@ -316,6 +316,10 @@ pub(crate) fn post_process_js_chunk(
     // bytecode-compiled module that contains TLA gets evaluated on the sync path
     // and the suspended generator is dropped — the entry promise resolves
     // immediately and the process exits before the awaited value lands.
+    //
+    // An unwrapped file that imports an async `__esm` wrapper prints
+    // `await init_x()` at the top level without any `await` keyword of its
+    // own, so the async flag counts as well.
     if let Some(mi) = module_info.as_deref_mut() {
         let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
         let wraps = c.graph.meta.items_flags();
@@ -327,7 +331,7 @@ pub(crate) fn post_process_js_chunk(
             if wraps[idx].wrap != crate::WrapKind::None {
                 continue;
             }
-            if !tla_keywords[idx].is_empty() {
+            if !tla_keywords[idx].is_empty() || wraps[idx].is_async_or_has_async_dependency {
                 mi.flags.has_tla = true;
                 break;
             }

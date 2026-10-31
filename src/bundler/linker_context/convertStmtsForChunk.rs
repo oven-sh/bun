@@ -287,24 +287,29 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 );
-                                // An async init returns a promise: await it as
-                                // `import` does. A `__commonJS` wrapper cannot await.
-                                if flag.is_async_or_has_async_dependency && wrap != WrapKind::Cjs {
-                                    stmts.inside_wrapper_prefix.append_async_dependency(
-                                        init_call,
-                                        c.promise_all_runtime_ref,
-                                    )?;
+                                // An async init returns a promise, so await it. The
+                                // statement stays in source order. The `await` is
+                                // only valid when this file's own wrapper is async:
+                                // a `__commonJS` wrapper never is, and in an import
+                                // cycle the two async flags can disagree.
+                                let value = if flag.is_async_or_has_async_dependency
+                                    && wrap != WrapKind::Cjs
+                                    && c.graph.meta.items_flags()[source_index as usize]
+                                        .is_async_or_has_async_dependency
+                                {
+                                    Expr::init(E::Await { value: init_call }, stmt.loc)
                                 } else {
-                                    stmts.inside_wrapper_prefix.append_non_dependency(
-                                        Stmt::alloc(
-                                            S::SExpr {
-                                                value: init_call,
-                                                ..Default::default()
-                                            },
-                                            stmt.loc,
-                                        ),
-                                    )?;
-                                }
+                                    init_call
+                                };
+                                stmts
+                                    .inside_wrapper_prefix
+                                    .append_non_dependency(Stmt::alloc(
+                                        S::SExpr {
+                                            value,
+                                            ..Default::default()
+                                        },
+                                        stmt.loc,
+                                    ))?;
                             }
                         }
 

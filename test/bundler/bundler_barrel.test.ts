@@ -2238,9 +2238,9 @@ describe("bundler", () => {
     },
   });
 
-  // Two async `export *` targets fold into one `await __promiseAll([...])`,
-  // like two async `import` statements do.
-  itBundled("barrel/TwoExportStarsAwaitTogether", {
+  // Two async `export *` targets are awaited one after the other, in source
+  // order.
+  itBundled("barrel/TwoExportStarsAwaitInOrder", {
     files: {
       "/main.js": /* js */ `
         import { a, b } from './barrel.js'
@@ -2267,7 +2267,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out/main.js");
-      expect(out).toMatch(/await __promiseAll\(\[\s*init_a\(\),\s*init_b\(\)\s*\]\)/);
+      expect(out).toMatch(/var init_barrel = __esm\(async \(\) => \{\s*await init_a\(\);\s*await init_b\(\);\s*\}\);/);
     },
   });
 
@@ -2299,6 +2299,47 @@ describe("bundler", () => {
       const out = api.readFile("/out/main.js");
       expect(out).toMatch(/var init_barrel = __esm\(\(\) => \{\s*init_a\(\);\s*\}\);/);
       expect(out).not.toContain("await init_a");
+    },
+  });
+
+  // An async `export *` init stays in source order after a CommonJS import
+  // too: the polyfill still runs before the library.
+  itBundled("barrel/ExportStarAsyncTargetKeepsSourceOrderAfterCommonJSImport", {
+    files: {
+      "/main.js": /* js */ `
+        import { load } from './lazy.js'
+        console.log(typeof (await load()).x)
+      `,
+      "/lazy.js": /* js */ `
+        export async function load() {
+          return import('./barrel.js')
+        }
+      `,
+      "/barrel.js": /* js */ `
+        import './polyfill.cjs'
+        export * from './container.js'
+      `,
+      "/container.js": /* js */ `
+        import './lib.cjs'
+        export const x = await Promise.resolve('x')
+      `,
+      "/lib.cjs": /* js */ `
+        if (!globalThis.__polyfill) throw new Error('lib needs the polyfill')
+        console.log('lib ok')
+      `,
+      "/polyfill.cjs": /* js */ `globalThis.__polyfill = 'ready'`,
+    },
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "lib ok\nstring",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/main.js");
+      expect(out).toMatch(
+        /var init_barrel = __esm\(async \(\) => \{\s*import_polyfill = __toESM\(require_polyfill\(\)\);\s*await init_container\(\);\s*\}\);/,
+      );
     },
   });
 

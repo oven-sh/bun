@@ -5928,6 +5928,31 @@ pub mod bv2_impl {
             ) == crate::linker_context_mod::ScanCssImportsResult::Ok
         }
 
+        /// Hashes the text of this stylesheet and of every stylesheet that its import records reach.
+        pub fn css_tree_fingerprint(&self, source_index: Index) -> u64 {
+            let css = self.graph.ast.items_css();
+            let import_records = self.graph.ast.items_import_records();
+            let sources = self.graph.input_files.items_source();
+            let mut hasher = ContentHasher::default();
+            let mut seen = vec![false; css.len()];
+            // A worklist, not recursion: an `@import` chain can be deeper than the stack.
+            let mut pending = vec![source_index.get()];
+            while let Some(index) = pending.pop() {
+                let row = index as usize;
+                if css[row].is_none() || seen[row] {
+                    continue;
+                }
+                seen[row] = true;
+                hasher.write(sources[row].contents());
+                for record in import_records[row].as_slice() {
+                    if record.source_index.is_valid() {
+                        pending.push(record.source_index.get());
+                    }
+                }
+            }
+            hasher.digest()
+        }
+
         // The body has deep DevServer field access (current_bundle.start_data,
         // css_entry_points, etc.). After tier-6 collapse this fn should be hoisted into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2

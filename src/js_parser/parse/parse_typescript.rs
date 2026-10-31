@@ -4,7 +4,9 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
+use crate::parser::{
+    FnOrArrowDataParse, LexicalDecl, ParseStatementOptions, Ref, ScopeOrder, StatementScope,
+};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -599,6 +601,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_index = p.scopes_in_order.len();
         if !opts.is_typescript_declare {
             name.ref_ = p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?;
+            // Printed in a block with no scope, except as a label's body or a module-level `var`.
+            if matches!(
+                opts.lexical_decl,
+                LexicalDecl::Forbid | LexicalDecl::AllowFnInsideIf
+            ) && p.current_scope != p.module_scope
+            {
+                p.stop_tracking_scope_uses();
+            }
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
             // Overwrite allowed: on a forbidden redeclaration `declare_symbol` returns

@@ -1356,7 +1356,14 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
     protoProps = undefined;
   }
 
-  let tag = value[SymbolToStringTag];
+  // A `var` has no temporal dead zone to set up, so the `try` adds no instruction when nothing throws.
+  var tag;
+  try {
+    tag = value[SymbolToStringTag];
+  } catch {
+    // Ignore error.
+  }
+
   // Only list the tag in case it's non-enumerable / not an own property.
   // Otherwise we'd print this twice.
   if (

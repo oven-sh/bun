@@ -238,7 +238,7 @@ pub(crate) enum JoinRequest {
     Root(ClientFileIndex),
     /// A stylesheet this bundle parsed: the bundler prints it from its source index.
     Parsed(bun_ast::Index),
-    /// A css root asked at an earlier scan end: the bundler prints it if the bundle holds it now.
+    /// A css root that the bundler does not enter: it prints the root if the bundle holds it now.
     Asked(ClientFileIndex),
 }
 
@@ -345,12 +345,25 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// heap-allocated `DevServer` (guaranteed by `Box<DevServer>` ownership).
     #[inline]
     unsafe fn owner(&mut self) -> *mut DevServer {
-        let offset = match SIDE {
-            Side::Client => offset_of!(DevServer, client_graph),
-            Side::Server => offset_of!(DevServer, server_graph),
-        };
+        let offset = Self::offset_in_owner();
         // SAFETY: `self` is the `<side>_graph` field of `DevServer`.
         unsafe { bun_core::container_of::<DevServer, Self>(std::ptr::from_mut(self), offset) }
+    }
+
+    /// [`owner`](Self::owner) for a caller that holds `&self`: it can only read the sibling fields.
+    #[inline]
+    unsafe fn owner_for_read(&self) -> *const DevServer {
+        let offset = Self::offset_in_owner();
+        // SAFETY: `self` is the `<side>_graph` field of `DevServer`.
+        unsafe { bun_core::container_of::<DevServer, Self>(std::ptr::from_ref(self), offset) }
+    }
+
+    #[inline]
+    fn offset_in_owner() -> usize {
+        match SIDE {
+            Side::Client => offset_of!(DevServer, client_graph),
+            Side::Server => offset_of!(DevServer, server_graph),
+        }
     }
 
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
@@ -1205,23 +1218,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             if self.has_html_or_script_importer(file) {
                 holders.push(file);
             }
+            // The skip rule holds a root back for a failed asset, also when this bundle repairs it.
+            let gates = |key: &[u8], failed: bool| {
+                failed || self.get_file_index(key).is_some_and(unrepaired)
+            };
             for holder in holders {
-                // The skip rule holds a root back for a failed asset, also when this bundle repairs it.
-                let mut held_back = self.reaches_unrepaired_failure(server_graph, holder, &[]);
-                let mut it = self.edge_lists[holder.get() as usize].first_import;
-                while let Some(edge_index) = it {
-                    let edge = self.edges[edge_index.get() as usize];
-                    it = edge.next_import;
-                    held_back |= unrepaired(edge.imported);
-                }
+                let held_back = self.reaches_unrepaired_failure(server_graph, holder, &gates);
                 // Handed to the bundler, and no stylesheet of the bundle has its key: it was not entered.
                 let key = &self.bundled_files.keys()[holder.get() as usize];
                 let not_entered = joined.contains(&ClientFileIndex::init(holder.get()))
                     && !css.iter().zip(sources).any(|(css, source)| {
                         css.is_some() && source.path.key_for_incremental_graph() == &**key
                     });
+                // The join found no importer to bundle again for a root that the bundler cannot enter.
+                let no_way_in = !self.css_root_can_enter(server_graph, holder, &gates);
                 debug_assert!(
-                    held_back || printed(holder) || not_entered,
+                    held_back || printed(holder) || not_entered || no_way_in,
                     "{} lost its failure in a bundle that did not print the css root {}",
                     bstr::BStr::new(&self.bundled_files.keys()[file.get() as usize]),
                     bstr::BStr::new(key),
@@ -1264,31 +1276,50 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         out: &mut Vec<JoinRequest>,
     ) {
         debug_assert!(matches!(SIDE, Side::Client));
-        let mut it = self.edge_lists[file.get() as usize].first_dep;
-        while let Some(edge_index) = it {
-            let edge = self.edges[edge_index.get() as usize];
-            it = edge.next_dependency;
-            let root = edge.dependency;
-            if !matches!(
-                self.bundled_files.values()[root.get() as usize].content,
-                Content::CssRoot(_),
-            ) {
-                continue;
+        let is_repaired = |key: &[u8]| {
+            let index = self.get_file_index(key);
+            index.is_some_and(|index| repaired.iter().any(|(known, _)| *known == index))
+        };
+        let unrepaired = |key: &[u8], failed: bool| failed && !is_repaired(key);
+        // A root that inlines a holder holds `file` too, and its own imports can be older than the holder's.
+        let mut seen: Vec<FileIndex<SIDE>> = Vec::new();
+        let mut queue = vec![file];
+        while let Some(held) = queue.pop() {
+            let mut it = self.edge_lists[held.get() as usize].first_dep;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_dependency;
+                let root = edge.dependency;
+                let content = &self.bundled_files.values()[root.get() as usize].content;
+                if !matches!(content, Content::CssRoot(_)) || seen.contains(&root) {
+                    continue;
+                }
+                seen.push(root);
+                queue.push(root);
+                let holder = ClientFileIndex::init(root.get());
+                if asked.contains(&holder) {
+                    // Another joined root can bring in a root that the bundler could not enter.
+                    out.push(JoinRequest::Asked(holder));
+                    continue;
+                }
+                let request = match repaired.iter().find(|(index, _)| *index == root) {
+                    Some(&(_, parsed)) => JoinRequest::Parsed(parsed),
+                    // That failure still gates the root, and the bundle that clears it joins the root.
+                    None if self.reaches_unrepaired_failure(server_graph, root, &unrepaired) => {
+                        continue;
+                    }
+                    None if self.css_root_can_enter(server_graph, root, &unrepaired) => {
+                        JoinRequest::Root(holder)
+                    }
+                    // It stays out of `asked`: the next scan end of this bundle looks for an importer again.
+                    None => {
+                        out.push(JoinRequest::Asked(holder));
+                        continue;
+                    }
+                };
+                asked.push(holder);
+                out.push(request);
             }
-            let holder = ClientFileIndex::init(root.get());
-            if asked.contains(&holder) {
-                // Another joined root can bring in a root that the bundler could not enter.
-                out.push(JoinRequest::Asked(holder));
-                continue;
-            }
-            let request = match repaired.iter().find(|(index, _)| *index == root) {
-                Some(&(_, parsed)) => JoinRequest::Parsed(parsed),
-                // That failure still gates the root, and the bundle that clears it joins the root.
-                None if self.reaches_unrepaired_failure(server_graph, root, repaired) => continue,
-                None => JoinRequest::Root(holder),
-            };
-            asked.push(holder);
-            out.push(request);
         }
         let holder = ClientFileIndex::init(file.get());
         if !asked.contains(&holder) && self.has_html_or_script_importer(file) {
@@ -1297,35 +1328,103 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    /// True if `root` or a file it imports has a failure on record that this bundle did not repair.
-    fn reaches_unrepaired_failure(
+    /// True if `unrepaired(key, failed)` holds for `from`, or for a file that the imports of `from` reach.
+    fn reaches_unrepaired_failure<const TWIN: bake::Side>(
         &self,
-        server_graph: &IncrementalGraph<{ Side::Server }>,
-        root: FileIndex<SIDE>,
-        repaired: &[(FileIndex<SIDE>, bun_ast::Index)],
+        twin_graph: &IncrementalGraph<TWIN>,
+        from: FileIndex<SIDE>,
+        unrepaired: &impl Fn(&[u8], bool) -> bool,
     ) -> bool {
-        let unrepaired = |index: FileIndex<SIDE>| {
-            let file = index.get() as usize;
+        let files = self.bundled_files.count();
+        let mut seen = bun_core::handle_oom(DynamicBitSetUnmanaged::init_empty(files));
+        seen.set(from.get() as usize);
+        let mut queue = vec![from];
+        while let Some(index) = queue.pop() {
+            let key: &[u8] = &self.bundled_files.keys()[index.get() as usize];
+            let file = &self.bundled_files.values()[index.get() as usize];
             // A stylesheet that a server file imports has its failure on the server graph.
-            let failed = self.bundled_files.values()[file].failed
-                || server_graph
-                    .bundled_files
-                    .get(&self.bundled_files.keys()[file])
-                    .is_some_and(|on_server| on_server.failed);
-            failed && !repaired.iter().any(|(known, _)| *known == index)
-        };
-        if unrepaired(root) {
-            return true;
-        }
-        let mut it = self.edge_lists[root.get() as usize].first_import;
-        while let Some(edge_index) = it {
-            let edge = self.edges[edge_index.get() as usize];
-            it = edge.next_import;
-            if unrepaired(edge.imported) {
+            let twin = twin_graph.get_file_index(key);
+            let failed =
+                file.failed || twin.is_some_and(|twin| twin_graph.get_file_by_index(twin).failed);
+            if unrepaired(key, failed) {
                 return true;
+            }
+            // The walk ends at a failed file: this bundle parsed a repaired one, so its old imports say nothing.
+            if failed {
+                continue;
+            }
+            // The imports of a stylesheet are on the client graph: a css file of the server graph has none.
+            let crosses = matches!(SIDE, Side::Server) && file.kind == FileKind::Css;
+            if crosses
+                && twin.is_some_and(|twin| {
+                    twin_graph.reaches_unrepaired_failure(self, twin, unrepaired)
+                })
+            {
+                return true;
+            }
+            let mut it = self.edge_lists[index.get() as usize].first_import;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_import;
+                if !seen.is_set(edge.imported.get() as usize) {
+                    seen.set(edge.imported.get() as usize);
+                    queue.push(edge.imported);
+                }
             }
         }
         false
+    }
+
+    /// True if the bundler can enter `root` by its key, or the join can bundle an importer of it again.
+    fn css_root_can_enter(
+        &self,
+        server_graph: &IncrementalGraph<{ Side::Server }>,
+        root: FileIndex<SIDE>,
+        unrepaired: &impl Fn(&[u8], bool) -> bool,
+    ) -> bool {
+        let key: &[u8] = &self.bundled_files.keys()[root.get() as usize];
+        if bun_paths::is_absolute(key) {
+            return true;
+        }
+        if !self
+            .importers_to_bundle_for_css_root(server_graph, root, unrepaired)
+            .is_empty()
+        {
+            return true;
+        }
+        // The server graph has a file of that key when a server file imports the root.
+        server_graph.get_file_index(key).is_some_and(|on_server| {
+            let importers =
+                server_graph.importers_to_bundle_for_css_root(self, on_server, unrepaired);
+            !importers.is_empty()
+        })
+    }
+
+    /// The importers of `root` that the join bundles again when the bundler cannot enter `root` by its key.
+    fn importers_to_bundle_for_css_root<const TWIN: bake::Side>(
+        &self,
+        twin_graph: &IncrementalGraph<TWIN>,
+        root: FileIndex<SIDE>,
+        unrepaired: &impl Fn(&[u8], bool) -> bool,
+    ) -> Vec<FileIndex<SIDE>> {
+        let mut importers = Vec::new();
+        let mut it = self.edge_lists[root.get() as usize].first_dep;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            it = edge.next_dependency;
+            let importer = edge.dependency;
+            let key = &self.bundled_files.keys()[importer.get() as usize];
+            let file = &self.bundled_files.values()[importer.get() as usize];
+            // A css importer is a holder itself. A failed importer parses `root` when it builds again.
+            if file.kind == FileKind::Css || file.failed || !bun_paths::is_absolute(key) {
+                continue;
+            }
+            // Bundled again, an importer that reaches such a failure would file it again.
+            if !self.reaches_unrepaired_failure(twin_graph, importer, unrepaired) {
+                importers.push(importer);
+            }
+        }
+        importers
     }
 
     /// Bundles the importers of `root` again, a css root whose key the bundler cannot enter.
@@ -1335,10 +1434,27 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         root: FileIndex<SIDE>,
         bv2: &mut bun_bundler::BundleV2<'_>,
     ) {
-        // A css importer is a holder itself. A failed importer parses `root` when it builds again.
-        self.enqueue_importers(root, bv2, |key, file| {
-            file.kind != FileKind::Css && !file.failed && bun_paths::is_absolute(key)
-        });
+        use bun_bundler::mal_prelude::*;
+        let ast = &bv2.graph.ast;
+        let rows = ast.items_css().iter().zip(ast.items_parts());
+        let rows = rows.zip(bv2.graph.input_files.items_source());
+        // This bundle repaired a failed stylesheet that it parsed, if the link step keeps it: it has parts.
+        let is_repaired = |key: &[u8]| {
+            rows.clone().any(|((css, parts), source)| {
+                css.is_some() && !parts.is_empty() && source.path.key_for_incremental_graph() == key
+            })
+        };
+        let unrepaired = |key: &[u8], failed: bool| failed && !is_repaired(key);
+        // SAFETY: see `owner()`. Nothing writes to either graph during this call, and both are only read.
+        let (client_graph, server_graph) = unsafe {
+            let dev = self.owner_for_read();
+            (&(*dev).client_graph, &(*dev).server_graph)
+        };
+        let importers = match SIDE {
+            Side::Client => self.importers_to_bundle_for_css_root(server_graph, root, &unrepaired),
+            Side::Server => self.importers_to_bundle_for_css_root(client_graph, root, &unrepaired),
+        };
+        self.enqueue_importers(root, bv2, |importer| importers.contains(&importer));
     }
 
     /// Keeps a failed stylesheet that html or a script imports a css root for `invalidate`.
@@ -1878,7 +1994,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // Rebuild all dependencies.
-        self.enqueue_importers(index, bv2, |_, _| true);
+        self.enqueue_importers(index, bv2, |_| true);
 
         // Bust the resolution cache of the dir containing this file.
         let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
@@ -1896,18 +2012,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &self,
         index: FileIndex<SIDE>,
         bv2: &mut bun_bundler::BundleV2<'_>,
-        rebundle: impl Fn(&[u8], &File) -> bool,
+        rebundle: impl Fn(FileIndex<SIDE>) -> bool,
     ) {
         let mut it = self.edge_lists[index.get() as usize].first_dep;
         while let Some(edge_index) = it {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
-            let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
-            let file = &self.bundled_files.values()[dep.dependency.get() as usize];
-            if !rebundle(key, file) {
+            if !rebundle(dep.dependency) {
                 continue;
             }
+            let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            let file = &self.bundled_files.values()[dep.dependency.get() as usize];
             let loader = file
                 .html_route_bundle_index
                 .is_some()

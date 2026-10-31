@@ -721,6 +721,71 @@ describe("error event", () => {
     expect(err.message).toBe("oh no");
   });
 
+  // Like node (lib/internal/error_serdes.js): a field that cannot be read costs that field, not the Error.
+  describe.concurrent("an Error with a field that cannot be read", () => {
+    const errorEventOf = async (workerSource: string) => {
+      const worker = new Worker(workerSource, { eval: true });
+      const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+      // 'error' precedes 'exit'; a worker that exits without one fails here instead of timing out.
+      const [err] = await Promise.race([
+        once(worker, "error"),
+        exited.then(code => Promise.reject(new Error(`worker exited with code ${code} without emitting 'error'`))),
+      ]);
+      await exited;
+      return err;
+    };
+
+    // A row leaves out what is incidental to its shape.
+    test.each([
+      [
+        "throwing stack getter",
+        `const e = new RangeError("boom"); e.code = "E_STACK";
+         Object.defineProperty(e, "stack", { get() { throw new Error("x"); } });
+         throw e;`,
+        { name: "RangeError", message: "boom", code: "E_STACK", stack: undefined },
+      ],
+      // With the name unreadable, the error's own constructor decides the type.
+      [
+        "throwing name getter",
+        `const e = new TypeError("boom");
+         Object.defineProperty(e, "name", { get() { throw new Error("x"); } });
+         throw e;`,
+        { name: "TypeError", message: "boom" },
+      ],
+      [
+        "Symbol name",
+        `const e = new TypeError("boom"); e.name = Symbol("name"); throw e;`,
+        { name: "TypeError", message: "boom" },
+      ],
+      // An unreadable message is left out, as node does.
+      [
+        "Symbol message",
+        `const e = new Error("boom"); e.message = Symbol("message"); throw e;`,
+        { name: "Error", message: "" },
+      ],
+      [
+        "throwing Error.prepareStackTrace",
+        `Error.prepareStackTrace = () => { throw new Error("x"); }; throw new Error("boom");`,
+        { name: "Error", message: "boom" },
+      ],
+    ])("is delivered without that field: %s", async (_shape, workerSource, expected) => {
+      const err = await errorEventOf(workerSource);
+      expect(err).toBeInstanceOf(Error);
+      expect({ name: err.name, message: err.message, code: err.code, stack: err.stack }).toMatchObject(expected);
+    });
+
+    // node reads only a thrown Error field by field. An Error inside a thrown value is cloned strictly.
+    test("inside a thrown object still takes the text fallback", async () => {
+      const err = await errorEventOf(
+        `const e = new RangeError("boom");
+         Object.defineProperty(e, "stack", { get() { throw new Error("x"); } });
+         throw { e };`,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toStartWith("{\n  e: ");
+    });
+  });
+
   test("falls back to string when the error cannot be serialized", async () => {
     const worker = new Worker(
       /* js */ `

@@ -206,11 +206,18 @@ impl<V> Calc<V> {
         }
     }
 
-    pub(crate) fn deep_clone_boxed(&self) -> Box<Self>
-    where
-        V: Clone,
-    {
-        Box::new(self.deep_clone())
+    /// A value adds to a value or to a term of a sum, and to nothing in a product, a function or a number.
+    pub(crate) fn is_value_or_sum(&self) -> bool {
+        matches!(self, Calc::Value(_) | Calc::Sum { .. })
+    }
+
+    /// Takes the operands of a `Sum` and leaves a placeholder. Not inlined, to keep this node out of each frame of a search.
+    #[inline(never)]
+    pub(crate) fn take_sum(&mut self) -> (Box<Self>, Box<Self>) {
+        let Calc::Sum { left, right } = core::mem::replace(self, Calc::Number(0.0)) else {
+            unreachable!()
+        };
+        (left, right)
     }
 
     // Cleanup is handled by Drop on Box<V>/Box<Calc<V>>/

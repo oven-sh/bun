@@ -3433,20 +3433,20 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
     },
   ];
 
+  // What the install says and how it ends when the failed `baz` is required.
+  const exited1 = { error: 'error: postinstall script from "baz" exited with 1', exitCode: 1 };
+
   async function expectOutcome(
     ctx: Awaited<ReturnType<typeof setupScriptPackages>>,
     args: string[],
     required: boolean,
+    failed = exited1,
   ) {
     const { err, exitCode } = await ctx.bun("install", ...args);
     expect({
       errors: splitErrLines(err).filter(line => line.startsWith("error:")),
       exitCode,
-    }).toEqual(
-      required
-        ? { errors: ['error: postinstall script from "baz" exited with 1'], exitCode: 1 }
-        : { errors: [], exitCode: 0 },
-    );
+    }).toEqual(required ? { errors: [failed.error], exitCode: failed.exitCode } : { errors: [], exitCode: 0 });
     if (!required) expect(existsSync(ctx.installed("baz"))).toBeFalse();
   }
 
@@ -3503,6 +3503,121 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
       required
         ? { errors: ['error: postinstall script from "baz" exited with 1'], exitCode: 1 }
         : { errors: [], exitCode: 0 },
+    );
+  });
+
+  // What ends the script does not change who needs `baz`. `kill -<SIG> $$` ends the shell itself,
+  // so bun sees the signal and not an exit code. Windows has no POSIX signals.
+  describe.skipIf(isWindows)("a signal ends the script", () => {
+    const signal = (name: string) => 128 + osConstants.signals[`SIG${name}` as "SIGKILL"];
+    const terminatedBy = (name: string) => `error: postinstall script from "baz" terminated by SIG${name}`;
+    const killed = { error: `${terminatedBy("KILL")} (Forced quit)`, exitCode: signal("KILL") };
+
+    test.each(shapes)("$title", async ({ manifest, args, required }) => {
+      using ctx = await setupScriptPackages(linker, {
+        ...packages,
+        baz: { scripts: { postinstall: "kill -KILL $$" } },
+      });
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", ...manifest }));
+      await expectOutcome(ctx, args, required, killed);
+    });
+
+    // The scripts after the failed one do not run, and the rest of the install does.
+    const scriptNames = ["preinstall", "install", "postinstall"] as const;
+    const mark = (name: string) => `echo > "$INIT_CWD/${name}.ran"`;
+    test.each([
+      ["preinstall", "kill -KILL $$"],
+      ["install", "ulimit -c 0; kill -ABRT $$"],
+      ["postinstall", "ulimit -c 0; kill -SEGV $$"],
+    ] as const)("in %s, by `%s`", async (failing, how) => {
+      using ctx = await setupScriptPackages(linker, {
+        baz: {
+          scripts: Object.fromEntries(
+            scriptNames.map(name => [name, mark(name) + (name === failing ? `; ${how}` : "")]),
+          ),
+        },
+        other: { scripts: { postinstall: mark("other") } },
+      });
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { other: "1.0.0" },
+          optionalDependencies: { baz: "1.0.0" },
+          trustedDependencies: ["baz", "other"],
+        }),
+      );
+      const { err, exitCode } = await ctx.bun("install");
+      expect({
+        errors: splitErrLines(err).filter(line => line.startsWith("error:")),
+        ran: (await readdirSorted(ctx.packageDir)).filter(name => name.endsWith(".ran")),
+        lockfile: existsSync(join(ctx.packageDir, "bun.lock")),
+        baz: existsSync(ctx.installed("baz")),
+        other: existsSync(ctx.installed("other", "package.json")),
+        exitCode,
+      }).toEqual({
+        errors: [],
+        ran: [...scriptNames.slice(0, scriptNames.indexOf(failing) + 1), "other"].map(name => `${name}.ran`).sort(),
+        lockfile: true,
+        baz: false,
+        other: true,
+        exitCode: 0,
+      });
+    });
+
+    // `bun install` after `setup` in the same process, so that bun inherits a signal disposition.
+    async function installAfter(ctx: Awaited<ReturnType<typeof setupScriptPackages>>, setup: string) {
+      await using proc = spawn({
+        cmd: ["bash", "-c", `${setup}; exec "$0" "$@"`, bunExe(), "install"],
+        cwd: ctx.packageDir,
+        env: ctx.env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { errors: splitErrLines(err).filter(line => line.startsWith("error:")), exitCode };
+    }
+
+    // SIGINT, SIGTERM, SIGHUP and SIGQUIT ask a process to stop, so they end the install also for a
+    // package that nothing else needs. bun itself can outlive such a signal, under `nohup` or as
+    // PID 1 of a container: the last row ignores SIGTERM the way `nohup` ignores SIGHUP. SIGQUIT
+    // writes a core file by default, so its row sets that limit to 0 for bun and for the script.
+    test.each([
+      { name: "INT", description: "Quit request", setup: ":" },
+      { name: "TERM", description: "Polite quit request", setup: ":" },
+      { name: "HUP", description: "Terminal hung up", setup: ":" },
+      { name: "QUIT", description: "Quit request", setup: "ulimit -c 0" },
+      { name: "TERM", description: "Polite quit request", setup: 'trap "" TERM' },
+    ])("SIG$name ends the install (bun install after `$setup`)", async ({ name, description, setup }) => {
+      // bash ignores SIGQUIT, so for that signal the script becomes a bun that ends itself with it.
+      const postinstall =
+        name === "QUIT" ? `exec "${bunExe()}" -e "process.kill(process.pid, 'SIGQUIT')"` : `kill -${name} $$`;
+      using ctx = await setupScriptPackages(linker, { baz: { scripts: { postinstall } } });
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", ...optional }));
+      expect(await installAfter(ctx, setup)).toEqual({
+        errors: [`${terminatedBy(name)} (${description})`],
+        exitCode: signal(name),
+      });
+    });
+
+    // With SIGCHLD ignored, Linux reaps the script itself and the wait of bun for it fails. The
+    // script exits 0 here: the failed wait is what fails it.
+    const waitedFor = shapes.filter(
+      ({ title }) => title === "nothing else needs it" || title === "a dependency needs it",
+    );
+    test.skipIf(!isLinux).each(waitedFor)(
+      "$title, and bun cannot wait for the script",
+      async ({ manifest, required }) => {
+        using ctx = await setupScriptPackages(linker, { ...packages, baz: { scripts: { postinstall: "true" } } });
+        await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", ...manifest }));
+        expect(await installAfter(ctx, 'trap "" CHLD')).toEqual(
+          required
+            ? { errors: ['error: Failed to run postinstall script from "baz" due to'], exitCode: 1 }
+            : { errors: [], exitCode: 0 },
+        );
+        if (!required) expect(existsSync(ctx.installed("baz"))).toBeFalse();
+      },
     );
   });
 });

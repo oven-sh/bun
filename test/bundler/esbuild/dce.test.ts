@@ -3510,6 +3510,27 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+  itBundled("dce/IgnoreAnnotationsCallOfTypeScriptDeclarationKeyword", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { as, satisfies } from "./names";
+        function type(n: number) { console.log("type", n); }
+        /* @__PURE__ */ type(as.one);
+        /* @__PURE__ */ type(satisfies.two) as any;
+        console.log("done");
+      `,
+      "/names.ts": /* ts */ `
+        export type as = number;
+        export namespace as { export const one: as = 1; }
+        namespace satisfies { export const two = 2; }
+        export { satisfies };
+      `,
+    },
+    ignoreDCEAnnotations: true,
+    run: {
+      stdout: "type 1\ntype 2\ndone",
+    },
+  });
   itBundled("dce/IgnoreAnnotationsDoesNotApplyToRuntime", {
     files: {
       "/entry.js": /* js */ `

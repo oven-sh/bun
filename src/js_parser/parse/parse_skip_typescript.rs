@@ -1612,30 +1612,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(self.ts_conditional_arrow_attempts[i] & 1 == 1);
         }
 
-        let snapshot = self.parser_snapshot();
-        self.lexer.is_log_disabled = true;
-        // Metadata looks up type names, which adds unbound symbols to the module scope.
-        let emit_decorator_metadata =
-            core::mem::take(&mut self.options.features.emit_decorator_metadata);
-
         let mut data = arrow_data.clone();
-        let result: Result<(), Error> = (|| {
-            self.lexer.expect(T::TColon)?;
-            self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
-            // The ":" that pairs with the "?"
-            self.lexer.expect(T::TColon)?;
-            Ok(())
-        })();
-
-        self.restore_parser_snapshot(snapshot);
-        self.options.features.emit_decorator_metadata = emit_decorator_metadata;
-        let is_arrow_fn = match result {
-            Ok(()) => true,
-            // Stack and memory exhaustion are not properties of the attempt
-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
-            Err(_) => false,
-        };
+        let is_arrow_fn = self
+            .speculate(|p| {
+                p.lexer.expect(T::TColon)?;
+                p.skip_typescript_return_type()?;
+                p.parse_arrow_body(&mut [], &mut data)?;
+                // The ":" that pairs with the "?"
+                p.lexer.expect(T::TColon)?;
+                Ok(())
+            })?
+            .is_some();
 
         // Re-search for the insertion point: attempts nested inside this one may
         // have added entries of their own.

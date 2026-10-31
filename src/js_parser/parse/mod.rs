@@ -44,12 +44,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         errors: Option<&mut DeferredErrors>,
         expr: &mut Expr,
     ) -> Result<(), Error> {
-        self.parse_expr_common(level, errors, EFlags::None, expr)
+        self.parse_expr_common::<false>(level, errors, EFlags::None, expr)
     }
     #[inline]
     pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
         let mut expr = Expr::EMPTY;
-        self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
+        self.parse_expr_common::<false>(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
     }
     #[inline]
@@ -59,9 +59,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
         expr: &mut Expr,
     ) -> Result<(), Error> {
-        self.parse_expr_common(level, None, flags, expr)
+        self.parse_expr_common::<false>(level, None, flags, expr)
     }
-    pub(crate) fn parse_expr_common(
+    /// With `STOP_BEFORE_NAME`, an identifier after the prefix ends the expression, so the caller can read it as a name.
+    pub(crate) fn parse_expr_common<const STOP_BEFORE_NAME: bool>(
         &mut self,
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
@@ -75,6 +76,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let had_pure_comment_before =
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
+        if STOP_BEFORE_NAME && self.lexer.token == T::TIdentifier {
+            return Ok(());
+        }
         // `errors` is reborrowed via as_deref_mut for each call site.
 
         // There is no formal spec for "__PURE__" comments but from reverse-

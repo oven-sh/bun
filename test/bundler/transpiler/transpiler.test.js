@@ -598,6 +598,225 @@ describe("Bun.Transpiler", () => {
       exp("declare class Foo {}", "");
     });
 
+    describe("a declaration named `as` or `satisfies`", () => {
+      // After `type`, `interface`, `namespace` or `module`, `as` or `satisfies` is the name
+      // when a declaration follows it. If not, it is the cast operator.
+      const names = ["as", "satisfies"];
+
+      const declarations = [
+        "type NAME = number;",
+        "type NAME<T> = T[];",
+        "type NAME<> = number;",
+        "type NAME\n= number;",
+        "type /* comment */ NAME = number;",
+        "/* @__PURE__ */ type NAME = number;",
+        "declare type NAME = number;",
+        "export declare type NAME = number;",
+        "interface NAME { a: number }",
+        "interface NAME<T> { a: T }",
+        "interface NAME extends Bar { a: number }",
+        "interface NAME\n{ a: number }",
+        "declare interface NAME {}",
+        "export interface NAME {}",
+        "export declare interface NAME {}",
+        "export default interface NAME {}",
+        "namespace NAME { export const x = 1 }",
+        "namespace NAME\n{ export const x = 1 }",
+        "namespace NAME.b { export const x = 1 }",
+        "module NAME { export const x = 1 }",
+        "module NAME.b { export const x = 1 }",
+        "export namespace NAME { export const x = 1 }",
+        "declare namespace NAME { const x: number }",
+        "declare module NAME { const x: number }",
+        "export declare namespace NAME { const x: number }",
+        "namespace N { type NAME = number; export interface NAME {} }",
+        "function f() { type NAME = number; interface NAME {} }",
+        "{ type NAME = number }",
+        "if (x) type NAME = number;",
+        "label: type NAME = number;",
+        "class C { static { type NAME = number; } }",
+        "declare global { type NAME = number; interface NAME {} }",
+        'declare module "m" { type NAME = number; namespace NAME {} }',
+      ];
+
+      it.each(declarations)("%j gives the output of the same declaration named Foo", template => {
+        const run = (name, loader) => {
+          const code = template.replaceAll("NAME", name) + "\nkeep();";
+          return {
+            transformSync: transpiler.transformSync(code, loader),
+            scan: transpiler.scan(code, loader),
+            scanImports: transpiler.scanImports(code, loader),
+          };
+        };
+        for (const loader of ["ts", "tsx"]) {
+          const control = run("Foo", loader);
+          expect(control.transformSync).toEndWith("keep();\n");
+          for (const name of names) {
+            expect(run(name, loader)).toEqual(JSON.parse(JSON.stringify(control).replaceAll("Foo", name)));
+          }
+        }
+      });
+
+      it("the type-only declarations are removed from the output", async () => {
+        const cases = [
+          ["type as = number;\nconst n: as = 1;\nexport { n };", "const n = 1;\n\nexport { n };\n", ["n"]],
+          [
+            "interface as { a: number }\nconst o: as = { a: 1 };\nexport { o };",
+            "const o = { a: 1 };\n\nexport { o };\n",
+            ["o"],
+          ],
+        ];
+        for (const [code, output, exports] of cases) {
+          expect({
+            transformSync: transpiler.transformSync(code, "ts"),
+            transform: await transpiler.transform(code, "ts"),
+            scan: transpiler.scan(code, "ts"),
+            scanImports: transpiler.scanImports(code, "ts"),
+          }).toEqual({
+            transformSync: output,
+            transform: output,
+            scan: { exports, imports: [] },
+            scanImports: [],
+          });
+        }
+      });
+
+      it("the keyword is an identifier when no name follows it on the line", () => {
+        const exp = ts.expectPrinted_;
+
+        // A line break after the keyword ends the statement.
+        exp("type\nas;", "type;\nas;\n");
+        exp("type\nas = 3;", "type;\nas = 3;\n");
+        exp("namespace\nsatisfies;", "namespace;\nsatisfies;\n");
+        exp("var interface, as; interface\nas\n{}", "var interface, as;\n{}");
+
+        // A token that is not an identifier after the keyword continues the expression.
+        exp("type! as number;", "type;\n");
+        exp("type.x as number;", "type.x;\n");
+        exp("type++ as any;", "type++;\n");
+        exp("module.exports = x as any;", "module.exports = x;\n");
+        exp("type => 1\nas;", "as;\n");
+        exp("type();", "type();\n");
+        exp("module.foo();", "module.foo();\n");
+        exp("/* @__PURE__ */ type();", "");
+        exp("/* @__PURE__ */ module.foo() as any;", "");
+
+        // The keyword does not start the statement.
+        exp("var type = 1; var y = type as number;", "var type = 1;\nvar y = type;\n");
+        exp("(type as number);", "type;\n");
+        exp("x = interface satisfies any;", "x = interface;\n");
+        exp("x(type => type as any);", "x((type) => type);\n");
+        exp("for (type as any;;) {}", "for (type;; ) {}");
+        exp("for (module satisfies any of []) {}", "for (module of []) {}");
+      });
+
+      it("a cast of a variable that has the name of the keyword stays a cast", () => {
+        const exp = ts.expectPrinted_;
+        const err = ts.expectParseError;
+
+        // tsc reads each of these as a declaration and rejects it (microsoft/TypeScript#58248).
+        exp("type as number;", "type;\n");
+        exp("type satisfies never;", "type;\n");
+        exp("type as any as number;", "type;\n");
+        exp("type as\nnumber;", "type;\n");
+        exp("type as { a: number };", "type;\n");
+        exp("switch (type) { default: type satisfies never; }", "switch (type) {\n  default:\n    type;\n}");
+        exp("function f(module: unknown) { module satisfies object; }", "function f(module) {}");
+        exp("namespace as number;", "namespace;\n");
+        exp("namespace satisfies object;", "namespace;\n");
+
+        // Type parameters start a type alias only when "=" follows them.
+        exp("type as <T>() => T;", "type;\n");
+        exp("type satisfies <const T>(x: T) => T;", "type;\n");
+
+        // A namespace is not a declaration in a nested scope.
+        exp("{ namespace as {} }", "{\n  namespace;\n}");
+        exp("function f(namespace: any) { namespace as {}; return 1 }", "function f(namespace) {\n  return 1;\n}");
+        exp("{ module as {} }", "{}");
+        exp("function f(module: any) { module as {}; return 1 }", "function f(module) {\n  return 1;\n}");
+
+        // `interface` followed by a token on the same line is always read as a declaration.
+        exp("var interface: any; interface as number\nfoo();", "var interface;\nfoo();\n");
+        err("interface as number;", 'Expected identifier but found ";"');
+      });
+
+      it("`{` after the name starts a declaration, also where main read a cast to an object type", () => {
+        const exp = ts.expectPrinted_;
+        const err = ts.expectParseError;
+
+        exp("interface as { a: number }\nkeep();", "keep();\n");
+        exp("namespace as {}\nkeep();", "keep();\n");
+        // As in tsc, the body is a labeled statement. A type checker reports TS2693 for it.
+        exp("namespace as { a: number };", "var as;\n((as) => {\n  a:\n    number;\n})(as ||= {});\n");
+
+        // tsc rejects these. They are casts on main and in esbuild.
+        err("var namespace: any = {}; namespace as { a?: number };", "Unexpected :");
+        err("namespace as {} | null;", "Unexpected |");
+        err("module satisfies { exports: unknown } | undefined;", "Unexpected |");
+        err("var interface: any;\ninterface as { a: number } | null\nfoo();", "Unexpected |");
+      });
+
+      it("only the first token of a statement is tested for the keyword", () => {
+        const exp = ts.expectPrinted_;
+
+        exp("y = namespace;\n(z) as { a: number };", "y = namespace;\nz;\n");
+        exp("f(module);\n[z()] satisfies { length: number };", "f(module);\nz();\n");
+        exp("a.interface = 1;\n(b) as { a: number };", "a.interface = 1;\nb;\n");
+        exp("a.type = 1;\n-b satisfies number;", "a.type = 1;\n-b;\n");
+      });
+
+      it("the js and jsx loaders have no such declarations", () => {
+        for (const loader of ["js", "jsx"]) {
+          for (const [code, message] of [
+            ["type as = 1;", 'Expected ";" but found "as"'],
+            ["type satisfies<T> = T;", 'Expected ";" but found "satisfies"'],
+            ["interface as {}", 'Expected ";" but found "as"'],
+            ["interface satisfies extends Bar {}", 'Expected ";" but found "satisfies"'],
+          ]) {
+            const actual = {};
+            for (const api of ["transformSync", "scan", "scanImports"]) {
+              try {
+                transpiler[api](code, loader);
+                actual[api] = "did not throw";
+              } catch (e) {
+                actual[api] = (e instanceof AggregateError ? e.errors[0] : e).message;
+              }
+            }
+            expect(actual).toEqual({ transformSync: message, scan: message, scanImports: message });
+          }
+          expect(transpiler.transformSync("type\nas = 3;", loader)).toBe("type;\nas = 3;\n");
+        }
+      });
+
+      it("bun runs a file that declares and uses them", async () => {
+        using dir = tempDir("ts-declaration-named-as", {
+          "index.ts": `
+            type as = number;
+            interface satisfies {
+              a: as;
+            }
+            namespace as {
+              export const one: as = 1;
+            }
+            export namespace satisfies {
+              export const two: as = as.one + 1;
+            }
+            const n: as = as.one;
+            const o: satisfies = { a: satisfies.two };
+            console.log(JSON.stringify([n, o]));
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: '[1,{"a":2}]\n', stderr: "", exitCode: 0 });
+      });
+    });
+
     it("contextual keywords followed by a newline apply ASI instead of acting as modifiers", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -5807,6 +6026,8 @@ it("deeply nested TypeScript types error instead of crashing the process", () =>
       },
       // deeply nested tuple type in a type alias
       { loader: "ts", code: n => "type A = " + repeat("[", n) + "0" + repeat("]", n) + ";" },
+      // the same in the type parameters of an alias named "as", which the parser first looks past
+      { loader: "ts", code: n => "type as<in T extends " + repeat("[", n) + "0" + repeat("]", n) + "> = T;" },
       // deeply nested destructuring pattern in a function type's arguments
       { loader: "ts", code: n => "type A = (" + repeat("[", n) + "a" + repeat("]", n) + ": any) => void;" },
     ];

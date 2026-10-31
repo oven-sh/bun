@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -811,6 +811,7 @@ devTest("css import before create project relative", {
   },
 });
 // Two `[serve.static]` plugins: one that declines an import, and one that answers with the path.
+// Each callback prints "onResolve <specifier>".
 const resolvePlugin = {
   "bunfig.toml": `
     [serve.static]
@@ -821,13 +822,22 @@ const resolvePlugin = {
     export default {
       name: "resolve-some",
       setup(build) {
-        build.onResolve({ filter: /declined\\.\\w+$/ }, () => undefined);
-        build.onResolve({ filter: /answered\\.\\w+$/ }, args => ({
-          path: path.resolve(path.dirname(args.importer), args.path),
-        }));
+        build.onResolve({ filter: /declined\\.\\w+$/ }, args => {
+          console.log("onResolve " + args.path);
+        });
+        build.onResolve({ filter: /answered\\.\\w+$/ }, args => {
+          console.log("onResolve " + args.path);
+          return { path: path.resolve(path.dirname(args.importer), args.path) };
+        });
       },
     };
   `,
+};
+// The next `count` calls that `resolvePlugin` printed, sorted.
+const onResolveCalls = async (dev: Dev, count: number) => {
+  const calls: string[] = [];
+  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
+  return calls.sort();
 };
 devTest("stylesheet that a script imports through an onResolve plugin comes back after a failed first build", {
   files: {
@@ -854,6 +864,7 @@ devTest("stylesheet that a script imports through an onResolve plugin comes back
   },
   async test(dev) {
     expect((await dev.fetch("/")).status).toBe(500);
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.css", "./declined.css"]);
     await dev.write("declined.css", `h1 { color: red; }`, { errors: null });
     await dev.write("answered.css", `body { color: blue; }`);
     // previously: the page had no stylesheet
@@ -889,6 +900,7 @@ devTest("stylesheet imported through an onResolve plugin follows its edits", {
     await using c = await dev.client("/");
     await c.style("h1").color.expect.toBe("red");
     await c.style("body").color.expect.toBe("red");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.css", "./declined.css"]);
     // previously: the edit did not reach the page
     await dev.write("declined.css", `h1 { color: blue; }`);
     await c.style("h1").color.expect.toBe("#00f");
@@ -926,7 +938,10 @@ devTest("stylesheet of a tailwind plugin keeps its build error and comes back on
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    // The dev server takes a stylesheet for a tailwind file when the first bytes of its output have "tailwind" in them.
+    const href = (await dev.fetch("/").text()).match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+    expect(href).toBeString();
+    await dev.fetch(href!).expect.toInclude("tailwindcss");
     await dev.write("styles.css", `h1 { color: red; }}`);
     expect((await dev.fetch("/")).status).toBe(500);
     // previously: 200, and the page had no stylesheet from here on

@@ -642,6 +642,12 @@ devTest("stylesheet that fails in the same rebuild as its html file comes back o
     await dev.fetch("/").expect.toInclude("<h1>World</h1>");
   },
 });
+// Each `onResolve` callback of a test plugin prints "onResolve <specifier>". These are the next `count` calls, sorted.
+const onResolveCalls = async (dev: Dev, count: number) => {
+  const calls: string[] = [];
+  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
+  return calls.sort();
+};
 devTest("html script that an onResolve plugin resolves loads by its module id", {
   files: {
     "bunfig.toml": `
@@ -653,10 +659,13 @@ devTest("html script that an onResolve plugin resolves loads by its module id", 
       export default {
         name: "resolve-scripts",
         setup(build) {
-          build.onResolve({ filter: /declined\\.ts$/ }, () => undefined);
-          build.onResolve({ filter: /answered\\.ts$/ }, args => ({
-            path: path.resolve(path.dirname(args.importer), args.path),
-          }));
+          build.onResolve({ filter: /declined\\.ts$/ }, args => {
+            console.log("onResolve " + args.path);
+          });
+          build.onResolve({ filter: /answered\\.ts$/ }, args => {
+            console.log("onResolve " + args.path);
+            return { path: path.resolve(path.dirname(args.importer), args.path) };
+          });
         },
       };
     `,
@@ -674,6 +683,7 @@ devTest("html script that an onResolve plugin resolves loads by its module id", 
     // previously: Failed to load bundled module './declined.ts'
     await using c = await dev.client("/");
     await c.expectMessage("declined", "answered");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.ts", "./declined.ts"]);
   },
 });
 devTest("html script that an onResolve plugin puts in a namespace loads by its module id", {
@@ -720,10 +730,13 @@ devTest("script import of a json file that an onResolve plugin resolves loads by
       export default {
         name: "resolve-json",
         setup(build) {
-          build.onResolve({ filter: /declined\\.json$/ }, () => undefined);
-          build.onResolve({ filter: /answered\\.json$/ }, args => ({
-            path: path.resolve(path.dirname(args.importer), args.path),
-          }));
+          build.onResolve({ filter: /declined\\.json$/ }, args => {
+            console.log("onResolve " + args.path);
+          });
+          build.onResolve({ filter: /answered\\.json$/ }, args => {
+            console.log("onResolve " + args.path);
+            return { path: path.resolve(path.dirname(args.importer), args.path) };
+          });
         },
       };
     `,
@@ -742,6 +755,7 @@ devTest("script import of a json file that an onResolve plugin resolves loads by
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("declined", "answered");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.json", "./declined.json"]);
   },
 });
 devTest("stylesheet that an onResolve plugin resolves comes back after a failed first build", {
@@ -754,7 +768,9 @@ devTest("stylesheet that an onResolve plugin resolves comes back after a failed 
       export default {
         name: "resolve-styles",
         setup(build) {
-          build.onResolve({ filter: /styles\\.css$/ }, () => undefined);
+          build.onResolve({ filter: /styles\\.css$/ }, args => {
+            console.log("onResolve " + args.path);
+          });
         },
       };
     `,
@@ -770,6 +786,7 @@ devTest("stylesheet that an onResolve plugin resolves comes back after a failed 
   },
   async test(dev) {
     expect((await dev.fetch("/")).status).toBe(500);
+    expect(await onResolveCalls(dev, 1)).toEqual(["./styles.css"]);
     await dev.write("styles.css", `body { color: red; }`);
     // previously: the page had no stylesheet
     await using c = await dev.client("/");

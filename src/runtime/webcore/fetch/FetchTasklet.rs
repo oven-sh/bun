@@ -1454,6 +1454,9 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => BunString::create_format(format_args!(
                 "{code}: Redirect URL in Location header is invalid."
             )),
+            http::Error::ConflictingFraming => BunString::create_format(format_args!(
+                "{code}: The server sent both a Transfer-Encoding and a Content-Length header, which RFC 9112 section 6.3 forbids."
+            )),
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")

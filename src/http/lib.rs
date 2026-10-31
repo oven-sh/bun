@@ -4970,9 +4970,12 @@ impl<'a> HTTPClient<'a> {
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         let mut has_keep_alive_token = false;
+        let mut saw_content_length = false;
+        let mut saw_transfer_encoding = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
+                    saw_content_length = true;
                     // byte-level parse — header.value() is network bytes, not &str
                     //
                     // RFC 9112 section 6.3: an invalid or conflicting
@@ -5025,6 +5028,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
+                    saw_transfer_encoding = true;
                     fold_transfer_encoding(header.value(), &mut self.state.transfer_encoding)?;
                 }
                 h if h == hash_header_const(b"Location") => {
@@ -5114,6 +5118,11 @@ impl<'a> HTTPClient<'a> {
             self.flags.disable_keepalive = true;
             self.clone_metadata(response);
             return Err(crate::Error::ProxyConnectFailed);
+        }
+
+        // RFC 9112 §6.3 item 3. Presence, not state: HEAD and 1xx/204/304 overwrite content_length.
+        if saw_content_length && saw_transfer_encoding {
+            return Err(crate::Error::ConflictingFraming);
         }
 
         // RFC 9112 §9.3: an HTTP/1.0 response is non-persistent unless it says

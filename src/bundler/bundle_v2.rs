@@ -3104,6 +3104,81 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// Enters the css root `key` into the running bundle. `false`: no such file can enter.
+        pub fn enqueue_css_root_from_dev_server(&mut self, key: &[u8]) -> Result<bool, Error> {
+            debug_assert!(self.dev_server.is_some());
+            // A plugin can name a file that is not on disk: ask the bundle before the resolver.
+            if self.add_css_root_in_bundle_from_dev_server(key) {
+                return Ok(true);
+            }
+            // The key of a file in a plugin namespace is `<namespace>:<path>`, which is no path.
+            if !bun_paths::is_absolute(key) {
+                return Ok(false);
+            }
+            let log = self.transpiler_for_target(Target::Browser).log_mut();
+            let log_before = (log.msgs.len(), log.errors, log.warnings);
+            let dot_slash = OnceCell::new();
+            let Ok(resolved) = self
+                .transpiler_for_target(Target::Browser)
+                .resolve_entry_point(key, &dot_slash)
+            else {
+                // The dev server files no failure for this key: take back what the resolve logged.
+                let log = self.transpiler_for_target(Target::Browser).log_mut();
+                log.msgs.truncate(log_before.0);
+                (log.errors, log.warnings) = (log_before.1, log_before.2);
+                return Ok(false);
+            };
+            let in_bundle = resolved
+                .path_const()
+                .and_then(|path| self.source_index_in_bundle(path.text));
+            // The resolver can spell the key as another path that this bundle holds.
+            if let Some(source_index) = in_bundle {
+                self.add_css_root_from_dev_server(source_index);
+                return Ok(true);
+            }
+            // `None`: a plugin file of this bundle holds this path text in the path map.
+            let entered = self.enqueue_entry_item(&resolved, true, Target::Browser, None)?;
+            Ok(entered.is_some())
+        }
+
+        /// Gives the css root `key` a css chunk of its own if the running bundle holds it. It enters nothing.
+        pub fn add_css_root_in_bundle_from_dev_server(&mut self, key: &[u8]) -> bool {
+            let Some(source_index) = self.source_index_in_bundle(key) else {
+                return false;
+            };
+            self.add_css_root_from_dev_server(source_index);
+            true
+        }
+
+        /// Gives a stylesheet that the running bundle already parsed a css chunk of its own.
+        pub fn add_css_root_from_dev_server(&mut self, source_index: Index) {
+            let index = source_index.get() as usize;
+            let ast = &self.graph.ast;
+            // A stylesheet whose import did not resolve keeps its css AST and has no parts.
+            let built = ast.items_css().get(index).is_some_and(Option::is_some)
+                && ast.items_parts()[index].len() != 0;
+            // It can be another root's child, or a root already: a file is an entry point once.
+            if built && !self.graph.entry_points.contains(&source_index) {
+                self.graph.entry_points.push(source_index);
+            }
+        }
+
+        /// The file of this bundle whose graph key is `key`, under any target: the browser's first.
+        fn source_index_in_bundle(&self, key: &[u8]) -> Option<Index> {
+            let sources = self.graph.input_files.items_source();
+            let has_key = |source: &bun_ast::Source| source.path.key_for_incremental_graph() == key;
+            if !bun_paths::is_absolute(key) {
+                // The path maps hold the path text: no map has the key of a file in a plugin namespace.
+                let index = sources.iter().position(has_key)?;
+                return Some(Index::init(index as u32));
+            }
+            self.graph.build_graphs.values().find_map(|graph| {
+                let index = graph.get(key)?;
+                // The maps are keyed by path text, which a file in a plugin namespace can share.
+                has_key(sources.get(index as usize)?).then_some(Index::init(index))
+            })
+        }
+
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
         fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
             loader.unwrap_or_else(|| {
@@ -5967,7 +6042,8 @@ pub mod bv2_impl {
                 let css = asts.items_css();
                 for entry_point in &self.graph.entry_points {
                     if css[entry_point.get() as usize].is_some() {
-                        start.css_entry_points.put(
+                        // A root that is already listed keeps its `imported_on_server`.
+                        start.css_entry_points.get_or_put_value(
                             Index::init(entry_point.get()),
                             CssEntryPointMeta {
                                 imported_on_server: false,

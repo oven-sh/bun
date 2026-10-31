@@ -4931,6 +4931,42 @@ impl VirtualMachine {
         }
     }
 
+    /// Adds the file that a plugin's `onLoad` in the `file` namespace is asked to load to the file
+    /// watcher when watch mode is enabled. `key` is the module's key.
+    pub fn add_plugin_served_file_to_watcher(&self, key: &[u8]) {
+        let watcher = self.bun_watcher_ptr();
+        if watcher.is_null() {
+            return;
+        }
+        // As for a file Bun loads itself, `?query` is not part of the file's path.
+        let path = match bun_core::strings::index_of_char_usize(key, b'?') {
+            Some(query) => &key[..query],
+            None => key,
+        };
+        if !bun_paths::is_absolute(path) || bun_core::strings::contains(path, b"node_modules") {
+            return;
+        }
+        // SAFETY: as in `add_to_watcher_if_needed`. `is_watching` takes `Watcher.mutex`.
+        if unsafe { (*watcher).is_watching(path) } {
+            return;
+        }
+        // A plugin can serve a key that names a directory, or nothing on disk.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.len() >= buf.len() || bun_core::strings::contains_char(path, 0) {
+            return;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        let path_z = bun_core::ZStr::from_buf(&buf[..], path.len());
+        if !matches!(
+            bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z),
+            Ok(bun_sys::ExistsAtType::File)
+        ) {
+            return;
+        }
+        self.add_to_watcher_if_needed(path);
+    }
+
     /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
     /// enabled.
     pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {

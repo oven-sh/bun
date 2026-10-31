@@ -1588,6 +1588,7 @@ static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::M
 }
 
 extern "C" int32_t Bun__onLoadNamespaceLength(const BunString* key);
+extern "C" void Bun__watchFileLoadedByPlugin(void* bunVM, const BunString* key);
 
 static bool isLoadedByPlugin(Zig::GlobalObject* globalObject, const String& key)
 {
@@ -4052,6 +4053,10 @@ JSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const String& 
     }
     if (matches.callbacks.isEmpty())
         return {};
+
+    // Before the call: a save made while the callback runs is seen, and a callback that throws leaves the file watched.
+    if (!namespaceLength)
+        Bun__watchFileLoadedByPlugin(Bun::vm(vm), &keyString);
 
     // `key` can borrow the caller's bytes, and `args.path` outlives this call, so give it a copy.
     matches.path = jsString(vm, path.isolatedCopy());

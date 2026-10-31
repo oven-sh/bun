@@ -1034,7 +1034,7 @@ devTest("script that does not build is not a stylesheet of a page that reaches i
     // This request bundles "first.html" together with the script that does not build.
     expect((await linkedStylesheets(dev, "/first")).status).toBe(500);
     // The bundle of "second.html" does not hold the script, so this page loads. It must not link the script.
-    expect((await linkedStylesheets(dev, "/second")).sheets).toEqual([]);
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 200, sheets: [] });
   },
 });
 devTest("css file with an @import of a file that is not css is a build error until it is repaired", {
@@ -1080,6 +1080,9 @@ devTest("an open page gets the styles of a css file that did not build when its 
       body {
         color: red;
       }
+      .styles-v1 {
+        width: 1px;
+      }
     `,
     "second.css": `
       h2 {
@@ -1113,6 +1116,9 @@ devTest("an open page gets the styles of a css file that did not build when its 
         h1 {
           color: green;
         }
+        .third-v1 {
+          width: 3px;
+        }
       `,
     );
     await c.style("h1").color.expect.toBe("green");
@@ -1145,13 +1151,19 @@ devTest("an open page gets the styles of a css file that did not build when its 
         h2 {
           color: green;
         }
+        .second-v1 {
+          width: 2px;
+        }
       `,
     );
     await c.style("h2").color.expect.toBe("green");
     await c.style("h1").color.expect.toBe("green");
     await c.style("body").color.expect.toBe("red");
-    // "styles.css", "second.css" and "third.css" each have a link on a new page.
-    expect((await linkedStylesheets(dev, "/")).sheets).toHaveLength(3);
+    // "second.css", "styles.css" and "third.css" each have a link on a new page.
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".second-v1", ".second-v1 .styles-v1", ".third-v1"],
+    });
   },
 });
 devTest("css file that an onLoad plugin turns into javascript is bundled as a module without a stylesheet link", {
@@ -1334,10 +1346,14 @@ devTest("css file saved with an @import that an onResolve plugin declines does n
       plugins = ["./decline-plugin.ts"]
     `,
     "decline-plugin.ts": `
+      import { appendFileSync } from "node:fs";
+      import { join } from "node:path";
       export default {
         name: "decline-plugin",
         setup(build) {
-          build.onResolve({ filter: /declined\\.css$/ }, () => undefined);
+          build.onResolve({ filter: /declined\\.css$/ }, args => {
+            appendFileSync(join(import.meta.dir, "declined.txt"), args.path + "\\n");
+          });
         },
       };
     `,
@@ -1349,6 +1365,7 @@ devTest("css file saved with an @import that an onResolve plugin declines does n
     await c.style("body").color.expect.toBe("red");
     // The plugin declines this import, and then the resolver does not find the file.
     await dev.write("styles.css", `@import "./missing-declined.css";\nbody { color: blue; }`, { errors: null });
+    expect(dev.read("declined.txt")).toContain("./missing-declined.css");
     await c.style("body").color.expect.toBe("red");
     await dev.write("styles.css", `body { color: green; }`);
     await c.style("body").color.expect.toBe("green");

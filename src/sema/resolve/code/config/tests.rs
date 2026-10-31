@@ -307,6 +307,57 @@ fn nearest_extended_file_decides_class_field_semantics() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn target_decides_class_field_semantics_unless_the_flag_does() {
+    let cases: [(&str, Option<bool>); 8] = [
+        (r#""target": "ES2021""#, Some(false)),
+        (r#""target": "es5""#, Some(false)),
+        (r#""target": "ES2022""#, Some(true)),
+        (r#""target": "esnext""#, Some(true)),
+        (r#""target": "ES4""#, None),
+        (
+            r#""target": "ES2017", "useDefineForClassFields": true"#,
+            Some(true),
+        ),
+        (
+            r#""target": "ES2022", "useDefineForClassFields": false"#,
+            Some(false),
+        ),
+        ("", None),
+    ];
+    for (options, expected) in cases {
+        let merged = lib_settings(&format!("{{{options}}}"));
+        assert_eq!(merged.use_define_for_class_fields, expected, "{options}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn nearest_target_of_an_extends_chain_decides_unless_a_flag_does() {
+    let chain = |child: &str, base: &str| {
+        let child = format!(r#"{{"extends": "./base.json", "compilerOptions": {{{child}}}}}"#);
+        let base = format!(r#"{{"compilerOptions": {{{base}}}}}"#);
+        let host = MemoryHost::new(&[("/lib/tsconfig.json", &child), ("/lib/base.json", &base)]);
+        settings(&host, "/lib/a.ts").use_define_for_class_fields
+    };
+    assert_eq!(
+        chain(r#""strict": true"#, r#""target": "ES2017""#),
+        Some(false)
+    );
+    assert_eq!(
+        chain(r#""target": "ES2022""#, r#""target": "ES2017""#),
+        Some(true)
+    );
+    assert_eq!(
+        chain(
+            r#""target": "ES2017""#,
+            r#""useDefineForClassFields": true"#
+        ),
+        Some(true)
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn first_of_repeated_option_keys_wins() {
     let config = r#"{
         "compilerOptions": {
@@ -738,7 +789,14 @@ fn aot_package_states_each_option_in_its_package_json() {
             r#""jsxImportSource": "solid-js""#,
             "Automatic dev React.createElement React.Fragment solid-js | legacy false | metadata false | define None",
         ),
-        (r#""target": "es5""#, PACKAGE_DEFAULTS),
+        (
+            r#""target": "es5""#,
+            "Automatic dev React.createElement React.Fragment react | legacy false | metadata false | define Some(false)",
+        ),
+        (
+            r#""target": "es2022""#,
+            "Automatic dev React.createElement React.Fragment react | legacy false | metadata false | define Some(true)",
+        ),
         (r#""verbatimModuleSyntax": true"#, PACKAGE_DEFAULTS),
     ];
     for (option, expected) in cases {

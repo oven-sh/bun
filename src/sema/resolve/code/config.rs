@@ -168,7 +168,9 @@ struct ParsedConfig {
     jsx: JsxFields,
     emits_decorator_metadata: bool,
     experimental_decorators: bool,
+    /// The explicit flag only. [`Self::class_field_semantics`] applies the `target` default.
     use_define_for_class_fields: Option<bool>,
+    target: ScriptTarget,
     has_compiler_options: bool,
 }
 
@@ -200,8 +202,20 @@ impl ParsedConfig {
             emits_decorator_metadata: bool_entry(options, b"emitDecoratorMetadata") == Some(true),
             experimental_decorators: bool_entry(options, b"experimentalDecorators") == Some(true),
             use_define_for_class_fields: bool_entry(options, b"useDefineForClassFields"),
+            target: string_entry(options, b"target")
+                .and_then(|name| SCRIPT_TARGETS.get_ascii_case_insensitive(name))
+                .copied()
+                .unwrap_or(ScriptTarget::None),
             has_compiler_options: true,
         }
+    }
+
+    /// `useDefineForClassFields` as `bun run` resolves it: the flag, else what `target` implies, else `None`.
+    fn class_field_semantics(&self) -> Option<bool> {
+        self.use_define_for_class_fields.or(match self.target {
+            ScriptTarget::None => None,
+            target => Some(target >= ScriptTarget::ES2022),
+        })
     }
 
     fn inherit(&mut self, parent: ParsedConfig) {
@@ -216,6 +230,9 @@ impl ParsedConfig {
         self.experimental_decorators = parent.experimental_decorators;
         let use_define = parent.use_define_for_class_fields;
         self.use_define_for_class_fields = self.use_define_for_class_fields.or(use_define);
+        if self.target == ScriptTarget::None {
+            self.target = parent.target;
+        }
     }
 }
 
@@ -289,7 +306,7 @@ impl<'h> Resolver<'h> {
             },
             experimental_decorators: stated.experimental_decorators,
             emits_decorator_metadata: stated.emits_decorator_metadata,
-            use_define_for_class_fields: stated.use_define_for_class_fields,
+            use_define_for_class_fields: stated.class_field_semantics(),
         });
         *by_directory.insert_ref(self.keep(directory), settings)
     }
@@ -375,7 +392,7 @@ impl<'h> Resolver<'h> {
             },
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,
-            use_define_for_class_fields: config.use_define_for_class_fields,
+            use_define_for_class_fields: config.class_field_semantics(),
         })
     }
 

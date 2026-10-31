@@ -233,9 +233,6 @@ fn project_for_build(
     };
     errors.retain(|error| error.code != UNKNOWN_OPTION_CODE || !names_output_option(error));
     let base_url = take_base_url(&mut raw.compiler, base);
-    let assigns_class_fields = raw.compiler.iter().any(|option| {
-        option.0 == b"useDefineForClassFields" && matches!(option.1, Json::Bool(false))
-    });
     match root_files {
         RootFiles::Listed => {}
         RootFiles::Unlisted => raw.leaves_root_files_unlisted = true,
@@ -243,8 +240,8 @@ fn project_for_build(
     }
     let mut project = project_from_raw(host, session, path, base, raw, errors);
     project.options.imports_need_no_extension = true;
-    project.options.use_define_for_class_fields = !assigns_class_fields;
-    project.options.emit_standard_class_fields = !assigns_class_fields;
+    // Bun never downlevels a class field: it keeps a [[Define]] field where it is written, whatever the target.
+    project.options.emit_standard_class_fields = project.options.use_define_for_class_fields;
     project.options.referenced_outputs = find_outputs_of_referenced_projects(host, &project);
     if let Some(base_url) = base_url {
         project.options.paths_base_dir.clone_from(&base_url);

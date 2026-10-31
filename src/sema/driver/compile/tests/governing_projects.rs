@@ -640,12 +640,19 @@ fn helpers_that_tsc_would_import_are_not_asked_for_in_a_build() {
 }
 
 #[test]
-fn class_fields_stay_where_they_are_written_whatever_the_target() {
+fn class_fields_are_assigned_under_an_old_target_and_stay_where_they_are_written_otherwise() {
     let options_of =
         |written: &'static str| load_project(&disk_of(&[(CONFIG, written), A])).options;
     let old_target = options_of(r#"{ "compilerOptions": { "target": "es2017" } }"#);
-    assert!(old_target.use_define_for_class_fields);
-    assert!(old_target.emit_standard_class_fields);
+    assert!(!old_target.use_define_for_class_fields);
+    assert!(!old_target.emit_standard_class_fields);
+    let kept = r#"{ "compilerOptions": { "target": "es2017", "useDefineForClassFields": true } }"#;
+    let kept = options_of(kept);
+    assert!(kept.use_define_for_class_fields);
+    assert!(kept.emit_standard_class_fields);
+    let unspecified = options_of(r#"{ "compilerOptions": {} }"#);
+    assert!(unspecified.use_define_for_class_fields);
+    assert!(unspecified.emit_standard_class_fields);
     let assigned =
         r#"{ "compilerOptions": { "target": "esnext", "useDefineForClassFields": false } }"#;
     let assigned = options_of(assigned);

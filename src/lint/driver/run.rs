@@ -669,12 +669,18 @@ impl Run<'_> {
             self.options.error_on_unmatched_pattern && !is_oxlint,
         )?;
         if let Some(only) = context.only {
+            let links = std::mem::take(&mut *loader.links.lock());
+            only.searched(links, loader.named_a_file.load(Ordering::Relaxed));
             targets.retain(|it| only.has(&it.path));
             let mut gone = discover::find_files_not_on_disk(loader, patterns, only.not_on_disk())?;
             if !gone.is_empty() {
                 targets.append(&mut gone);
                 bun_lint::utils::sort::sort_by(&mut targets, |a, b| a.path.cmp(&b.path));
+                // A listed file whose directory became a symlink is found on disk too, through the symlink.
+                targets.dedup_by(|a, b| a.path == b.path);
             }
+            // Only after the search is it known which symlinks an import can go through.
+            context.modules.provide(only.already_read(false));
         }
         phases.discovery = started.elapsed().as_secs_f64();
         if self.options.list_files {
@@ -1058,9 +1064,6 @@ impl Run<'_> {
             Ok(only) => only,
             Err(Fatal(error)) => return self.reject_flag(&error),
         };
-        if let Some(only) = &only {
-            store.provide(only.already_read(false));
-        }
         // Opt-in, because loading the libraries and types takes longer than linting a small project. A file that's
         // linted with types has them anyway. See `typed::FileGlobals`.
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
@@ -1418,13 +1421,17 @@ impl Run<'_> {
         let mut not_staged: Vec<Vec<u8>> = Vec::new();
         if options.fix {
             let portable = |it: &FileResult| paths::from_native(&it.path);
-            let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
+            let changed = results.iter().filter(|it| it.is_fixed);
+            // A file that two paths lead to is written once. If git listed it, the path that git has goes first.
+            let is_first = |it: &&FileResult| {
+                (only.as_ref()).is_none_or(|only| only.is_git_path(&portable(it)))
+            };
+            let (first, second): (Vec<&FileResult>, Vec<&FileResult>) = changed.partition(is_first);
             let (mut failures, mut written_paths) =
                 (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
             let fixes_written = AtomicU64::new(0);
             let written_files = fs::WrittenFiles::default();
-            pool.for_each(changed.len(), 1, &|index| {
-                let result = changed[index];
+            let write = |result: &FileResult| {
                 let done = match result.text_to_write() {
                     // Never write an empty file instead. Fixes that delete everything produce an empty text, which is
                     // `Some` and gets saved.
@@ -1443,7 +1450,9 @@ impl Run<'_> {
                         failures.lock().push(line);
                     }
                 }
-            });
+            };
+            pool.for_each(first.len(), 1, &|index| write(first[index]));
+            pool.for_each(second.len(), 1, &|index| write(second[index]));
             if let Some(only) = &only {
                 // See `Context::fixes_file`.
                 let is_fixable = |it: &LintMessage| it.fix.is_some() && context.should_fix(it);
@@ -1458,7 +1467,7 @@ impl Run<'_> {
             }
             not_written = std::mem::take(failures.get_mut());
             bun_lint::utils::sort::sort_unstable(&mut not_written);
-            fixed = changed.len() - not_written.len();
+            fixed = first.len() + second.len() - not_written.len();
             fixes = fixes_written.into_inner() as usize;
         }
 

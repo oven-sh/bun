@@ -219,13 +219,14 @@ describe("require(specifier)", () => {
       });
     });
 
-    it.concurrent("in a Bun.ModuleGraph or in a plugin's callback, the next require() loads the module", async () => {
+    it.concurrent("before the load reaches a file, the next require() loads the module", async () => {
       using dir = tempDir("bun-test-require-cut", {
         "in-graph.cjs": `
           exports.load = () => require("bun:sqlite");
           exports.isCached = () => "bun:sqlite" in require.cache;
         `,
         "on-disk.spins": "",
+        "plain.cjs": `exports.plain = true;`,
         "index.cjs": `${cutInBody}
           const run = timeout => vm.runInThisContext("load()", { timeout });
           (async () => {
@@ -260,6 +261,19 @@ describe("require(specifier)", () => {
               spins = false;
               console.log("build." + kind + ":", code, id in require.cache, JSON.stringify(require(id)));
             }
+
+            // The run ends in the getter of the "type" option, which require() reads before it loads the file.
+            const plain = require.resolve("./plain.cjs");
+            const options = {
+              get type() {
+                if (spins) spin();
+              },
+            };
+            globalThis.load = () => require(plain, options);
+            spins = true;
+            const optionCode = cutInBody(run);
+            spins = false;
+            console.log("type option:", optionCode, plain in require.cache, JSON.stringify(require(plain)));
           })();
         `,
       });
@@ -269,6 +283,7 @@ describe("require(specifier)", () => {
           "Bun.ModuleGraph: ERR_SCRIPT_EXECUTION_TIMEOUT false function",
           'build.module: ERR_SCRIPT_EXECUTION_TIMEOUT false {"calls":2}',
           'build.onLoad: ERR_SCRIPT_EXECUTION_TIMEOUT false {"calls":2}',
+          'type option: ERR_SCRIPT_EXECUTION_TIMEOUT false {"plain":true}',
         ],
         stderr: "",
         exitCode: 0,

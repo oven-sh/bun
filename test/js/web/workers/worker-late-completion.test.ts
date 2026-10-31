@@ -365,6 +365,168 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
   });
 });
 
+// `Bun.write(file, file)` copies on a pool thread. When the other end of a FIFO,
+// pipe or socket is silent, that thread waits in a poll that the worker's stop
+// phase wakes, so the worker goes away and the copy never settles.
+describe.skipIf(isWindows)("terminate() cancels a Bun.write(file, file) that waits for the other end", () => {
+  // "socket": what Bun.spawn hands a child for "pipe". "fifo": a FIFO this test
+  // holds open read-write and never reads or writes, so the child's end has a
+  // peer that stays silent.
+  type Stdio = "socket" | "fifo";
+  type Row = {
+    name: string;
+    // One copy for each row. The pool can have as few as two threads, and a copy that waits holds one.
+    copy: string;
+    // How many files the copy opens and holds while it waits.
+    opens: number;
+    stdin?: Stdio;
+    stdout?: Stdio;
+    end?: "terminate" | "exit";
+    skip?: boolean;
+  };
+  const rows: Row[] = [
+    {
+      // Linux has no call that copies a FIFO into a file: it rejects this copy at once.
+      name: "a FIFO source that nobody writes to, into a file",
+      copy: `Bun.write(d.out, Bun.file(d.fifo))`,
+      opens: 2,
+      skip: isLinux || isAndroid,
+    },
+    {
+      name: "a FIFO source that nobody writes to, into Bun.stdout (a pipe)",
+      copy: `Bun.write(Bun.stdout, Bun.file(d.fifo))`,
+      opens: 1,
+      stdout: "fifo",
+    },
+    {
+      name: "a FIFO source whose writer is silent, as a Response, into Bun.stdout (a pipe)",
+      copy: `Bun.write(Bun.stdout, new Response(Bun.file(d.held)))`,
+      opens: 1,
+      stdout: "fifo",
+    },
+    {
+      // macOS and FreeBSD still open the destination with an open(2) that waits for the reader.
+      name: "a FIFO destination that nobody reads",
+      copy: `Bun.write(Bun.file(d.fifo), Bun.file(d.small))`,
+      opens: 1,
+      skip: !isLinux && !isAndroid,
+    },
+    {
+      name: "Bun.stdin (a socket) into Bun.stdout (a socket)",
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
+    },
+    {
+      name: "Bun.file(0) (a socket) into a file",
+      copy: `Bun.write(d.out, Bun.file(0))`,
+      opens: 1,
+    },
+    {
+      name: "Bun.stdin (a pipe) into Bun.stdout (a pipe)",
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
+      stdin: "fifo",
+      stdout: "fifo",
+    },
+    {
+      name: "Bun.stdin (a socket) into Bun.stdout (a pipe)",
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
+      stdout: "fifo",
+    },
+    {
+      // macOS and FreeBSD write to a pipe that they did not open with a write(2) that waits for room.
+      name: "a file into Bun.stdout, a pipe that nobody drains",
+      copy: `Bun.write(Bun.stdout, Bun.file(d.big))`,
+      opens: 1,
+      stdout: "fifo",
+      skip: !isLinux && !isAndroid,
+    },
+    {
+      name: "a file into a socket that nobody drains",
+      copy: `Bun.write(Bun.file(3), Bun.file(d.big))`,
+      opens: 1,
+    },
+    {
+      name: "the worker's own process.exit(), with Bun.stdin (a socket) into Bun.stdout",
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
+      end: "exit",
+    },
+  ];
+  test.concurrent.each(rows.filter(row => !row.skip).map(row => [row.name, row] as const))("%s", async (_, row) => {
+    using dir = tempDir("worker-terminate-cancels-copy", {
+      "small.txt": "a regular file\n",
+      "big.bin": Buffer.alloc(1024 * 1024, "x"),
+    });
+    const d = {
+      out: path.join(String(dir), "out.bin"),
+      small: path.join(String(dir), "small.txt"),
+      big: path.join(String(dir), "big.bin"),
+      fifo: path.join(String(dir), "fifo"),
+      held: path.join(String(dir), "held"),
+    };
+    mkfifo(d.fifo);
+    mkfifo(d.held);
+    const held: number[] = [fs.openSync(d.held, "r+")];
+    const stdio = (name: string, kind: Stdio | undefined) => {
+      if (kind !== "fifo") return "pipe";
+      const fifo = path.join(String(dir), name);
+      mkfifo(fifo);
+      held.push(fs.openSync(fifo, "r+"));
+      return held.at(-1)!;
+    };
+    // A copy that waits has the files it opened and the fd that wakes it (a pipe on macOS: two fds). The
+    // worker goes on once the process has them: the copy is then in its wait. A terminate() that comes
+    // before a pool thread takes the copy skips the copy, so it would prove nothing.
+    const waiting = row.opens + (isMacOS ? 2 : 1);
+    const worker = `
+      const { parentPort, workerData: d } = require("node:worker_threads");
+      const fds = () => require("node:fs").readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      (async () => {
+        const before = fds();
+        let settled = false;
+        const settle = how => () => ((settled = true), parentPort.postMessage(how));
+        (${row.copy}).then(settle("resolved"), settle("rejected"));
+        while (!settled && fds() < before + ${waiting}) await Bun.sleep(1);
+        ${row.end === "exit" ? "process.exit(0);" : `parentPort.postMessage("copying");`}
+      })();
+    `;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          // The child of a test that timed out must not stay behind: nothing else ends it.
+          setTimeout(() => process.exit(1), 30_000).unref();
+          const { Worker } = require("node:worker_threads");
+          const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: ${JSON.stringify(d)} });
+          w.on("error", error => console.error("worker error:", error));
+          const seen = [];
+          w.on("message", async message => {
+            seen.push(message);
+            if (message === "copying") console.error(JSON.stringify({ code: await w.terminate(), seen }));
+          });
+          ${row.end === "exit" ? `w.once("exit", code => console.error(JSON.stringify({ code, seen })));` : ""}
+        `,
+        ],
+        env: bunEnv,
+        // fd 3: a socket whose other end this test never reads.
+        stdio: [stdio("stdin", row.stdin), stdio("stdout", row.stdout), "pipe", "pipe"],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // A copy that settled would be in `seen`.
+      expect(stderr.trim()).toBe(
+        JSON.stringify(row.end === "exit" ? { code: 0, seen: [] } : { code: 1, seen: ["copying"] }),
+      );
+      expect(exitCode).toBe(0);
+    } finally {
+      for (const fd of held) fs.closeSync(fd);
+    }
+  });
+});
+
 // The wait is unbounded by design: a job that cannot be cancelled makes
 // terminate() take as long as the job (as Node's environment cleanup does),
 // and then complete cleanly. Here the job is a read() blocking a pool thread on

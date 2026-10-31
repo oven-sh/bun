@@ -1583,7 +1583,8 @@ describe("JWK import validation", () => {
     const importJwk = (key: JsonWebKey) => crypto.subtle.importKey("jwk", key, name, true, usages);
 
     expect((await importJwk(jwk)).type).toBe("private");
-    expect((await importJwk({ ...jwk, x: Buffer.from(jwk.x!, "base64url").toString("base64") })).type).toBe("private");
+    const standard = (encoded: string) => Buffer.from(encoded, "base64url").toString("base64");
+    expect((await importJwk({ ...jwk, x: standard(jwk.x!), d: standard(jwk.d!) })).type).toBe("private");
     const { x, ...withoutX } = jwk;
     expect({
       otherKey: await rejection(importJwk({ ...jwk, x: other.x })),

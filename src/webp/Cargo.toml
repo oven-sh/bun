@@ -1,0 +1,14 @@
+[package]
+name = "bun_webp"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true
+thiserror.workspace = true

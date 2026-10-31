@@ -1,0 +1,199 @@
+//! `token_enc.c`: the bits of the coefficients, kept until the probabilities to code them with are known.
+
+use core::mem::replace;
+
+use super::bit_writer::BitWriter;
+use super::dsp::{Coeffs, num_levels_block};
+use crate::Result;
+use crate::util::{Checked, SliceExt, try_with_capacity};
+use crate::vp8::common::{NUM_BANDS, NUM_CTX, NUM_PROBAS};
+use crate::vp8::tables::{BANDS, CAT3, CAT4, CAT5, CAT6};
+
+/// Bit 15: the bit to code. Bits 0 to 13: its probability if bit 14 (`FIXED_PROBA_BIT`) is set, else the index of it.
+type Token = u16;
+
+const FIXED_PROBA_BIT: u16 = 1 << 14;
+
+/// One for "any coefficient?", then for each 6 for its range, 11 for its place in it, the sign, and "is it the last?".
+const MAX_TOKENS_PER_BLOCK: usize = 1 + 16 * (6 + 11 + 1 + 1);
+
+/// The least number of tokens in a page.
+const MIN_PAGE_SIZE: usize = 8192;
+
+/// `VP8TBuffer`: pages rather than one vector, which would hold up to twice the memory when it grows.
+pub(super) struct TokenBuffer {
+    /// The pages that have too little room left for a block.
+    full_pages: Vec<Vec<Token>>,
+    /// The page that the next block goes to.
+    page: Vec<Token>,
+}
+
+/// `TOKEN_ID`: the index of the first probability of a type, band and context.
+fn base_id(coeff_type: usize, band: usize, ctx: usize) -> usize {
+    NUM_PROBAS * (ctx + NUM_CTX * (band + NUM_BANDS * coeff_type))
+}
+
+/// Counts one more use of a probability, for `bit`.
+#[inline(always)]
+fn record_stats(bit: bool, stats: &mut u32) {
+    let mut p = *stats;
+    // Halve both counts when the one in the high bits is about to overflow.
+    if p >= 0xfffe_0000 {
+        p = ((p + 1) >> 1) & 0x7fff_7fff;
+    }
+    *stats = p + 0x0001_0000 + u32::from(bit);
+}
+
+/// The tokens of one block.
+struct BlockTokens<'a> {
+    tokens: &'a mut Vec<Token>,
+    /// All the statistics, in the order of the probabilities.
+    stats: &'a mut [u32],
+    /// The `base_id` of the current band and context.
+    base_id: usize,
+}
+
+impl BlockTokens<'_> {
+    #[inline(always)]
+    fn add_token(&mut self, bit: bool, proba: usize) -> Checked<bool> {
+        let id = self.base_id + proba;
+        self.tokens.push((u16::from(bit) << 15) | id as u16);
+        record_stats(bit, self.stats.at_mut(id)?);
+        Ok(bit)
+    }
+
+    #[inline(always)]
+    fn add_constant_token(&mut self, bit: bool, proba: u8) {
+        self.tokens
+            .push((u16::from(bit) << 15) | FIXED_PROBA_BIT | u16::from(proba));
+    }
+}
+
+impl TokenBuffer {
+    pub(super) fn new(page_size: usize) -> Result<Self> {
+        Ok(Self {
+            full_pages: Vec::new(),
+            page: try_with_capacity(page_size.max(MIN_PAGE_SIZE))?,
+        })
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.full_pages.clear();
+        self.page.clear();
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.full_pages.iter().map(Vec::len).sum::<usize>() + self.page.len()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn new_page(&mut self) -> Result<()> {
+        self.full_pages.try_reserve(1)?;
+        let page = try_with_capacity(self.page.capacity())?;
+        self.full_pages.push(replace(&mut self.page, page));
+        Ok(())
+    }
+
+    /// Records the levels of a block from `first` on. Returns whether there are any.
+    pub(super) fn record_coeff_tokens(
+        &mut self,
+        coeff_type: usize,
+        first: usize,
+        ctx: u8,
+        levels: &Coeffs,
+        stats: &mut [u32],
+    ) -> Result<bool> {
+        if self.page.capacity() - self.page.len() < MAX_TOKENS_PER_BLOCK {
+            self.new_page()?;
+        }
+        // `first` is 0 or 1, which are their own bands.
+        let mut t = BlockTokens {
+            tokens: &mut self.page,
+            stats,
+            base_id: base_id(coeff_type, first, usize::from(ctx)),
+        };
+        let num_levels = usize::from(num_levels_block(*levels));
+        if !t.add_token(num_levels != 0, 0)? {
+            return Ok(false);
+        }
+
+        let next_bands = BANDS.sub(first + 1..)?;
+        let levels = levels.as_flattened().iter().enumerate().skip(first);
+        for ((n, &level), &next_band) in levels.zip(next_bands) {
+            let next_band = usize::from(next_band);
+            let v = u32::from(level.unsigned_abs());
+            if !t.add_token(v != 0, 1)? {
+                t.base_id = base_id(coeff_type, next_band, 0);
+                continue;
+            }
+            if !t.add_token(v > 1, 2)? {
+                t.base_id = base_id(coeff_type, next_band, 1);
+            } else {
+                if !t.add_token(v > 4, 3)? {
+                    if t.add_token(v != 2, 4)? {
+                        t.add_token(v == 4, 5)?;
+                    }
+                } else if !t.add_token(v > 10, 6)? {
+                    if !t.add_token(v > 6, 7)? {
+                        t.add_constant_token(v == 6, 159);
+                    } else {
+                        t.add_constant_token(v >= 9, 165);
+                        t.add_constant_token(v & 1 == 0, 145);
+                    }
+                } else {
+                    let residue = v - 3;
+                    let (residue, tab): (u32, &[u8]) = if residue < 8 << 1 {
+                        t.add_token(false, 8)?;
+                        t.add_token(false, 9)?;
+                        (residue - 8, &CAT3)
+                    } else if residue < 8 << 2 {
+                        t.add_token(false, 8)?;
+                        t.add_token(true, 9)?;
+                        (residue - (8 << 1), &CAT4)
+                    } else if residue < 8 << 3 {
+                        t.add_token(true, 8)?;
+                        t.add_token(false, 10)?;
+                        (residue - (8 << 2), &CAT5)
+                    } else {
+                        t.add_token(true, 8)?;
+                        t.add_token(true, 10)?;
+                        (residue - (8 << 3), &CAT6)
+                    };
+                    for (shift, &proba) in (0..tab.len()).rev().zip(tab) {
+                        t.add_constant_token((residue >> shift) & 1 != 0, proba);
+                    }
+                }
+                t.base_id = base_id(coeff_type, next_band, 2);
+            }
+            t.add_constant_token(level < 0, 128);
+            if n == 15 || !t.add_token(n + 1 < num_levels, 0)? {
+                return Ok(true);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Codes the tokens, with `probas` for those that have an index, and frees each page once it is coded.
+    pub(super) fn emit_tokens(self, bw: &mut BitWriter, probas: &[u8]) -> Checked {
+        for page in self.full_pages.into_iter().chain([self.page]) {
+            emit_page(&page, bw, probas)?;
+        }
+        Ok(())
+    }
+}
+
+/// Out of line: within the loop over the pages, this loop compiles to more instructions per token.
+#[inline(never)]
+fn emit_page(page: &[Token], bw: &mut BitWriter, probas: &[u8]) -> Checked {
+    for &token in page {
+        let bit = token >> 15 != 0;
+        let proba = if token & FIXED_PROBA_BIT != 0 {
+            token as u8
+        } else {
+            probas.at(usize::from(token & 0x3fff))?
+        };
+        bw.put_bit(bit, proba);
+    }
+    Ok(())
+}

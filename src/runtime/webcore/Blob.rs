@@ -75,6 +75,16 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
+/// What `Blob::from_js_without_defer_gc` copies a typed array into.
+#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
+pub(crate) enum TypedArrayCopy {
+    /// `Blob::try_create`: a memfd on Linux when the source is large, so that `arrayBuffer()`
+    /// and `bytes()` of the Blob can map it copy-on-write.
+    Shareable,
+    /// Heap memory, for a copy that one write reads and nothing maps.
+    Private,
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -364,7 +374,11 @@ pub(crate) trait BlobExt {
     fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
     where
         Self: Sized;
-    fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
+    fn from_js_without_defer_gc<
+        const MOVE: bool,
+        const REQUIRE_ARRAY: bool,
+        const COPY: TypedArrayCopy,
+    >(
         global: &JSGlobalObject,
         arg: JSValue,
     ) -> JsResult<Blob>
@@ -2926,20 +2940,25 @@ impl BlobExt for Blob {
 
     #[inline]
     fn from_js_move(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<true, false>(global, arg)
+        Self::from_js_without_defer_gc::<true, false, { TypedArrayCopy::Shareable }>(global, arg)
     }
 
     #[inline]
     fn from_js_clone(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, true>(global, arg)
+        Self::from_js_without_defer_gc::<false, true, { TypedArrayCopy::Shareable }>(global, arg)
     }
 
+    /// The source of a write (`write_file_internal`).
     #[inline]
     fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, false>(global, arg)
+        Self::from_js_without_defer_gc::<false, false, { TypedArrayCopy::Private }>(global, arg)
     }
 
-    fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
+    fn from_js_without_defer_gc<
+        const MOVE: bool,
+        const REQUIRE_ARRAY: bool,
+        const COPY: TypedArrayCopy,
+    >(
         global: &JSGlobalObject,
         arg: JSValue,
     ) -> JsResult<Blob> {
@@ -2989,12 +3008,20 @@ impl BlobExt for Blob {
                 }
 
                 t if t.is_array_buffer_like() => {
-                    return Blob::try_create(
-                        top_value.as_array_buffer(global).unwrap().byte_slice(),
-                        global,
-                        false,
-                    )
-                    .map_err(Into::into);
+                    let buffer = top_value.as_array_buffer(global).unwrap();
+                    let bytes = buffer.byte_slice();
+                    return match COPY {
+                        TypedArrayCopy::Shareable => {
+                            Blob::try_create(bytes, global, false).map_err(Into::into)
+                        }
+                        TypedArrayCopy::Private => {
+                            let mut copy = Vec::new();
+                            copy.try_reserve_exact(bytes.len())
+                                .map_err(|_| bun_alloc::AllocError)?;
+                            copy.extend_from_slice(bytes);
+                            Ok(Blob::create_with_bytes_and_allocator(copy, global, false))
+                        }
+                    };
                 }
 
                 jsc::JSType::DOMWrapper => {

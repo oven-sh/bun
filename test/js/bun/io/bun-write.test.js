@@ -1791,6 +1791,85 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   });
 });
 
+// Only the write job reads the copy that a write makes of a typed array, so it is heap memory.
+// On Linux a Blob, a File or a Response body made from the same bytes keeps them in a memfd,
+// which `arrayBuffer()` and `bytes()` map. /proc/self/maps lists each memfd as "memfd-num-<n>".
+(isWindows ? describe : describe.concurrent)("the copy that a write makes of a typed array", () => {
+  const forms = [
+    ["Bun.write(path, Uint8Array)", `Bun.write(path, source)`],
+    ["Bun.file(path).write(Uint8Array)", `Bun.file(path).write(source)`],
+    ["Bun.write(path, [Uint8Array])", `Bun.write(path, [source])`],
+    ["Bun.write(path, ArrayBuffer)", `Bun.write(path, source.buffer)`],
+    ["Bun.write(path, DataView)", `Bun.write(path, new DataView(source.buffer))`],
+    ["Bun.write(path, Buffer)", `Bun.write(path, Buffer.from(source.buffer))`],
+  ];
+  const script = size => `
+    const fs = require("fs");
+    const size = ${size};
+    const memfds = () =>
+      process.platform === "linux"
+        ? new Set(fs.readFileSync("/proc/self/maps", "utf8").match(/memfd-num-\\d+/g)).size
+        : 0;
+    const result = { writes: {} };
+
+    const forms = { ${forms.map(([name, call]) => `${JSON.stringify(name)}: (path, source) => ${call}`).join(", ")} };
+    for (const [name, write] of Object.entries(forms)) {
+      const path = "out" + Object.keys(result.writes).length;
+      const expected = Buffer.alloc(size, name + ":0123456789;");
+      const promise = write(path, new Uint8Array(expected));
+      // The JS thread has not returned to the event loop, so the write job still has its copy.
+      const memfdsDuringTheWrite = memfds();
+      const wrote = await promise;
+      result.writes[name] = {
+        memfdsDuringTheWrite,
+        wrote,
+        fileHasTheBytes: Buffer.compare(fs.readFileSync(path), expected) === 0,
+      };
+    }
+
+    const source = new Uint8Array(size).fill(4);
+    const before = memfds();
+    const blob = new Blob([source]);
+    const withBlob = memfds();
+    const file = new File([source], "name");
+    const withFile = memfds();
+    const response = new Response([source]);
+    const withResponse = memfds();
+    result.memfds = { blob: withBlob - before, file: withFile - withBlob, response: withResponse - withFile };
+    result.sizes = [blob.size, file.size, (await response.blob()).size];
+    console.log(JSON.stringify(result));
+  `;
+
+  it.each([
+    // One byte more than whole pages.
+    ["8 MiB", [], 8 * 1024 * 1024 + 1],
+    ["1 MiB with --smol", ["--smol"], 1024 * 1024 + 1],
+  ])("is heap memory: %s", async (_, flags, size) => {
+    using dir = tempDir("bun-write-typed-array-copy", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script(size)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ result: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: {
+        writes: Object.fromEntries(
+          forms.map(([name]) => [name, { memfdsDuringTheWrite: 0, wrote: size, fileHasTheBytes: true }]),
+        ),
+        // Other platforms have no memfd.
+        memfds: isLinux ? { blob: 1, file: 1, response: 1 } : { blob: 0, file: 0, response: 0 },
+        sizes: [size, size, size],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // The write job has its own copy of a typed array, string or array source. It frees
 // that copy when the pool thread is done with the write. If it waited for the JS
 // thread to complete the write, a caller that does not await would hold every copy.
@@ -1832,7 +1911,8 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 128 : 96);
   }
 
-  // A copy of 8 MB or more of a typed array is a memfd, which /proc/self/maps names ("memfd-num-0").
+  // A Response body made from a typed array of 8 MB or more is a memfd, which /proc/self/maps names
+  // ("memfd-num-0"). A write of that body takes the memfd over.
   // The JS thread frees that one: a free on a pool thread makes the next memfd copy slower.
   // This case passes on main too. It guards the memfd condition in WriteFile::on_finish.
   it.skipIf(!isLinux)("stays until the JS thread completes the write when it is a memfd", async () => {
@@ -1845,7 +1925,7 @@ describe.skipIf(isWindows)("the write job's copy of the source", () => {
           `
         const source = new Uint8Array(8 * size).fill(0x61);
         const mappedCopies = () => [...new Set(fs.readFileSync("/proc/self/maps", "utf8").match(/memfd-num-\\d+/g))];
-        const promise = Bun.write("out.bin", source);
+        const promise = Bun.write("out.bin", new Response([source]));
         // The JS thread stays in this block, so it cannot complete the write.
         const fd = fs.openSync("out.bin", "r");
         const last = Buffer.alloc(1);

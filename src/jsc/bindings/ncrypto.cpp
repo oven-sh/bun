@@ -44,16 +44,27 @@ static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~AS
 
 // ============================================================================
 
+// ERR_clear_error() resets every slot of the queue; peeking first keeps the guard cheap on hot paths.
+static inline void clearErrorQueue()
+{
+    if (ERR_peek_error() != 0) ERR_clear_error();
+}
+
 ClearErrorOnReturn::ClearErrorOnReturn(CryptoErrorList* errors)
     : errors_(errors)
 {
-    ERR_clear_error();
+    clearErrorQueue();
 }
 
 ClearErrorOnReturn::~ClearErrorOnReturn()
 {
     if (errors_ != nullptr) errors_->capture();
-    ERR_clear_error();
+    clearErrorQueue();
+}
+
+uint32_t ClearErrorOnReturn::peekError()
+{
+    return ERR_peek_error();
 }
 
 MarkPopErrorOnReturn::MarkPopErrorOnReturn(CryptoErrorList* errors)

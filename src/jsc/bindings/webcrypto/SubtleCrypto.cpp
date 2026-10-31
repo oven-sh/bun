@@ -1028,6 +1028,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
     // regardless what kind of keys it produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
     // That's simply not efficient for AES, HMAC and EC keys. Therefore, we perform it as an async task only for RSA keys.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext()));
 }
 
@@ -1290,6 +1291,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-importKey
     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     RELEASE_AND_RETURN(scope, algorithm->importKey(format, WTF::move(keyData), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
@@ -1341,6 +1343,7 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-exportKey
     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     algorithm->exportKey(format, key, WTF::move(callback), WTF::move(exceptionCallback));
 }
 
@@ -1477,6 +1480,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     };
 
     // The following operation should be performed synchronously.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     RELEASE_AND_RETURN(scope, exportAlgorithm->exportKey(format, key, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
@@ -1607,6 +1611,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                 };
 
                 // The following operation should be performed synchronously.
+                ncrypto::ClearErrorOnReturn clearErrorOnReturn;
                 RELEASE_AND_RETURN(scope, importAlgorithm->importKey(format, WTF::move(keyData), *unwrappedKeyAlgorithm, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
             }
         }
@@ -1673,6 +1678,7 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
     }
     importParams->identifier = identifier;
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     Vector<uint8_t> spki;
     {
         AsymmetricKeyValue keyValue(key);

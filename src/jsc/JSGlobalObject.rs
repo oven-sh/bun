@@ -516,6 +516,7 @@ impl JSGlobalObject {
 
     pub fn throw_invalid_scrypt_params(&self) -> JsError {
         let err = bun_boringssl::c::ERR_peek_last_error();
+        bun_boringssl::c::ERR_clear_error();
         if err != 0 {
             let mut buf = [0u8; 256];
             // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;

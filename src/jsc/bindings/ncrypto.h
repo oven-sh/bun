@@ -139,6 +139,8 @@ public:
     NCRYPTO_DISALLOW_COPY_AND_MOVE(ClearErrorOnReturn)
     NCRYPTO_DISALLOW_NEW_DELETE()
 
+    uint32_t peekError();
+
 private:
     CryptoErrorList* errors_;
 };

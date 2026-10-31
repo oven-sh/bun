@@ -81,6 +81,8 @@ void JSHmac::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const St
         return;
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     // Create the HMAC context
     m_ctx = ncrypto::HMACCtxPointer::New();
 
@@ -230,6 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     };
 
     if (hmac->m_ctx) {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         if (!hmac->m_ctx.digestInto(&mdBuffer)) {
             hmac->m_ctx.reset();
             hmac->m_sizeForGC = 0;

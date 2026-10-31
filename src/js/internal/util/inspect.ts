@@ -61,6 +61,7 @@ const DatePrototypeToISOString = Date.prototype.toISOString;
 const DatePrototypeToString = Date.prototype.toString;
 const ErrorPrototypeToString = Error.prototype.toString;
 const FunctionPrototypeToString = Function.prototype.toString;
+const Int32ArrayCtor = Int32Array;
 const JSONStringify = JSON.stringify;
 const MapPrototypeEntries = Map.prototype.entries;
 const MapPrototypeValues = Map.prototype.values;
@@ -1787,6 +1788,199 @@ function getFunctionBase(ctx: Context, value, constructor: string | null, tag: s
   return base;
 }
 
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L1627-L1734
+function getDuplicateErrorFrameRanges(frames: string[]): number[] {
+  // Same ranges as Node's text, which is quadratic. That text is duplicate-frames-fixture.cjs: the tests run both.
+  const result: number[] = [];
+  const length = frames.length;
+  const minimumDuplicateRange = 3;
+
+  // A range needs three lines in a row whose lengths occurred earlier: a length is cheaper to look up than a line.
+  const sizes: Set<number> = new SafeSet();
+  let run = 0;
+  let longestRun = 0;
+  for (let i = 0; i < length && longestRun < minimumDuplicateRange; i++) {
+    const line: unknown = frames[i];
+    if (typeof line !== "string") {
+      // The marker of the cause step, which the `stylize` option can make any value.
+      longestRun = minimumDuplicateRange;
+      break;
+    }
+    const size = line.length;
+    if (!sizes.has(size)) {
+      sizes.add(size);
+      run = 0;
+    } else if (++run > longestRun) {
+      longestRun = run;
+    }
+  }
+  if (longestRun < minimumDuplicateRange) {
+    return result;
+  }
+
+  const lineToId: Map<unknown, number> = new SafeMap();
+  let distinct = 0;
+  run = 0;
+  longestRun = 0;
+  for (let i = 0; i < length; i++) {
+    if (lineToId.get(frames[i]) === undefined) {
+      lineToId.set(frames[i], distinct++);
+      run = 0;
+    } else if (++run > longestRun) {
+      longestRun = run;
+    }
+  }
+  // Node reads `undefined` past the end (L1698): it equals a marker of the cause step that `stylize` made `undefined`.
+  const idPastEnd = lineToId.get(undefined) ?? distinct;
+  if (idPastEnd !== distinct && run + 1 > longestRun) {
+    longestRun = run + 1;
+  }
+  if (length - distinct <= minimumDuplicateRange || longestRun < minimumDuplicateRange) {
+    return result;
+  }
+
+  const slots = length + 1;
+  const ids = new Int32ArrayCtor(slots);
+  // previous[i] - 1 is the index of the copy of line i before i. lastOfId[id] - 1 is the index of the last copy.
+  const previous = new Int32ArrayCtor(length);
+  const lastOfId = new Int32ArrayCtor(distinct);
+  // `| 0`: `bun build --compile --aot` takes an index that it cannot prove to be a number for the name of any member.
+  for (let i = 0; i < length; i++) {
+    const id = lineToId.get(frames[i])! | 0;
+    ids[i] = id;
+    previous[i] = lastOfId[id];
+    lastOfId[id] = i + 1;
+  }
+  ids[length] = idPastEnd;
+
+  // limit[i] is the longest block Node tries at i: up to the copy where the gcd of the distances is 1 (L1660-L1683).
+  const limit = new Int32ArrayCtor(length);
+  let maxLimit = 0;
+  // Pairs [gcd, index] of one copy: the distances from it to its copies up to `index` have that gcd.
+  const gcds: number[] = [];
+  for (let id = 0; id < distinct; id++) {
+    const last = lastOfId[id] - 1;
+    let used = 0;
+    for (let later = last, i = previous[last] - 1; i >= 0; later = i, i = previous[i] - 1) {
+      let gcd = later - i;
+      let reached = later;
+      let kept = 0;
+      for (let pair = 0; pair < used && gcd !== 1; pair += 2) {
+        let common = gcd;
+        let divisor = gcds[pair];
+        const index = gcds[pair + 1];
+        while (divisor !== 0) {
+          const remainder = common % divisor;
+          common = divisor;
+          divisor = remainder;
+        }
+        if (common !== gcd) {
+          $putByValDirect(gcds, kept++, gcd);
+          $putByValDirect(gcds, kept++, reached);
+          gcd = common;
+          reached = index;
+        }
+      }
+      $putByValDirect(gcds, kept++, gcd);
+      $putByValDirect(gcds, kept++, reached);
+      used = kept;
+      if (last - i >= minimumDuplicateRange) {
+        const distance = (gcd === 1 ? reached : last) - i;
+        limit[i] = distance;
+        if (distance > maxLimit) {
+          maxLimit = distance;
+        }
+      }
+    }
+  }
+
+  // names[k][i] names the 2 ** k lines from i: two indexes have the same name if and only if those lines are equal.
+  const names: Int32Array[] = [ids];
+  // nexts[k][i] is the next index with the name of i, or `slots`.
+  const nexts: Int32Array[] = [];
+  let count = idPastEnd === distinct ? distinct + 1 : distinct;
+  for (let k = 0, size = 1; ; k++, size *= 2) {
+    const name = names[k];
+    const next = new Int32ArrayCtor(slots);
+    // firstOfName[name] - 1 is the first index with that name.
+    const firstOfName = new Int32ArrayCtor(count);
+    for (let i = slots - 1; i >= 0; i--) {
+      const named = name[i] | 0;
+      const later = firstOfName[named];
+      next[i] = later === 0 ? slots : later - 1;
+      firstOfName[named] = i + 1;
+    }
+    $putByValDirect(nexts, k, next);
+    // No longer block occurs twice within a distance that Node tries.
+    if (size * 2 > maxLimit || count === slots) {
+      break;
+    }
+    // Names 2 * size lines by the names of their halves: pairedWith[second] === head if this first half has that pair.
+    const doubled = new Int32ArrayCtor(slots);
+    const pairedWith = new Int32ArrayCtor(count);
+    const nameOfPair = new Int32ArrayCtor(count);
+    let pairs = 0;
+    for (let first = 0; first < count; first++) {
+      const head = firstOfName[first];
+      for (let i = head - 1; i < slots; i = next[i] | 0) {
+        if (i + size * 2 > slots) {
+          doubled[i] = pairs++;
+          continue;
+        }
+        const second = name[i + size] | 0;
+        if (pairedWith[second] !== head) {
+          pairedWith[second] = head;
+          nameOfPair[second] = pairs++;
+        }
+        doubled[i] = nameOfPair[second];
+      }
+    }
+    $putByValDirect(names, k + 1, doubled);
+    count = pairs;
+  }
+  const top = names.length - 1;
+
+  for (let i = 0; i < length - minimumDuplicateRange; i++) {
+    const farthest = limit[i];
+    let bestRange = 0;
+    let bestHidden = 0;
+    // A block of size <= range < 2 * size lines repeats at i only if its first `size` lines occur again at i + range.
+    for (let k = 0, size = 1; k <= top && size <= farthest; k++, size *= 2) {
+      const next = nexts[k];
+      const windowEnd = i + $min(farthest, size * 2 - 1);
+      for (let j = next[i] | 0; j <= windowEnd; j = next[j] | 0) {
+        const range = j - i;
+        if (range < size) {
+          continue;
+        }
+        let equal = size;
+        for (let q = top; q >= 0; q--) {
+          const name = names[q];
+          const step = 1 << q;
+          while (j + equal + step <= slots && name[i + equal] === name[j + equal]) {
+            equal += step;
+          }
+        }
+        const hidden = equal - (equal % range);
+        // No two lengths tie for the most hidden lines: Node tries their gcd too, and it hides more (L1709-L1724).
+        if (hidden > bestHidden) {
+          bestRange = range;
+          bestHidden = hidden;
+        }
+      }
+    }
+    if (bestHidden >= minimumDuplicateRange) {
+      $arrayPush(result, i + bestRange);
+      $arrayPush(result, bestRange);
+      $arrayPush(result, bestHidden / bestRange);
+      // Skip over the collapsed portion to avoid overlapping matches.
+      i += bestRange + bestHidden - 1;
+    }
+  }
+
+  return result;
+}
+
 function identicalSequenceRange(a: string[], b: string[]) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
@@ -1837,6 +2031,33 @@ function getStackFrames(ctx: Context, err: Error, stack: string) {
         const msg = `    ... ${skipped} lines matching cause stack trace ...`;
         frames.splice(offset + 1, skipped, ctx.stylize(msg, "undefined"));
       }
+    }
+  }
+
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L1782-L1798
+  if (frames.length > 10) {
+    const ranges = getDuplicateErrorFrameRanges(frames);
+    const count = ranges.length;
+    // Node splices once per range, from the last: `stylize` is called in that order.
+    for (let i = count - 3; i >= 0; i -= 3) {
+      const length = ranges[i + 1];
+      const duplicateRanges = ranges[i + 2];
+      const msg =
+        `    ... collapsed ${length * duplicateRanges} duplicate lines ` +
+        "matching above " +
+        (duplicateRanges > 1 ? `${length} lines ${duplicateRanges} times...` : "lines ...");
+      frames[ranges[i]] = ctx.stylize(msg, "undefined");
+    }
+    if (count !== 0) {
+      // Each marker stands where its range starts. Move the lines after each range down, in one pass.
+      let kept = ranges[0] + 1;
+      for (let i = 0; i < count; i += 3) {
+        const end = i + 3 < count ? ranges[i + 3] + 1 : frames.length;
+        for (let line = ranges[i] + ranges[i + 1] * ranges[i + 2]; line < end; line++) {
+          frames[kept++] = frames[line];
+        }
+      }
+      frames.length = kept;
     }
   }
   return frames;

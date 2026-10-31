@@ -53,7 +53,9 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["node:fs", `console.log(require("node:fs").readFileSync("x", "utf8").length);`],
     ["node:util", `console.log(require("node:util").format("%s", 1));`],
   ])("the computed keys in what %s brings leave the report closed", async (_, text) => {
-    await closedReport(text);
+    const use = await closedReport(text);
+    // A key that may be a name of any member makes this "the compiler can't tell which API this program uses at ..".
+    expect(use.lines[0]).toBe("the compiler can see every API this program uses");
   });
 
   const hostClasses = `declare const URL: any, performance: any;\n`;

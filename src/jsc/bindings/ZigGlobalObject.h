@@ -92,6 +92,9 @@ extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSVa
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
+// The table of built-ins names it (private-globals.builtins.ts).
+JSC_DECLARE_HOST_FUNCTION(functionEsmLoadSync);
+
 #if OS(WINDOWS)
 #include <uv.h>
 extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);

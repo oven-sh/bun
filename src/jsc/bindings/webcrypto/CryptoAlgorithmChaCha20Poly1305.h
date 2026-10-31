@@ -41,6 +41,12 @@ public:
     static constexpr size_t s_keyLengthBits = 256;
     static Ref<CryptoAlgorithm> create();
 
+    // The steps of encrypt and decrypt that need neither the key nor the data. SubtleCrypto.supports runs them too.
+    static bool tagLengthIsValid(uint8_t);
+    // An absent tag length is the default tag length.
+    static bool tagLengthIsValid(std::optional<uint8_t>);
+    static bool ivLengthIsValid(size_t);
+
 private:
     CryptoAlgorithmChaCha20Poly1305() = default;
     CryptoAlgorithmIdentifier identifier() const final;

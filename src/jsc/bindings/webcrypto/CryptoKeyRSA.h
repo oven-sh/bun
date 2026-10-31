@@ -78,6 +78,8 @@ public:
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
 
     static bool isValidRSAAlgorithm(CryptoAlgorithmIdentifier);
+    // The step of generatePair that needs only the exponent. SubtleCrypto.supports runs it too.
+    static bool publicExponentIsValid(std::span<const uint8_t>);
 
 private:
     CryptoKeyRSA(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType, PlatformRSAKeyContainer&&, bool extractable, CryptoKeyUsageBitmap);

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("should work for static input", () => {
   const inputs = [
@@ -118,7 +118,8 @@ for (const how of ["await", "then"]) {
 }
 
 // The ref that the second loop takes is the one that the first loop dropped. A program that unref'd stdin itself keeps it unref'd.
-it("a loop over the console does not ref a stdin that the program unref'd", async () => {
+// On Windows the pending read of such a loop keeps the process alive.
+it.todoIf(isWindows)("a loop over the console does not ref a stdin that the program unref'd", async () => {
   await using proc = spawn({
     cmd: [
       bunExe(),

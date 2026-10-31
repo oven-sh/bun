@@ -72,6 +72,32 @@ test("runs while the timer of a fires", async () => {
   });
 }
 
+// The same for a module that the file waits for behind an import(): it is part of the file that is over.
+test.concurrent("a module behind the import() of a file that failed does not go on under a later file", async () => {
+  const a = `import { test } from "bun:test";
+await import("./helper.ts");
+console.log("a goes on");
+test("late", () => {});
+`;
+  const helper = `import { beforeEach } from "bun:test";
+await new Promise(resolve => setTimeout(resolve, 20).unref());
+console.log("helper goes on");
+beforeEach(() => console.log("a hook of helper"));
+`;
+  const b = `import { test } from "bun:test";
+test("runs while the timer of helper fires", async () => {
+  await new Promise(resolve => setTimeout(resolve, 200));
+});
+`;
+  expect(await run({ "a.test.ts": a, "helper.ts": helper, "b.test.ts": b }, ["./a.test.ts", "./b.test.ts"])).toEqual({
+    stdout: "",
+    located: ["error: Detected unsettled top-level await at file://<dir>/a.test.ts:2"],
+    summary: ["1 pass", "1 fail", "1 error"],
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
 // The module that was given up on has failed for good, so a later file that imports it fails with the same error.
 test.concurrent("a later file that imports the module that was given up on fails too", async () => {
   const setup = `await new Promise(resolve => setTimeout(resolve, 20).unref());

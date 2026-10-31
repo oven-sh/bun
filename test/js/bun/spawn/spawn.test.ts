@@ -973,10 +973,11 @@ describe("unref() + .exited with nothing else ref'd", () => {
       expect({
         // Without the line that names the test runner.
         stdout: stdout.replace(/^bun test v.*\n/, ""),
-        stderr: exitCode === 0 ? "" : stderr,
+        // The runner writes its report to stderr. A warning or an error would be there too.
+        diagnostics: stderr.split(/\r?\n/).filter(line => /^(warn|error)/i.test(line)),
         exitCode,
         signalCode: child.signalCode,
-      }).toEqual({ stdout: "resolved\n", stderr: "", exitCode: 0, signalCode: null });
+      }).toEqual({ stdout: "resolved\n", diagnostics: [], exitCode: 0, signalCode: null });
     });
   }
 

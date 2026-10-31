@@ -1655,47 +1655,15 @@ impl Run<'_> {
             }
 
             // While the entry is suspended on a top-level await its result is the loader's own promise.
-            if ctx.runtime_options.eval.eval_and_print && !entry_is_pending(vm) {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                result.then2(
-                                    global,
-                                    JSValue::UNDEFINED,
-                                    crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
-                };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        global,
-                        &raw const to_print,
-                        1,
-                    );
-                }
+            let mut print_result = ctx
+                .runtime_options
+                .eval
+                .eval_and_print
+                .then_some(print_entry_point_result);
+            if !entry_is_pending(vm)
+                && let Some(print) = print_result.take()
+            {
+                print(vm, global);
             }
 
             vm.on_before_exit();
@@ -1722,6 +1690,12 @@ impl Run<'_> {
                         break;
                     }
                     vm.on_before_exit();
+                }
+                // A 'beforeExit' listener let the module finish: its result is there now.
+                if promise.status() == PromiseStatus::Fulfilled
+                    && let Some(print) = print_result.take()
+                {
+                    print(vm, global);
                 }
                 if promise.status() == PromiseStatus::Rejected
                     && vm.pending_internal_promise_reported_at != vm.hot_reload_counter
@@ -1769,6 +1743,50 @@ impl Run<'_> {
         );
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
+    }
+}
+
+/// `--print`: writes what the entry point evaluated to, and waits for it first if that is a pending promise.
+fn print_entry_point_result(vm: &mut VirtualMachine, global: &JSGlobalObject) {
+    let to_print: JSValue = 'brk: {
+        let result = vm
+            .entry_point_result
+            .value
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
+        if let Some(promise) = result.as_any_promise() {
+            match promise.status() {
+                PromiseStatus::Pending => {
+                    result.then2(
+                        global,
+                        JSValue::UNDEFINED,
+                        crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
+                        crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
+                    );
+                    vm.tick();
+                    vm.auto_tick_active();
+                    while vm.is_event_loop_alive() {
+                        vm.tick();
+                        vm.auto_tick_active();
+                    }
+                    break 'brk result;
+                }
+                _ => break 'brk promise.result(vm.jsc_vm()),
+            }
+        }
+        result
+    };
+    // SAFETY: `vals[..1]` is the single stack `to_print`; null
+    // `ctype` routes to the VM's stdout/stderr default.
+    unsafe {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            ::core::ptr::null_mut(),
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            global,
+            &raw const to_print,
+            1,
+        );
     }
 }
 

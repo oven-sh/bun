@@ -16,12 +16,38 @@ impl Crypto {
         array: JsLocal<'a>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
-        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
-        // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
-        // all pass `as_array_buffer` but must still raise TypeMismatchError.
-        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
+        let js_type = array.to_js().js_type();
+        // Web IDL's conversion to an ArrayBufferView that is neither [AllowShared] nor [AllowResizable].
+        let view = array
+            .to_js()
+            .as_array_buffer(global)
+            .filter(|_| js_type != JSType::ArrayBuffer);
+        let refused = match &view {
+            None => Some("is not an ArrayBufferView"),
+            Some(view) if view.shared => {
+                Some("is a view on a SharedArrayBuffer, which is not allowed")
+            }
+            Some(view) if view.resizable => {
+                Some("is backed by a resizable ArrayBuffer, which is not allowed")
+            }
+            Some(_) => None,
+        };
+        if let Some(refused) = refused {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!(
+                        "Failed to execute 'getRandomValues' on 'Crypto': 1st argument {refused}."
+                    ),
+                )
+                .throw()
+                .into());
+        }
+
+        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only integer-typed views.
+        let array_buffer = view.filter(|_| {
             matches!(
-                array.to_js().js_type(),
+                js_type,
                 JSType::Int8Array
                     | JSType::Uint8Array
                     | JSType::Uint8ClampedArray
@@ -42,7 +68,7 @@ impl Crypto {
                 .into());
         };
 
-        random_data(global, array_buffer.byte_slice_mut());
+        bun_boringssl_sys::rand_bytes(array_buffer.byte_slice_mut());
 
         Ok(array)
     }
@@ -83,25 +109,6 @@ pub(crate) fn timing_safe_equal<'a>(
     }
 
     Ok(bun_boringssl::c::constant_time_eq(buf1, buf2))
-}
-
-fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
-    const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
-    match slice.len() {
-        0 => {}
-        // 512 bytes or less we reuse from the same cache as UUID generation.
-        1..=ENTROPY_CACHE_FAST_PATH_MAX => {
-            let src = global
-                .bun_vm()
-                .as_mut()
-                .rare_data()
-                .entropy_slice(slice.len());
-            slice[..src.len()].copy_from_slice(src);
-        }
-        _ => {
-            bun_boringssl_sys::rand_bytes(slice);
-        }
-    }
 }
 
 fn encoding_from_label<'a>(heap: &JsHeap<'a>, label: &[u8]) -> bindgen::Result<'a, Encoding> {

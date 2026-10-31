@@ -1663,10 +1663,8 @@ class WASI {
       },
       random_get: (bufPtr: number, bufLen: number) => {
         this.refreshMemory();
-        // getRandomValues takes one integer-typed view and ignores any further
-        // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
-        // memory rather than the requested window.
-        crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
+        // getRandomValues refuses a view on shared memory, so it fills an array of its own.
+        new Uint8Array(this.memory.buffer, bufPtr, bufLen).set(crypto.getRandomValues(new Uint8Array(bufLen)));
         return WASI_ESUCCESS;
       },
       sched_yield() {

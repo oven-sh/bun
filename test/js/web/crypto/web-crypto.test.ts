@@ -1475,9 +1475,6 @@ describe("crypto.getRandomValues argument types", () => {
     ["Float32Array", () => new Float32Array(4)],
     ["Float64Array", () => new Float64Array(4)],
     ["DataView", () => new DataView(new ArrayBuffer(4))],
-    ["ArrayBuffer", () => new ArrayBuffer(4)],
-    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
-    ["plain object", () => ({})],
   ] as const;
 
   for (const [name, make] of rejected) {
@@ -1486,6 +1483,40 @@ describe("crypto.getRandomValues argument types", () => {
         expect.objectContaining({
           name: "TypeMismatchError",
           message: "The data argument must be an integer-type TypedArray",
+        }),
+      );
+    });
+  }
+
+  // Web IDL's conversion of the argument to an ArrayBufferView comes first.
+  const notConverted = [
+    ["ArrayBuffer", () => new ArrayBuffer(4), "is not an ArrayBufferView"],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4), "is not an ArrayBufferView"],
+    ["plain object", () => ({}), "is not an ArrayBufferView"],
+    [
+      "view on a SharedArrayBuffer",
+      () => new Uint8Array(new SharedArrayBuffer(4)),
+      "is a view on a SharedArrayBuffer, which is not allowed",
+    ],
+    [
+      "view on a resizable ArrayBuffer",
+      () => new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 })),
+      "is backed by a resizable ArrayBuffer, which is not allowed",
+    ],
+    [
+      "Float32Array on a SharedArrayBuffer",
+      () => new Float32Array(new SharedArrayBuffer(4)),
+      "is a view on a SharedArrayBuffer, which is not allowed",
+    ],
+  ] as const;
+
+  for (const [name, make, why] of notConverted) {
+    it(`rejects ${name} with TypeError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `Failed to execute 'getRandomValues' on 'Crypto': 1st argument ${why}.`,
         }),
       );
     });

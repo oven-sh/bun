@@ -47,9 +47,14 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   expect(wasi.FD_MAP.get(0).rights).toEqual({ base: WASI_RIGHT_FD_READ, inheriting: BigInt(0) });
 });
 
-it("random_get fills only the requested window", () => {
+it.each([
+  ["memory", () => new WebAssembly.Memory({ initial: 1 })],
+  ["shared memory", () => new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })],
+  // Not every build of JavaScriptCore backs shared memory with a SharedArrayBuffer.
+  ["a SharedArrayBuffer", () => ({ buffer: new SharedArrayBuffer(65536) })],
+])("random_get fills only the requested window of %s", (_, memory) => {
   const wasi = new WASI({});
-  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  wasi.setMemory(memory());
 
   const WASI_ESUCCESS = 0;
   const bufPtr = 1024;

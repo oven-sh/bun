@@ -3874,13 +3874,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
 
-                if ex.is_parenthesized {
-                    invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
-                        kind: crate::parser::InvalidLocTag::Parentheses,
-                    });
-                }
-
                 // p.markSyntaxFeature(Destructing)
                 let mut items = BumpVec::with_capacity_in(ex.items.len_u32() as usize, self.arena);
                 let mut is_spread = false;
@@ -3926,13 +3919,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     invalid_loc.push(InvalidLoc {
                         loc: sp,
                         kind: crate::parser::InvalidLocTag::Spread,
-                    });
-                }
-
-                if ex.is_parenthesized {
-                    invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
-                        kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
                 // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))

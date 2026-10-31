@@ -290,6 +290,73 @@ describe.concurrent("bun test --isolate", () => {
     },
   );
 
+  // A module that an earlier file loaded is not transpiled again, and a module's own source map is read when the
+  // module is transpiled.
+  test("with --isolate, a file's process.setSourceMapsEnabled() is for the modules that the file loads", async () => {
+    const firstFrame = `
+      function firstFrame(f: () => void) {
+        try {
+          f();
+        } catch (e: any) {
+          return e.stack.split("\\n")[1].trim().replace(import.meta.dir, "<dir>").replaceAll("\\\\", "/");
+        }
+      }
+    `;
+    using dir = tempDir("isolate-source-maps-module", {
+      // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
+      "lib.js": [
+        `"use strict";`,
+        `Object.defineProperty(exports, "__esModule", { value: true });`,
+        `exports.boom = boom;`,
+        `function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+        `//# sourceMappingURL=lib.js.map`,
+        ``,
+      ].join("\n"),
+      "lib.js.map": JSON.stringify({
+        version: 3,
+        sources: ["lib.ts"],
+        names: [],
+        mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
+      }),
+      "a-off.test.ts": `
+        import { test, expect } from "bun:test";
+        import { boom } from "./lib.js";
+        ${firstFrame}
+        test("the stack is in the loaded file", () => {
+          expect(firstFrame(boom)).toBe("at boom (<dir>/lib.js:5:15)");
+        });
+      `,
+      "b-on.test.ts": `
+        import { test, expect } from "bun:test";
+        ${firstFrame}
+        process.setSourceMapsEnabled(true);
+        const { boom } = await import("./lib.js");
+        test("the stack is in the original file", () => {
+          expect(firstFrame(boom)).toBe("at boom (<dir>/lib.ts:4:13)");
+        });
+      `,
+      "c-off.test.ts": `
+        import { test, expect } from "bun:test";
+        import { boom } from "./lib.js";
+        ${firstFrame}
+        test("the stack of a module that loaded before the switch is in the loaded file", () => {
+          process.setSourceMapsEnabled(true);
+          expect(firstFrame(boom)).toBe("at boom (<dir>/lib.js:5:15)");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-off.test.ts", "./b-on.test.ts", "./c-off.test.ts"],
+    );
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

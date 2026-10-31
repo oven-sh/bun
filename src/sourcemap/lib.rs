@@ -104,6 +104,22 @@ pub struct ParseUrl {
     pub source_contents: Option<Box<[u8]>>,
 }
 
+/// Whose rules [`parse_json`] and [`parse_url`] read a source map by.
+#[derive(Clone, Copy)]
+pub enum ParsePolicy<'a> {
+    /// A map that Bun wrote, for a file that starts with `// @bun`: `sourcesContent` has an entry for each source,
+    /// and a source is named as the map writes it.
+    Bun,
+    /// The map that a loaded file's `sourceMappingURL` comment names, read as Node.js reads it for
+    /// `--enable-source-maps`: `version` is not looked at, `sourcesContent` can be missing, and `sourceRoot` goes
+    /// before each source with nothing between them. `resolve_source` turns the result into the name to show, and
+    /// an empty name is a source that no stack frame is renamed to.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L285-L337
+    Node {
+        resolve_source: &'a dyn Fn(&[u8]) -> Box<[u8]>,
+    },
+}
+
 pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
 
 pub struct ParseFail {
@@ -444,7 +460,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     break 'try_inline;
                 };
 
-                match parse_url(&arena, found_url.slice(), result) {
+                match parse_url(&arena, found_url.slice(), result, ParsePolicy::Bun) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
                     Err(err) => {
                         inline_err = Some(err);
@@ -465,7 +481,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     };
 
                     // Parse the JSON source map
-                    match parse_json(json_slice, result) {
+                    match parse_json(json_slice, result, ParsePolicy::Bun) {
                         Ok(parsed) => {
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
@@ -490,7 +506,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         let Some(data) = provider.get_external_data(source_filename) else {
                             break 'fallback_to_normal;
                         };
-                        match parse_json(data, result) {
+                        match parse_json(data, result, ParsePolicy::Bun) {
                             Ok(parsed) => {
                                 break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                             }
@@ -535,7 +551,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&data, result) {
+                match parse_json(&data, result, ParsePolicy::Bun) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
@@ -820,11 +836,16 @@ impl SourceMapPieces {
 /// The mappings are owned by the global allocator.
 /// Temporary allocations are made to the `arena` allocator, which
 /// should be an arena allocator (caller is assumed to call `reset`).
-pub(crate) fn parse_url(
+pub fn parse_url(
     arena: &bun_alloc::Arena,
     source: &[u8],
     hint: ParseUrlResultHint,
+    policy: ParsePolicy<'_>,
 ) -> crate::Result<ParseUrl> {
+    if matches!(policy, ParsePolicy::Node { .. }) {
+        return parse_json(json_of_data_url_for_node(arena, source)?, hint, policy);
+    }
+
     let json_bytes: &[u8] = 'json_bytes: {
         const DATA_PREFIX: &[u8] = b"data:application/json";
 
@@ -863,14 +884,53 @@ pub(crate) fn parse_url(
         return Err(crate::Error::UnsupportedFormat);
     };
 
-    parse_json(json_bytes, hint)
+    parse_json(json_bytes, hint, policy)
+}
+
+/// The JSON of a `data:` URL as Node.js takes it. The media type is `application/json` in those letters, the data
+/// is base64 if the last parameter says so, and it ends at a second comma: JSON with a comma in it is cut there.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L298-L319
+fn json_of_data_url_for_node<'a>(
+    arena: &'a bun_alloc::Arena,
+    url: &'a [u8],
+) -> crate::Result<&'a [u8]> {
+    use bun_core::strings;
+
+    const SCHEME: &[u8] = b"data:";
+    if !strings::has_prefix_case_insensitive(url, SCHEME) {
+        return Err(crate::Error::UnsupportedFormat);
+    }
+    // Node.js splits `URL.pathname`, which stops at a query or a fragment.
+    let path = &url[SCHEME.len()..];
+    let path = &path[..strings::index_of_any(path, b"?#").unwrap_or(path.len())];
+    let Some((format, after_comma)) = strings::split_once_char(path, b',') else {
+        return Err(crate::Error::UnsupportedFormat);
+    };
+    let data = strings::split_once_char(after_comma, b',').map_or(after_comma, |(data, _)| data);
+    let content_type = strings::split_once_char(format, b';').map_or(format, |(first, _)| first);
+    if content_type != b"application/json" {
+        return Err(crate::Error::UnsupportedFormat);
+    }
+    let last_parameter =
+        &format[strings::last_index_of_char(format, b';').map_or(0, |at| at + 1)..];
+    if last_parameter != b"base64" {
+        return Ok(data);
+    }
+    // `Buffer.from(data, "base64")`, which skips what is not base64.
+    let bytes = arena.alloc_slice_fill_default::<u8>(bun_base64::decode_lenient_len(data.len()));
+    let len = bun_base64::decode_lenient(bytes, data, false);
+    Ok(&bytes[..len])
 }
 
 /// Parses a JSON source-map
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+pub fn parse_json(
+    source: &[u8],
+    hint: ParseUrlResultHint,
+    policy: ParsePolicy<'_>,
+) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
@@ -892,7 +952,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let json = parsed.root;
 
-    if let Some(version) = json.get(b"version") {
+    if matches!(policy, ParsePolicy::Bun)
+        && let Some(version) = json.get(b"version")
+    {
         match version.data.as_e_number() {
             Some(n) if n.value() == 3.0 => {}
             _ => return Err(crate::Error::UnsupportedVersion),
@@ -907,15 +969,14 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     };
 
-    let sources_content = match json
-        .get(b"sourcesContent")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        bun_ast::ExprData::EArrayJSON(arr) => arr,
+    let sources_content = match json.get(b"sourcesContent").map(|contents| contents.data) {
+        Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
+        _ if matches!(policy, ParsePolicy::Node { .. }) => None,
         _ => return Err(crate::Error::InvalidSourceMap),
     };
-    let sources_content = sources_content.get();
+    let sources_content = sources_content
+        .as_ref()
+        .map_or(&[][..], |contents| contents.get().items());
 
     let sources_paths = match json
         .get(b"sources")
@@ -927,7 +988,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let sources_paths = sources_paths.get();
 
-    if sources_content.items().len() != sources_paths.items().len() {
+    if matches!(policy, ParsePolicy::Bun) && sources_content.len() != sources_paths.items().len() {
         return Err(crate::Error::InvalidSourceMap);
     }
 
@@ -935,12 +996,35 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
-        for item in sources_paths.items() {
-            let Some(s) = item.as_str() else {
-                return Err(crate::Error::InvalidSourceMap);
-            };
-            v.push(Box::<[u8]>::from(s));
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
+        match policy {
+            ParsePolicy::Bun => {
+                for item in sources_paths.items() {
+                    let Some(s) = item.as_str() else {
+                        return Err(crate::Error::InvalidSourceMap);
+                    };
+                    v.push(Box::<[u8]>::from(s));
+                }
+            }
+            ParsePolicy::Node { resolve_source } => {
+                let source_root = json.get(b"sourceRoot");
+                let source_root = source_root
+                    .as_ref()
+                    .and_then(|root| root.as_utf8_string_literal())
+                    .unwrap_or(b"");
+                let mut rooted: Vec<u8> = Vec::new();
+                for item in sources_paths.items() {
+                    // Node.js names a `null` source "null". Here it has no name.
+                    let Some(source) = item.as_str() else {
+                        v.push(Box::default());
+                        continue;
+                    };
+                    rooted.clear();
+                    rooted.extend_from_slice(source_root);
+                    rooted.extend_from_slice(source);
+                    v.push(resolve_source(&rooted));
+                }
+            }
         }
         Some(v)
     } else {
@@ -1000,6 +1084,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
+        psm.has_resolved_source_names = matches!(policy, ParsePolicy::Node { .. });
         // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
         // `ref_count` field is layout parity only and FFI ref/deref routes
         // through `Arc::{increment,decrement}_strong_count` (see
@@ -1028,9 +1113,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     let content_slice: Option<Box<[u8]>> = match source_index {
         Some(idx)
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.items().len() =>
+                && (idx as usize) < sources_content.len() =>
         'content: {
-            let item = &sources_content.items()[idx as usize];
+            let item = &sources_content[idx as usize];
             let Some(str) = item.as_str() else {
                 break 'content None;
             };

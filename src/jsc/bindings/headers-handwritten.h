@@ -496,7 +496,16 @@ bool Bun__deepMatch(
     Bun::DeepMatchState& state,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
+// Mirrors `PositionSpace` in bun_jsc: the file that a reader of a stack position wants the position in.
+enum class BunPositionSpace : uint8_t {
+    // The file that was loaded.
+    Loaded = 0,
+    // What the loaded file was made from, for a file with a source map of its own, while
+    // process.sourceMapsEnabled is on. Otherwise the same as Loaded. What Node maps, `Error.stack` and a printed
+    // error, reads this one.
+    Original = 1,
+};
+extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t, BunPositionSpace);
 
 namespace Inspector {
 class ScriptArguments;
@@ -539,9 +548,9 @@ public:
 
     ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
 
-    void remap(void* bunVM)
+    void remap(void* bunVM, BunPositionSpace space)
     {
-        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
+        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size(), space);
     }
 
 private:

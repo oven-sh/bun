@@ -210,7 +210,7 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        remappedFrames.remap(Bun::vm(globalObject));
+        remappedFrames.remap(Bun::vm(globalObject), BunPositionSpace::Loaded);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();

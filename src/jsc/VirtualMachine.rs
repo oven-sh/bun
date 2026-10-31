@@ -16,7 +16,7 @@ use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
-use crate::saved_source_map::{SavedSourceMap, SourceMapsSupport};
+use crate::saved_source_map::{PositionSpace, SavedSourceMap, SourceMapsSupport};
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
     PlatformEventLoop, ResolvedSource, VM, ZigException,
@@ -530,6 +530,7 @@ unsafe extern "C" {
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
+    safe fn Bun__IsolatedModuleCache__clear(vm: &VM);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -4564,7 +4565,13 @@ impl VirtualMachine {
         this: &VirtualMachine,
         support: SourceMapsSupport,
     ) {
-        this.source_mappings.set_source_maps_support(support);
+        // `put_mappings` reads the setting when a module is transpiled, and `bun test --isolate` does not transpile
+        // a module again that an earlier file loaded. It does after the setting changes.
+        if this.source_mappings.set_source_maps_support(support)
+            && this.use_isolation_source_provider_cache()
+        {
+            Bun__IsolatedModuleCache__clear(this.jsc_vm());
+        }
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -6588,10 +6595,10 @@ impl VirtualMachine {
 
     /// The switch is on the VM, which outlives the file: put the startup value back so a file's setting stays with it.
     fn undo_source_maps_support(&mut self) {
-        self.source_mappings
-            .set_source_maps_support(SourceMapsSupport::all(
-                self.transpiler.options.transform_options.enable_source_maps,
-            ));
+        Self::set_source_maps_support(
+            self,
+            SourceMapsSupport::all(self.transpiler.options.transform_options.enable_source_maps),
+        );
     }
 
     /// `--isolate=modules`: creates the graph for the test file that's about to run.
@@ -6990,6 +6997,7 @@ impl VirtualMachine {
         &mut self,
         frames: *mut crate::ZigStackFrame<'_>,
         frames_count: usize,
+        space: PositionSpace,
     ) {
         if frames_count == 0 {
             return;
@@ -7024,6 +7032,7 @@ impl VirtualMachine {
                     frame.position.line,
                     frame.position.column,
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
+                    space,
                 )
                 .map(|lookup| {
                     (
@@ -7234,6 +7243,7 @@ impl VirtualMachine {
                     },
                     source_map: None,
                     prefetched_source_code: None,
+                    loaded: None,
                 })
             } else {
                 self.resolve_source_mapping(
@@ -7241,11 +7251,13 @@ impl VirtualMachine {
                     frames[top].position.line,
                     frames[top].position.column,
                     bun_sourcemap::SourceContentHandling::SourceContents,
+                    PositionSpace::Original,
                 )
             };
 
             maybe_lookup.map(|lookup| {
                 let mapping = lookup.mapping;
+                let loaded = lookup.loaded;
                 let display_url = if !already_remapped {
                     lookup.display_source_url_if_needed(top_source_url.slice())
                 } else {
@@ -7262,14 +7274,27 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                (mapping, display_url, external_code)
+                // The position is in what the loaded file was made from, and nothing has that text: the lines to
+                // show are the loaded file's, as in Node.js.
+                let loaded = if enable_source_code_preview.get() && external_code.is_none() {
+                    loaded
+                } else {
+                    None
+                };
+                (mapping, display_url, external_code, loaded)
             })
         };
 
-        if let Some((mapping, display_url, external_code)) = resolved {
+        if let Some((mapping, display_url, external_code, mut loaded)) = resolved {
+            let mut loaded_url: Option<bun_core::StringOrView<'a>> = None;
             if let Some(src) = display_url {
-                frames[top].source_url = src.into();
+                let before = core::mem::replace(&mut frames[top].source_url, src.into());
+                if loaded.is_some() {
+                    loaded_url = Some(before);
+                }
             }
+            let code_url: &bun_core::String =
+                loaded_url.as_deref().unwrap_or(&frames[top].source_url);
 
             let code: bun_core::Utf8Bytes<'static> = 'code: {
                 if !enable_source_code_preview.get() {
@@ -7283,7 +7308,7 @@ impl VirtualMachine {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
-                let top_path = frames[top].source_url.to_utf8();
+                let top_path = code_url.to_utf8();
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
@@ -7299,7 +7324,7 @@ impl VirtualMachine {
                     VirtualMachine::fetch_without_on_load_plugins,
                     self,
                     global,
-                    &frames[top].source_url,
+                    code_url,
                     &bun_core::String::EMPTY,
                     None,
                     &mut log,
@@ -7316,6 +7341,7 @@ impl VirtualMachine {
 
             if enable_source_code_preview.get() && code.is_empty() {
                 exception.collect_source_lines(error_instance, global);
+                loaded = None;
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -7323,8 +7349,13 @@ impl VirtualMachine {
             frames[top].position.column = mapping.original.columns;
             exception.remapped = true;
             frames[top].remapped = true;
+            exception.source_lines_column =
+                loaded.map_or(bun_core::Ordinal::INVALID, |position| position.columns);
 
-            let last_line = frames[top].position.line.zero_based().max(0);
+            let last_line = loaded
+                .map_or(frames[top].position.line, |position| position.lines)
+                .zero_based()
+                .max(0);
             if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
                 { crate::zig_exception::SOURCE_LINES_COUNT },
             >(code, last_line as u32)
@@ -7368,6 +7399,7 @@ impl VirtualMachine {
                         frames[i].position.line,
                         frames[i].position.column,
                         bun_sourcemap::SourceContentHandling::NoSourceContents,
+                        PositionSpace::Original,
                     )
                     .map(|lookup| {
                         (
@@ -7789,7 +7821,11 @@ impl VirtualMachine {
                     } else {
                         pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
 
-                        let col = top.position.column.zero_based();
+                        let col = if exception.source_lines_column.is_valid() {
+                            exception.source_lines_column.zero_based()
+                        } else {
+                            top.position.column.zero_based()
+                        };
                         if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
                             || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
                         {
@@ -8293,10 +8329,11 @@ impl VirtualMachine {
         line: bun_core::Ordinal,
         column: bun_core::Ordinal,
         source_handling: bun_sourcemap::SourceContentHandling,
+        space: PositionSpace,
     ) -> Option<bun_sourcemap::mapping::Lookup> {
         if let Some(lookup) =
             self.source_mappings
-                .resolve_mapping(path, line, column, source_handling)
+                .resolve_mapping(path, line, column, source_handling, space)
         {
             return Some(lookup);
         }
@@ -8330,6 +8367,7 @@ impl VirtualMachine {
             mapping,
             source_map: Some(map),
             prefetched_source_code: None,
+            loaded: None,
         })
     }
 

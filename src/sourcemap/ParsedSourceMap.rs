@@ -27,6 +27,9 @@ pub struct ParsedSourceMap {
     /// loaded without transpilation but with external sources. This array
     /// maps `source_index` to the correct filename.
     pub external_source_names: Vec<Box<[u8]>>,
+    /// `external_source_names` are the names to show, as [`crate::ParsePolicy::Node`] resolved them. Otherwise a
+    /// name is relative to the directory of the file that the map is for.
+    pub has_resolved_source_names: bool,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored, along with a
     /// load hint recording whether the map is known to be inline or external.
@@ -66,6 +69,7 @@ impl Default for ParsedSourceMap {
             mappings: mapping::List::default(),
             internal: None,
             external_source_names: Vec::new(),
+            has_resolved_source_names: false,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
@@ -229,6 +233,7 @@ impl ParsedSourceMap {
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),
+            has_resolved_source_names: false,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }

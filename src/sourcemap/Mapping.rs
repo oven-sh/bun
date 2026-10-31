@@ -303,6 +303,9 @@ pub struct Lookup {
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
     pub prefetched_source_code: Option<Box<[u8]>>,
+    /// Where the position is in the file that was loaded, when `mapping` is from that file's own source map and so
+    /// is a position in what the file was made from.
+    pub loaded: Option<LineColumnOffset>,
 }
 
 impl Lookup {
@@ -324,7 +327,8 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        let display = if !source_map.is_standalone_module_graph
+        let display = if !source_map.has_resolved_source_names
+            && !source_map.is_standalone_module_graph
             && bun_paths::is_absolute(base_filename)
         {
             // `platform::Auto` is a cfg-selected
@@ -352,9 +356,21 @@ impl Lookup {
             let source_map = self.source_map.as_deref()?;
             debug_assert!(source_map.is_external());
 
-            let provider = source_map.underlying_provider.provider()?;
-
             let index = usize::try_from(self.mapping.source_index).ok()?;
+
+            if source_map.has_resolved_source_names {
+                // As in Node.js, only a source that resolved to a file is read. A `webpack://` one is not.
+                let name: &[u8] = source_map.external_source_names.get(index)?;
+                if !bun_paths::is_absolute(name) {
+                    return None;
+                }
+                match bun_sys::File::read_from(bun_sys::Fd::cwd(), name) {
+                    Ok(r) => break 'bytes r,
+                    Err(_) => return None,
+                }
+            }
+
+            let provider = source_map.underlying_provider.provider()?;
 
             // Standalone module graph source maps are stored (in memory) compressed.
             // They are decompressed on demand.

@@ -519,6 +519,62 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
   });
+
+  // A hit does not parse the file, so the entry says where the file's `sourceMappingURL` comment is. The switch is
+  // not part of the key: an entry written without it serves a run with it, and the other way round.
+  test("a module from the cache has its own source map in stack traces, like one that was transpiled", () => {
+    // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
+    const code = [
+      `"use strict";`,
+      `Object.defineProperty(exports, "__esModule", { value: true });`,
+      `exports.boom = boom;`,
+      `function boom() {`,
+      `    throw new Error("kaboom");`,
+      `}`,
+      `// ${Buffer.alloc(5 * 1024, "f").toString()}`,
+      `//# sourceMappingURL=lib.js.map`,
+      ``,
+    ].join("\n");
+    writeFileSync(join(temp_dir, "lib.js"), code);
+    writeFileSync(
+      join(temp_dir, "lib.js.map"),
+      JSON.stringify({
+        version: 3,
+        sources: ["lib.ts"],
+        names: [],
+        mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
+      }),
+    );
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `try { require("./lib.js").boom(); } catch (e) { console.log(e.stack.split("\\n")[1].trim()); }`,
+    );
+    const run = (flags: string[]) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...flags, "main.js"], cwd: temp_dir, env });
+      return { stdout: result.stdout.toString().trim(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+    };
+    // An entry that is written again is another file.
+    const entries = () => readdirSync(cache_dir).map(name => `${name} ${statSync(join(cache_dir, name)).ino}`);
+    const loaded = { stdout: `at boom (${join(temp_dir, "lib.js")}:5:15)`, stderr: "", exitCode: 0 };
+    const original = { stdout: `at boom (${join(temp_dir, "lib.ts")}:4:13)`, stderr: "", exitCode: 0 };
+
+    expect(run([])).toEqual(loaded);
+    const written = entries();
+    expect(written).toHaveLength(1);
+    expect([run([]), run(["--enable-source-maps"]), run([])]).toEqual([loaded, original, loaded]);
+    expect(entries()).toEqual(written);
+
+    removeCache();
+    expect(run(["--enable-source-maps"])).toEqual(original);
+    const writtenWithTheSwitch = entries();
+    expect(writtenWithTheSwitch).toHaveLength(1);
+    expect([run(["--enable-source-maps"]), run([]), run(["--enable-source-maps"])]).toEqual([
+      original,
+      loaded,
+      original,
+    ]);
+    expect(entries()).toEqual(writtenWithTheSwitch);
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

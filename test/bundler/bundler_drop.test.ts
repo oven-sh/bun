@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -113,5 +114,28 @@ describe("bundler", () => {
     run: { stdout: "" },
     drop: ["ASSERT"],
     backend: "api",
+  });
+  // Bun does not define `window`. The name is dropped as any other name is.
+  const dropWindow = { "/a.js": `window.alert("hello"); console.log("done");` };
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`drop/WindowTargetBun-${backend}`, {
+      files: dropWindow,
+      target: "bun",
+      drop: ["window"],
+      backend,
+      run: { stdout: "done" },
+    });
+  }
+  test("drop/WindowAtRuntime", async () => {
+    using dir = tempDir("drop-window", { "a.js": dropWindow["/a.js"] });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--drop=window", "a.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
 });

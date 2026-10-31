@@ -466,6 +466,36 @@ body { color: blue; }`,
     expect(exitCode).toBe(0);
   });
 
+  // The executable is for Bun and the page is for a browser: the script of
+  // the page assumes the browser APIs, as `--target=browser` without
+  // `--compile` does.
+  test("CLI --compile --target=browser assumes the browser APIs in the script of the page", async () => {
+    using dir = tempDir("compile-browser-globals", {
+      "index.html": `<!DOCTYPE html>
+<html><head></head>
+<body><script src="./app.js"></script></body></html>`,
+      "app.js": `window;\ndocument;\nconsole.log("page");`,
+    });
+
+    const outdir = `${dir}/out`;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/index.html`, "--outdir", outdir],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const html = await Bun.file(`${outdir}/index.html`).text();
+    const script = html.slice(html.indexOf('<script type="module">'), html.indexOf("</script>"));
+    // The first line is a comment with the path of the module.
+    expect(script.trim().split(/\r?\n/).slice(1)).toEqual([`console.log("page");`]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("malformed HTML without closing tags still inlines JS and CSS", async () => {
     // This tests the cold fallback path when no </head>, </body>, or </html> tags exist.
     // The document is just a fragment - the loader must still inject both CSS and JS.

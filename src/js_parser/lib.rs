@@ -270,6 +270,8 @@ pub mod defines {
     use bun_ast::StoreRef;
     use bun_ast::expr::Data as ExprData;
 
+    use crate::defines_table::PureGlobalIdentifierValue;
+
     pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
     pub type UserDefines = StringHashMap<DefineData>;
     pub type UserDefinesArray = StringArrayHashMap<DefineData>;
@@ -481,6 +483,27 @@ pub mod defines {
         }
     }
 
+    /// Which names of the pure-global table a parse assumes to exist where its output runs.
+    #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+    pub enum PureGlobals {
+        /// Every name, the browser APIs included.
+        #[default]
+        All,
+        /// Only the `Universal` names: in Bun a read of `document` throws a ReferenceError.
+        Universal,
+    }
+
+    impl PureGlobals {
+        /// A Node.js target keeps `All`, as esbuild does for `--platform=node`.
+        pub fn for_target(target: bun_ast::Target) -> PureGlobals {
+            if target.is_bun() {
+                PureGlobals::Universal
+            } else {
+                PureGlobals::All
+            }
+        }
+    }
+
     #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
@@ -632,11 +655,19 @@ pub mod defines {
             Some(hasher.final_())
         }
 
-        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+        pub(crate) fn for_identifier(
+            &self,
+            name: &[u8],
+            pure_globals: PureGlobals,
+        ) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
-            crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
+            let value = crate::defines_table::lookup_pure_global_identifier(name)?;
+            if value == PureGlobalIdentifierValue::Other && pure_globals == PureGlobals::Universal {
+                return None;
+            }
+            Some(value.value())
         }
 
         pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>

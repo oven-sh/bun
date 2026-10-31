@@ -252,6 +252,9 @@ pub mod Runtime {
         // TODO: make this a bitset of all unsupported features
         pub lower_using: bool,
 
+        /// Set from the target of the parse, like `lower_using`.
+        pub pure_globals: crate::defines::PureGlobals,
+
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         ///
@@ -312,6 +315,7 @@ pub mod Runtime {
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,
                 lower_using: true,
+                pure_globals: crate::defines::PureGlobals::All,
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
@@ -390,6 +394,7 @@ pub mod Runtime {
             // `[bool; N]` is N bytes of 0x00/0x01.
             hasher.update(bun_core::slice_as_bytes(&bools));
             hasher.update(&[self.react_compiler as u8]);
+            hasher.update(&[self.pure_globals as u8]);
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add

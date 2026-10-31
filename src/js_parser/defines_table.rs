@@ -246,6 +246,8 @@ pub(crate) enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
     StrictUndefined,
+    Universal,
+    /// A browser API: only a parse with `PureGlobals::All` assumes it.
     Other,
 }
 
@@ -255,7 +257,9 @@ impl PureGlobalIdentifierValue {
             PureGlobalIdentifierValue::NaN => identifiers::nan(),
             PureGlobalIdentifierValue::Infinity => identifiers::infinity(),
             PureGlobalIdentifierValue::StrictUndefined => identifiers::undefined(),
-            PureGlobalIdentifierValue::Other => pure_global_identifier_define(),
+            PureGlobalIdentifierValue::Universal | PureGlobalIdentifierValue::Other => {
+                pure_global_identifier_define()
+            }
         }
     }
 }

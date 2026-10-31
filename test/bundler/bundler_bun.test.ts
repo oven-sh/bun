@@ -302,6 +302,160 @@ error: Hello World`,
       },
     },
   });
+  // Bun does not define most browser APIs, and a read of a name that is not
+  // defined throws a ReferenceError. `try { document } catch {}` relies on it.
+  // A bundle for Bun keeps the read, so it answers as `bun entry.js` does.
+  const browserGlobalReads = {
+    "/entry.js": /* js */ `
+      import "./statement.js";
+      const answers = [globalThis.statement, globalThis.staticBlock];
+      function nested() {
+        try {
+          document;
+          return "browser";
+        } catch {
+          return "no browser";
+        }
+      }
+      answers.push(nested());
+      // A module that reads a browser API as it loads.
+      try {
+        require("./property.js");
+        answers.push("browser");
+      } catch {
+        answers.push("no browser");
+      }
+      try {
+        await import("./bare.js");
+        answers.push("browser");
+      } catch {
+        answers.push("no browser");
+      }
+      console.log(answers.join(", "));
+    `,
+    "/statement.js": /* js */ `
+      try {
+        document;
+        globalThis.statement = "browser";
+      } catch {
+        globalThis.statement = "no browser";
+      }
+      class Unused {
+        static {
+          try {
+            HTMLElement;
+          } catch {
+            globalThis.staticBlock = "no browser";
+          }
+        }
+      }
+    `,
+    "/property.js": /* js */ `
+      const unused = window.document;
+      export const loaded = true;
+    `,
+    "/bare.js": /* js */ `
+      HTMLElement;
+      export const loaded = true;
+    `,
+  };
+  const noBrowser = "no browser, no browser, no browser, no browser, no browser";
+  // Every read is erased, so no static block and no statement is left to throw.
+  // `window.document` is not a bare read.
+  const assumed = "browser, , browser, no browser, browser";
+  // Tree shaking still removes an unused top-level declaration that reads a
+  // browser API, as it does for the other targets and as esbuild does.
+  const unusedDeclarations = {
+    "/entry.ts": /* ts */ `
+      import { render } from "./components.ts";
+      console.log(render());
+    `,
+    "/components.ts": /* ts */ `
+      export class Counter extends HTMLElement {}
+      export const doc = document;
+      export const win = window;
+      export let Lazy = class extends HTMLElement {
+        static registry = customElements;
+      };
+      export default class extends MutationObserver {}
+      export enum Ratio {
+        One = 1,
+        Device = devicePixelRatio,
+      }
+      export function render() {
+        return "<my-counter></my-counter>";
+      }
+    `,
+  };
+  for (const backend of ["cli", "api"] as const) {
+    for (const minifySyntax of [false, true]) {
+      const suffix = `${backend}${minifySyntax ? "-minify-syntax" : ""}`;
+      itBundled(`bun/KeepsReadOfBrowserGlobal-${suffix}`, {
+        backend,
+        target: "bun",
+        minifySyntax,
+        files: browserGlobalReads,
+        run: { stdout: noBrowser },
+      });
+      itBundled(`bun/TreeShakesUnusedDeclarationThatReadsBrowserGlobal-${suffix}`, {
+        backend,
+        target: "bun",
+        minifySyntax,
+        files: unusedDeclarations,
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js")).not.toMatch(
+            /HTMLElement|MutationObserver|customElements|devicePixelRatio|document|window/,
+          );
+        },
+        run: { stdout: "<my-counter></my-counter>" },
+      });
+    }
+    itBundled(`bun/AssumesBrowserGlobalForTargetBrowser-${backend}`, {
+      backend,
+      target: "browser",
+      minifySyntax: true,
+      files: browserGlobalReads,
+      run: { stdout: assumed },
+    });
+    itBundled(`bun/DefineRestoresBrowserGlobal-${backend}`, {
+      backend,
+      target: "bun",
+      define: { document: "document", HTMLElement: "HTMLElement" },
+      files: browserGlobalReads,
+      run: { stdout: assumed },
+    });
+  }
+  itBundled("bun/KeepsReadOfBrowserGlobalInExecutable", {
+    backend: "cli",
+    compile: true,
+    minifySyntax: true,
+    files: browserGlobalReads,
+    run: { stdout: noBrowser },
+  });
+  itBundled("bun/KeepsReadOfBrowserGlobalWithoutBundling", {
+    backend: "cli",
+    bundling: false,
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          document;
+          void HTMLElement;
+          console.log("browser");
+        } catch {
+          console.log("no browser");
+        }
+      `,
+    },
+    run: { stdout: "no browser" },
+  });
+  itBundled("bun/KeepsReadOfBrowserGlobalInShebangEntry", {
+    // No `target`: the "#!/usr/bin/env bun" line makes the entry point a file for bun.
+    files: {
+      "/entry.js": `#!/usr/bin/env bun\ntry { document; console.log("browser"); } catch { console.log("no browser"); }`,
+    },
+    run: { stdout: "no browser" },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

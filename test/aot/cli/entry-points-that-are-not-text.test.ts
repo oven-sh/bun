@@ -3,7 +3,7 @@ import { symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned } from "../harness/commands";
-import { describe, test } from "../supported";
+import { beforeAll, describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildLimit = 300_000;
@@ -15,31 +15,37 @@ const blob = noise(2000);
 const typed = `const n: number = 41;\nconsole.log("ran", n + 1);\nmodule.exports = { n };\n`;
 
 // Prints a line for each file that the executable holds, and what `require` answers for a file whose name says nothing about it.
-const listsItsFiles = `// The last part of a path, without the hash of the contents.
-const named = (path: string) => path.replace(/^.*[\\\\/]/, "").replace(/-[a-z0-9]+\\./, ".");
+const listsItsFiles = `// A name as it is, but for the hash of the contents.
+const withoutHash = (name: string) => name.replace(/-[a-z0-9]+\\./, ".");
 const lines: string[] = [];
 for (const file of Bun.embeddedFiles as readonly (Blob & { name: string })[]) {
   const sha256 = new Bun.CryptoHasher("sha256").update(await file.arrayBuffer()).digest("hex");
-  lines.push([named(file.name), file.size, sha256].join(" "));
+  lines.push([withoutHash(file.name), file.size, sha256].join(" "));
 }
 for (const line of lines.sort()) console.log(line);
 const tool = require("./tool.unknown");
-console.log("required", typeof tool === "string" ? named(tool) : tool.n);
+// An executable answers a path. The part behind its folder is printed.
+console.log("required", typeof tool === "string" ? withoutHash(tool.replace(/^.*[\\\\/]/, "")) : tool.n);
 `;
 /** The line that the program prints for a file with these contents. */
 const held = (name: string, contents: string | Buffer) =>
   [name, Buffer.byteLength(contents), new Bun.CryptoHasher("sha256").update(contents).digest("hex")].join(" ");
 
 // One folder for all tests. A build writes a copy of Bun, so each command line is built once and its executable is started once.
-const dir = tempDir("aot-entry-points-not-text", {
-  "app.ts": listsItsFiles,
-  "table.unknown": table,
-  "store/blob": blob,
-  "tool.unknown": typed,
-  "tool": Buffer.from(`// caf\xe9\nconsole.log("ran");\n`, "latin1"),
+// The folder is made before the first test that runs: a run that selects none of them leaves nothing behind.
+let dir: ReturnType<typeof tempDir> | undefined;
+let folder = "";
+beforeAll(() => {
+  dir = tempDir("aot-entry-points-not-text", {
+    "app.ts": listsItsFiles,
+    "table.unknown": table,
+    "store/blob": blob,
+    "tool.unknown": typed,
+    "tool": Buffer.from(`// caf\xe9\nconsole.log("ran");\n`, "latin1"),
+  });
+  folder = String(dir);
+  if (!isWindows) symlinkSync(join("store", "blob"), join(folder, "linked.node"));
 });
-const folder = String(dir);
-if (!isWindows) symlinkSync(join("store", "blob"), join(folder, "linked.node"));
 const furtherEntryPoints = isWindows ? ["table.unknown"] : ["table.unknown", "linked.node"];
 const namesOfHeld = isWindows ? ["table.unknown", "tool.unknown"] : ["blob.", "table.unknown", "tool.unknown"];
 
@@ -47,7 +53,7 @@ const executables = new Map<string, ReturnType<typeof spawned>>();
 afterAll(async () => {
   // A test that has failed does not wait for the builds of the others.
   await Promise.allSettled(executables.values());
-  dir[Symbol.dispose]();
+  dir?.[Symbol.dispose]();
 }, buildLimit);
 
 /** What the executable of `entryPoints` prints, and how it ends. */
@@ -64,10 +70,14 @@ function outputOf(mode: string[], entryPoints: string[]) {
 /** The lines that the executable of app.ts and the further entry points prints. */
 async function app(mode: string[]) {
   const { stdout, ...ended } = await outputOf(mode, ["app.ts", ...furtherEntryPoints]);
-  expect(ended).toEqual({ stderr: "", exitCode: 0, signal: null });
   const lines = stdout.split("\n");
   // It holds nothing else, and nothing twice.
-  expect(lines.map(line => line.split(" ")[0])).toEqual([...namesOfHeld, "required", ""]);
+  expect({ names: lines.map(line => line.split(" ")[0]), ...ended }).toEqual({
+    names: [...namesOfHeld, "required", ""],
+    stderr: "",
+    exitCode: 0,
+    signal: null,
+  });
   return lines;
 }
 

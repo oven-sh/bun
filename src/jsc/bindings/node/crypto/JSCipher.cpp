@@ -76,9 +76,10 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
 
-    // Like Node, validate the cipher options (padding, oaepHash, oaepLabel) before any key
+    // Like Node, validate the cipher options (padding, oaepHash, mgf1Hash, oaepLabel) before any key
     // parsing so an invalid digest is reported even when the key material itself is invalid.
     ncrypto::Digest digest;
+    ncrypto::Digest mgf1Digest;
     int32_t padding = defaultPadding;
     std::optional<WTF::Vector<uint8_t>> oaepLabel;
     JSValue encodingValue = jsUndefined();
@@ -101,6 +102,22 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             RETURN_IF_EXCEPTION(scope, {});
             digest = ncrypto::Digest::FromName(oaepHashView);
             if (!digest) {
+                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
+                return {};
+            }
+        }
+
+        JSValue mgf1HashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "mgf1Hash"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!mgf1HashValue.isUndefined()) {
+            V::validateString(scope, lexicalGlobalObject, mgf1HashValue, "options.mgf1Hash"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSString* mgf1HashString = mgf1HashValue.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            GCOwnedDataScope<WTF::StringView> mgf1HashView = mgf1HashString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            mgf1Digest = ncrypto::Digest::FromName(mgf1HashView);
+            if (!mgf1Digest) {
                 ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
                 return {};
             }
@@ -195,6 +212,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     ncrypto::Cipher::CipherParams cipherParams {
         .padding = padding,
         .digest = digest,
+        .mgf1_digest = mgf1Digest,
         .label = labelBuf,
     };
 

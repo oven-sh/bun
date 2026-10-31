@@ -321,6 +321,7 @@ public:
     struct CipherParams {
         int padding;
         Digest digest;
+        Digest mgf1_digest;
         const Buffer<const void> label;
     };
 
@@ -680,6 +681,7 @@ public:
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
+    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);

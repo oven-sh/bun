@@ -320,6 +320,41 @@ test(`RSA with hash mismatch`, () => {
   }).toThrow(expect.objectContaining(decryptError));
 });
 
+test("RSA-OAEP with an mgf1Hash other than oaepHash", () => {
+  const input = Buffer.from("Hello Node.js");
+  const decodingError = expect.objectContaining({ code: "ERR_OSSL_RSA_OAEP_DECODING_ERROR" });
+  const roundTrip = (encrypt, decrypt = encrypt) =>
+    crypto.privateDecrypt({ key: rsaKeyPem, ...decrypt }, crypto.publicEncrypt({ key: rsaPubPem, ...encrypt }, input));
+
+  for (const [oaepHash, mgf1Hash] of [
+    ["sha256", "sha1"],
+    ["sha512", "sha1"],
+    ["sha384", "sha256"],
+    ["sha1", "sha256"],
+  ]) {
+    expect(roundTrip({ oaepHash, mgf1Hash })).toEqual(input);
+  }
+
+  // Without mgf1Hash, MGF1 uses oaepHash, which is sha1 by default.
+  expect(roundTrip({ oaepHash: "sha256" }, { oaepHash: "sha256", mgf1Hash: "sha256" })).toEqual(input);
+  expect(roundTrip({}, { mgf1Hash: "sha1" })).toEqual(input);
+  expect(() => roundTrip({ oaepHash: "sha256", mgf1Hash: "sha1" }, { oaepHash: "sha256" })).toThrow(decodingError);
+  expect(() => roundTrip({ oaepHash: "sha256" }, { oaepHash: "sha256", mgf1Hash: "sha1" })).toThrow(decodingError);
+
+  // publicEncrypt({ key: rsaPubPem, oaepHash: "sha256", mgf1Hash: "sha1" }, input) in Node.js v26.12.1.
+  const fromNode = Buffer.from(
+    "C582UzGmT/stl/cSxOtvfMXt2jOR4L/XUxXRN2PngRLMqrfbJCdqyLv8Z4dLLs0ajL9QL8NIgJYOaxbmstzCIk" +
+      "9GNfN30b83Aun3/TxMCB4bfdFRKPwRCy2ObGWLyo6ictk90VmdReBinQDYiJhBA116pczFakKkKQTIjBO2fKxK" +
+      "b3ZRXbdmflrtjj4MtHTLjoLvsV9oCkWk+R5HX86yS91Kpcz+8lZ15wIbOIt775XY4NR8qXZAYJRggtLSxYdToc" +
+      "jpYSBNkxBhgKXvWUstqYx7TDhyx0KsdmOgorT+9dZ8rCkIrDKGXBsZeoF5+hxGYthmvKH1u41Gkk+0SI/ZaQ==",
+    "base64",
+  );
+  expect(crypto.privateDecrypt({ key: rsaKeyPem, oaepHash: "sha256", mgf1Hash: "sha1" }, fromNode)).toEqual(input);
+  expect(() => crypto.privateDecrypt({ key: rsaKeyPem, oaepHash: "sha1", mgf1Hash: "sha256" }, fromNode)).toThrow(
+    decodingError,
+  );
+});
+
 test("RSA-OAEP test vectors", () => {
   const { decryptionTests } = JSON.parse(fixtures.readSync("rsa-oaep-test-vectors.js", "utf8"));
 
@@ -351,7 +386,7 @@ test("RSA-OAEP test vectors", () => {
   }
 });
 
-describe("Invalid oaepHash and oaepLabel options", () => {
+describe("Invalid oaepHash, mgf1Hash and oaepLabel options", () => {
   const testCases = [
     { fn: crypto.publicEncrypt, name: "publicEncrypt", key: rsaPubPem },
     { fn: crypto.privateDecrypt, name: "privateDecrypt", key: rsaKeyPem },
@@ -388,6 +423,17 @@ describe("Invalid oaepHash and oaepLabel options", () => {
           }),
         );
       });
+    });
+
+    test(`${name} with invalid mgf1Hash`, () => {
+      expect(() => fn({ key, mgf1Hash: "Hello world" }, Buffer.alloc(10))).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_EVP_INVALID_DIGEST" }),
+      );
+      for (const mgf1Hash of [0, false, null, Symbol(), () => {}]) {
+        expect(() => fn({ key, mgf1Hash }, Buffer.alloc(10))).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      }
     });
 
     test(`${name} with invalid oaepLabel`, () => {

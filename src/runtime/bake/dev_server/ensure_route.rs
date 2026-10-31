@@ -386,16 +386,7 @@ fn check_route_failures(
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
     let _lock_guard = dev.graph_safety_lock.guard();
-    match &dev.route_bundles[route_bundle_index.get() as usize].data {
-        route_bundle::Data::Framework(fw) => {
-            dev.trace_all_route_imports(fw.route_index, &mut gts, TraceImportGoal::FindErrors)?
-        }
-        route_bundle::Data::Html(html) => dev.client_graph.trace_imports(
-            html.bundled_file,
-            &mut gts,
-            TraceImportGoal::FindErrors,
-        )?,
-    }
+    dev.trace_route_failures(route_bundle_index, &mut gts)?;
     if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {

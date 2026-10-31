@@ -256,32 +256,6 @@ impl DevServer {
                 }
             }
 
-            // Note: iterate by index — the loop bodies need
-            // `&mut self.route_bundles` / `&mut self.router`, which conflicts
-            // with the `&self.incremental_result` iterator borrow.
-            for i in 0..self.incremental_result.framework_routes_affected.len() {
-                let entry = self.incremental_result.framework_routes_affected[i];
-                if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
-                    self.route_bundle_ptr(index).server_state =
-                        route_bundle::State::PossibleBundlingFailures;
-                }
-                if entry.should_recurse_when_visiting() {
-                    self.mark_all_route_children_failed(entry.route_index());
-                }
-            }
-
-            for i in 0..self.incremental_result.html_routes_soft_affected.len() {
-                let index = self.incremental_result.html_routes_soft_affected[i];
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
-            }
-
-            for i in 0..self.incremental_result.html_routes_hard_affected.len() {
-                let index = self.incremental_result.html_routes_hard_affected[i];
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
-            }
-
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         } else if !self.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
@@ -306,8 +280,48 @@ impl DevServer {
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         }
 
+        self.fail_loaded_routes_above_bundled_files();
+
         self.incremental_result.failures_removed.clear();
         Ok(())
+    }
+
+    /// A listed route can now reach a recorded failure: the bundle added one, or changed an import while one is on record.
+    pub(super) fn fail_loaded_routes_above_bundled_files(&mut self) {
+        if self.incremental_result.failures_added.is_empty()
+            && (self.bundling_failures.is_empty() || !self.incremental_result.had_adjusted_edges)
+        {
+            return;
+        }
+
+        // By index: the loop bodies need `&mut self`, which an iterator over `self.incremental_result` conflicts with.
+        for i in 0..self.incremental_result.framework_routes_affected.len() {
+            let entry = self.incremental_result.framework_routes_affected[i];
+            if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
+                self.fail_loaded_route(index);
+            }
+            if entry.should_recurse_when_visiting() {
+                self.mark_all_route_children_failed(entry.route_index());
+            }
+        }
+
+        for i in 0..self.incremental_result.html_routes_soft_affected.len() {
+            let index = self.incremental_result.html_routes_soft_affected[i];
+            self.fail_loaded_route(index);
+        }
+
+        for i in 0..self.incremental_result.html_routes_hard_affected.len() {
+            let index = self.incremental_result.html_routes_hard_affected[i];
+            self.fail_loaded_route(index);
+        }
+    }
+
+    /// Only a loaded route: `check_route_failures` finds no failure for a route that was never bundled, and loads it.
+    fn fail_loaded_route(&mut self, index: route_bundle::Index) {
+        let route_bundle = self.route_bundle_ptr(index);
+        if route_bundle.server_state == route_bundle::State::Loaded {
+            route_bundle.server_state = route_bundle::State::PossibleBundlingFailures;
+        }
     }
 
     /// Note: The log is not consumed here
@@ -415,8 +429,7 @@ impl DevServer {
             let bundle = route.bundle;
             let next_sibling = route.next_sibling;
             if let Some(index) = bundle {
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
+                self.fail_loaded_route(index);
             }
             self.mark_all_route_children_failed(child_index);
             next = next_sibling;

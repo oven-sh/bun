@@ -303,6 +303,38 @@ describe("toMatchSnapshot errors", () => {
       expect({ a: 3 }).toMatchSnapshot({ a: expect.any(BigInt) });
     }).toThrow();
   });
+  // https://github.com/oven-sh/bun/issues/9089
+  it("should print every matcher that passed if property matchers don't match", () => {
+    const epoch = new Date(0);
+    /** The `Received:` part of the error that `assert` throws. */
+    const received = (assert: () => void) => {
+      try {
+        assert();
+      } catch (e) {
+        const message = Bun.stripANSI((e as Error).message);
+        return message.slice(message.indexOf("Received:"));
+      }
+      throw new Error("the property matchers matched");
+    };
+    // `a` does not match. `b` matches, and is walked after `a` or before it.
+    const aFirst = { a: "foobar", b: epoch };
+    const aFirstMatchers = { a: expect.any(Date), b: expect.any(Date) };
+    const bFirst = { b: epoch, a: "foobar" };
+    const bFirstMatchers = { b: expect.any(Date), a: expect.any(Date) };
+    expect([
+      received(() => expect(aFirst).toMatchSnapshot(aFirstMatchers)),
+      received(() => expect(bFirst).toMatchSnapshot(bFirstMatchers)),
+      received(() => expect(aFirst).toMatchInlineSnapshot(aFirstMatchers, `"not compared"`)),
+      received(() => expect(bFirst).toMatchInlineSnapshot(bFirstMatchers, `"not compared"`)),
+    ]).toEqual([
+      'Received: {\n  a: "foobar",\n  b: Any<Date>,\n}\n',
+      'Received: {\n  b: Any<Date>,\n  a: "foobar",\n}\n',
+      'Received: {\n  a: "foobar",\n  b: Any<Date>,\n}\n',
+      'Received: {\n  b: Any<Date>,\n  a: "foobar",\n}\n',
+    ]);
+    expect(aFirst.b).toBe(epoch);
+    expect(bFirst.b).toBe(epoch);
+  });
   it("should throw if arguments are in the wrong order", () => {
     expect(() => {
       // @ts-expect-error

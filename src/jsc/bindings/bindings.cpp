@@ -2216,6 +2216,7 @@ private:
  * be safe tnan sorry
  *
  * @tparam enableAsymmetricMatchers
+ * @tparam walkPastMismatch
  * @param objValue
  * @param seenObjProperties already visited properties of `objValue`.
  * @param subsetValue
@@ -2229,7 +2230,7 @@ private:
  * @return true
  * @return false
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, bool walkPastMismatch>
 bool Bun__deepMatch(
     JSValue objValue,
     std::set<EncodedJSValue>* seenObjProperties,
@@ -2265,6 +2266,9 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
+    // With `walkPastMismatch` a mismatch is recorded here and the walk goes on.
+    bool allMatched = true;
+
     // arrays should match exactly
     bool objIsArray = isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
@@ -2272,13 +2276,15 @@ bool Bun__deepMatch(
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
-            return false;
+            if constexpr (!walkPastMismatch) return false;
+            allMatched = false;
         }
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {
-            return false;
+            if constexpr (!walkPastMismatch) return false;
+            allMatched = false;
         }
     }
 
@@ -2286,7 +2292,9 @@ bool Bun__deepMatch(
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
-            return false;
+            if constexpr (!walkPastMismatch) return false;
+            allMatched = false;
+            continue;
         }
 
         JSValue subsetProp = subsetObj->get(globalObject, property);
@@ -2299,7 +2307,10 @@ bool Bun__deepMatch(
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
-                    return false;
+                    if constexpr (!walkPastMismatch) return false;
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    allMatched = false;
+                    continue;
                 case AsymmetricMatcherResult::PASS:
                     RETURN_IF_EXCEPTION(throwScope, false);
                     if (matcherWrites) matcherWrites->append(obj, property, subsetProp);
@@ -2311,7 +2322,10 @@ bool Bun__deepMatch(
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
-                    return false;
+                    if constexpr (!walkPastMismatch) return false;
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    allMatched = false;
+                    continue;
                 case AsymmetricMatcherResult::PASS:
                     RETURN_IF_EXCEPTION(throwScope, false);
                     if (matcherWrites) matcherWrites->append(subsetObj, property, prop);
@@ -2343,18 +2357,24 @@ bool Bun__deepMatch(
                 gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, matcherWrites, isMatchingObjectContaining);
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers, walkPastMismatch>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, matcherWrites, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
-                if (!matched) return false;
+                if (!matched) {
+                    if constexpr (!walkPastMismatch) return false;
+                    allMatched = false;
+                }
             }
         } else {
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (!same) return false;
+            if (!same) {
+                if constexpr (!walkPastMismatch) return false;
+                allMatched = false;
+            }
         }
     }
 
-    return true;
+    return allMatched;
 }
 
 // Reads the own property of `target` as it is stored. False if a direct put over it could not be undone.
@@ -3320,7 +3340,10 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
     Bun::DeferredMatcherWrites matcherWrites;
-    bool matched = Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, &matcherWrites, false);
+    // A failed match that is printed needs every matcher that passed, also after the first mismatch.
+    bool matched = formatIfNotMatched
+        ? Bun__deepMatch<true, true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, &matcherWrites, false)
+        : Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, &matcherWrites, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (!(matched ? formatIfMatched : formatIfNotMatched)) return matched;
 

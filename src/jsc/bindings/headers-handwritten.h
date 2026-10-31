@@ -467,6 +467,7 @@ class DeferredMatcherWrites;
  *
  *
  * @tparam enableAsymmetricMatchers
+ * @tparam walkPastMismatch the walk does not stop at a mismatch, so `matcherWrites` receives the matchers that passed after it too. For a caller that prints the values when they do not match.
  * @param objValue
  * @param seenObjProperties already visited properties of `objValue`.
  * @param subsetValue
@@ -480,7 +481,7 @@ class DeferredMatcherWrites;
  * @return true
  * @return false
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, bool walkPastMismatch = false>
 bool Bun__deepMatch(
     JSC::JSValue object,
     std::set<JSC::EncodedJSValue>* seenObjProperties,

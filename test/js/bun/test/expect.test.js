@@ -3576,6 +3576,254 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1, b: 2 }, { a: 1 })).toBe(false);
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
+
+      // https://github.com/oven-sh/bun/issues/9089
+      describe("when the match fails, the diff does not flag a matcher that passed", () => {
+        /** The lines that the diff in the message of `error` marks with `-` or `+`. */
+        const flaggedLinesOf = (/** @type {unknown} */ error) => {
+          const message = Bun.stripANSI(ANY(error).message);
+          expect(message).toMatch(/^expect\(received\)\.(resolves\.|rejects\.)?toMatchObject\(expected\)\n/);
+          return message.split("\n").filter(line => /^[-+] {3}/.test(line));
+        };
+        const flaggedLines = (/** @type {any} */ received, /** @type {any} */ expected) => {
+          try {
+            expect(received).toMatchObject(expected);
+          } catch (e) {
+            return flaggedLinesOf(e);
+          }
+          throw new Error("toMatchObject did not throw");
+        };
+        const epoch = new Date(0);
+
+        test("after the first mismatch, in each key order", () => {
+          const onlyA = ['-   "a": Any<Date>,', '+   "a": "foobar",'];
+          expect(
+            flaggedLines(
+              { a: "foobar", b: epoch, c: "hello" },
+              { a: expect.any(Date), b: expect.any(Date), c: "hello" },
+            ),
+          ).toEqual(onlyA);
+          expect(
+            flaggedLines(
+              { b: epoch, a: "foobar", c: "hello" },
+              { b: expect.any(Date), a: expect.any(Date), c: "hello" },
+            ),
+          ).toEqual(onlyA);
+          expect(
+            flaggedLines(
+              { c: "hello", a: "foobar", b: epoch },
+              { c: expect.stringContaining("ell"), a: "wrong", b: expect.any(Date) },
+            ),
+          ).toEqual(['-   "a": "wrong",', '+   "a": "foobar",']);
+        });
+
+        test("in an array and in a nested object", () => {
+          expect(flaggedLines([1, epoch, "x"], [expect.any(String), expect.any(Date), "x"])).toEqual([
+            "-   Any<String>,",
+            "+   1,",
+          ]);
+          expect(
+            flaggedLines(
+              { outer: { a: 1, b: "x" }, ok: 42 },
+              { outer: { a: 2, b: expect.any(String) }, ok: expect.any(Number) },
+            ),
+          ).toEqual(['-     "a": 2,', '+     "a": 1,']);
+          expect(flaggedLines({ 0: "x", 5: epoch }, { 0: "y", 5: expect.any(Date) })).toEqual([
+            '-   "0": "y",',
+            '+   "0": "x",',
+          ]);
+        });
+
+        test("after a missing property", () => {
+          expect(flaggedLines({ b: epoch }, { a: 1, b: expect.any(Date) })).toEqual(['-   "a": 1,']);
+        });
+
+        test("when the arrays differ in length or in keys", () => {
+          expect(flaggedLines([1, 2], [expect.any(Number), 2, 3])).toEqual(["-   3,"]);
+          expect(flaggedLines([1, 2, 3], [expect.any(Number), 2])).toEqual(["+   3,"]);
+          // The diff does not print `extra`, the only difference, so it has no line to flag.
+          expect(flaggedLines(Object.assign([epoch], { extra: 1 }), [expect.any(Date)])).toEqual([]);
+          // The lengths differ and the key counts do not: only the length says that these do not match.
+          expect(flaggedLines([epoch, ,], [expect.any(Date)])).toEqual(["+   undefined,"]);
+          expect([1, ,]).not.toMatchObject([1]);
+        });
+
+        test("when a matcher is on the received side", () => {
+          const expected = { a: 2, b: epoch };
+          expect(flaggedLines({ a: 1, b: expect.any(Date) }, expected)).toEqual(['-   "a": 2,', '+   "a": 1,']);
+          expect(expected.b).toBe(epoch);
+
+          expect(flaggedLines({ a: expect.any(Date), b: epoch }, { a: "foobar", b: expect.any(Date) })).toEqual([
+            '-   "a": "foobar",',
+            '+   "a": Any<Date>,',
+          ]);
+        });
+
+        test("through .resolves and .rejects", async () => {
+          const received = { a: "foobar", b: epoch };
+          const expected = { a: expect.any(Date), b: expect.any(Date) };
+          for (const assert of [
+            () => expect(Promise.resolve(received)).resolves.toMatchObject(expected),
+            () => expect(Promise.reject(received)).rejects.toMatchObject(expected),
+          ]) {
+            let error;
+            try {
+              await assert();
+            } catch (e) {
+              error = e;
+            }
+            expect(flaggedLinesOf(error)).toEqual(['-   "a": Any<Date>,', '+   "a": "foobar",']);
+          }
+        });
+
+        test("and leaves both values as they were", () => {
+          const tags = ["a", "b"];
+          const received = Object.freeze({
+            name: "alice",
+            id: 7,
+            tags,
+            get when() {
+              return epoch;
+            },
+          });
+          const expected = {
+            name: "bob",
+            id: expect.any(Number),
+            tags: [expect.any(String), "b"],
+            when: expect.any(Date),
+          };
+          expect(flaggedLines(received, expected)).toEqual(['-   "name": "bob",', '+   "name": "alice",']);
+          expect(received.id).toBe(7);
+          expect(tags[0]).toBe("a");
+          expect(typeof Object.getOwnPropertyDescriptor(received, "when")?.get).toBe("function");
+          expect(Object.isFrozen(received)).toBe(true);
+        });
+
+        describe("and the walk", () => {
+          const count = { reads: { before: 0, after: 0 }, calls: { before: 0, after: 0 } };
+          expect.extend({
+            toBeCountedAs(_received, /** @type {"before" | "after"} */ position) {
+              count.calls[position]++;
+              return { pass: true, message: () => "" };
+            },
+          });
+          const makeReceived = (/** @type {string} */ differs) => ({
+            get before() {
+              count.reads.before++;
+              return 1;
+            },
+            differs,
+            get after() {
+              count.reads.after++;
+              return 1;
+            },
+          });
+          const expected = {
+            before: ANY(expect).toBeCountedAs("before"),
+            differs: "bob",
+            after: ANY(expect).toBeCountedAs("after"),
+          };
+          const counted = (/** @type {() => void} */ run) => {
+            count.reads = { before: 0, after: 0 };
+            count.calls = { before: 0, after: 0 };
+            run();
+            return count;
+          };
+
+          test("runs each getter and each matcher once", () => {
+            expect(
+              counted(() =>
+                expect(flaggedLines(makeReceived("alice"), expected)).toEqual([
+                  '-   "differs": "bob",',
+                  '+   "differs": "alice",',
+                ]),
+              ),
+            ).toEqual({ reads: { before: 1, after: 1 }, calls: { before: 1, after: 1 } });
+            expect(counted(() => expect(makeReceived("bob")).toMatchObject(expected))).toEqual({
+              reads: { before: 1, after: 1 },
+              calls: { before: 1, after: 1 },
+            });
+          });
+
+          test("stops at the first mismatch when nothing is printed", () => {
+            expect(counted(() => expect(makeReceived("alice")).not.toMatchObject(expected))).toEqual({
+              reads: { before: 1, after: 0 },
+              calls: { before: 1, after: 0 },
+            });
+            expect(
+              counted(() =>
+                expect(Bun.deepMatch({ before: 1, differs: "bob", after: 1 }, makeReceived("alice"))).toBe(false),
+              ),
+            ).toEqual({ reads: { before: 1, after: 0 }, calls: { before: 0, after: 0 } });
+            expect(counted(() => expect(makeReceived("alice")).not.toEqual(expect.objectContaining(expected)))).toEqual(
+              { reads: { before: 1, after: 0 }, calls: { before: 1, after: 0 } },
+            );
+
+            const throwsAfter = {
+              a: 1,
+              get b() {
+                throw new Error("thrown by the getter");
+              },
+            };
+            expect(throwsAfter).not.toMatchObject({ a: 2, b: 1 });
+          });
+
+          test("throws what a getter or a matcher after the mismatch throws", () => {
+            class Throws {
+              static [Symbol.hasInstance]() {
+                throw new Error("thrown by Symbol.hasInstance");
+              }
+            }
+            expect.extend({
+              toThrowWhenAsked() {
+                throw new Error("thrown by the matcher");
+              },
+            });
+            const throwsAfter = {
+              a: 1,
+              get b() {
+                throw new Error("thrown by the getter");
+              },
+            };
+            expect(() => expect(throwsAfter).toMatchObject({ a: 2, b: 1 })).toThrow("thrown by the getter");
+            for (const [matcher, message] of [
+              [ANY(expect).toThrowWhenAsked(), "thrown by the matcher"],
+              [ANY(expect).not.toThrowWhenAsked(), "thrown by the matcher"],
+              [expect.any(Throws), "thrown by Symbol.hasInstance"],
+              [expect.not.any(Throws), "thrown by Symbol.hasInstance"],
+            ]) {
+              expect(() => expect({ a: 1, b: 1 }).toMatchObject({ a: 2, b: matcher })).toThrow(message);
+              expect(() => expect({ a: 1, b: matcher }).toMatchObject({ a: 2, b: 1 })).toThrow(message);
+            }
+          });
+
+          test("throws what a matcher throws when the next key can no longer be read", () => {
+            expect.extend({
+              toRevokeThenThrow(_received, /** @type {() => void} */ revoke) {
+                revoke();
+                throw new Error("thrown by the matcher");
+              },
+            });
+            // Reading `c` from the revoked Proxy throws a TypeError, which must not replace the matcher's error.
+            const revocable = Proxy.revocable({ a: 1, b: 1, c: 1 }, {});
+            expect(() =>
+              expect(revocable.proxy).toMatchObject({
+                a: 2,
+                b: ANY(expect).toRevokeThenThrow(revocable.revoke),
+                c: 1,
+              }),
+            ).toThrow("thrown by the matcher");
+
+            const withMatcher = Proxy.revocable(
+              { a: 1, b: ANY(expect).toRevokeThenThrow(() => withMatcher.revoke()), c: 1 },
+              {},
+            );
+            expect(() => expect(withMatcher.proxy).toMatchObject({ a: 2, b: 1, c: 1 })).toThrow(
+              "thrown by the matcher",
+            );
+          });
+        });
+      });
     }
     test("with expect matcher", () => {
       const f = Symbol.for("foo");

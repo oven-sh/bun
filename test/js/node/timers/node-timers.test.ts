@@ -455,3 +455,46 @@ it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
     clearTimeout(timer);
   }
 });
+
+it("timers/promises clears its timers with the globals that were there when it set them", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const live = new Set();
+        const set = () => {
+          const timer = { ref: () => timer, unref: () => timer, hasRef: () => true };
+          live.add(timer);
+          return timer;
+        };
+        const clear = timer => void live.delete(timer);
+        Object.assign(globalThis, { setTimeout: set, setInterval: set, setImmediate: set });
+        Object.assign(globalThis, { clearTimeout: clear, clearInterval: clear, clearImmediate: clear });
+
+        const promises = require("node:timers/promises");
+        const counts = [];
+        for (const start of [promises.setTimeout, promises.setImmediate]) {
+          const controller = new AbortController();
+          const options = { signal: controller.signal };
+          const aborted = (start === promises.setTimeout ? start(1000, null, options) : start(null, options)).catch(() => {});
+          counts.push(live.size);
+          controller.abort();
+          await aborted;
+          counts.push(live.size);
+        }
+        const iterator = promises.setInterval(1000)[Symbol.asyncIterator]();
+        iterator.next();
+        counts.push(live.size);
+        await iterator.return();
+        counts.push(live.size);
+        console.log(counts.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
+});

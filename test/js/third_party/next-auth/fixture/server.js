@@ -46,6 +46,13 @@ function test(port) {
   });
 }
 
+// `next dev` waits for this with no timeout, only to report whether it is out of date.
+const { fetch } = globalThis;
+globalThis.fetch = (input, init) =>
+  String(input?.url ?? input).startsWith("https://registry.npmjs.org/")
+    ? Promise.reject(new Error("no public internet in tests"))
+    : fetch(input, init);
+
 const app = next({ dev: true, dir: import.meta.dirname, quiet: true });
 const handle = app.getRequestHandler();
 

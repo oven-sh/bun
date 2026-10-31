@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { closeSync, openAsBlob, openSync } from "node:fs";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -819,6 +820,404 @@ describe("FormData", () => {
       }
     }
   }, 180000);
+});
+
+// The bytes of a Bun.file() body are on disk, and the bytes of an S3 file are
+// in a bucket. formData() reads them first, as text() does, and parses what it
+// read.
+describe.concurrent("formData() of a body whose bytes are not in memory", () => {
+  const urlencoded = { "Content-Type": "application/x-www-form-urlencoded" };
+  const parsed = { ok: "true", name: "bun" };
+  const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
+    ["Request", (body, headers) => new Request("http://example.com/", { method: "POST", body, headers })],
+    ["Response", (body, headers) => new Response(body, { headers } as ResponseInit)],
+  ];
+  const entries = async (owner: Request | Response) => Object.fromEntries(await owner.formData());
+  const reason = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      e => ({ name: e.name, code: e.code, message: e.message, syscall: e.syscall, path: e.path }),
+    );
+
+  describe.each(owners)("%s over a Bun.file()", (_, make) => {
+    test("multipart with a text entry and a file entry", async () => {
+      // A Blob type is lower case. Only the header keeps this boundary as it is.
+      const bytes = [
+        "--AbC123",
+        'Content-Disposition: form-data; name="ok"',
+        "",
+        "true",
+        "--AbC123",
+        'Content-Disposition: form-data; name="file"; filename="index.html"',
+        "Content-Type: text/html;charset=utf-8",
+        "",
+        "<h1>Hello</h1>\n",
+        "--AbC123--",
+        "",
+      ].join("\r\n");
+      using dir = tempDir("formdata-file-multipart", { "form.bin": bytes });
+      const owner = make(Bun.file(join(String(dir), "form.bin")), {
+        "Content-Type": "multipart/form-data; boundary=AbC123",
+      });
+      const form = await owner.formData();
+      const file = form.get("file") as File;
+      expect({
+        names: [...form.keys()],
+        ok: form.get("ok"),
+        file: { name: file.name, type: file.type, text: await file.text() },
+      }).toEqual({
+        names: ["ok", "file"],
+        ok: "true",
+        file: { name: "index.html", type: "text/html;charset=utf-8", text: "<h1>Hello</h1>\n" },
+      });
+    });
+
+    test("the type of the Bun.file() decides when no header gives one", async () => {
+      using dir = tempDir("formdata-file-typed", { "form.bin": "ok=true&name=bun" });
+      const typed = Bun.file(join(String(dir), "form.bin"), { type: "application/x-www-form-urlencoded" });
+      expect(await entries(make(typed))).toEqual(parsed);
+    });
+
+    test("fs.openAsBlob()", async () => {
+      using dir = tempDir("formdata-file-open-as-blob", { "form.bin": "ok=true&name=bun" });
+      const blob = await openAsBlob(join(String(dir), "form.bin"), { type: "application/x-www-form-urlencoded" });
+      expect(await entries(make(blob))).toEqual(parsed);
+    });
+
+    test("a file descriptor, and a Blob made from the file", async () => {
+      using dir = tempDir("formdata-file-kinds", { "form.bin": "ok=true&name=bun" });
+      const path = join(String(dir), "form.bin");
+      const fd = openSync(path, "r");
+      try {
+        expect({
+          fd: await entries(make(Bun.file(fd), urlencoded)),
+          blob: await entries(make(new Blob([Bun.file(path)]), urlencoded)),
+        }).toEqual({ fd: parsed, blob: parsed });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    test("a slice gives only its own bytes", async () => {
+      using dir = tempDir("formdata-file-slice", { "form.bin": "no=1&ok=true&name=bun&no=2" });
+      const slice = Bun.file(join(String(dir), "form.bin")).slice(5, 21);
+      expect(await entries(make(slice, urlencoded))).toEqual(parsed);
+    });
+
+    test("after the body getter turned the file into a stream", async () => {
+      using dir = tempDir("formdata-file-body-getter", { "form.bin": "ok=true&name=bun" });
+      const owner = make(Bun.file(join(String(dir), "form.bin")), urlencoded);
+      expect(owner.body).toBeInstanceOf(ReadableStream);
+      expect([await entries(owner), owner.bodyUsed]).toEqual([parsed, true]);
+    });
+
+    test("Bun.file().stream()", async () => {
+      using dir = tempDir("formdata-file-stream", { "form.bin": "ok=true&name=bun" });
+      const owner = make(Bun.file(join(String(dir), "form.bin")).stream(), urlencoded);
+      expect([await entries(owner), owner.bodyUsed]).toEqual([parsed, true]);
+    });
+
+    test("both sides of a clone()", async () => {
+      using dir = tempDir("formdata-file-clone", { "form.bin": "ok=true&name=bun" });
+      const path = join(String(dir), "form.bin");
+      const sides = async (original: Request | Response) => {
+        const clone = original.clone() as Request | Response;
+        return [await entries(original), await entries(clone)];
+      };
+      expect({
+        file: await sides(make(Bun.file(path), urlencoded)),
+        stream: await sides(make(Bun.file(path).stream(), urlencoded)),
+      }).toEqual({ file: [parsed, parsed], stream: [parsed, parsed] });
+    });
+
+    test("the file as it is when formData() is called", async () => {
+      using dir = tempDir("formdata-file-late", {});
+      const path = join(String(dir), "form.bin");
+      const owner = make(Bun.file(path), urlencoded);
+      await Bun.write(path, "ok=true&name=bun");
+      expect(await entries(owner)).toEqual(parsed);
+    });
+
+    test("the body is used while the read is pending", async () => {
+      using dir = tempDir("formdata-file-pending", { "form.bin": "ok=true&name=bun" });
+      const owner = make(Bun.file(join(String(dir), "form.bin")), urlencoded);
+      const pending = owner.formData();
+      const code = (promise: Promise<unknown>) =>
+        promise.then(
+          () => "resolved",
+          e => e.code,
+        );
+      expect({
+        bodyUsed: owner.bodyUsed,
+        formData: await code(owner.formData()),
+        text: await code(owner.text()),
+        first: Object.fromEntries(await pending),
+      }).toEqual({
+        bodyUsed: true,
+        formData: "ERR_BODY_ALREADY_USED",
+        text: "ERR_BODY_ALREADY_USED",
+        first: parsed,
+      });
+    });
+
+    test("a file that cannot be read rejects as text() does", async () => {
+      using dir = tempDir("formdata-file-unreadable", {});
+      const missing = () => make(Bun.file(join(String(dir), "missing.bin")), urlencoded);
+      const directory = () => make(Bun.file(String(dir)), urlencoded);
+      const rejections = {
+        missing: await reason(missing().formData()),
+        directory: await reason(directory().formData()),
+      };
+      expect(rejections).toEqual({
+        missing: await reason(missing().text()),
+        directory: await reason(directory().text()),
+      });
+      expect(rejections.missing).toMatchObject({ code: "ENOENT", syscall: "open" });
+      expect(rejections.directory).not.toBe("resolved");
+    });
+
+    test("a read failure has the async stack frames, as text() has", async () => {
+      using dir = tempDir("formdata-file-stack", {});
+      async function level2() {
+        await make(Bun.file(join(String(dir), "missing.bin")), urlencoded).formData();
+      }
+      async function level1() {
+        await level2();
+      }
+      const caught = await level1().then(
+        () => null,
+        e => e,
+      );
+      expect(caught?.code).toBe("ENOENT");
+      expect(caught.stack).toContain("at async level2");
+      expect(caught.stack).toContain("at async level1");
+    });
+
+    test("a pending read keeps the promise that script dropped", async () => {
+      using dir = tempDir("formdata-file-gc", { "form.bin": "ok=true&name=bun" });
+      const path = join(String(dir), "form.bin");
+      const count = isDebug || isASAN ? 200 : 2000;
+      const seen = new Set<string>();
+      let settled = 0;
+      const { promise: done, resolve } = Promise.withResolvers<void>();
+      const settle = (value: string) => {
+        seen.add(value);
+        if (++settled === count) resolve();
+      };
+      for (let i = 0; i < count; i++) {
+        // Script keeps no reference to this promise. Only the pending read does.
+        make(Bun.file(path), urlencoded)
+          .formData()
+          .then(
+            form => settle(JSON.stringify([...form])),
+            e => settle(String(e)),
+          );
+        if (i % 50 === 49) Bun.gc(true);
+      }
+      Bun.gc(true);
+      await done;
+      expect([...seen]).toEqual(['[["ok","true"],["name","bun"]]']);
+    });
+
+    test("bytes that do not parse reject as the same bytes in memory do", async () => {
+      // The last boundary is there, but the part has no end of headers.
+      const bytes = ["--abc123", 'Content-Disposition: form-data; name="value"', "--abc123--", ""].join("\r\n");
+      const headers = { "Content-Type": "multipart/form-data; boundary=abc123" };
+      using dir = tempDir("formdata-file-invalid", { "form.bin": bytes });
+      const rejection = await reason(make(Bun.file(join(String(dir), "form.bin")), headers).formData());
+      expect(rejection).toEqual(await reason(make(bytes, headers).formData()));
+      expect(rejection).toMatchObject({ name: "TypeError", code: "ERR_FORMDATA_PARSE_ERROR" });
+    });
+  });
+
+  // `new Response(s3File)` is a redirect with no body. A Request takes an S3
+  // file as its body, and so does the Response of a fetch() of its blob: URL.
+  test("a body that is an S3 file", async () => {
+    const object = "no=1&ok=true&name=bun&no=2";
+    const downloads: string[] = [];
+    await using bucket = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        const range = request.headers.get("range");
+        downloads.push(range ? `${pathname} ${range}` : pathname);
+        if (pathname === "/b/missing") {
+          return new Response(
+            `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`,
+            { status: 404, headers: { "Content-Type": "application/xml" } },
+          );
+        }
+        // A bucket that does not look at Range hides a read of the wrong bytes.
+        const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(range ?? "") ?? [];
+        if (start === undefined) return new Response(object);
+        return new Response(object.slice(Number(start), Number(end) + 1), {
+          status: 206,
+          headers: { "Content-Range": `bytes ${start}-${end}/${object.length}` },
+        });
+      },
+    });
+    const s3 = new Bun.S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      endpoint: bucket.url.href,
+      bucket: "b",
+    });
+    const request = (body: Blob) => new Request("http://example.com/", { method: "POST", body, headers: urlencoded });
+    const listed = async (owner: Request | Response) => [...(await owner.formData())];
+    const url = URL.createObjectURL(s3.file("form", { type: urlencoded["Content-Type"] }));
+    try {
+      expect({
+        request: await listed(request(s3.file("form"))),
+        slice: await listed(request(s3.file("form").slice(5, 21))),
+        response: await listed(await fetch(url)),
+        // A stream of an S3 file is not this body. It is read as a stream.
+        stream: await listed(new Response(s3.file("form").stream(), { headers: urlencoded })),
+      }).toEqual({
+        request: [
+          ["no", "1"],
+          ["ok", "true"],
+          ["name", "bun"],
+          ["no", "2"],
+        ],
+        slice: [
+          ["ok", "true"],
+          ["name", "bun"],
+        ],
+        response: [
+          ["no", "1"],
+          ["ok", "true"],
+          ["name", "bun"],
+          ["no", "2"],
+        ],
+        stream: [
+          ["no", "1"],
+          ["ok", "true"],
+          ["name", "bun"],
+          ["no", "2"],
+        ],
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    // One download for each call, and a Range only for the slice.
+    expect(downloads.splice(0)).toEqual(["/b/form", "/b/form bytes=5-20", "/b/form", "/b/form"]);
+
+    // The failure of the request has the code, the message and the path that text() reports.
+    const failure = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolved",
+        e => ({ code: e.code, message: e.message, path: e.path }),
+      );
+    const missing = await failure(request(s3.file("missing")).formData());
+    expect(missing).toEqual(await failure(request(s3.file("missing")).text()));
+    expect(missing).toMatchObject({ code: "NoSuchKey" });
+
+    // A key that does not fit the signed URL cannot be signed: the read fails
+    // before formData() returns. 600 bytes fit the path limit of every platform,
+    // and each "+" is three bytes in the URL.
+    const unsigned = () => request(s3.file(Buffer.alloc(600, "+").toString()));
+    const rejection = await failure(unsigned().formData());
+    expect(rejection).toEqual(await failure(unsigned().text()));
+    expect(rejection).toMatchObject({ code: "ERR_S3_INVALID_PATH" });
+    expect(downloads).toEqual(["/b/missing", "/b/missing"]);
+  });
+
+  test("the Response of a fetch() of a blob: URL of a Bun.file()", async () => {
+    using dir = tempDir("formdata-file-blob-url", { "form.bin": "ok=true&name=bun" });
+    const url = URL.createObjectURL(Bun.file(join(String(dir), "form.bin"), { type: urlencoded["Content-Type"] }));
+    try {
+      expect(await entries(await fetch(url))).toEqual(parsed);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  // The limit on the length of a string is global to a process, so this case
+  // has a process of its own.
+  test("bytes over the string limit reject as the same bytes in memory do", async () => {
+    using dir = tempDir("formdata-file-string-limit", {});
+    const script = `
+      const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+      const headers = ${JSON.stringify(urlencoded)};
+      const path = ${JSON.stringify(join(String(dir), "form.bin"))};
+      const bytes = Buffer.alloc(2 * 1024 * 1024, "a");
+      await Bun.write(path, bytes);
+      setSyntheticAllocationLimitForTesting(1024 * 1024);
+      const code = promise => promise.then(() => "resolved", e => e.code);
+      const request = body => new Request("http://example.com/", { method: "POST", body, headers });
+      console.log(JSON.stringify({
+        file: [await code(new Response(Bun.file(path), { headers }).formData()), await code(request(Bun.file(path)).formData())],
+        memory: [await code(new Response(bytes, { headers }).formData()), await code(request(bytes).formData())],
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        file: ["ERR_STRING_TOO_LONG", "ERR_STRING_TOO_LONG"],
+        memory: ["ERR_STRING_TOO_LONG", "ERR_STRING_TOO_LONG"],
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun.stdin is a file too. Its stream is lifted back into that file before the read.
+  test("a stream of Bun.stdin that is a pipe", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const form = await new Response(Bun.stdin.stream(), { headers: ${JSON.stringify(urlencoded)} }).formData();
+         console.log(JSON.stringify([...form]));`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("ok=true&name=bun");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '[["ok","true"],["name","bun"]]', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The read is on another thread when the Worker exits, so the teardown
+  // hands it ECANCELED and the read has to free itself. As in
+  // worker-late-completion.test.ts, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE holds
+  // the read back until the teardown waits for it, and the runtime then names
+  // it on stderr.
+  test.skipIf(!isDebug && !isASAN)("a Worker that exits while the file is read", async () => {
+    const worker = `
+      new Response(Bun.file(process.execPath).slice(0, 65536), { headers: ${JSON.stringify(urlencoded)} }).formData().catch(() => {});
+      setImmediate(() => setImmediate(() => process.exit(0)));
+    `;
+    const host = `
+      const url = URL.createObjectURL(new Blob([${JSON.stringify(worker)}], { type: "text/javascript" }));
+      new Worker(url).addEventListener("close", event => { process.exitCode = event.code; });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", host],
+      env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const late = stderr
+      .split("\n")
+      .some(line => line.startsWith("[vm] late completion from ") && line.includes("read_file.rs"));
+    expect({ late, exitCode, detail: late && exitCode === 0 ? "" : stdout + stderr }).toEqual({
+      late: true,
+      exitCode: 0,
+      detail: "",
+    });
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/14988

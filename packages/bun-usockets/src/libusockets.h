@@ -762,6 +762,8 @@ void us_socket_unref(us_socket_r s);
 
 void us_socket_nodelay(us_socket_r s, int enabled);
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
+/* us_socket_keepalive with the seconds between two probes and their count, also after a shutdown. A zero in delay, interval or count writes none of the three. */
+int us_socket_keepalive_ex(us_socket_r s, int enabled, unsigned int delay, unsigned int interval, unsigned int count);
 /* IP type-of-service (IPv4 IP_TOS / IPv6 IPV6_TCLASS). set returns 0 or a
  * negative platform errno; get returns the value (>= 0) or a negative errno. */
 int us_socket_set_tos(us_socket_r s, int tos);

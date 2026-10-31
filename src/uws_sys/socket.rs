@@ -542,6 +542,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// `uv_tcp_keepalive_ex`: seconds before the first probe and between two probes, and the count of probes.
+    pub fn set_keep_alive_ex(&self, enabled: bool, delay: u32, interval: u32, count: u32) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                sock(s).set_keepalive_ex(enabled, delay, interval, count) == 0
+            }
+            _ => false,
+        }
+    }
+
     /// Set the IP type-of-service. Returns 0 on success or a negative errno;
     /// non-TCP sockets (pipes, duplexes, not-yet-connected) report -EBADF (-9)
     /// the way Node's no-handle fallback does.

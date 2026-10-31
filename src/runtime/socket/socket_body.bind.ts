@@ -118,6 +118,17 @@ export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandl
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
+/** `setKeepAlive()` of Node's TCP handle, in seconds. False for a handle that is not a socket of Bun: nothing is set. */
+export const setKeepAliveEx = b.fn({
+  args: {
+    socket: SocketHandle,
+    enable: b.bool,
+    initialDelay: b.u32.wrap,
+    interval: b.f64.otherAsNull,
+    count: b.f64.otherAsNull,
+  },
+  returns: b.bool,
+});
 /** `tls` is `true` or what `SSLConfig` takes, and can hold the `secureContext`. */
 export const DuplexTLSOptions = b.dictionary({
   socket: SocketHandler,

@@ -1466,12 +1466,12 @@ node:net.Socket.prototype resetAndDestroy("a", 1)
   throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
   throws TypeError: null is not an object <- null
 node:net.Socket.prototype setKeepAlive()
-  the receiver, stores [kSetKeepAlive] [kSetKeepAliveInitialDelay] <- every object
+  the receiver, stores [kSetKeepAlive] [kSetKeepAliveInitialDelay] [kSetKeepAliveInterval] [kSetKeepAliveCount] <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:net.Socket.prototype setKeepAlive("a", 1)
-  the receiver, stores [kSetKeepAlive] [kSetKeepAliveInitialDelay] <- every object
+  the receiver, stores [kSetKeepAlive] [kSetKeepAliveInitialDelay] [kSetKeepAliveInterval] [kSetKeepAliveCount] <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null

@@ -1202,7 +1202,8 @@ declare namespace $Node {
     timeout(seconds: number): void;
     // `new net.Socket({ handle })` keeps any object as its handle, so `node:net` asks for these four before it calls them.
     setNoDelay?(enabled?: boolean): boolean;
-    setKeepAlive?(enabled?: boolean, initialDelayMilliseconds?: number): boolean;
+    /** A socket of Bun reads two arguments, in milliseconds. `node:net` gives any other handle Node's four, in seconds. */
+    setKeepAlive?(enabled?: boolean, initialDelay?: number, interval?: number, count?: unknown): boolean;
     /** 0 or -errno. */
     setTypeOfService?(tos: number): number;
     /** The value or -errno. */

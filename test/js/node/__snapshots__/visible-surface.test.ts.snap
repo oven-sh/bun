@@ -2164,7 +2164,7 @@ net[Socket][prototype][resetAndDestroy]: function function name="resetAndDestroy
 net[Socket][prototype][resetAndDestroy][length] c-- number
 net[Socket][prototype][resetAndDestroy][name] c-- string
 net[Socket][prototype][setKeepAlive] cew function
-net[Socket][prototype][setKeepAlive]: function function name="setKeepAlive" length=0 above=Function extensible=true
+net[Socket][prototype][setKeepAlive]: function function name="setKeepAlive" length=4 above=Function extensible=true
 net[Socket][prototype][setKeepAlive][length] c-- number
 net[Socket][prototype][setKeepAlive][name] c-- string
 net[Socket][prototype][setNoDelay] cew function

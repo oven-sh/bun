@@ -882,6 +882,13 @@ int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
     return 0;
 }
 
+int us_socket_keepalive_ex(us_socket_r s, int enabled, unsigned int delay, unsigned int interval, unsigned int count) {
+    if (us_socket_is_closed(s)) {
+        return 0;
+    }
+    return bsd_socket_keepalive_ex(us_poll_fd((struct us_poll_t *) s), enabled, delay, interval, count);
+}
+
 void us_socket_unref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_unref((uv_handle_t *) s->p.uv_p);

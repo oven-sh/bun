@@ -180,6 +180,8 @@ int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sock
 int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
+/* With the interval between two probes and their count. A zero in delay, interval or count writes none of the three. */
+int bsd_socket_keepalive_ex(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay, unsigned int interval, unsigned int count);
 /* IP type-of-service (IPv4 IP_TOS / IPv6 IPV6_TCLASS). set returns 0 or a
  * negative platform errno; get returns the value (>= 0) or a negative errno. */
 int bsd_socket_set_tos(LIBUS_SOCKET_DESCRIPTOR fd, int tos);

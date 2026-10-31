@@ -1000,6 +1000,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "fields-added-in-a-row-after-construction",
     "calls-that-spread-one-list",
     "objects-created-below-a-prototype-and-only-read",
+    "places-of-object-create-handed-values-in-every-order",
     "typed-arrays-walked-with-callbacks",
     "patterns-with-back-references",
     "functions-never-constructed-changed-above-classes",

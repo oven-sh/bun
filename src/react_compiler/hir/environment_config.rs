@@ -106,6 +106,10 @@ pub struct EnvironmentConfig {
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
+    /// `x = 1`, `x++`, `++x` and `x += 1` print in place (#42628, #42809). To upstream they are a constant or a read.
+    pub stores_print_in_place: bool,
+    /// `x++` on a `const` is lowered, as in upstream's Rust. Upstream's TypeScript, which the plugin runs, reports it.
+    pub updates_of_a_const_are_lowered: bool,
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
@@ -167,6 +171,8 @@ impl Default for EnvironmentConfig {
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
+            stores_print_in_place: true,
+            updates_of_a_const_are_lowered: true,
             dependencies_are_sorted_by_bytes: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,

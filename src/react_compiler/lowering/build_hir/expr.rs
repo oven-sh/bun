@@ -10,9 +10,9 @@ use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
     AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
-    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    lower_assignment, lower_expression_to_temporary, lower_identifier,
+    lower_identifier_for_assignment, lower_member_expression, lower_object_property_key,
+    lower_optional_call_expression, lower_optional_member_expression, lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -939,6 +939,9 @@ fn lower_compound_assignment_identifier(
                 loc: ident_loc,
             };
             // Unlike upstream: the value is the store itself, as for `x = y`, so it prints in place.
+            // Where `stores_print_in_place` is off, it is upstream's: a read of the variable.
+            let variable =
+                (!builder.environment().config.stores_print_in_place).then(|| place.clone());
             if builder.is_context_identifier(ref_) {
                 let temp = lower_value_to_temporary(
                     builder,
@@ -951,6 +954,9 @@ fn lower_compound_assignment_identifier(
                         loc,
                     },
                 )?;
+                if let Some(place) = variable {
+                    return Ok(InstructionValue::LoadContext { place, loc });
+                }
                 Ok(InstructionValue::LoadLocal {
                     loc: temp.loc,
                     place: temp,
@@ -968,6 +974,9 @@ fn lower_compound_assignment_identifier(
                         loc,
                     },
                 )?;
+                if let Some(place) = variable {
+                    return Ok(InstructionValue::LoadLocal { place, loc });
+                }
                 Ok(InstructionValue::LoadLocal {
                     loc: temp.loc,
                     place: temp,
@@ -1175,7 +1184,26 @@ fn lower_update_identifier(
         return Ok(unsupported_node("UpdateExpression", loc));
     }
     let identifier = match binding {
-        VariableBinding::Identifier { identifier, .. } => identifier,
+        VariableBinding::Identifier {
+            identifier,
+            binding_kind,
+        } => {
+            // Upstream resolves the target with `lowerIdentifierForAssignment`, which reports a `const`.
+            if binding_kind == BindingKind::Const
+                && !builder.environment().config.updates_of_a_const_are_lowered
+                && lower_identifier_for_assignment(
+                    builder,
+                    ident_loc,
+                    ident_loc,
+                    InstructionKind::Reassign,
+                    ref_,
+                )?
+                .is_none()
+            {
+                return Ok(unsupported_node("UpdateExpression", loc));
+            }
+            identifier
+        }
         _ => {
             builder.record_error(CompilerErrorDetail {
                 category: ErrorCategory::Todo,

@@ -1642,6 +1642,35 @@ describe("bundler", () => {
     run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
   });
 
+  // The same for `++x`: if its value folds, the callback prints `++x` ahead of `x = 5`.
+  itBundled("react-compiler/PrefixUpdateOrderInSameExpression", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const Stub = () => null;
+        function InCallback({ cond }) {
+          const f = () => {
+            let x = 1;
+            const a = [(x = 5), -(++x)];
+            if (cond) x = 100;
+            return [a, x];
+          };
+          return <Stub run={f} />;
+        }
+        function InBody() {
+          let x;
+          const v = [(x = 5), -(++x)];
+          return <Stub v={v} x={x++} />;
+        }
+        console.log(JSON.stringify([InCallback({ cond: false }).p.run(), InBody().p]));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: '[[[5,-6],6],{"v":[5,-6],"x":6}]' },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `

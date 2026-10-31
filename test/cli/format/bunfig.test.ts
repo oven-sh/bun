@@ -499,6 +499,202 @@ export function add(a, b) {}
     expect(result.files["a.js"]).toBe(input);
     expect(result.exitCode).toBe(2);
   });
+
+  // The code of an `@example` is indented once it's formatted. oxfmt 0.72 then reads the closing fence as code on its
+  // second pass and prints ` *   ```;`, and with `keepUnparsableExampleIndent` it indents the code once more on each
+  // pass. Here the second pass changes nothing. The first is what oxfmt prints, unless a row says otherwise.
+  const keep = "jsdoc = { keepUnparsableExampleIndent = true }";
+  const example = (lines: string[]) => `/**\n * @example\n${lines.map(line => ` * ${line}\n`).join("")} */\nlet a;\n`;
+  test.each<[name: string, options: string, input: string, printed: string]>([
+    [
+      "a fenced TypeScript example",
+      "jsdoc = true",
+      example(["```ts", "const total = add(1,2)", "```"]),
+      example(["  ```ts", "  const total = add(1, 2);", "  ```"]),
+    ],
+    [
+      "a fenced example with a template literal",
+      "jsdoc = true",
+      example(["```ts", "const s = `", "  two", "`;", "```"]),
+      example(["  ```ts", "  const s = `", "  two", "`;", "  ```"]),
+    ],
+    [
+      "a fenced example that isn't JavaScript",
+      "jsdoc = true",
+      example(["```sh", "npm install", "```"]),
+      example(["  ```sh", "  npm install", "  ```"]),
+    ],
+    [
+      "a fence without a language",
+      "jsdoc = true",
+      example(["```", "add(1,2)", "```"]),
+      example(["  ```", "  add(1,2)", "  ```"]),
+    ],
+    [
+      "an example with a hashbang",
+      "jsdoc = true",
+      example(["#!/usr/bin/env bun", "if (x) {", "  y()", "}"]),
+      example(["  #!/usr/bin/env bun", "  if (x) {", "    y();", "  }"]),
+    ],
+    [
+      "a fenced example with a caption",
+      "jsdoc = true",
+      "/**\n * @example <caption>Sum</caption>\n * ```ts\n * add(1,2)\n * ```\n */\nlet a;\n",
+      "/**\n * @example <caption>Sum</caption>\n *   ```ts\n *   add(1, 2);\n *   ```\n */\nlet a;\n",
+    ],
+    [
+      "a fenced example with tabs",
+      "jsdoc = true\nuseTabs = true",
+      example(["```sh", "npm install", "```"]),
+      example(["\t```sh", "\tnpm install", "\t```"]),
+    ],
+    // oxfmt reads the whole block as code, like the second pass above.
+    [
+      "an indented opening fence and a closing fence at the margin",
+      "jsdoc = true",
+      example(["  ```ts", "  foo()", "```"]),
+      example(["  ```ts", "  foo();", "  ```"]),
+    ],
+    // The text after the closing fence stays as it is. oxfmt reads the whole block as code on its second pass.
+    [
+      "text after a fenced example that has an indented fence in it",
+      "jsdoc = true",
+      example(["```js", "foo()", "```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]),
+      example(["  ```js", "  foo();", "  ```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]),
+    ],
+    [
+      "text after a fenced example",
+      "jsdoc = true",
+      example(["```js", "foo()", "```", "", "This prints 1."]),
+      example(["  ```js", "  foo();", "  ```", "", "This prints 1."]).replace(" * \n", " *\n"),
+    ],
+    // oxfmt takes the last fence for the closing fence: it reads both blocks as one, and prints its lines as they are.
+    [
+      "two fenced blocks",
+      "jsdoc = true",
+      example(["```js", "foo()", "```", "Or:", "```js", "bar()", "```"]),
+      example(["  ```js", "  foo();", "  ```", "Or:", "```js", "bar()", "```"]),
+    ],
+    // oxfmt does not find the closing fence, and prints the block as code, with ` *   ```;` at the end.
+    [
+      "a closing fence that is indented more than the opening fence",
+      "jsdoc = true",
+      example(["```ts", "foo()", "  ```"]),
+      example(["  ```ts", "  foo();", "  ```"]),
+    ],
+    [
+      "a closing fence that is indented by three blanks more than the opening fence",
+      "jsdoc = true",
+      example(["```ts", "foo()", "   ```"]),
+      example(["  ```ts", "  foo();", "  ```"]),
+    ],
+    // Indented by more than three blanks, the line is not a closing fence, as in Markdown: the block is code, as in
+    // oxfmt, and stays so.
+    [
+      "a closing fence that is indented by four blanks more than the opening fence",
+      "jsdoc = true",
+      example(["```ts", "foo()", "    ```"]),
+      example(["  ```ts", "foo()", "    ```;"]),
+    ],
+    [
+      "a fence inside a fence",
+      "jsdoc = true",
+      example(["````md", "```js", "x", "```", "````"]),
+      example(["  ````md", "  ```js", "  x", "  ```", "  ````"]),
+    ],
+    // oxfmt takes the last line that starts with three backticks for the closing fence, whatever follows them.
+    [
+      "a fence with a language inside a fence of the same backticks",
+      "jsdoc = true",
+      example(["```md", "```js", "x", "```"]),
+      example(["  ```md", "  ```js", "  x", "  ```"]),
+    ],
+    // oxfmt takes the last line of three backticks for the closing fence, whatever the opening fence has.
+    [
+      "a fence inside a fence, and text with a shorter fence after the block",
+      "jsdoc = true",
+      example(["````md", "```js", "x", "```", "````", "Or:", "```"]),
+      example(["  ````md", "  ```js", "  x", "  ```", "  ````", "Or:", "```"]),
+    ],
+    // oxfmt keeps one blank line fewer on each pass.
+    [
+      "blank lines before the closing fence",
+      "jsdoc = true",
+      example(["```sh", "npm install", "", "", "```"]),
+      example(["  ```sh", "  npm install", "  ```"]),
+    ],
+    [
+      "blank lines before the closing fence, with keepUnparsableExampleIndent",
+      keep,
+      example(["```sh", "npm install", "", "", "```"]),
+      example(["  ```sh", "  npm install", "  ```"]),
+    ],
+    [
+      "code that doesn't parse, with keepUnparsableExampleIndent",
+      keep,
+      example(["if (", "  x"]),
+      example(["  if (", "    x"]),
+    ],
+    [
+      "one indented line that doesn't parse, with keepUnparsableExampleIndent",
+      keep,
+      example(["    npm install foo"]),
+      example(["  npm install foo"]),
+    ],
+    // oxfmt trims the first line and prints `  if (` / `      x`, then moves the second line right on each pass.
+    [
+      "indented code that doesn't parse, with keepUnparsableExampleIndent",
+      keep,
+      example(["  if (", "    x"]),
+      example(["  if (", "    x"]),
+    ],
+    [
+      "code that is indented by more than the code indent, with keepUnparsableExampleIndent",
+      keep,
+      example(["    if (", "      x"]),
+      example(["    if (", "      x"]),
+    ],
+    // oxfmt trims the first line and prints `\tif (` / `\t    x`.
+    [
+      "code that is indented with spaces, with keepUnparsableExampleIndent and tabs",
+      `${keep}\nuseTabs = true`,
+      example(["  if (", "    x"]),
+      example(["\t  if (", "\t    x"]),
+    ],
+    [
+      "a fenced example that doesn't parse, with keepUnparsableExampleIndent",
+      keep,
+      example(["```sh", "npm install", "  nested", "```"]),
+      example(["  ```sh", "  npm install", "    nested", "  ```"]),
+    ],
+    [
+      "a fence at the margin around indented code, with keepUnparsableExampleIndent",
+      keep,
+      example(["```sh", "    npm install", "      nested", "```"]),
+      example(["  ```sh", "      npm install", "        nested", "  ```"]),
+    ],
+    // oxfmt reads the whole block as code, like the second pass above.
+    [
+      "an indented fence, with keepUnparsableExampleIndent",
+      keep,
+      example(["    ```sh", "    npm install", "      nested", "    ```"]),
+      example(["  ```sh", "  npm install", "    nested", "  ```"]),
+    ],
+    [
+      "an indented fence around a line that is indented less, with keepUnparsableExampleIndent",
+      keep,
+      example(["    ```sh", "    npm install", "  x", "    ```"]),
+      example(["  ```sh", "      npm install", "    x", "  ```"]),
+    ],
+  ])("%s is stable when the output is formatted again", async (_, options, input, printed) => {
+    const first = await format({ ...bunfig(options), "a.js": input });
+    expect(first.files["a.js"]).toBe(printed);
+    expect(first.exitCode).toBe(0);
+    const second = await format({ ...bunfig(options), "a.js": printed });
+    expect(second.files["a.js"]).toBe(printed);
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("svelte", () => {

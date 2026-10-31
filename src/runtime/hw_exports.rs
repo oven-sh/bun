@@ -81,7 +81,6 @@ pub(crate) fn remap_stack_frame_positions(
     }
 }
 
-/// [`bun_jsc::module_link_error::position`] for `Bun__locateModuleLinkError` (FormatStackTraceForJS.cpp).
 // HOST_EXPORT(Bun__positionOfModuleLinkError, c)
 pub(crate) fn position_of_module_link_error(
     vm: &mut VirtualMachine,

@@ -31,8 +31,7 @@ impl Site {
     }
 }
 
-/// The 1-based line and UTF-16 column of the specifier that `name` names in the source of `importer_url`.
-// A removable-feature guard enters here (`Bun__positionOfModuleLinkError`): the trimmable link expects a call.
+/// The 1-based line and UTF-16 column of the specifier that `name` names. Not inlined: a removable-feature guard calls it.
 #[cold]
 #[inline(never)]
 pub fn position(

@@ -51,6 +51,8 @@ declare_scope!(Chrome, hidden);
 
 pub(crate) struct ChromeProcess {
     process: ProcessHandle,
+    /// The profile directory bun made for this Chrome; `None` when the caller supplied one.
+    temp_profile: Option<TempProfile>,
     /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
     #[cfg(windows)]
@@ -79,18 +81,14 @@ static INSTANCE: AtomicPtr<ChromeProcess> = AtomicPtr::new(ptr::null_mut());
 #[cfg(windows)]
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
-/// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
-/// renderer/gpu/utility children (the "process model" zygote tree) — tracked
-/// by Chrome's own ProcessSingleton, they exit when the browser process
-/// dies. SIGKILL here takes the browser process, the zygote tree follows.
-/// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
-/// rejectAllAndMarkDead handles promise rejection on the next loop tick.
+/// Called from WebView.closeAll() and dispatchOnExit. The C++ side doesn't touch
+/// JS state; EVFILT_PROC → Bun__Chrome__died → rejectAllAndMarkDead does that.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
         if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
-            let _ = i.process.kill(9);
+            kill_tree(i);
         }
     }
 }
@@ -111,7 +109,112 @@ extern "C" fn Bun__Chrome__retire() {
         GENERATION.fetch_add(1, Ordering::Relaxed);
         chrome.pipes.close();
     }
+    kill_tree(chrome);
+    // The exit hook can no longer reach this Chrome through INSTANCE.
+    if let Some(profile) = chrome.temp_profile.take() {
+        PARKED.lock().push(Parked {
+            pid: chrome.process.process_mut().pid,
+            profile,
+        });
+    }
+}
+
+/// SIGKILLs a running Chrome and, on POSIX, its helpers.
+fn kill_tree(chrome: &ChromeProcess) {
+    #[cfg(unix)]
+    {
+        let process = chrome.process.process_mut();
+        // A reaped pid can belong to another process by now.
+        if process.has_exited() {
+            return;
+        }
+        // SAFETY: plain syscall on a pid; no memory is passed.
+        unsafe { libc::kill(process.pid, libc::SIGKILL) };
+        kill_group(process.pid);
+    }
+    #[cfg(windows)]
     let _ = chrome.process.kill(9);
+}
+
+/// Chrome's helpers outlive the browser by a few ms and write to the profile on the way out.
+#[cfg(unix)]
+fn kill_group(pid: bun_spawn::PidT) {
+    // SAFETY: plain syscall on a pid; no memory is passed.
+    unsafe { libc::kill(-pid, libc::SIGKILL) };
+}
+
+/// Unlike `Process::kill_and_reap`, blocks on macOS too: the thread that one hands a slow reap to is never joined here.
+#[cfg(unix)]
+fn kill_and_reap(pid: bun_spawn::PidT) {
+    let mut status = 0;
+    // SAFETY: plain syscalls on a pid; `status` is a valid out-pointer.
+    unsafe {
+        let reaped = libc::waitpid(pid, &raw mut status, libc::WNOHANG);
+        // ECHILD: the waiter thread reaped it earlier, and the pid may be another process's by now.
+        if reaped < 0 {
+            return;
+        }
+        // A child we cannot signal (EPERM) would never be waited out.
+        if reaped == 0 && libc::kill(pid, libc::SIGKILL) != 0 {
+            return;
+        }
+        kill_group(pid);
+        if reaped == 0 {
+            while libc::waitpid(pid, &raw mut status, 0) == -1
+                && bun_sys::last_errno() == libc::EINTR
+            {}
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_and_reap(pid: bun_spawn::PidT) {
+    use bun_sys::windows as w;
+    unsafe extern "system" {
+        // Opaque kernel HANDLE, validated by the kernel; no memory-safety preconditions.
+        safe fn TerminateProcess(h: w::HANDLE, code: u32) -> w::BOOL;
+    }
+    const PROCESS_TERMINATE: w::DWORD = 0x0001;
+    const SYNCHRONIZE: w::DWORD = 0x0010_0000;
+    // SAFETY: FFI; a null handle means no process has this pid any more.
+    let handle = unsafe { w::OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid as w::DWORD) };
+    if handle.is_null() {
+        return;
+    }
+    // Fails when the process already exited, which the wait then reports.
+    TerminateProcess(handle, 1);
+    let _ = w::kernel32::WaitForSingleObject(handle, 5000);
+    // SAFETY: `handle` came from OpenProcess above.
+    unsafe { w::CloseHandle(handle) };
+}
+
+/// A retired Chrome's profile: deleted by its `on_exit`, or at process exit if that never runs.
+struct Parked {
+    pid: bun_spawn::PidT,
+    profile: TempProfile,
+}
+
+static PARKED: bun_core::Mutex<Vec<Parked>> = bun_core::Mutex::new(Vec::new());
+
+fn take_parked(pid: bun_spawn::PidT) -> Option<TempProfile> {
+    let mut parked = PARKED.lock();
+    let i = parked.iter().position(|p| p.pid == pid)?;
+    Some(parked.swap_remove(i).profile)
+}
+
+/// `dispatch_on_exit` only kills, and some `Global::exit` paths skip it.
+extern "C" fn delete_temp_profiles_at_exit() {
+    // SAFETY: JS-thread-only global; see INSTANCE decl.
+    if let Some(chrome) = unsafe { INSTANCE.load(Ordering::Relaxed).as_mut() } {
+        if let Some(profile) = chrome.temp_profile.take() {
+            kill_and_reap(chrome.process.process_mut().pid);
+            drop(profile);
+        }
+    }
+    for parked in core::mem::take(&mut *PARKED.lock()) {
+        kill_and_reap(parked.pid);
+        drop(parked.profile);
+    }
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
@@ -188,7 +291,12 @@ impl ChromeProcess {
         let mut chrome = unsafe { bun_core::heap::take(this) };
         debug_assert_eq!(process, chrome.process.as_ptr());
         chrome.close_transport();
+        let pid = chrome.process.process_mut().pid;
+        #[cfg(unix)]
+        kill_group(pid);
         if chrome.retired {
+            // Dropping the parked profile deletes it; the browser is reaped now.
+            drop(take_parked(pid));
             return;
         }
         let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
@@ -505,39 +613,33 @@ fn spawn(
         // full-Chrome-only switch). Playwright passes plain --headless
         // (chromium.js:293).
         //
-        // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
-        // CommandLine::Init stops at the first -- after argv[0] on some builds;
-        // order-insensitive on most, but --user-data-dir-first is the defensive
-        // layout every headless harness uses. Without it, ProcessSingleton locks
-        // the default profile (~/Library/Application Support/Google/Chrome) and
-        // aborts if a real Chrome is already running.
-        let data_dir: ZBox = if let Some(d) = user_data_dir {
+        // Without a --user-data-dir, ProcessSingleton locks the default profile.
+        let user_flag: Option<ZBox> = user_data_dir.map(|d| {
             let d = d.to_bytes();
-            let mut v = Vec::with_capacity(16 + d.len());
-            v.extend_from_slice(b"--user-data-dir=");
+            let mut v = Vec::with_capacity(USER_DATA_DIR_FLAG.len() + d.len());
+            v.extend_from_slice(USER_DATA_DIR_FLAG);
             v.extend_from_slice(d);
             ZBox::from_vec(v)
+        });
+        let argv_has_user_data_dir = extra_argv.iter().any(|a| {
+            // SAFETY: caller contract, each entry is a valid NUL-terminated string.
+            let a = unsafe { CStr::from_ptr(*a) }.to_bytes();
+            a == b"--user-data-dir" || a.starts_with(USER_DATA_DIR_FLAG)
+        });
+        // Held here until `attach` takes it: a spawn that fails after the mkdir drops it and deletes the directory.
+        let temp_profile = if user_flag.is_none() && !argv_has_user_data_dir {
+            Some(TempProfile::create()?)
         } else {
-            let mut name_buf = [0u8; 64];
-            let name = bun_paths::fs::FileSystem::tmpname(
-                b"bun-chrome",
-                &mut name_buf,
-                bun_core::fast_random(),
-            )?;
-            let mut dir_buf = path_buffer_pool::get();
-            let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
-            let dir =
-                resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
-            bun_sys::mkdir(dir, 0o700)?;
-            let mut v = Vec::with_capacity(16 + dir.len());
-            v.extend_from_slice(b"--user-data-dir=");
-            v.extend_from_slice(&dir[..]);
-            ZBox::from_vec(v)
+            None
         };
 
-        let mut argv: Vec<*const c_char> = vec![
-            chrome.as_ptr(),
-            data_dir.as_ptr(),
+        let mut argv: Vec<*const c_char> = vec![chrome.as_ptr()];
+        if let Some(flag) = &user_flag {
+            argv.push(flag.as_ptr());
+        } else if let Some(profile) = &temp_profile {
+            argv.push(profile.argv_ptr());
+        }
+        argv.extend_from_slice(&[
             c"--remote-debugging-pipe".as_ptr(),
             c"--headless".as_ptr(),
             c"--no-first-run".as_ptr(),
@@ -561,7 +663,7 @@ fn spawn(
             // No startup window — targets are Target.createTarget'd, not the
             // default about:blank. Saves one tab and the visual-complete wait.
             c"--no-startup-window".as_ptr(),
-        ];
+        ]);
         // User extras last so they can override built-in flags (Chrome's
         // CommandLine last-wins for duplicate switches). Memory is the caller's
         // CString Vector — lives until Bun__Chrome__ensure returns, after which
@@ -590,6 +692,9 @@ fn spawn(
             },
             extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
             argv0: Some(chrome.as_ptr()),
+            // setsid, not setpgid: a background group on a `tostop` terminal stops on its first inherited-stderr write.
+            #[cfg(unix)]
+            detached: true,
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: event_loop,
@@ -608,7 +713,53 @@ fn spawn(
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();
 
-        endpoints.attach(spawned.to_process_handle(event_loop))
+        endpoints.attach(spawned.to_process_handle(event_loop), temp_profile)
+    }
+}
+
+const USER_DATA_DIR_FLAG: &[u8] = b"--user-data-dir=";
+
+/// The `--user-data-dir=<dir>` argument of a Chrome given a fresh temp directory; dropping it deletes the directory.
+struct TempProfile(ZBox);
+
+impl TempProfile {
+    fn create() -> crate::Result<Self> {
+        let mut name_buf = [0u8; 64];
+        let name = bun_paths::fs::FileSystem::tmpname(
+            b"bun-chrome",
+            &mut name_buf,
+            bun_core::fast_random(),
+        )?;
+        let mut dir_buf = path_buffer_pool::get();
+        let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
+        let dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
+        bun_sys::mkdir(dir, 0o700)?;
+        let mut v = Vec::with_capacity(USER_DATA_DIR_FLAG.len() + dir.len());
+        v.extend_from_slice(USER_DATA_DIR_FLAG);
+        v.extend_from_slice(&dir[..]);
+        bun_core::Global::add_exit_callback(delete_temp_profiles_at_exit);
+        Ok(Self(ZBox::from_vec(v)))
+    }
+
+    fn argv_ptr(&self) -> *const c_char {
+        self.0.as_ptr()
+    }
+
+    fn path(&self) -> &[u8] {
+        &self.0.as_bytes()[USER_DATA_DIR_FLAG.len()..]
+    }
+}
+
+impl Drop for TempProfile {
+    fn drop(&mut self) {
+        if let Err(err) = bun_sys::delete_tree_absolute(self.path()) {
+            scoped_log!(
+                Chrome,
+                "could not delete {}: {}",
+                bstr::BStr::new(self.path()),
+                err
+            );
+        }
     }
 }
 
@@ -672,9 +823,14 @@ impl Endpoints {
     }
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
-    fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
+    fn attach(
+        mut self,
+        process: ProcessHandle,
+        temp_profile: Option<TempProfile>,
+    ) -> crate::Result<i32> {
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
             process,
+            temp_profile,
             retired: false,
         }));
         // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
@@ -688,6 +844,8 @@ impl Endpoints {
         };
         if let Err(e) = process.process_mut().watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
+            // Unwatched, so nothing else reaps it.
+            kill_and_reap(process.process_mut().pid);
             // SAFETY: reclaim the Box (drops our process ref).
             drop(unsafe { bun_core::heap::take(self_ptr) });
             self.close_all();
@@ -807,7 +965,11 @@ impl Endpoints {
     }
 
     /// Moves our ends into a [`ChromeProcess`], starts reading replies, and publishes it.
-    fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
+    fn attach(
+        mut self,
+        process: ProcessHandle,
+        temp_profile: Option<TempProfile>,
+    ) -> crate::Result<i32> {
         let pipes = WindowsPipes {
             cmd: core::mem::replace(&mut self.cmd, ptr::null_mut()),
             reply: core::mem::replace(&mut self.reply, ptr::null_mut()),
@@ -817,6 +979,7 @@ impl Endpoints {
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
             process,
+            temp_profile,
             retired: false,
             pipes,
             generation,
@@ -841,7 +1004,7 @@ impl Endpoints {
             unsafe {
                 let mut chrome = bun_core::heap::take(self_ptr);
                 chrome.pipes.close();
-                let _ = chrome.process.kill(9);
+                kill_and_reap(chrome.process.process_mut().pid);
             }
             return Err(err.into());
         }

@@ -192,7 +192,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       schemaInputs: [schema, schemaGenerator],
       schemaGeneratedDirectory: undefined,
       schemaOutputs: [],
-      schemaUsers: [],
       builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
       builtinTableOutputs: [],
       builtinsLeftOut: [],
@@ -213,7 +212,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
     ],
     schemaGeneratedDirectory: aotGeneratedDirectory(wk),
     schemaOutputs: aotGeneratedFiles(lists, "SCHEMA"),
-    schemaUsers: handwrittenAotFiles(wk.JSC),
     builtinTableInputs: [
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS"),

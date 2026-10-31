@@ -1,6 +1,11 @@
 //! Zstandard (RFC 8878). A port of https://github.com/facebook/zstd v1.5.7 (LICENSE.md): the same bytes out for the
 //! same bytes in, in both directions, and the same errors. Where that is not so, a comment tells what the C library does.
-#![feature(hint_prefetch, mpmc_channel, vec_push_within_capacity)]
+#![feature(
+    adt_const_params,
+    hint_prefetch,
+    mpmc_channel,
+    vec_push_within_capacity
+)]
 #![forbid(unsafe_code)]
 // Frames come from anywhere and a panic aborts the process.
 #![deny(

@@ -6,8 +6,8 @@ use core::mem;
 use super::hist;
 use super::huf::HufRepeat;
 use super::internal::{
-    BlockSrc, Common, Descent, DictMatchState, DictMode, DictTree, EntropyCTables, Hasher, Match,
-    MatchState, Near, Nodes, OptState, ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore,
+    BlockSrc, Common, Descent, DictMatchState, DictMode, DictTree, EntropyCTables, Hasher, Hints,
+    Match, MatchState, Near, Nodes, OptState, ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore,
     SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, bt_look_ahead, bt_nodes, bt_set_children, bt_walk,
     hash3_of, index_overlap_check, ll_code, ml_code, new_rep, offset_to_offbase, table_get,
     table_put,
@@ -20,6 +20,10 @@ use crate::util::{BUG, SliceExt, highbit32, read_le32};
 
 /// How much a literal adds to its frequency, so that frequencies adapt fast to new statistics.
 const ZSTD_LITFREQ_ADD: u32 = 2;
+/// From that many positions on, [`Trees::update_tree`] gives fewer hints on the way down.
+const LONG_RUN: u32 = 32;
+/// And none if the way down is at most that many positions: further down, it gets to bytes that are not at hand.
+const SHORT_WAY_DOWN: u32 = 32;
 const ZSTD_MAX_PRICE: i32 = 1 << 30;
 /// A first block of at most this size is priced by fixed rules, not by statistics.
 const ZSTD_PREDEF_THRESHOLD: usize = 8;
@@ -567,7 +571,7 @@ impl<'a> Trees<'a> {
     /// that is met on the way, which are all at least `low`, and what it has in common with `ip`, and returns whether
     /// to go on. Returns how many more positions could have been compared.
     #[inline(always)]
-    fn walk(
+    fn walk<const HINTS: Hints>(
         &mut self,
         ip: u32,
         bytes: u64,
@@ -589,7 +593,7 @@ impl<'a> Trees<'a> {
         }
 
         let descent = Descent::new(self.bt, curr);
-        bt_walk::<false>(
+        bt_walk::<false, HINTS>(
             self.bt,
             &self.input,
             ip,
@@ -604,7 +608,7 @@ impl<'a> Trees<'a> {
     /// `ZSTD_insertBt1`: adds `curr`, which is at least 8 bytes before the end, to its tree. `target` is up to where
     /// the caller is filling them. Returns how many positions to move forward.
     #[inline(always)]
-    fn insert_bt1(&mut self, curr: u32, target: u32) -> Result<u32> {
+    fn insert_bt1<const HINTS: Hints>(&mut self, curr: u32, target: u32) -> Result<u32> {
         let ip = curr.wrapping_sub(self.input.dict_limit);
         let bytes = self.input.near.read64(ip).ok_or(BUG)?;
         // Only the positions that are still in the window once the trees are filled are of use.
@@ -612,7 +616,7 @@ impl<'a> Trees<'a> {
         let mut match_end_idx = curr.wrapping_add(8 + 1);
         let mut best_length = 8u32;
 
-        self.walk(ip, bytes, window_low, |match_index, common| {
+        self.walk::<HINTS>(ip, bytes, window_low, |match_index, common| {
             if common.len > best_length {
                 cold_path();
                 best_length = common.len;
@@ -635,17 +639,24 @@ impl<'a> Trees<'a> {
     /// `ZSTD_updateTree_internal`: adds the positions from `next_to_update` up to `target` to the trees.
     #[inline(always)]
     fn update_tree(&mut self, target: u32) -> Result<()> {
-        self.update_tree_in_part(target, target)?;
+        if target.saturating_sub(self.next_to_update) < LONG_RUN || !self.input.far {
+            self.update_tree_in_part::<{ Hints::All }>(target, target)?;
+        // A match skipped them: they go down past its positions, which follow each other too and so are mostly at hand.
+        } else if self.nb_compares > SHORT_WAY_DOWN {
+            self.update_tree_in_part::<{ Hints::Bytes }>(target, target)?;
+        } else {
+            self.update_tree_in_part::<{ Hints::None }>(target, target)?;
+        }
         self.next_to_update = target;
         Ok(())
     }
 
     /// The part of [`Self::update_tree`] that gets to `up_to`, or somewhat beyond.
     #[inline(never)]
-    fn update_tree_in_part(&mut self, up_to: u32, target: u32) -> Result<()> {
+    fn update_tree_in_part<const HINTS: Hints>(&mut self, up_to: u32, target: u32) -> Result<()> {
         let mut idx = self.next_to_update;
         while idx < up_to {
-            idx = idx.wrapping_add(self.insert_bt1(idx, target)?);
+            idx = idx.wrapping_add(self.insert_bt1::<HINTS>(idx, target)?);
         }
         self.next_to_update = idx;
         Ok(())
@@ -839,7 +850,7 @@ impl<'a> Trees<'a> {
     ) -> Result<u32> {
         let curr = ip.wrapping_add(self.input.dict_limit);
         let mut is_over = false;
-        let nb_compares = self.walk(ip, bytes, match_low, |match_index, common| {
+        let left = self.walk::<{ Hints::All }>(ip, bytes, match_low, |match_index, common| {
             if common.len > found.best_length {
                 if common.len > found.match_end_idx.wrapping_sub(match_index) {
                     found.match_end_idx = match_index.wrapping_add(common.len);
@@ -861,7 +872,7 @@ impl<'a> Trees<'a> {
             }
             Ok(true)
         })?;
-        Ok(if is_over { 0 } else { nb_compares })
+        Ok(if is_over { 0 } else { left })
     }
 
     /// [`Self::get_all_matches`] for `ip`, which comes after literals, and then for the positions after it, before
@@ -1010,7 +1021,7 @@ pub(crate) fn update_tree(
         ms.check_cancelled()?;
         let up_to = ms.next_to_update.saturating_add(1 << 12).min(target);
         let mut trees = Trees::new(ms, prefix, no_dict, None, iend, mls)?;
-        trees.update_tree_in_part(up_to, target)?;
+        trees.update_tree_in_part::<{ Hints::All }>(up_to, target)?;
         ms.next_to_update = trees.next_to_update;
     }
     ms.next_to_update = target;

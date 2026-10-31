@@ -1,6 +1,7 @@
 //! `zstd_compress_internal.h`: what the parts of the compressor share.
 
 use core::hint::{Locality, prefetch_read};
+use core::marker::ConstParamTy;
 use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
 use std::sync::Arc;
 
@@ -1369,12 +1370,21 @@ pub(crate) fn bt_look_ahead<const ROOT: u32, const BELOW: u32>(
     }
 }
 
+/// What each step of [`bt_walk`] tells, where `input.far`, of what the next one may read. Not [`bt_look_ahead`].
+#[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
+pub(crate) enum Hints {
+    /// The nodes and the bytes.
+    All,
+    Bytes,
+    None,
+}
+
 /// Goes down the tree whose root is `root` for the position `ip` of `input.near`, which `descent` is for and which
 /// becomes the root. `visit` is called with each position that is met on the way, which are all at least `low` and at
 /// most `nb_compares`, and what it has in common with `ip`, and returns whether to go on. Returns how many more positions
 /// could have been compared. `BY_HEAD` is whether to try [`Near::compare_head`], which is for ways down that are short.
 #[inline(always)]
-pub(crate) fn bt_walk<const BY_HEAD: bool>(
+pub(crate) fn bt_walk<const BY_HEAD: bool, const HINTS: Hints>(
     bt: &mut Nodes,
     input: &TreeInput<'_>,
     ip: u32,
@@ -1397,8 +1407,12 @@ pub(crate) fn bt_walk<const BY_HEAD: bool>(
         // Whichever way it goes, the next step does not wait as long for memory.
         if input.far {
             for child in children {
-                bt_prefetch(bt, child);
-                near.prefetch(child.wrapping_sub(dict_limit).wrapping_add(from));
+                if matches!(HINTS, Hints::All) {
+                    bt_prefetch(bt, child);
+                }
+                if matches!(HINTS, Hints::All | Hints::Bytes) {
+                    near.prefetch(child.wrapping_sub(dict_limit).wrapping_add(from));
+                }
             }
         }
         let match_pos = match_index.wrapping_sub(dict_limit);

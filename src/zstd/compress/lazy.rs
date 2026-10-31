@@ -6,7 +6,7 @@ use core::ops::Range;
 
 use super::internal::{
     BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, Hash8, Hasher,
-    K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE, RowTags,
+    Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE, RowTags,
     SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low, bt_nodes, bt_set_children,
     bt_walk, count_2segments, hash_ptr, hashed_swap, index_overlap_check, offbase_is_offset,
@@ -219,7 +219,7 @@ impl<'a> Dubt<'a> {
         let mut search_dict = true;
         match_index = table_get(self.hash_table, h);
         table_put(self.hash_table, h, curr);
-        let nb_compares = bt_walk::<true>(
+        let nb_compares = bt_walk::<true, { Hints::All }>(
             self.bt,
             &self.input,
             ip,
@@ -438,7 +438,7 @@ fn sort_dubt1(
 ) -> Result<()> {
     // The next sorted candidate is in the first slot. The other one has the previous unsorted candidate.
     let [next_sorted, _] = bt_children(bt, curr);
-    bt_walk::<true>(
+    bt_walk::<true, { Hints::All }>(
         bt,
         input,
         curr.wrapping_sub(input.dict_limit),

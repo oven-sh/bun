@@ -331,15 +331,23 @@ type Compiled = Map<string, { output: string } | { error: string }>;
 const compiled: Compiled = new Map();
 // Same corpus, built a second time with `minify: { syntax: true }`.
 const compiledMinify: Compiled = new Map();
+// The `@expectNothingCompiled` fixtures, built without the compiler.
+const nothingCompiled = compilable.filter(f => f.pragmas.has("expectNothingCompiled"));
+const asWritten: Compiled = new Map();
 
 // Bun.build aborts the print stage when ANY entrypoint errors, so we can't get
 // per-file output from a partially-failing batch. Instead: build, record the
 // erroring files from `result.logs`, drop them, and rebuild until the batch is
 // clean. In practice this converges in 1-2 rounds (only a handful of fixtures
 // are genuine parse errors).
-async function compileInto(into: Compiled, minify: false | { syntax: true }): Promise<void> {
+async function compileInto(
+  into: Compiled,
+  minify: false | { syntax: true },
+  reactCompiler = true,
+  of = compilable,
+): Promise<void> {
   const byInput = new Map<string, Fixture>();
-  for (const f of compilable) byInput.set(f.inputPath, f);
+  for (const f of of) byInput.set(f.inputPath, f);
   let pending = new Set(byInput.keys());
 
   for (let round = 0; pending.size > 0; round++) {
@@ -354,7 +362,7 @@ async function compileInto(into: Compiled, minify: false | { syntax: true }): Pr
       external: ["*"],
       treeShaking: false,
       minify,
-      reactCompiler: true,
+      reactCompiler,
       reactCompilerParseTestPragmas: true,
       // Upstream's Babel harness enables the TS plugin unconditionally, so
       // many `.js` fixtures contain TS syntax (casts, type params).
@@ -396,6 +404,7 @@ async function compileInto(into: Compiled, minify: false | { syntax: true }): Pr
 async function compileAll(): Promise<void> {
   await compileInto(compiled, false);
   await compileInto(compiledMinify, { syntax: true });
+  await compileInto(asWritten, false, false, nothingCompiled);
 }
 
 describe("react-compiler upstream fixtures", () => {
@@ -420,10 +429,7 @@ describe("react-compiler upstream fixtures", () => {
 
     fn(skip ? `SKIP (${skip})` : todo ? `TODO (${todo})` : "compile", async () => {
       const expected = parseExpect(await Bun.file(f.expectPath).text());
-      const isErrorFixture =
-        expected.error != null ||
-        pragmas.has("expectNothingCompiled") ||
-        /(^|\/)(error|todo\.error|bail)/.test(basename(name));
+      const isErrorFixture = expected.error != null || /(^|\/)(error|todo\.error|bail)/.test(basename(name));
 
       // `@panicThreshold:"none"` on an error-named fixture means upstream
       // expects the compiler to *bail* (skip the function) rather than throw,
@@ -439,6 +445,17 @@ describe("react-compiler upstream fixtures", () => {
 
       if (SNAPSHOT_BUN_OUTPUT) {
         expect({ buildError, output }).toMatchSnapshot();
+      }
+
+      if (pragmas.has("expectNothingCompiled")) {
+        // Upstream's harness fails such a fixture if a function of it is compiled, and if one has an error.
+        const written = asWritten.get(name);
+        expect({ fixture: name, buildError, output }).toEqual({
+          fixture: name,
+          buildError: null,
+          output: written && "output" in written ? written.output : null,
+        });
+        return;
       }
 
       if (isErrorFixture || isBailFixture) {

@@ -8,6 +8,7 @@ mod eval;
 mod identifiers;
 mod lexical_owners;
 mod plan;
+mod registries;
 mod state;
 #[cfg(test)]
 pub(in crate::lower) mod testing;
@@ -20,6 +21,7 @@ use bun_sema::hir::{self};
 use bun_sema::program::{CompiledModule, FileId};
 
 use super::FunctionLowering;
+use super::transpiled::TranspiledFile;
 use crate::builtins::ResolvedBuiltins;
 use crate::ir::{ClassSlot, DeclaredType, ValueId};
 use crate::modules::ModuleGraph;
@@ -32,6 +34,7 @@ pub(in crate::lower) use self::environments::environment_layout;
 pub(crate) use self::eval::lower_direct_eval;
 pub(crate) use self::identifiers::find_tested_local;
 pub(in crate::lower) use self::plan::is_let_declaration;
+pub(in crate::lower) use self::registries::RegistryNames;
 pub(crate) use self::state::ScopeState;
 pub(in crate::lower) use self::state::{DeadZone, LocalBinding};
 pub(in crate::lower) use self::walk::{Initialization, WalkedFunction, WalkedFunctionId};
@@ -41,8 +44,11 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) hir: &'x hir::File<'s>,
     pub(crate) bound: &'x Bound<'s>,
     pub(crate) compiled: &'x CompiledModule<'s>,
+    pub(in crate::lower) transpiled: Option<&'x TranspiledFile>,
     pub(crate) modules: &'x ModuleGraph,
     pub(crate) builtins: &'x ResolvedBuiltins,
+    /// Whether the name is one for a FinalizationRegistry.
+    pub(crate) holds_registry: &'x dyn Fn(SymbolId) -> bool,
     /// What a closure has room for in this build.
     pub(crate) max_captures: usize,
     /// How many values the blocks of one `try` may hand to its handler in this build.

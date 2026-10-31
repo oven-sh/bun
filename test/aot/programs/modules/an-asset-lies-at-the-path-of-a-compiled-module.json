@@ -1,1 +1,0 @@
-{ "build": ["--asset", "./data"], "entryPoints": ["./data/page.js"], "skipInShell": "it needs node:fs" }

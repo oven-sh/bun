@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { measureCommand } from "./analysis-scaling/measure-check";
+import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
 import { test } from "./supported";
 
 // A store by name that creates a field of an instance of a class asks a filter by the Structure whether anything above the instance stops it. Only a miss of the lookup tables fills the filter,
@@ -40,14 +40,17 @@ const files = {
     if (!collectsLast) Bun.gc(true);
     for (let i = rounds; i < rounds + warm; i++) store(list[i], i);
     if (collectsLast) Bun.gc(true);
-    for (let i = 0; i < rounds; i++) store(list[i], i);
+    // Without them, what is left of a round is its allocation and its share of the collections.
+    const stored = process.env.WITHOUT_MEASURED_STORES ? 0 : rounds;
+    for (let i = 0; i < stored; i++) store(list[i], i);
     let sum = 0;
-    for (let i = 0; i < list.length; i++) sum += list[i].late - i;
+    for (let i = 0; i < stored; i++) sum += list[i].late - i;
+    for (let i = rounds; i < list.length; i++) sum += list[i].late - i;
     console.log(sum);
   `,
 };
 
-const skipped = isDebug || isASAN || isWindows;
+const skipped = isDebug || isASAN || !countsInstructions();
 
 test.skipIf(skipped)(
   "a collection does not make the stores by name that create fields of instances dearer",
@@ -68,10 +71,10 @@ test.skipIf(skipped)(
     });
     const env = { ...bunEnv, BUN_JSC_useConcurrentGC: "0", BUN_JSC_numberOfGCMarkers: "1" };
     const [few, many] = [20_000, 220_000];
-    const aStore = async (when: string) => {
+    const aStore = async (when: string, more: Record<string, string> = {}) => {
       const costs: number[] = [];
       for (const rounds of [few, many]) {
-        const run = await measureCommand(String(dir), [executable, String(rounds), when], 120_000, env);
+        const run = await measureCommand(String(dir), [executable, String(rounds), when], 120_000, { ...env, ...more });
         expect(run.stdout).toBe("0\n");
         if (run.instructions === undefined) return undefined;
         costs.push(run.instructions);
@@ -96,6 +99,21 @@ test.skipIf(skipped)(
       const [first, last] = [await countsOf("first"), await countsOf("last")];
       for (const line of first.difference(last)) console.error("in front:", line);
       for (const line of last.difference(first)) console.error("behind:", line);
+      // Is it the stores at all? macOS counts the kernel as well, and a collection more costs about as much a round.
+      const [idleBefore, idleBehind] = [
+        await aStore("first", { WITHOUT_MEASURED_STORES: "1" }),
+        await aStore("last", { WITHOUT_MEASURED_STORES: "1" }),
+      ];
+      console.error(`without the measured stores: ${idleBefore?.toFixed(1)} | ${idleBehind?.toFixed(1)}`);
+      for (const when of ["first", "last"]) {
+        const logging = { ...env, BUN_JSC_logGC: "1" };
+        const { stderr } = await measureCommand(String(dir), [executable, String(many), when], 120_000, logging);
+        const collections = stderr.match(/(?:Eden|Full)Collection/g) ?? [];
+        // What /usr/bin/time -l says of the kernel's part.
+        const ofKernel =
+          stderr.match(/^.* sys *$|^ *\d+ +(?:page reclaims|page faults|peak memory footprint)$/gm) ?? [];
+        console.error(`${when}:`, [collections.join(" "), ...ofKernel.map(line => line.trim())].join("; "));
+      }
     }
     // A round is an allocation, its share of two collections and the store. The long way costs 60 instructions more.
     expect(behind - before).toBeLessThan(20);

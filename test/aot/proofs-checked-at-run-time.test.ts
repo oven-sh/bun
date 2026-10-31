@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump, withoutCrashReport } from "./harness/commands";
 import { run as spawned } from "./harness/run";
-import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { describe, test } from "./supported";
 
 // --aot-testing=CheckProofsAtRunTime builds the product's code and asks at run time what that code takes on trust. These tests plant false proofs to see that it finds them:

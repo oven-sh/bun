@@ -14,6 +14,7 @@ import { parseArgs } from "util";
 import { packedFiles, writeProgram } from "../generate";
 import { respellFiles, spellings, type Spelling } from "./respell-property-names";
 import { codeOfImage } from "./same-output";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 
 type Built = { functions: Map<string, { size: number; hash: string }>; output: string; failure?: string };
 /** One way to write a program: `rewrite` changes the files of a folder in place. */
@@ -42,7 +43,7 @@ export function functionsByOrder(map: string, code: Buffer) {
 
 /** Where the program `<topic>/<file or folder>` of ../programs lies. One that a `*.programs` file of its topic holds is written into `folder`. */
 export function storedProgram(program: string, folder: string) {
-  const stored = join(import.meta.dir, "..", "programs", program);
+  const stored = join(import.meta.dir, "..", "parallel", program);
   if (existsSync(stored)) return stored;
   const [topic, name] = [program.slice(0, program.indexOf("/")), program.slice(program.indexOf("/") + 1)];
   const packed = packedFiles(topic);
@@ -174,7 +175,7 @@ export async function compareFromCommandLine(tool: string, forms: readonly Form[
     process.exit(2);
   }
   const programs = positionals.flatMap(path => programsIn(resolve(path)));
-  const work = mkdtempSync(join(tmpdir(), "every-form-"));
+  const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "every-form-")));
   const differences: Difference[] = [];
   const waiting = [...programs.entries()];
   await Promise.all(

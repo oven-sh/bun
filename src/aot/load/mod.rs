@@ -12,10 +12,14 @@ pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
 pub(crate) mod macros;
 pub(crate) mod module_paths;
+pub(crate) mod modules_with_queries;
 pub(crate) mod named_loads;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
+pub mod replaced_builtins;
+pub(crate) mod replaced_by_tests;
+pub(crate) mod replaced_modules;
 pub(crate) mod runtime_declarations;
 pub(crate) mod runtime_host;
 pub(crate) mod runtime_modules;
@@ -54,6 +58,12 @@ pub fn host_platform() -> Platforms {
 
 pub(crate) fn is_host_path(path: &[u8]) -> bool {
     path.starts_with(HOST_ROOT)
+}
+
+pub(crate) fn is_in_archive_of_bun(path: &[u8]) -> bool {
+    bun_sema_driver::host::is_bundled(path)
+        || path.starts_with(bun_builtin_sources::VIRTUAL_ROOT)
+        || path.starts_with(runtime_types::PACKAGES)
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {

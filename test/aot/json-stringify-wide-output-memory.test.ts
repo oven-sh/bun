@@ -1,10 +1,12 @@
+// Runs alone: it judges by the memory that a program holds.
 // The compiled JSON.stringify writes a large 16-bit result straight into the string it returns, with no second copy of it.
 // Peak RSS over the baseline, in units of the length of the result, measured on Linux x64: 4.9 so, 6.9 with the second copy.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { built } from "./harness/commands";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
-import { built } from "./run-programs";
 import { test } from "./supported";
 
 const files = {
@@ -44,6 +46,7 @@ test.skipIf(isASAN || isDebug)(
     const baseline = await measure("nothing");
     const wide = await measure("stringify");
     expect(wide.length).toBeGreaterThan(18_000_000);
+    reads("JSON.stringify of wide text", (wide.peak - baseline.peak) / 2 ** 20, (5.8 * wide.length) / 2 ** 20, "MB");
     expect(wide.peak - baseline.peak).toBeLessThan(5.8 * wide.length);
   },
   240_000,

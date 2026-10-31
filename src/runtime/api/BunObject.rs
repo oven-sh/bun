@@ -20,9 +20,6 @@ pub(crate) fn get_public_path_with_asset_prefix(
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
-        // NOTE: spec is `VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform)`;
-        // that wrapper is stateless and forwards to bun_paths — dispatch on runtime `platform`
-        // here to keep this fn callable without const-generic plumbing through `transpiler.fs`.
         match platform {
             Platform::Posix => {
                 resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
@@ -129,14 +126,9 @@ pub(crate) mod bun_object {
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
                     #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        this: *mut JSGlobalObject,
-                        object: *mut JSObject,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, o) = unsafe { (&*this, &*object) };
-                        bun_jsc::to_js_host_call(g, || {
-                            IntoLazyPropResult::into_lazy_prop_result($target(g, o))
+                    pub unsafe fn $sym(this: &JSGlobalObject, object: &JSObject) -> JSValue {
+                        bun_jsc::to_js_host_call(this, || {
+                            IntoLazyPropResult::into_lazy_prop_result($target(this, object))
                         })
                     }
                 }
@@ -685,23 +677,12 @@ fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
 // into `bun_jsc`'s graph. Semantically it is
 // per-JS-thread state (one VM per thread), so a `thread_local` here is
 // equivalent and breaks the cycle without type erasure.
-//
-// `name_storage` owns the user-supplied editor name so `EditorContext.name`
-// (typed `&'static [u8]`) can borrow it
-// without leaking; the borrow lives as long as the thread.
-struct EditorContextSlot {
-    ctx: crate::cli::open::EditorContext,
-    name_storage: Vec<u8>,
-}
 thread_local! {
-    static EDITOR_CONTEXT: core::cell::RefCell<EditorContextSlot> =
-        const { core::cell::RefCell::new(EditorContextSlot {
-            ctx: crate::cli::open::EditorContext {
-                editor: None,
-                name: b"",
-                path: b"",
-            },
-            name_storage: Vec::new(),
+    static EDITOR_CONTEXT: core::cell::RefCell<crate::cli::open::EditorContext> =
+        const { core::cell::RefCell::new(crate::cli::open::EditorContext {
+            editor: None,
+            name: Vec::new(),
+            path: Vec::new(),
         }) };
 }
 
@@ -714,44 +695,22 @@ pub(crate) fn open_in_editor<'a>(
     let editor_name = options.editor.filter(|name| !name.is_empty());
 
     EDITOR_CONTEXT.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let slot = &mut *slot;
-        let edit = &mut slot.ctx;
+        let edit = &mut *cell.borrow_mut();
         let env = vm.transpiler.env_mut();
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            let prev_name = edit.name;
-
-            if !strings::eql_long(prev_name, name, true) {
+            if !strings::eql_long(&edit.name, name, true) {
                 let prev = core::mem::take(edit);
-                // Own the bytes in `name_storage` and
-                // hand back a thread-lifetime borrow.
-                let prev_storage = core::mem::replace(&mut slot.name_storage, name.to_vec());
-                // SAFETY: `name_storage` lives in a thread_local that
-                // outlives any caller; we never reallocate it while
-                // `edit.name` is observed (single-threaded JS VM).
-                edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                edit.name = name.to_vec();
                 edit.detect_editor(env);
                 editor_choice = edit.found();
                 if editor_choice.is_none() {
-                    slot.name_storage = prev_storage;
                     *edit = prev;
                     return Err(heap.error(format_args!(
                         "Could not find editor \"{}\"",
                         bstr::BStr::new(name),
                     )));
-                } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                    // `detect_editor` aliased `path` to `name` (absolute
-                    // editor path). `name` is backed by `slot.name_storage`,
-                    // which a later call may drop while the detached editor
-                    // thread is still reading argv[0]. Give `path`
-                    // process-lifetime storage, matching every other
-                    // `detect_editor` branch.
-                    edit.path = bun_resolver::fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(edit.path)
-                        .expect("unreachable");
                 }
             }
         }
@@ -773,7 +732,7 @@ pub(crate) fn open_in_editor<'a>(
             return Err(heap.error(format_args!("No file path specified")));
         }
 
-        if let Err(err) = editor.open(edit.path, path, options.line, options.column) {
+        if let Err(err) = editor.open(&edit.path, path, options.line, options.column) {
             return Err(heap.error(format_args!("Opening editor failed {}", err.name())));
         }
 
@@ -823,9 +782,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
+            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
+}
+
+/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
+/// A path in the executable is its own answer.
+fn find_source_path_of_compiled_file(
+    specifier: &BunString,
+    resolved: &BunString,
+) -> Option<BunString> {
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let program = graph.compiled_program.as_ref()?;
+    program.root_on_build_machine()?;
+    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+        return None;
+    }
+    let path = resolved.to_utf8();
+    let public_root =
+        bun_standalone_graph::StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX
+            .as_bytes();
+    let source_path = program.source_path_of_public(public_root, path.slice())?;
+    Some(BunString::clone_utf8(&source_path))
 }
 
 fn resolve_with_args<const IS_FILE_PATH: bool>(
@@ -1495,7 +1477,11 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
+    // `bun run --aot` and `bun test --aot` hold a compiled program and are no executable that was shipped.
+    JSValue::js_boolean(
+        global_this.bun_vm().standalone_module_graph.is_some()
+            && !crate::cli::run_compiled::runs_compiled_code(),
+    )
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {

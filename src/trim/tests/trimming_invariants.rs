@@ -600,8 +600,7 @@ fn close_over_followed_edges(table: &ToyTable, seed: FeatureSet) -> FeatureSet {
 
 fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
     use UnseenCodeCause::{
-        EvaluatesText, FlowGaveUp, LoadsCodeByName, LoadsModuleByName, RunsMachineCode,
-        RunsUnseenCode,
+        EvaluatesText, LoadsCodeByName, LoadsModuleByName, RunsMachineCode, RunsUnseenCode,
     };
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
@@ -619,12 +618,12 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
             ]));
             features
         }
-        FlowGaveUp | EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
+        EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
             .iter()
             .filter(|feature| {
                 let is_added_for_cause = matches!(cause, RunsUnseenCode | RunsMachineCode)
                     && *feature == Feature::NativeAddons;
-                let has_to_be_named = cause != FlowGaveUp && only_when_named.contains(*feature);
+                let has_to_be_named = only_when_named.contains(*feature);
                 is_added_for_cause
                     || (feature.is_engine()
                         && !outside_language.contains(feature)
@@ -659,6 +658,14 @@ fn check_plan(
     }
     if used.names(Feature::ShadowRealm) {
         seed.insert(Feature::RuntimeTranspiler);
+    }
+    if used.starts_workers_from_unseen_code && used.uses(Feature::WorkerConstructor) {
+        seed.union_with(&features_opened_by(UnseenCodeCause::LoadsCodeByName));
+        seed.union_with(&FeatureSet::from_features(&[
+            Feature::PostMessage,
+            Feature::MessageChannel,
+            Feature::StructuredClone,
+        ]));
     }
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {
@@ -805,6 +812,56 @@ fn removable_code(range: AddressRange, set: u16) -> ToyRange {
         is_code: true,
         can_be_cut: true,
         can_be_filled: true,
+    }
+}
+
+#[test]
+fn executable_on_a_template_is_what_the_same_build_on_the_whole_file_gives() {
+    const PAGE: u64 = 0x1000;
+    let pages = |start: u64, count: u64| AddressRange {
+        start,
+        end: start + count * PAGE,
+    };
+    let for_template = TrimRequest {
+        is_template: true,
+        ..TrimRequest::default()
+    };
+    let in_few_places = |target: &&Target| target.format == ExecutableFormat::Pe;
+    for target in ALL_TARGETS.iter().filter(in_few_places) {
+        let layout = layout_of(*target);
+        // More places than the file can be cut in. In every ten pages: what no program uses, and what this program does not use.
+        let first = layout.code.start + NEVER_REMOVED_BYTES;
+        let ranges = (first..layout.code.end - 10 * PAGE)
+            .step_by(10 * PAGE as usize)
+            .zip(0u64..)
+            .flat_map(|(start, index)| {
+                [
+                    removable_code(pages(start + PAGE, 1 + index % 4), 0),
+                    removable_code(pages(start + 6 * PAGE, 1 + index % 3), 1),
+                ]
+            });
+        let table = ToyTable {
+            sets: vec![vec![Feature::Jit], vec![chosen_features()[0]]],
+            ..create_table(ranges.collect())
+        };
+        let whole = build_executable(&layout, Some(&encode_table(&table)), &[]);
+        let label = format!("{target:?} template");
+        let template = trim(&label, whole.clone(), &nothing_used(), &for_template);
+        assert!(
+            template.summary.uncut.is_some(),
+            "{label}: every place was cut"
+        );
+        assert!(
+            template.after.len() < whole.len(),
+            "{label}: nothing was cut"
+        );
+
+        let label = format!("{target:?} on the whole file");
+        let once = trim(&label, whole, &nothing_used(), &removing_unused());
+        let label = format!("{target:?} on the template");
+        let twice = trim(&label, template.after, &nothing_used(), &removing_unused());
+        assert!(twice.after == once.after, "{label}: other bytes");
+        check_trimmed(&label, &layout, &table, &twice, &[]);
     }
 }
 

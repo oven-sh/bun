@@ -1,4 +1,0 @@
-{
-  "build": ["--feature", "SOME_FLAG"],
-  "reference": "compiled"
-}

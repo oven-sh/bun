@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { existsSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -31,6 +31,7 @@ const accepted = [
   "disable-in=3",
   "limit=RegExpPatternLengthWithCode:4",
   "limit=reg-exp-pattern-length-with-code:4",
+  "limit=MaxDataNodes:1",
   "heat=everything-is-cold",
   "testing=ignore-branch-hints,force-gc-slow-paths",
   "testing=ignore-expected-types",
@@ -52,7 +53,6 @@ const rejected = [
   ["only-passes=NoSuchPass", "--aot-only-passes=NoSuchPass: unknown pass NoSuchPass"],
   ["disable-in=0:0", "--aot-disable-in=0:0: the count must be above 0"],
   ["limit=RegExpPatternLengthWithCode:many", "--aot-limit=RegExpPatternLengthWithCode:many: many is not a number"],
-  ["limit=MaxDataNodes:1", "--aot-limit=MaxDataNodes:1: the limit MaxDataNodes fails the build and cannot be lowered"],
   ["layout-seed=seven", "--aot-layout-seed=seven: seven is not a number"],
   ["testing=DropGuard", "--aot-testing=DropGuard: use drop-guard=<Opcode>:<n>"],
   ["threads=many", 'Invalid value for --aot-threads: "many". Must be a whole number above zero'],

@@ -232,6 +232,8 @@ struct Summary<'a, 's> {
     analysis: &'a FileAnalysis<'s>,
     names: MemberNames,
     uses: ImportUses,
+    /// `CodeOptions::ignores_declared_side_effects`
+    runs_all_that_is_loaded: bool,
 }
 
 impl Summary<'_, '_> {
@@ -402,7 +404,10 @@ impl Summary<'_, '_> {
         for (symbol, imported) in self.bindings_of(import) {
             match (imported, self.find_members_read(symbol)) {
                 (Some(name), _) => names.push(name),
-                (None, Some(members)) if !self.hir[import].is_deferred => {
+                // The bundler loads every file behind `import *`, and leaves out those that nothing is read of only if they may go.
+                (None, Some(members))
+                    if !self.hir[import].is_deferred && !self.runs_all_that_is_loaded =>
+                {
                     names.extend_from_slice(members);
                 }
                 (None, _) => return Asked::All,
@@ -573,7 +578,8 @@ pub(super) fn summarize_requests<'s>(
     let may_be_barrel = code.analyzed.side_effects == DeclaredSideEffects::None
         && analysis.module_format == ModuleFormat::Esm
         && key.loader == HostLoader::default()
-        && !context.is_entry_point(key);
+        && !context.is_entry_point(key)
+        && context.inputs.loaded_before.is_none();
     let mut summary = Summary {
         hir,
         bound,
@@ -585,6 +591,7 @@ pub(super) fn summarize_requests<'s>(
             finally: context.atoms.intern(b"finally"),
         },
         uses: ImportUses::default(),
+        runs_all_that_is_loaded: context.inputs.code.ignores_declared_side_effects,
     };
     summary.collect_uses(may_be_barrel);
     let mut asked = Vec::with_capacity(target_count);
@@ -636,6 +643,34 @@ pub(super) fn erase_waiting_sites(
         );
         code.resolutions[it.site as usize] = SiteResolution::Constant(CodeResolution::Erased);
     }
+    let mut is_kept = loaded_targets.iter().map(|&target| target != NOT_LOADED);
+    code.targets.retain(|_| is_kept.next().unwrap_or(true));
+    loaded_targets.retain(|&target| target != NOT_LOADED);
+    code.index_targets_by_specifier();
+}
+
+/// `CodeHost::follows_imports_on_request`: what nothing asked for is as if it were not written.
+pub(super) fn erase_imports_not_followed(
+    code: &mut LoadedCode<'_, '_>,
+    loaded_targets: &mut Vec<u32>,
+) {
+    debug_assert_eq!(code.targets.len(), loaded_targets.len());
+    let mut next_target = 0;
+    for resolution in &mut code.resolutions {
+        let targets = next_target..next_target + files_of(*resolution).count();
+        next_target = targets.end;
+        // Another import of the file may have led to some of the files that a computed name stands for.
+        if loaded_targets[targets.clone()].contains(&NOT_LOADED) {
+            *resolution = SiteResolution::Constant(CodeResolution::Erased);
+            loaded_targets[targets].fill(NOT_LOADED);
+        }
+    }
+    code.implied.retain(|&implied| {
+        let has_file = matches!(implied, CodeResolution::File(_));
+        next_target += usize::from(has_file);
+        !has_file || loaded_targets[next_target - 1] != NOT_LOADED
+    });
+    debug_assert_eq!(next_target, loaded_targets.len());
     let mut is_kept = loaded_targets.iter().map(|&target| target != NOT_LOADED);
     code.targets.retain(|_| is_kept.next().unwrap_or(true));
     loaded_targets.retain(|&target| target != NOT_LOADED);

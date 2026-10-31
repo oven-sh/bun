@@ -43,6 +43,9 @@
 [bun_format]
 "field_valid_only_when:src/format/css/postcss.rs" = 1
 
+[bun_glob]
+"unused_pub:src/glob/lib.rs" = 1
+
 [bun_http]
 "bound_checked_only_in_debug:src/http/websocket.rs" = 1
 "freed_while_borrowed:src/http/AsyncHTTP.rs" = 1
@@ -220,8 +223,6 @@
 "unsafe_send_covers_more_than_pointers:src/runtime/node/fs_events.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/node_fs.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1
-"unsafe_send_covers_more_than_pointers:src/runtime/shell/IOReader.rs" = 2
-"unsafe_send_covers_more_than_pointers:src/runtime/shell/IOWriter.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/copy_file.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/read_file.rs" = 1
 

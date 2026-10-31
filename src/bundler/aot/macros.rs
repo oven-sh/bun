@@ -1,24 +1,32 @@
+use super::components;
 use super::data_values::{
     DataValueBuilder, ExprBuilder, PortableValue, report_not_data, write_data_value, write_expr,
 };
 use super::services::BuildContext;
 use crate::Transpiler;
 use bun_alloc::{Arena, AstAlloc};
-use bun_aot::load::source_provider::{Failed, MacroCall};
+use bun_aot::load::source_provider::{ComponentFile, Failed, MacroCall};
 use bun_ast::{E, Expr, ExprData, ExprNodeList, Loc, Log, Range, Source};
 use bun_core::{Output, zstr};
 use bun_js_parser as js_parser;
+use bun_js_parser::Macro::KnownAnswers;
+use bun_react_compiler::Observer;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::DataValue;
 use bun_threading::thread_pool::POOL_THREAD_STACK_SIZE;
 use bun_threading::{Condvar, Guarded};
-use std::collections::VecDeque;
+use core::ptr::NonNull;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+
+/// By the importer and the position of the call in it.
+type Answers = Guarded<BTreeMap<(Vec<u8>, u32), Arc<PortableValue>>>;
 
 pub(crate) struct MacroThread {
     shared: Arc<Shared>,
     handle: Guarded<Option<JoinHandle<()>>>,
+    answers: Answers,
 }
 
 impl MacroThread {
@@ -26,6 +34,7 @@ impl MacroThread {
         MacroThread {
             shared: Arc::default(),
             handle: Guarded::new(None),
+            answers: Guarded::new(BTreeMap::new()),
         }
     }
 
@@ -37,6 +46,29 @@ impl MacroThread {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> Result<&'s DataValue<'s>, Failed> {
+        // A build can load its program several times. A macro can keep state and have effects, so each call runs once.
+        let site = (call.importer.to_vec(), call.position);
+        let known = self.answers.lock().get(&site).cloned();
+        let portable = match known {
+            Some(portable) => portable,
+            None => {
+                let portable = Arc::new(self.submit_call(context, call, atoms, log)?);
+                self.answers.lock().insert(site, Arc::clone(&portable));
+                portable
+            }
+        };
+        let mut builder = DataValueBuilder::new(arena, atoms);
+        portable.replay(&mut builder);
+        Ok(builder.finish())
+    }
+
+    fn submit_call<'s>(
+        &self,
+        context: &BuildContext,
+        call: &MacroCall<'_, 's>,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<PortableValue, Failed> {
         let arguments = call
             .arguments
             .iter()
@@ -52,10 +84,25 @@ impl MacroThread {
             export_name: call.export_name.to_vec(),
             arguments,
         };
-        let portable = self.submit(context, call, log)?;
-        let mut builder = DataValueBuilder::new(arena, atoms);
-        portable.replay(&mut builder);
-        Ok(builder.finish())
+        self.submit(context, Work::Macro(call), log)
+    }
+
+    /// `components::compile_components` for a file whose parse may run macros.
+    pub(crate) fn compile_components(
+        &self,
+        context: &BuildContext,
+        file: &ComponentFile<'_>,
+        observer: &mut dyn Observer,
+    ) -> bool {
+        let mut parse = Parse {
+            context,
+            file,
+            observer,
+            answers: &self.answers,
+        };
+        // `submit` returns after the job has run, or without running it.
+        let work = Work::Parse(BorrowedParse(NonNull::from(&mut parse).cast()));
+        self.submit(context, work, &mut Log::init()).is_ok()
     }
 
     pub(crate) fn shut_down(mut self) {
@@ -68,22 +115,22 @@ impl MacroThread {
     fn submit(
         &self,
         context: &BuildContext,
-        call: PortableCall,
+        work: Work,
         log: &mut Log,
     ) -> Result<PortableValue, Failed> {
         let context = context.clone();
-        self.submit_with(call, log, move |shared| thread_main(shared, context))
+        self.submit_with(work, log, move |shared| thread_main(shared, context))
     }
 
     fn submit_with(
         &self,
-        call: PortableCall,
+        work: Work,
         log: &mut Log,
         thread_body: impl FnOnce(Arc<Shared>) + Send + 'static,
     ) -> Result<PortableValue, Failed> {
         self.ensure_thread(thread_body, log)?;
         let job = Arc::new(Job {
-            call,
+            work,
             outcome: Guarded::new(None),
             is_done: Condvar::new(),
         });
@@ -137,10 +184,62 @@ struct Queue {
 }
 
 struct Job {
-    call: PortableCall,
+    work: Work,
     outcome: Guarded<Option<Outcome>>,
     is_done: Condvar,
 }
+
+enum Work {
+    Macro(PortableCall),
+    Parse(BorrowedParse),
+}
+
+struct Parse<'a> {
+    context: &'a BuildContext,
+    file: &'a ComponentFile<'a>,
+    observer: &'a mut dyn Observer,
+    answers: &'a Answers,
+}
+
+/// The answers of the build, for Bun's parser.
+struct AnswersForParser<'a> {
+    answers: &'a Answers,
+    /// Holds the strings of what `find` returns.
+    arena: Arena,
+}
+
+impl KnownAnswers for AnswersForParser<'_> {
+    fn find(&mut self, source: &Source, call: Loc) -> Option<Expr> {
+        let site = (source.path.text.to_vec(), u32::try_from(call.start).ok()?);
+        let portable = self.answers.lock().get(&site).cloned()?;
+        let mut builder = ExprBuilder::new(&self.arena);
+        portable.replay(&mut builder);
+        Some(builder.finish())
+    }
+
+    fn add(&mut self, source: &Source, call: Loc, answer: &Expr) {
+        let Ok(position) = u32::try_from(call.start) else {
+            return;
+        };
+        // The load reports an answer that is no data when it comes to the call itself.
+        let mut portable = PortableValue::default();
+        if !matches!(answer.data, ExprData::ECall(_))
+            && write_expr(answer, &self.arena, &mut portable).is_ok()
+        {
+            let site = (source.path.text.to_vec(), position);
+            let mut answers = self.answers.lock();
+            answers.entry(site).or_insert_with(|| Arc::new(portable));
+        }
+    }
+}
+
+/// A parse the submitting thread is blocked on.
+struct BorrowedParse(NonNull<Parse<'static>>);
+
+// SAFETY: only the macro thread calls it, once, while the thread that owns its borrows is blocked.
+unsafe impl Send for BorrowedParse {}
+// SAFETY: as for `Send`.
+unsafe impl Sync for BorrowedParse {}
 
 struct PortableCall {
     importer: Vec<u8>,
@@ -201,9 +300,9 @@ impl Job {
     }
 }
 
-fn run_jobs(shared: &Shared, mut run_job: impl FnMut(&PortableCall) -> Outcome) {
+fn run_jobs(shared: &Shared, mut run_job: impl FnMut(&Work) -> Outcome) {
     while let Some(job) = shared.next_job() {
-        job.finish(run_job(&job.call));
+        job.finish(run_job(&job.work));
     }
 }
 
@@ -212,9 +311,25 @@ fn thread_main(shared: Arc<Shared>, context: BuildContext) {
     Output::Source::configure_named_thread(zstr!("bun macros"));
     // The virtual machine keeps the log pointer of its first call, so every job uses one log.
     let mut log = Log::init();
-    run_jobs(&shared, |call| {
-        let answer =
-            context.with_worker(|transpiler, arena| call_macro(transpiler, arena, call, &mut log));
+    run_jobs(&shared, |work| {
+        let answer = match work {
+            Work::Macro(call) => context
+                .with_worker(|transpiler, arena| call_macro(transpiler, arena, call, &mut log)),
+            Work::Parse(parse) => {
+                // SAFETY: the submitting thread keeps the `Parse` alive until this job finishes, and does not touch it.
+                let parse = unsafe { &mut *parse.0.as_ptr() };
+                let (context, file, observer) = (parse.context, parse.file, &mut *parse.observer);
+                let mut answers = AnswersForParser {
+                    answers: parse.answers,
+                    arena: Arena::new(),
+                };
+                let known = Some(&mut answers as &mut dyn KnownAnswers);
+                match components::compile_components(context, file, observer, known, &mut log) {
+                    true => Ok(PortableValue::default()),
+                    false => Err(Failed),
+                }
+            }
+        };
         let mut owned = Log::init();
         log.append_to(&mut owned);
         log.reset();
@@ -290,20 +405,23 @@ mod tests {
 
     type RunOrder = Arc<Guarded<Vec<Vec<u8>>>>;
 
-    fn work_with_contents(contents: Vec<u8>) -> PortableCall {
-        PortableCall {
+    fn work_with_contents(contents: Vec<u8>) -> Work {
+        Work::Macro(PortableCall {
             importer: Vec::new(),
             macro_path: Vec::new(),
             export_name: contents,
             arguments: Vec::new(),
-        }
+        })
     }
 
-    fn contents_of(call: &PortableCall) -> &[u8] {
+    fn contents_of(work: &Work) -> &[u8] {
+        let Work::Macro(call) = work else {
+            panic!("the job is a macro call");
+        };
         &call.export_name
     }
 
-    fn echo_contents(call: &PortableCall, run_order: &RunOrder) -> Outcome {
+    fn echo_contents(call: &Work, run_order: &RunOrder) -> Outcome {
         let contents = contents_of(call);
         run_order.lock().push(contents.to_vec());
         let mut answer = PortableValue::default();
@@ -332,7 +450,7 @@ mod tests {
                 return queue
                     .jobs
                     .iter()
-                    .map(|job| contents_of(&job.call).to_vec())
+                    .map(|job| contents_of(&job.work).to_vec())
                     .collect();
             }
             drop(queue);

@@ -986,7 +986,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// prefix (lowered to `>=`/`<=`).
     fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
         use bun_core::strings;
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         if strings::starts_with(ident, b"--") {
             return Ok((MediaFeatureName::Custom(DashedIdent { v: ident }), None));
@@ -1580,7 +1580,7 @@ fn parse_parens_or_function<C: QueryCondition>(
         matches!(t, css::Token::OpenParen) || !flags.contains(QueryConditionFlags::IN_PARENS);
     match (result, C::GENERAL_ENCLOSED) {
         (Err(_), Some(general_enclosed)) if may_keep && is_general_enclosed(input) => {
-            Ok(general_enclosed(input.slice_from_cloned(start)))
+            Ok(general_enclosed(input.slice_from(start)))
         }
         (result, _) => result,
     }

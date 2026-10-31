@@ -20,7 +20,7 @@ function sourceWith(objects: number) {
   let source = `const given = JSON.parse(process.argv[2] ?? "{}");\n`;
   for (let index = 0; index < objects; index++)
     source += `function step${index}() { given.k${index} = { f${index}: ${index}, next: step${index + 1} }; }\n`;
-  return source + `function step${objects}() {}\nstep0();\nprocess.stdout.write(Object.keys(given).join() + "\\n");\n`;
+  return source + `function step${objects}() {}\nstep0();\nprocess.stdout.end(Object.keys(given).join() + "\\n");\n`;
 }
 
 function countsOf(log: string) {
@@ -40,18 +40,20 @@ test("one more object adds a few rules, nodes and edges", async () => {
     Object.fromEntries(sizes.map(size => [`objects${size}.js`, sourceWith(size)])),
   );
   const directory = String(dir);
-  const counts = [];
-  for (const size of sizes) {
-    const executable = join(directory, `objects${size}${isWindows ? ".exe" : ""}`);
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", withThreads(1), `objects${size}.js`, "--outfile", executable],
-      directory,
-      { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
-    );
-    expect(built.exitCode).toBe(0);
-    expect((await run([executable, `{"other":3}`], directory, bunEnv)).stdout).toBe("other,k0\n");
-    counts.push(countsOf(built.stderr + built.stdout));
-  }
+  // Side by side: each build has one thread.
+  const counts = await Promise.all(
+    sizes.map(async size => {
+      const executable = join(directory, `objects${size}${isWindows ? ".exe" : ""}`);
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", withThreads(1), `objects${size}.js`, "--outfile", executable],
+        directory,
+        { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
+      );
+      expect(built.exitCode).toBe(0);
+      expect((await run([executable, `{"other":3}`], directory, bunEnv)).stdout).toBe("other,k0\n");
+      return countsOf(built.stderr + built.stdout);
+    }),
+  );
   expect(counts[0].edges).toBeGreaterThan(0);
   for (const name of Object.keys(most) as (keyof typeof most)[]) {
     const added = (counts[1][name] - counts[0][name]) / (sizes[1] - sizes[0]);

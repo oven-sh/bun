@@ -37,21 +37,20 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Functions on which the host puts members that have no entry yet: fetch.preconnect, Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
+// Functions on which the host puts members that have no entry yet: Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
+  "%ModuleRequirePrototype%.resolve",
   "Bun.$",
   "Bun.cron",
-  "Bun.fetch",
   "Bun.inspect",
   "Bun.peek",
   "Bun.sql",
-  "fetch",
   "process.hrtime",
   "process.memoryUsage",
 ];
 
-const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "Bun.$", "Bun.sql"];
+const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "%ModuleRequirePrototype%.resolve", "Bun.$", "Bun.sql"];
 
 // src/jsc/modules/NodeUtilTypesModule.cpp. Each looks at the type or the C++ class of a cell, isAsyncFunction also at what lies above a function.
 const typeTestsOfNode = [
@@ -101,10 +100,59 @@ const typeTestsOfNode = [
   "isWeakSet",
 ];
 
+const typedArrays = [
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+] as const;
+
+// The classes whose instances a test answers true for, and no others.
+const classesToldApart: Readonly<Record<string, readonly b.ClassName[]>> = {
+  isAnyArrayBuffer: ["ArrayBuffer", "SharedArrayBuffer"],
+  isArgumentsObject: ["Arguments"],
+  isArrayBuffer: ["ArrayBuffer"],
+  isArrayBufferView: [...typedArrays, "DataView"],
+  isBigIntObject: ["BigInt"],
+  isBooleanObject: ["Boolean"],
+  isBoxedPrimitive: ["BigInt", "Boolean", "Number", "String", "Symbol"],
+  isDataView: ["DataView"],
+  isDate: ["Date"],
+  isMap: ["Map"],
+  isMapIterator: ["MapIterator"],
+  isNativeError: ["Error"],
+  isNumberObject: ["Number"],
+  isPromise: ["Promise"],
+  isProxy: ["Proxy"],
+  isRegExp: ["RegExp"],
+  isSet: ["Set"],
+  isSetIterator: ["SetIterator"],
+  isSharedArrayBuffer: ["SharedArrayBuffer"],
+  isStringObject: ["String"],
+  isSymbolObject: ["Symbol"],
+  isTypedArray: typedArrays,
+  isWeakMap: ["WeakMap"],
+  isWeakSet: ["WeakSet"],
+  ...Object.fromEntries(typedArrays.map(name => [`is${name}`, [name]])),
+};
+
+const testOf = (name: string) => {
+  const classes = classesToldApart[name];
+  if (classes === undefined) return testsKindOfCell;
+  const [first, ...others] = classes.map(b.instance);
+  return { ...testsKindOfCell, answersWhetherInstance: { value: b.union(first, ...others) } };
+};
+
 export default b.declarations(
-  typeTestsOfNode.flatMap(name =>
-    b.static(`node:util/types.${name}`, { ...testsKindOfCell, implementation: b.generic }),
-  ),
+  typeTestsOfNode.flatMap(name => b.static(`node:util/types.${name}`, { ...testOf(name), implementation: b.generic })),
   // Nothing leads from the realm to a member of a module: its native code tells which function it is. That of these two belongs to the functions below.
   typeTestsOfNode
     .filter(name => name !== "isMapIterator" && name !== "isSetIterator")
@@ -123,8 +171,8 @@ export default b.declarations(
     .filter(path => !functionsBelowOtherObjects.includes(path))
     .flatMap(path => b.inherits(path, "Function.prototype")),
 
-  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testsKindOfCell),
-  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testsKindOfCell),
+  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testOf("isMapIterator")),
+  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testOf("isSetIterator")),
   // It looks for @@toStringTag without running a getter, and asks for the prototype, which a proxy answers with its trap.
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsError"), {
     ...operandCodeOnly,
@@ -159,7 +207,7 @@ export default b.declarations(
         b.contentsStoredIn(b.resultSlot("element")),
       ],
       except: b.ownPropertyTraps,
-      receiver: [b.everything],
+      receiver: b.inspected,
     },
     implementation: b.hostCall,
   }),
@@ -225,9 +273,14 @@ export default b.declarations(
   }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
+  // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and
+  // `new Bun.ModuleGraph()` in another. So the answer is an object whoever reads Bun.ModuleGraph.
   b.static(
     cpp("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame"),
-    looksForModuleGraph(b.union(b.object, b.undefined), [b.returnedFrom(moduleGraphsCell)]),
+    looksForModuleGraph(b.union(b.object, b.undefined), [
+      b.createdIn(b.object, b.nativeCell(moduleGraphsCell)),
+      b.returnedFrom(moduleGraphsCell),
+    ]),
   ),
   // The frame it answers is the operand or one below it: one that native code has made, or the copy of one that node:async_hooks has made.
   b.static(
@@ -242,7 +295,7 @@ export default b.declarations(
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {
     args: { filename: b.any.optional },
-    returns: b.object,
+    returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
     uses: { filename: b.inspected },

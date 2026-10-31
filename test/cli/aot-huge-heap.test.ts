@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
 import { run as runCommand } from "../aot/harness/run";
-import { withoutCoreDump, withoutCrashReport } from "../aot/run-programs";
 import { describe, test } from "../aot/supported";
 
 // --aot keeps references between objects in 32 bits, which limits each thread to 32 GB of objects. --aot-huge-heap compiles with
@@ -76,12 +76,12 @@ describe.concurrent("--aot-huge-heap", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
-  test("bun test --debug-aot takes it too", async () => {
+  test("bun test --aot, which builds, takes it too", async () => {
     using folder = tempDir("aot-huge-heap", {
       "program.test.ts": 'import { expect, test } from "bun:test";\ntest("runs", () => expect(1 + 1).toBe(2));\n',
     });
     const { stderr, exitCode } = await run(
-      [bunExe(), "test", "--debug-aot", "--aot-huge-heap", "program.test.ts"],
+      [bunExe(), "test", "--aot", "--aot-huge-heap", "program.test.ts"],
       String(folder),
     );
     expect(stderr).toContain("1 pass");
@@ -107,7 +107,6 @@ describe.concurrent("--aot-huge-heap", () => {
   test.each([
     [["run", "--aot", "--aot-huge-heap", "program.ts"]],
     [["--aot", "--aot-huge-heap", "program.ts"]],
-    [["test", "--aot", "--aot-huge-heap", "program.test.ts"]],
     [["run", "--aot-huge-heap", "program.ts"]],
     [["test", "--aot-huge-heap", "program.test.ts"]],
   ])("nothing is built here, so it is an error: bun %j", async args => {

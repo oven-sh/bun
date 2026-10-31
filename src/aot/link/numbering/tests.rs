@@ -116,6 +116,7 @@ fn move_units(projects: &Projects<'_, '_>, units: Vec<LinkUnit>) -> Moved {
         for function in list {
             let mut function = std::sync::Arc::unwrap_or_clone(function);
             let function_types = core::mem::take(&mut function.function_types);
+            function.body.unpack_code();
             function.remap_ids(&ids.as_map());
             function.function_types = function_types;
             functions.push(function);
@@ -190,7 +191,7 @@ fn define_variable(unit: &mut TestUnit, symbol: u32) -> Reference {
     let id = unit
         .fragment
         .declare_variable(test_variable_key(unit.file.0, symbol));
-    let definition = synthetic_export_variable(name, unit.module, ExportWriter::Loader);
+    let definition = synthetic_export_variable(name, unit.module, ExportWriter::Loader, true);
     unit.fragment.define_variable(id, definition);
     Reference::Variable(id)
 }

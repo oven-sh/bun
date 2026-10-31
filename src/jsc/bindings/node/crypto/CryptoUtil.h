@@ -31,11 +31,11 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid);
 namespace ExternZigHash {
 struct Hasher;
 
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher);
+Hasher* getByName(const StringView& name);
+Hasher* getFromOther(Hasher* hasher);
 void destroy(Hasher* hasher);
 bool update(Hasher* hasher, std::span<const uint8_t> data);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out);
+uint32_t digest(Hasher* hasher, std::span<uint8_t> out);
 uint32_t getDigestSize(Hasher* hasher);
 bool isXof(Hasher* hasher);
 

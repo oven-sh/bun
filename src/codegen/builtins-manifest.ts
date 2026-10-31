@@ -17,6 +17,7 @@ import {
 } from "./builtins-manifest-model";
 import { encodeNumbers, moveBundledNamesToSecondText } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { rangesSeenByEveryFile } from "./part-seen-by-every-file";
 import { define, globalsToPrefix } from "./replacements";
 
 const output = process.argv[3];
@@ -155,11 +156,27 @@ for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
 }
 
-// The positions of each module stand behind its id and their length.
+// What `declare global` and `declare module "name"` add is seen by files that do not name the file, so every build reads it:
+// the part of the file that these declarations lead to, and the rest once a file that is read names the file.
+for (const [file, text] of [
+  ...[...sourceFiles, ...functionFiles].map((file): [string, string] => [file, fs.readFileSync(locate(file), "utf8")]),
+  ...engineTexts,
+]) {
+  if (!/^\s*declare\s+(global\b|module\s*["'])/m.test(text)) continue;
+  const { seen, asked } = rangesSeenByEveryFile(file, text);
+  lines.push(`declares-for-every-file\t${file}\t${seen.join(" ")}\t${asked.join(" ") || "-"}`);
+}
+
+// The positions of each file stand behind its id and their length. The files of functions follow on the modules.
+const firstIdOfFunctionFiles = 1 << 20;
 const bundledPositions: Uint8Array[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
   const [kind, file, encoded] = line.split("\t");
   if (line === "") continue;
+  if (kind === "evaluated-functions" || kind === "place" || kind === "part") {
+    lines.push(line);
+    continue;
+  }
   if (kind !== "positions") {
     // The names are those of the text that was bundled.
     const bundled = path.join(import.meta.dir, "../js", file);
@@ -175,7 +192,10 @@ for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
     continue;
   }
   const positions = Buffer.from(encoded, "base64");
-  bundledPositions.push(encodeNumbers([moduleList.indexOf(file), positions.length]), positions);
+  const id = file.startsWith("builtins/")
+    ? firstIdOfFunctionFiles + functionFiles.indexOf(file)
+    : moduleList.indexOf(file);
+  bundledPositions.push(encodeNumbers([id, positions.length]), positions);
 }
 
 const manifest = lines.join("\n") + "\n";

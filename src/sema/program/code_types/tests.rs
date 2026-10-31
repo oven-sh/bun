@@ -1,7 +1,7 @@
 #![cfg(not(miri))]
 
 use super::*;
-use crate::program::code_file::load_code_file;
+use crate::program::code_file::{LoadInputs, load_code_file};
 use crate::program::code_test_host::{
     StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
 };
@@ -182,9 +182,7 @@ fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCode
         context.session.arena(),
         target,
         text,
-        false,
-        &[],
-        &[],
+        LoadInputs::default(),
     )
 }
 
@@ -521,7 +519,11 @@ fn referenced_options_are_found_by_address() {
 #[test]
 fn declaration_file_is_parsed_with_options_of_program() {
     with_projects(|context| {
-        let of_program = context.options.for_parsing();
+        assert!(!context.options.for_parsing().reads_as_bun_run);
+        let of_program = ParseOptions {
+            reads_as_bun_run: true,
+            ..context.options.for_parsing()
+        };
         assert!(!of_program.bind.before_es2020);
         let parse_options = |path: &[u8]| context.types_file_parse_options(path);
         let as_module = ParseOptions {

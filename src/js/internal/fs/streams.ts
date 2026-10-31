@@ -2,11 +2,8 @@
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
-const fileHandleInternals = fs.promises.$data;
-const FileHandle = fileHandleInternals.FileHandle;
-const kRef: typeof fileHandleInternals.kRef = fileHandleInternals.kRef;
-const kUnref: typeof fileHandleInternals.kUnref = fileHandleInternals.kUnref;
-const kFd: typeof fileHandleInternals.kFd = fileHandleInternals.kFd;
+const fileHandles = require("internal/fs/file_handles");
+type FileHandleInternals = NonNullable<typeof fileHandles.internals>;
 type FileHandle = $Node.FileHandle;
 type FileSink = $Node.FileSink;
 type FD = number;
@@ -55,6 +52,8 @@ interface FileStreamOptions extends $Node.ReadableOptions, $Node.WritableOptions
   start?: number;
   end?: number;
   flush?: boolean | null;
+  /** A raw Win32 `HANDLE`, wrapped in a file descriptor the stream owns. Windows only. */
+  windowsHandle?: bigint | null;
   $fastPath?: boolean;
 }
 
@@ -97,6 +96,9 @@ type FileStream = $Node.ReadStream | $Node.WriteStream;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
+const isWindows = process.platform === "win32";
+const windowsHandleToFd = $bindgen("node_fs_binding.bind.ts", "windowsHandleToFd");
+
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
@@ -104,12 +106,31 @@ const kIoDone = Symbol("kIoDone");
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
 
-const {
-  read: fileHandlePrototypeRead,
-  write: fileHandlePrototypeWrite,
-  fsync: fileHandlePrototypeFsync,
-  writev: fileHandlePrototypeWritev,
-} = FileHandle.prototype as FileHandle & { fsync?: undefined };
+let FileHandle: FileHandleInternals["FileHandle"] | undefined;
+let kRef: FileHandleInternals["kRef"];
+let kUnref: FileHandleInternals["kUnref"];
+let kFd: FileHandleInternals["kFd"];
+let fileHandlePrototypeRead: FileHandle["read"];
+let fileHandlePrototypeWrite: FileHandle["write"];
+let fileHandlePrototypeFsync: undefined;
+let fileHandlePrototypeWritev: FileHandle["writev"];
+
+function takeFileHandleInternals(internals: FileHandleInternals) {
+  FileHandle = internals.FileHandle;
+  kRef = internals.kRef;
+  kUnref = internals.kUnref;
+  kFd = internals.kFd;
+  ({
+    read: fileHandlePrototypeRead,
+    write: fileHandlePrototypeWrite,
+    fsync: fileHandlePrototypeFsync,
+    writev: fileHandlePrototypeWritev,
+  } = FileHandle.prototype as FileHandle & { fsync?: undefined });
+}
+
+const { internals } = fileHandles;
+if (internals) takeFileHandleInternals(internals);
+else fileHandles.whenLoaded = takeFileHandleInternals;
 
 const fileHandleStreamFs = (fh: FileHandle) => ({
   // try to use the basic fs.read/write/fsync if available, since they are less
@@ -206,6 +227,28 @@ function getStreamOptions(
   return options;
 }
 
+// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/lib/internal/fs/streams.js#L169
+function validateWindowsHandle(
+  windowsHandle: unknown,
+  fd: FileStreamOptions["fd"],
+  customFs: FileStreamOptions["fs"],
+): asserts windowsHandle is bigint {
+  if (fd != null) {
+    throw $ERR_INCOMPATIBLE_OPTION_PAIR('Option "windowsHandle" cannot be used in combination with option "fd"');
+  }
+  if (!isWindows) {
+    throw $ERR_FEATURE_UNAVAILABLE_ON_PLATFORM(
+      "The feature windowsHandle is unavailable on the current platform, which is being used to run Node.js",
+    );
+  }
+  if (customFs) {
+    throw $ERR_METHOD_NOT_IMPLEMENTED("windowsHandle with fs");
+  }
+  if (typeof windowsHandle !== "bigint") {
+    throw $ERR_INVALID_ARG_TYPE("options.windowsHandle", "bigint", windowsHandle);
+  }
+}
+
 function ReadStream(
   this: $Node.ReadStream,
   path: string | URL | null | undefined,
@@ -220,9 +263,12 @@ function ReadStream(
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, end = Infinity } = options;
+  let { fd, autoClose, fs: customFs, start, end = Infinity, windowsHandle } = options;
 
-  if (fd == null) {
+  if (windowsHandle != null) {
+    validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fs;
+  } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
     this.path = getValidatedPath(path);
@@ -244,7 +290,7 @@ function ReadStream(
     }
     this.fd = fd as number;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
@@ -284,6 +330,12 @@ function ReadStream(
       throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
+
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Readable.$call(this, options);
   return this as unknown as void;
@@ -433,7 +485,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
-  if (!stream.fd) {
+  if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync!(stream.fd, flushErr => {
@@ -467,8 +519,11 @@ function WriteStream(
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, flush } = options;
-  if (fd == null) {
+  let { fd, autoClose, fs: customFs, start, flush, windowsHandle } = options;
+  if (windowsHandle != null) {
+    validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fs;
+  } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
     // Internal $fastPath callers (writableFromFileSink) discard .path; do not
@@ -493,7 +548,7 @@ function WriteStream(
     }
     this.fd = fd as number;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
@@ -569,6 +624,12 @@ function WriteStream(
     }
   }
 
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
+
   Writable.$call(this, options);
 
   const encoding = options.encoding;
@@ -591,6 +652,8 @@ function writeAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
+  if (IS_COMPILED_AHEAD_OF_TIME && this[kFs] == null)
+    throw new TypeError(`${this[kFs]} is not an object (evaluating 'size')`);
   this[kFs].write!(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
@@ -756,6 +819,14 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
   cb(null);
 }
 
+// How the engine's "is not a function" names what it found.
+function describeForError(value: unknown): string {
+  if (typeof value === "string") return `"${value}"`;
+  if (typeof value !== "object" || value === null) return String(value);
+  const name = value.constructor?.name;
+  return "an instance of " + (typeof name === "string" && name !== "" ? name : "Object");
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -765,11 +836,16 @@ function writeFast(
   encoding?: string | null | ErrorCallback,
   cb?: ErrorCallback,
 ): boolean {
+  // The engine's errors quote the source of the expression that failed. A compiled frame has none, so what they say of a receiver that is no stream is written out.
+  if (IS_COMPILED_AHEAD_OF_TIME && this == null)
+    throw new TypeError(`${this} is not an object (evaluating 'kWriteMonkeyPatchDefense')`);
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding as string, cb);
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
   const state = this._writableState;
+  if (IS_COMPILED_AHEAD_OF_TIME && state === null)
+    throw new TypeError("null is not an object (evaluating 'kWriteMonkeyPatchDefense')");
   if (state !== undefined && (state.ending || state.destroyed)) {
     return writablePrototypeWrite.$call(this, data, encoding as string, cb);
   }
@@ -806,7 +882,17 @@ function writeFast(
       return true; // No backpressure
     }
   } else {
-    const result: any = this._write(data, encoding!, cb);
+    let result: any;
+    if (IS_COMPILED_AHEAD_OF_TIME) {
+      const write: any = this._write;
+      if (typeof write !== "function")
+        throw new TypeError(
+          `this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is ${describeForError(write)})`,
+        );
+      result = write.$call(this, data, encoding, cb);
+    } else {
+      result = this._write(data, encoding!, cb);
+    }
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {

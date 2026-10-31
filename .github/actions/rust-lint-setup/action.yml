@@ -40,7 +40,7 @@ runs:
 
     - name: Setup system deps
       # cmake/ninja for `--configure-only`; clang for toolchain detection
-      # (configure resolves cfg.cc/cxx). `engine-test-programs` links with AddressSanitizer.
+      # (configure resolves cfg.cc/cxx even though nothing here compiles C++).
       shell: bash
       env:
         LLVM_VERSION_MAJOR: ${{ inputs.llvm-version }}
@@ -48,7 +48,7 @@ runs:
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
         echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
         sudo apt-get update -qq
-        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR} libclang-rt-${LLVM_VERSION_MAJOR}-dev
+        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}
 
     - name: Setup Rust
       if: inputs.toolchain != ''

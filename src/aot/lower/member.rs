@@ -12,10 +12,12 @@ use bun_sema::hir::{
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::{BlockId, PropertyKeyId, ValueId};
+use crate::ir::generated::BlockFrequency;
+use crate::ir::{BlockId, PropertyKeyId, TypeTable, ValueId, VariableKey};
+use bun_sema::program::Sym;
 
 pub(in crate::lower) use self::key::find_function_name;
-pub(in crate::lower) use self::reference::{KeyConversion, Reference};
+pub(in crate::lower) use self::reference::{Holder, KeyConversion, Reference};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum PropertyName {
@@ -184,6 +186,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = self.lower_export_member(access) {
             return Some(value);
         }
+        if let Some(value) = self.lower_member_of_answer(access) {
+            return Some(value);
+        }
         if let Some(constant) = self.file.find_data_member_read(access) {
             return Some(self.emit_constant(constant));
         }
@@ -196,6 +201,66 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.enum_constants.insert(value);
         Some(value)
+    }
+
+    // `a.default` and `a.n`, where `a` stands for the copy that a helper makes of what `require` answered and a variable of its own holds the answer: `default` is the answer, and the getter of a name reads the name there. Where that variable is empty the access is what it is written as.
+    fn lower_member_of_answer(&mut self, access: ExprId) -> Option<ValueId> {
+        let modules = self.file.inputs.modules;
+        modules.answer_member(self.file.file, access)?;
+        Some(self.lower_member_of_answer_below(access, None).0)
+    }
+
+    /// `base`: what `a` holds, where it is already read. The member, and once more what was read on the answer alone: nothing where the access ran as it is written.
+    pub(in crate::lower) fn lower_member_of_answer_below(
+        &mut self,
+        access: ExprId,
+        base: Option<ValueId>,
+    ) -> (ValueId, ValueId) {
+        let file = &*self.file;
+        let member = file.inputs.modules.answer_member(file.file, access);
+        let member = member.expect("the access is bound to what `require` answered");
+        let holder = Sym {
+            file: file.file,
+            id: member.holder,
+        };
+        let Some((_, key)) = file.hir.member_key(access) else {
+            unreachable!("a member of an answer is a Dot or an Index expression");
+        };
+        self.set_position(file.hir[access].pos);
+        let variable = self
+            .file
+            .ensure_variable(VariableKey::RequiredAnswer(holder));
+        let answer = self.builder.get_module_variable(variable);
+        let result = self.builder.create_variable(None);
+        let result_on_answer = self.builder.create_variable(None);
+        let join = self.create_block();
+        let split = self.split_on_type(answer, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
+        self.builder.switch_to(split.taken);
+        let (base, property) = match base {
+            Some(base) => (base, self.lower_member_key(key)),
+            None => lower_member_operands(self, access, None),
+        };
+        let written = emit_member_read(self, access, base, property);
+        self.builder.write_variable(result, written);
+        let nothing = self.builder.absent();
+        self.builder.write_variable(result_on_answer, nothing);
+        self.jump(join);
+        self.builder.switch_to(split.not_taken);
+        let read = match member.name {
+            Some(_) => {
+                let property = self.lower_member_key(key);
+                emit_member_read(self, access, split.not_taken_value, property)
+            }
+            None => split.not_taken_value,
+        };
+        self.builder.write_variable(result, read);
+        self.builder.write_variable(result_on_answer, read);
+        self.jump(join);
+        self.continue_in(join);
+        let result = self.builder.read_variable(result);
+        (result, self.builder.read_variable(result_on_answer))
     }
 
     fn warn_function_introspection(&mut self, access: ExprId) {
@@ -233,7 +298,6 @@ pub(in crate::lower) fn lower_member(
     };
     if matches!(member, MemberKey::PrivateName(_)) {
         let base = lowering.lower_member_base(access, object, exit);
-        lowering.set_position(hir[access].pos);
         return lowering.emit_private_get(base, access);
     }
     if matches!(hir[object].kind, ExprKind::Super) {

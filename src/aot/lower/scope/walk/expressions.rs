@@ -1,13 +1,13 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, CodeUnit, PrivateMembers, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
     Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind, PropId,
     PropKey, PropKind, Span, is_proto_setter,
 };
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, JsxCallee, JsxImport, RequireCallForm, find_require_call,
-    jsx_callee, may_require_get_members,
+    ImportSite, ImportSiteKind, JsxCallee, JsxImport, RequireCallForm,
+    find_module_printed_as_require, find_require_call, jsx_callee, may_require_get_members,
 };
 use smallvec::SmallVec;
 
@@ -36,6 +36,7 @@ fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_coun
         },
         ImportSiteKind::RequireResolve(_) => argument_count <= 1,
         ImportSiteKind::ImportMetaResolve(_) => match answer {
+            SiteAnswer::Module(ModuleRef::External { .. }) => false,
             SiteAnswer::Module(_) => site.consults_resolver && argument_count == 1,
             SiteAnswer::Computed(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => false,
         },
@@ -144,8 +145,12 @@ impl Walker<'_, '_> {
     }
 
     fn visit_identifier(&mut self, identifier: ExprId, context: Context) {
+        self.visit_name(identifier, self.bound.binding(identifier), context);
+    }
+
+    // The binding is read, or stored to, where `identifier` stands.
+    fn visit_name(&mut self, identifier: ExprId, binding: Binding, context: Context) {
         let (bound, function) = (self.bound, context.function);
-        let binding = bound.binding(identifier);
         if let (Binding::Symbol(symbol), true) = (binding, bound.is_store_target(identifier)) {
             self.walk.symbol_stores.push((symbol, identifier, function));
             self.walk.last_store_times[symbol.idx()] = u32::MAX;
@@ -190,6 +195,11 @@ impl Walker<'_, '_> {
     }
 
     fn visit_member(&mut self, access: ExprId, object: ExprId, index: ExprId, context: Context) {
+        if let Some(module) = find_module_printed_as_require(self.hir, self.bound, access) {
+            let require = Binding::CommonJs(CommonJsVariable::Require);
+            self.visit_name(module, require, context);
+            return;
+        }
         if matches!(self.hir[object].kind, ExprKind::Super) {
             self.use_this(context);
             self.use_home_object(context);
@@ -325,16 +335,18 @@ impl Walker<'_, '_> {
         let Some(Resolved::Builtin(_)) = builtins.of_expr(callee) else {
             return false;
         };
+        let printed_as_require = find_module_printed_as_require(hir, bound, callee);
         let root = match hir.member_key(callee) {
-            Some((object, _)) => hir.skip_type_assertions(object),
-            None => callee,
+            Some((object, _)) if printed_as_require.is_none() => hir.skip_type_assertions(object),
+            _ => callee,
         };
         let Some(Resolved::Builtin(root_path)) = builtins.of_expr(root) else {
             return false;
         };
-        matches!(hir[root].kind, ExprKind::Ident(_))
-            && matches!(bound.binding(root), Binding::CommonJs(_))
-            && bound.dynamic_lookup_scope(NodeData::Expr(root)).is_none()
+        let name = printed_as_require.unwrap_or(root);
+        matches!(hir[name].kind, ExprKind::Ident(_))
+            && matches!(bound.binding(name), Binding::CommonJs(_))
+            && bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none()
             && table::entry(root_path.id).scope == Scope::Module
             && root_path.mutability == Mutability::AlwaysLocked
             && !(root != callee

@@ -81,6 +81,10 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
+    /// `bun test --aot-memory-limit`, and what stands in for it.
+    #[path = "MemoryOfJob.rs"]
+    pub(crate) mod memory_of_job;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -101,6 +105,10 @@ pub(crate) mod test {
         pub(crate) mod file_range;
         #[path = "Frame.rs"]
         pub(crate) mod frame;
+        #[path = "parts.rs"]
+        pub(crate) mod parts;
+        #[path = "Reservation.rs"]
+        pub(crate) mod reservation;
         #[path = "runner.rs"]
         pub(crate) mod runner;
         #[path = "Worker.rs"]
@@ -334,14 +342,13 @@ pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
         arguments::loader_resolver(input)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
-        // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { bun_ptr::detach_lifetime(input) })
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
+        Ok(input)
     }
 }
 
@@ -376,8 +383,8 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        // SAFETY: single-threaded process startup; nothing else refers to `LOG_` yet.
+        let log = unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
         // use) — see `super::CLI_ARENA`. The write happens before any worker
         // thread is spawned and before `Command::start` (the first
@@ -386,8 +393,6 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
@@ -1210,22 +1215,9 @@ pub(crate) mod command {
     ) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
-        #[cfg(target_os = "macos")]
-        if graph.flags.contains(
-            bun_standalone_graph::StandaloneModuleGraph::Flags::NAMES_SYSTEM_CA_CERTIFICATES,
-        ) {
-            unsafe extern "C" {
-                safe fn us_prefetch_root_system_certs();
-            }
-            bun_removable_features::call_removable!(
-                SystemCaCertificates,
-                ReturnDefault,
-                us_prefetch_root_system_certs
-            );
-        }
+        let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
         #[cfg(bun_hardened)]
-        if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
+        if bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();
             #[cfg(bun_locked_environment)]
             bun_jsc::compiled_program::refuse_variables_that_are_never_read();

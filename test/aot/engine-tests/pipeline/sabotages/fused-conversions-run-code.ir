@@ -1,0 +1,6 @@
+# sabotage=FusedConversionsRunCode: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=FusedConversionsRunCode
+# CHECK-NOT: first,,fifth,sixth,first,,fifth,sixth
+# PROGRAM-OF: fused-conversions-run-code-left-alone.ir

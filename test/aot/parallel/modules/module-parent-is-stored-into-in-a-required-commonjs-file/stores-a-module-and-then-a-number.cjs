@@ -1,0 +1,11 @@
+const show = require("./show.cjs");
+module.parent = module;
+show("itself", module);
+console.log(module.parent === module);
+module.parent = 0;
+show("then zero", module);
+module.parent = require.main;
+show("then the entry file's object", module);
+console.log(module.parent === require.main);
+module.parent = Symbol.iterator;
+console.log(typeof module.parent);

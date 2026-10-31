@@ -3,8 +3,11 @@ use std::collections::BTreeMap;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
-use bun_aot::options::{Externals, LoadOptions, Options, PathOptions, RemovableOptions};
-use bun_ast::{Loc, Log};
+use bun_aot::options::{
+    Externals, FilesThatTestsLoad, LoadOptions, OpenedName, Options, PathOptions, RemovableOptions,
+    ReplacedExport, ReplacedModule, WaysBetweenModuleObjects,
+};
+use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
 use bun_options_types::aot_options::AotOptions;
@@ -12,6 +15,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
@@ -49,10 +53,15 @@ pub(crate) fn options_from_bundler<'r>(
         log,
     );
     let entry_points = entry_points.map(|list| follow_links(input, list));
+    let entry_points = entry_points.and_then(|list| start_with_first_script(input, list, log));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
     };
+    let mut load = load_options(input);
+    if input.aot.host_runs_files_from_disk {
+        load.stand_in_for_files_from_disk = entry_points.last().cloned();
+    }
     Some(Options {
         aot: input.aot,
         executable_identity: input.executable_identity,
@@ -60,7 +69,7 @@ pub(crate) fn options_from_bundler<'r>(
         entry_points,
         code: code_options(input),
         typescript_libs: input.typescript_libs,
-        load: load_options(input),
+        load,
         paths,
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
@@ -202,8 +211,20 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
 
     // An executable holds the file of a package that a bundle holds. `bun run` takes "main" where a package has both.
     code.prefers_module_field = !input.aot.runs_in_place;
+    code.builds_executable = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
-    code.transpiles_by_working_directory = input.aot.checks_only;
+    code.ignores_declared_side_effects = options.ignore_dce_annotations;
+    // As `bun run` and `bun test` transpile the same files.
+    code.transpiles_by_working_directory = input.aot.runs_in_place;
+    code.types_stop_at_entry_points = input.aot.is_part_of_test_files;
+    code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
+    code.main_modules_beside_entry_points = (input.aot.main_modules_beside_entry_points.iter())
+        .map(|path| from_native(path))
+        .collect();
+    code.entry_points_only_imported_from_above =
+        (input.aot.entry_points_only_imported_from_above.iter())
+            .map(|path| from_native(path))
+            .collect();
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
@@ -250,7 +271,10 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .zip(options.loaders.values())
         .map(|(extension, &loader)| (extension.to_vec(), loader))
         .collect();
-    loaders.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let replaced = &input.aot.replaced_by_tests;
+    // The programs above call what this one exports, and its build does not see them.
+    let is_below_other_programs = input.aot.shares_realms && !input.aot.is_part_of_test_files;
     LoadOptions {
         project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
         loaders,
@@ -263,7 +287,84 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
         takes_runtime_as_any: false,
+        errors_with_bun_types: None,
+        library_code_lacked: Default::default(),
+        keeps_library_code_without_names: false,
+        // Code that a test loads from disk may read it, and no build sees that code. The engine's word comes a front end and a flow analysis later.
+        reads_main_module_without_its_name: input.aot.runs_tests,
+        stores_path_of_main_module: false,
+        stores_loader_functions: replaced.stores_loader_functions,
+        // Bun's own code reads `parent` of objects that nobody knows, and a program that other programs import from hands its module
+        // objects out. So with all of that code the engine always finds this, a front end and a flow analysis later.
+        ways_read_out_of_sight: WaysBetweenModuleObjects {
+            parent: input.aot.library_runs_compiled_alone,
+            children: false,
+        },
+        ways_named_that_nobody_reads: Default::default(),
+        replaced_exports: sorted(
+            replaced
+                .exports
+                .iter()
+                .map(|(module, name)| ReplacedExport {
+                    module: ReplacedModule::File(module.clone()),
+                    name: name.clone(),
+                }),
+        ),
+        mocked_modules: sorted(replaced.modules.iter().cloned().map(ReplacedModule::File)),
+        // A name that no file spells finds any file of the program. Where the host alone runs what the build has not seen it finds the entry points, and flow says
+        // which of their objects a spy meets.
+        mocks_any_module: replaced.any_module
+            || (replaced.spy_may_meet_module_that_no_file_spells
+                && !input.aot.host_runs_files_from_disk),
+        every_export_is_asked_for: is_below_other_programs,
+        handed_on_modules: sorted(
+            (replaced.handed_on_modules.iter().cloned()).map(ReplacedModule::File),
+        ),
+        hands_on_any_module: replaced.hands_on_any_module,
+        spies_on_unknown_objects: replaced.spies_on_unknown_objects,
+        names_spied_on_unknown_objects: replaced.names_spied_on_unknown_objects.clone(),
+        names_spied_in_text: Vec::new(),
+        modules_replaced_in_text: Vec::new(),
+        evicted_modules: sorted(
+            replaced
+                .evicted_modules
+                .iter()
+                .cloned()
+                .map(ReplacedModule::File),
+        ),
+        // Where the host alone runs what the build has not seen, the stand-in spells the queries of the test files, and the build reads them there.
+        evicts_any_module: replaced.evicts_any_module
+            || (replaced.names_file_with_query && !input.aot.host_runs_files_from_disk),
+        files_that_tests_load: {
+            let files = |paths: &[Vec<u8>]| sorted(paths.iter().cloned().map(ReplacedModule::File));
+            FilesThatTestsLoad {
+                by_statements: files(&replaced.files_imported_by_statements),
+                by_calls: files(&replaced.files_imported_by_calls),
+                by_require: files(&replaced.files_required),
+                where_throws_are_caught: files(&replaced.files_required_where_throws_are_caught),
+            }
+        },
+        replaced_builtins: sorted(replaced.builtins.iter().copied()),
+        opened_names: sorted(
+            replaced
+                .names_added_to_builtins
+                .iter()
+                .map(|(holder, name)| OpenedName {
+                    holder: *holder,
+                    name: name.clone(),
+                }),
+        ),
+        left_to_loader: Vec::new(),
+        loads_below_files_left_to_loader: Vec::new(),
+        stand_in_for_files_from_disk: None,
     }
+}
+
+fn sorted<T: Ord>(items: impl Iterator<Item = T>) -> Vec<T> {
+    let mut items: Vec<T> = items.collect();
+    items.shared_sort_unstable();
+    items.dedup();
+    items
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -285,7 +386,7 @@ fn in_memory_file_keys(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8
     let mut keys: Vec<_> = (by_path.into_iter())
         .map(|(path, (key, _))| (key.to_vec(), path))
         .collect();
-    keys.sort_unstable();
+    keys.shared_sort_unstable();
     keys
 }
 
@@ -296,7 +397,7 @@ pub(crate) fn in_memory_files_by_path<'f>(
 ) -> BTreeMap<Vec<u8>, (&'f [u8], &'f [u8])> {
     let working_directory = from_native(working_directory);
     let mut files: Vec<_> = file_map.map.iter().collect();
-    files.sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
+    files.shared_sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
     (files.into_iter())
         .map(|(key, contents)| {
             (
@@ -332,7 +433,7 @@ fn externals(options: &BundleOptions<'_>) -> Externals {
 
 fn sorted_unique<T: Ord>(list: impl Iterator<Item = T>) -> Vec<T> {
     let mut sorted: Vec<T> = list.collect();
-    sorted.sort_unstable();
+    sorted.shared_sort_unstable();
     sorted.dedup();
     sorted
 }
@@ -433,6 +534,7 @@ fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
 /// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.
 fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     let mut followed: Vec<Vec<u8>> = Vec::with_capacity(entry_points.len());
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     for entry in entry_points {
         let is_in_memory = input.file_map.is_some_and(|files| files.contains(&entry));
         let absolute = absolute_path(input.working_directory, &entry);
@@ -441,11 +543,29 @@ fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) ->
             false => real_file_path(&absolute).filter(|real| *real != absolute),
         };
         let entry = real.unwrap_or(entry);
-        if !followed.contains(&entry) {
+        if seen.insert(entry.clone()) {
             followed.push(entry);
         }
     }
     followed
+}
+
+/// As with `bun build --compile`, an executable starts with the first entry point that is neither a stylesheet nor a page.
+fn start_with_first_script(
+    input: &OptionsInput<'_, '_, '_>,
+    mut entry_points: Vec<Vec<u8>>,
+    log: &mut Log,
+) -> Option<Vec<Vec<u8>>> {
+    let is_script = |entry: &Vec<u8>| {
+        let loader = input.bundle_options.loader(bun_paths::extension(entry));
+        !matches!(loader, Loader::Css | Loader::Html)
+    };
+    let Some(first) = entry_points.iter().position(is_script) else {
+        log.add_error_fmt(None, Loc::EMPTY, format_args!("No output files to bundle"));
+        return None;
+    };
+    entry_points[..=first].rotate_right(1);
+    Some(entry_points)
 }
 
 fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
@@ -515,6 +635,12 @@ pub(crate) fn embedded_entry_point_names(
             Some(name) if index == 0 => Some(name.to_vec()),
             _ => {
                 let relative = relative_path(working_directory, root_directory, entry)?;
+                let extension: &[u8] = match options.loader(bun_paths::extension(entry)) {
+                    Loader::Css => b"css",
+                    Loader::Html => b"html",
+                    _ => b"js",
+                };
+                template.placeholder.ext = extension.into();
                 Some(entry_name(Some(&mut template), relative))
             }
         });
@@ -523,7 +649,7 @@ pub(crate) fn embedded_entry_point_names(
 
 fn without_equal_names(names: Vec<Vec<u8>>, log: &mut Log) -> Option<Vec<Vec<u8>>> {
     let mut sorted: Vec<&Vec<u8>> = names.iter().collect();
-    sorted.sort_unstable();
+    sorted.shared_sort_unstable();
     let mut has_duplicate = false;
     for group in sorted
         .chunk_by(|a, b| a == b)
@@ -654,7 +780,7 @@ fn glob_matches(pattern: &[u8], working_directory: &[u8]) -> Option<Vec<Vec<u8>>
             Ok(Err(_)) | Err(_) => return None,
         }
     }
-    matches.sort_unstable();
+    matches.shared_sort_unstable();
     Some(matches)
 }
 

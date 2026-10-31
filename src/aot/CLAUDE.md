@@ -59,13 +59,13 @@ Before you push: `bun fmt --plugin=prettier-plugin-organize-imports` with a cana
 
 [`test/aot/README.md`](../../test/aot/README.md) lists every group of tests, what CI runs, and where a new test goes. The short form:
 
-- **A fix brings its test.** The smallest program that showed the problem goes to `test/aot/programs/<topic>/`, with a line in `test/aot/programs-in-every-run.txt`. Without that line one commit in ten runs it.
+- **A fix brings its test.** The smallest program that showed the problem goes to `test/aot/parallel/<topic>/`, or as IR text to `test/aot/ir/` or `test/aot/engine-tests/` where that asks the same. Every run of CI takes it.
 - **The oracle is plain Bun.** A program must print under `--aot` what `bun run` prints, with its types and with its types erased.
 - **A test is worth what it does without the fix.** Run it on the old binary once.
 - **One case per program** where a case can change what the compiler knows: one line that gives a type up turns every other case in the file green.
 - A test says what the program does. It does not tell the story of how somebody found it.
 - The checking builds find what answers do not show: `--aot-validate`, `--aot-check=ClaimsToBackEnd`, `test/aot/shell/collector-stress.py`, `heat.py`, an ASAN build. A change to code generation or to what the collector sees wants all of them.
-- The fuzzers are in `test/aot/fuzz` (`farm.py` runs them without end). A seed that found something goes to `fuzzer-seeds-that-found-faults.test.ts`.
+- The fuzzers are in `test/aot/fuzz` (`farm.py` runs them without end). What a seed found is cut down and becomes a test with the fix.
 
 ## Measure
 
@@ -142,7 +142,7 @@ These are settled. Each was argued, and most were learned by building the opposi
 - **An option is on by default or deleted.** No always-on options, no knobs kept "for safety".
 - **No run-time safety net for compiler bugs.** Fix the bug, at no cost in speed. Checks belong in the checking builds.
 - **The table of built-ins is data**, generated from `*.builtins.ts`. Type predicates (`Array.isArray`, `typeof`) always fold. `Math` functions are intrinsics.
-- **CommonJS is just a function.** A module of the image runs at most once; cycles must work.
+- **CommonJS is just a function.** A module of the image runs at most once; cycles must work. The one exception is an ES module that is a test file under `bun test --rerun-each` (`ModuleFlags::RunsAgain`): each run holds what the file declares in an environment of its own, and flow takes the body to run any number of times. The body of a library module that threw is entered again by the next `require`, as in plain Bun: the run time first forgets what the failed run made (`Modules::forgetRunOfLibraryModule`), so for the code each run is the first.
 
 **What an executable is**
 

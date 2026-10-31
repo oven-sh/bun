@@ -7,7 +7,7 @@
 // ./idioms.test.ts says how instructions are counted and what a turn costs. A row is worse at 2% over its pin: two runs of one Bun differ by 0.02%. On a platform without pins the numbers are printed and not judged:
 // ./pins-from-a-log.ts writes the file from the log of such a run.
 //
-//   TEST_PART=aot/perf/pinned-applications bun test test/aot/parts.test.ts
+//   bun test ./test/aot/perf/pinned-applications.measure.ts
 //   AOT_PERF=lower ..                                 writes every number that got better into the file
 //   AOT_PERF=update ..                                rewrites the pinned numbers as measured
 //   AOT_SERVERS_MODULES=<node_modules folder> ..      nothing is downloaded
@@ -18,7 +18,7 @@ import { dirname, join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
 import { run } from "../harness/run";
-import { slot, withoutDebugInformation } from "../run-programs";
+import { slot, withoutDebugInformation } from "../harness/commands";
 import { installPackages } from "../servers/run-servers";
 import { describe, test } from "../supported";
 

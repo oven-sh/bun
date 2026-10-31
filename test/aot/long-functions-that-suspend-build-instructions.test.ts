@@ -1,4 +1,5 @@
-import { isASAN, isDebug, isWindows } from "harness";
+import { isASAN, isDebug } from "harness";
+import { countsInstructions } from "./analysis-scaling/measure-check";
 import { expectLinearInstructionCount } from "./long-functions-instructions";
 import { indexesUpTo, type Program } from "./long-functions-programs";
 import { test } from "./supported";
@@ -49,7 +50,7 @@ ${run}
   };
 
 // The locals that the suspensions keep grow by sixteen when the function grows by four: that part is small at these sizes.
-test.skipIf(isSlowBuild || isWindows).each(Object.entries(kinds))(
+test.skipIf(isSlowBuild || !countsInstructions()).each(Object.entries(kinds))(
   "the instructions of a build follow the number of suspensions of %s that keeps many locals",
   async (_, kind) => {
     await expectLinearInstructionCount(250, writeLocalsKeptOverSuspensions(kind), 7.5);

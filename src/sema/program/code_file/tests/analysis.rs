@@ -270,9 +270,7 @@ fn binder_stack_overflow_replaces_tree_with_empty_tree() {
                 context.session.arena(),
                 target,
                 source,
-                false,
-                &[],
-                &[],
+                LoadInputs::default(),
             );
             let hir = &parsed.parse.hir;
             assert!(hir.ran_out_of_stack && hir.has_errors && hir.has_parse_diagnostics);
@@ -317,6 +315,22 @@ fn only_entry_point_is_main_module() {
     assert_eq!(main_of(&["/a.ts", "/b.ts"], "/b.ts"), None);
     assert_eq!(main_of(&["/a.ts", "/b.ts"], "/c.ts"), Some(false));
     assert_eq!(main_of(&[], "/a.ts"), Some(false));
+}
+
+#[test]
+fn file_that_host_may_run_is_main_module_or_not() {
+    let host = host_of(&[("/b.test.ts", ""), ("/c.ts", "")]);
+    let mut build = TestBuild::new(&host, &["/a.ts"]);
+    build.code.main_modules_beside_entry_points =
+        vec![b"/b.test.ts".to_vec(), b"/missing.test.ts".to_vec()];
+    with_compile_context(&build, |context| {
+        let loader = HostLoader::default();
+        let main_of = |path: &[u8]| import_meta_main(context, LoadKey { path, loader });
+        assert_eq!(main_of(b"/a.ts"), Some(true));
+        assert_eq!(main_of(b"/b.test.ts"), None);
+        assert_eq!(main_of(b"/c.ts"), Some(false));
+        assert_eq!(main_of(b"/missing.test.ts"), Some(false));
+    });
 }
 
 #[test]

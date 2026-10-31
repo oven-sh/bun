@@ -358,9 +358,64 @@ fn is_runtime_module_read(source: &str, path: &[u8]) -> Option<bool> {
 fn module_of_bun_is_read_for_the_code_that_asks_for_it() {
     let path = b"/$bun/js/node/querystring.ts";
     let prints = "console.log('a line');";
-    assert_eq!(is_runtime_module_read(prints, path), Some(false));
+    assert_eq!(is_runtime_module_read(prints, path), None);
     let parses = "import { parse } from 'node:querystring'; console.log(parse('a=b'));";
     assert_eq!(is_runtime_module_read(parses, path), Some(true));
+}
+
+fn compiles_runtime_module(source: &str, path: &[u8]) -> bool {
+    let files = [("main.ts", source)];
+    with_loaded_build(&files, &default_settings(), |_, loaded| {
+        let files = loaded.project(ProjectId::Runtime).loaded.files();
+        let file = files.by_path.get(path);
+        file.is_some_and(|file| files.is_compiled(file))
+    })
+}
+
+fn count_library_functions(text: &str) -> usize {
+    let mut project = TestProject::new(&[("a.ts", text)], &default_settings());
+    project.keeps_library_code_without_names = false;
+    let mut log = Log::init();
+    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log);
+    expect_success(result, &log).program.runtime_functions.len()
+}
+
+#[test]
+fn program_holds_the_code_of_bun_behind_what_it_names() {
+    assert_eq!(count_library_functions("console.log('a line');"), 0);
+    let sorting = count_library_functions("console.log([3, 1, 2].sort().join());");
+    let printing_with_a_method = count_library_functions(
+        "console.log({ [Symbol.for('nodejs.util.inspect.custom')]() { return 'a line'; } });",
+    );
+    assert!(0 < sorting && sorting < 20, "{sorting}");
+    assert!(printing_with_a_method > 100, "{printing_with_a_method}");
+}
+
+// The function of Bun's that makes `process.stdout` asks for node:fs. It stands in one file with functions that every program runs.
+#[test]
+fn module_of_bun_is_loaded_for_the_function_that_asks_for_it() {
+    let path = b"/$bun/js/node/fs.ts";
+    assert!(!compiles_runtime_module("console.log('a line');", path));
+    assert!(compiles_runtime_module(
+        "process.stdout.write('a line');",
+        path
+    ));
+}
+
+#[test]
+fn each_public_module_of_bun_is_loaded_for_a_program_that_imports_it_alone() {
+    let has_source = |module: &RuntimeModule| {
+        let flags = table::module_data(*module).flags;
+        flags.contains(table::ModuleFlags::IS_PUBLIC | table::ModuleFlags::HAS_SOURCE)
+    };
+    let modules: Vec<RuntimeModule> = RuntimeModule::ALL.into_iter().filter(has_source).collect();
+    assert!(modules.len() > 40);
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    bun_sema_standalone::for_each_parallel(threads, modules.len(), |index| {
+        let specifier = BStr::new(table::specifier_of(modules[index]));
+        let text = format!("import * as it from \"{specifier}\"; console.log(typeof it);");
+        with_loaded_build(&[("main.ts", &text)], &default_settings(), |_, _| {});
+    });
 }
 
 // Where several files of Bun's declare one interface, the order of the files is the order of its members and overloads.
@@ -765,6 +820,29 @@ fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
     }
 }
 
+// The file may be imported while it runs, so whoever imports it asks for `default` when it is linked.
+#[test]
+fn commonjs_file_that_is_left_out_of_a_cycle_is_asked_for_nothing() {
+    let linked = link_successfully(&[
+        ("main.mjs", "import b from \"./b.mjs\";\nconsole.log(b);\n"),
+        ("a.cjs", "module.exports = require(\"./b.mjs\");\n"),
+        ("b.mjs", "import a from \"./a.cjs\";\nexport default 7;\n"),
+        (
+            "package.json",
+            r#"{ "name": "program", "sideEffects": false }"#,
+        ),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let find = |name: &str| {
+        let mut modules = program.modules.iter();
+        modules.find(|module| program.strings.get(module.path).ends_with_str(name))
+    };
+    assert!(find("a.cjs").is_none());
+    let importer = find("b.mjs").expect("b.mjs has a record");
+    assert!(importer.required_names.is_empty());
+}
+
 #[test]
 fn link_error_names_the_files_and_the_import() {
     use super::link_stage::describe_link_error;
@@ -811,6 +889,14 @@ fn link_error_names_the_files_and_the_import() {
             describe_link_error(loaded, &missing),
             b"MissingUnit: /project/main.js"
         );
+        let missing = LinkError::MissingRecord {
+            module: ProgramModule::Face(file(b"/project/tools.cjs")),
+            named_by: Some(ProgramModule::File(main)),
+        };
+        assert_eq!(
+            describe_link_error(loaded, &missing),
+            b"MissingRecord: the face of /project/tools.cjs, named by /project/main.js"
+        );
     });
 }
 
@@ -838,6 +924,36 @@ fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
     ] {
         link_with_unused_package(importer, manifest, package);
     }
+}
+
+#[test]
+fn skipped_star_barrel_still_imports_listed_side_effects() {
+    let manifest = r#"{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": ["./polyfill.js", "./listed.js"] }"#;
+    let linked = link_successfully(&[
+        ("main.js", "import { a } from \"lib\";\na();\n"),
+        ("node_modules/lib/package.json", manifest),
+        (
+            "node_modules/lib/index.js",
+            "console.log(0);\nimport \"./polyfill.js\";\nimport \"./pure.js\";\nexport * from \"./a.js\";\nexport { listed } from \"./listed.js\";\n",
+        ),
+        ("node_modules/lib/polyfill.js", "console.log(1);\n"),
+        ("node_modules/lib/pure.js", "console.log(2);\n"),
+        ("node_modules/lib/a.js", "export function a() {}\n"),
+        (
+            "node_modules/lib/listed.js",
+            "console.log(3);\nexport const listed = 1;\n",
+        ),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let name_of = |module: ModuleId| {
+        let path = program.strings.get(program.modules[module.index()].path);
+        BStr::new(path.rsplit_str("/").next().unwrap_or_default()).to_string()
+    };
+    let main = (0..program.modules.len()).find(|&index| name_of(ModuleId::new(index)) == "main.js");
+    let requests = &program.modules[main.expect("the entry point has a record")].requests;
+    let requested: Vec<String> = requests.iter().map(|it| name_of(it.target)).collect();
+    assert_eq!(requested, ["polyfill.js", "a.js", "listed.js"]);
 }
 
 fn list_evaluated_files_of_package(main: &str, page: &str, index: &str) -> Vec<String> {
@@ -1138,4 +1254,53 @@ fn build_that_compiles_refuses_the_whole_program() {
     let project = TestProject::with_entry_points(&files, 2, &default_settings());
     let (result, _) = link_project(&project, &WithoutServices);
     assert_eq!(expect_failure(result).refused_entry_points, None);
+}
+
+#[test]
+fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
+    use crate::ir::generated::{SourceLocation, UnseenCodeRecord, Witness};
+    use crate::ir::ids::ABSENT_WORD;
+    let both = WaysBetweenModuleObjects {
+        children: true,
+        parent: true,
+    };
+    for cause in [UnseenCodeCause::FlowResultDisabled] {
+        let unseen_code = [UnseenCodeRecord {
+            cause,
+            builtin: ABSENT_WORD,
+            witness: Witness {
+                function: ABSENT_WORD,
+                value: ABSENT_WORD,
+                location: SourceLocation {
+                    module: ABSENT_WORD,
+                    position: 0,
+                },
+            },
+        }];
+        let found = FlowFindings {
+            unseen_code: &unseen_code,
+            builtins_used: &[],
+            library_functions_lacked: &[],
+            exports_that_spies_replace: &[],
+            builtins_that_tests_replace: &[],
+            names_that_tests_add: &[],
+            text_of_names: &[],
+        };
+        assert!(reads_main_module(&found, false));
+        assert_eq!(find_ways_read_out_of_sight(&found, both), both);
+        assert!(find_ways_named_that_nobody_reads(&found, both).is_empty());
+    }
+    // It has analyzed the program, and lists no use.
+    let found = FlowFindings {
+        unseen_code: &[],
+        builtins_used: &[],
+        library_functions_lacked: &[],
+        exports_that_spies_replace: &[],
+        builtins_that_tests_replace: &[],
+        names_that_tests_add: &[],
+        text_of_names: &[],
+    };
+    assert!(!reads_main_module(&found, false));
+    assert!(find_ways_read_out_of_sight(&found, both).is_empty());
+    assert_eq!(find_ways_named_that_nobody_reads(&found, both), both);
 }

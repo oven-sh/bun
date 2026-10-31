@@ -1,11 +1,11 @@
 // BUN_JSC_verifyGC=1 marks the heap again after every collection and reports a cell that is reachable but was not marked.
-// ./parts.mts runs programs under it (variant-verified-collections). This test shows that it follows the fields of compiled objects:
+// This test shows that it follows the fields of compiled objects:
 // a build without write barriers leaves cells unmarked that only an old compiled object refers to.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump, withoutCrashReport } from "./harness/commands";
 import { run } from "./harness/run";
-import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { test } from "./supported";
 
 const program = `import { edenGC, fullGC } from "bun:jsc";

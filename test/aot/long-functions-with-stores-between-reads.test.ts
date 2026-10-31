@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { countsInstructions } from "./analysis-scaling/measure-check";
 import { expectLinearInstructionCount } from "./long-functions-instructions";
 import { indexesUpTo, mix, type Program } from "./long-functions-programs";
 import { test } from "./supported";
@@ -74,7 +75,7 @@ async function codeBytesOfFunction(program: Program, name: string) {
   return functions.filter(it => it.name === name).reduce((sum, it) => sum + it.codeBytes, 0);
 }
 
-test.skipIf(isSlowBuild || isWindows)(
+test.skipIf(isSlowBuild || !countsInstructions())(
   "the instructions of a build are nearly linear in the number of locals loaded between stores",
   async () => {
     await expectLinearInstructionCount(100, writeLocalsLoadedBetweenStores, 5.5);

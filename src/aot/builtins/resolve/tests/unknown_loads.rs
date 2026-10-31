@@ -53,7 +53,6 @@ const UNKNOWN_LOADS: &[&str] = &[
     "Bun.build(options);",
     "f(Bun);",
     "f(globalThis);",
-    "new ShadowRealm();",
     "import { createRequire } from 'node:module'; f(createRequire(import.meta.url));",
     "import { createRequire } from 'node:module'; f(createRequire(import.meta.url) as any);",
     "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); f(load);",

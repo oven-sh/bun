@@ -440,6 +440,8 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
+    // Object lists a member from when it is first read, and a call of this method has always read this one.
+    const { defineProperties: _ObjectDefineProperties } = Object;
     if (thisArg !== undefined) {
       const bound = this.runInAsyncScope.bind(this, fn, thisArg);
       return Object.defineProperty(bound, "length", {
@@ -550,6 +552,10 @@ function createHook(hook: HookCallbacks) {
         enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
         require("internal/process/next_tick_queue").ring.pushWithInitHooks =
           require("internal/process/tick_ring").pushWithInitHooks;
+        if (IS_COMPILED_AHEAD_OF_TIME) {
+          require("internal/process/next_tick_queue").whileHooked.push =
+            require("internal/process/tick_ring").pushInsideNextTick;
+        }
         require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
       }
       if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {

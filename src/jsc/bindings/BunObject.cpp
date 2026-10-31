@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "BunCompiledModules.h"
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
@@ -328,6 +329,12 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2 }, globalObject))
+            return standIn;
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
@@ -336,6 +343,12 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.SQL", "SQL"_s);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "SQL"_s, 0, true }, globalObject))
+            return standIn;
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
@@ -366,7 +379,7 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 #if ENABLE(AOT)
     // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForMemberLeftOut(globalObject, "$"_s)) {
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "BunShell"_s, 1 }, globalObject)) {
             JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
             RETURN_IF_EXCEPTION(scope, {});
             process.get(globalObject, Identifier::fromString(vm, "env"_s));
@@ -795,6 +808,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+extern "C" SYSV_ABI double AOT__nanoseconds(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
@@ -866,6 +884,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         if (useArrayBuffer) {
             JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
             auto bytes = builder.jsonBytes();
+            heapProfiler.clearSnapshots();
             RETURN_IF_EXCEPTION(throwScope, {});
             auto released = bytes.releaseBuffer();
             auto span = released.leakSpan();
@@ -877,6 +896,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
 
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         auto json = builder.json();
+        heapProfiler.clearSnapshots();
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::encode(jsString(vm, json));
     }
@@ -884,6 +904,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
     auto json = builder.json();
+    heapProfiler.clearSnapshots();
     RETURN_IF_EXCEPTION(throwScope, {});
     // json() returns a null string if the snapshot exceeds the max string length.
     if (json.isNull()) [[unlikely]] {
@@ -1145,6 +1166,11 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        Bun::willStorePathOfMainModule(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return BunObject_setter_main(globalObject, encodedValue);
 }
 

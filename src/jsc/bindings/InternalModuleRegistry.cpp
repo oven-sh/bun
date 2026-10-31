@@ -390,7 +390,8 @@ JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, I
 {
     uint32_t id = field;
     if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText(globalObject) && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
-        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin);
+        // What is loaded for a method that prints its own object is the printer of node:util.
+        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin == "Startup"_s ? "util.inspect"_s : builtin);
         return {};
     }
     return requireField(globalObject, field);
@@ -678,9 +679,9 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
     RETURN_IF_EXCEPTION(scope, {});
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
-    result->putDirect(vm, Identifier::fromString(vm, "bytecode"_s), buffer);
-    result->putDirect(vm, Identifier::fromString(vm, "strings"_s), strings);
-    result->putDirect(vm, Identifier::fromString(vm, "lazyFunctionCount"_s), jsNumber(lazyFunctionCount));
+    Bun::putDirectNamed(vm, result, "bytecode"_s, buffer);
+    Bun::putDirectNamed(vm, result, "strings"_s, strings);
+    Bun::putDirectNamed(vm, result, "lazyFunctionCount"_s, jsNumber(lazyFunctionCount));
     return JSValue::encode(result);
 }
 

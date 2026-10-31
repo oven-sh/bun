@@ -9,19 +9,23 @@ const machineCodeLoaders = [
   "bun:ffi.dlopen",
   "bun:ffi.linkSymbols",
   "native:Bindgen:ffi.bind.ts:cc",
+  "native:Bindgen:ffi.bind.ts:linkLibrary",
+  "native:Bindgen:ffi.bind.ts:makeCallback",
+  "native:Bindgen:ffi.bind.ts:makeFunction",
+  "native:Bindgen:ffi.bind.ts:openLibrary",
   "process.dlopen",
 ];
 
 const moduleLoaders = [
   "%ModuleRequire%",
   "%ModuleRequire%.extensions",
+  "%ModuleRequirePrototype%.extensions",
   "%PrivateGlobals%.createInternalModuleById",
   "%PrivateGlobals%.esmLoadSync",
   "%PrivateGlobals%.requireCommonJS",
   "Bun.ModuleGraph",
   "Bun.build",
   "Bun.plugin",
-  "ShadowRealm.prototype.importValue",
   "node:module._extensions",
   "node:module._load",
   "node:module.runMain",
@@ -32,7 +36,6 @@ const textEvaluators = [
   "%NodeVMBinding%.Module",
   "%NodeVMBinding%.Script",
   "%NodeVMBinding%.compileFunction",
-  "ShadowRealm.prototype.evaluate",
   "native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding",
 ];
 

@@ -1,4 +1,5 @@
-import { isASAN, isDebug, isWindows } from "harness";
+import { isASAN, isDebug } from "harness";
+import { countsInstructions } from "./analysis-scaling/measure-check";
 import { expectLinearInstructionCount } from "./long-functions-instructions";
 import { indexesUpTo, mix, type Program } from "./long-functions-programs";
 import { test } from "./supported";
@@ -32,7 +33,7 @@ function writeLoadsWithCallsBetween(localCount: number): Program {
   };
 }
 
-test.skipIf(isSlowBuild || isWindows)(
+test.skipIf(isSlowBuild || !countsInstructions())(
   "the instructions of a build are linear in the number of loads with a call between them",
   async () => {
     await expectLinearInstructionCount(2_000, writeLoadsWithCallsBetween, 4.5);

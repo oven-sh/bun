@@ -1,1 +1,0 @@
-{ "env": { "FLAGS": "1,0" }, "skipInShell": "it asks for modules of Bun" }

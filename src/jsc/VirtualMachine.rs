@@ -140,6 +140,8 @@ pub enum MainEntryPoint {
     /// The user's file, through the `bun:main` wrapper.
     File,
     Compiled,
+    /// A file that is not compiled into an executable that runs only what is. The loader gets its path and answers for it.
+    OutsideExecutable,
     /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
     Html,
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
@@ -442,6 +444,9 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
+    /// What the outgoing file gives back once its realm is retired. See
+    /// [`VirtualMachine::release_at_retirement`].
+    pub at_retirement: Option<Vec<Box<dyn FnOnce()>>>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1152,6 +1157,19 @@ impl VirtualMachine {
         (context.id() != self.root_context.id()).then_some(context)
     }
 
+    /// `context` when it stops while the VM goes on: a `Bun.ModuleGraph`'s, and under
+    /// `bun test --isolate` the realm's own, which stops with each test file.
+    #[inline]
+    pub fn as_context_that_stops_early<'a>(
+        &self,
+        context: &'a crate::ScriptExecutionContext,
+    ) -> Option<&'a crate::ScriptExecutionContext> {
+        if self.test_isolation_enabled {
+            return Some(context);
+        }
+        self.as_graph_context(context)
+    }
+
     /// The context of the realm's own script: what belongs to the realm rather
     /// than to whichever `Bun.ModuleGraph` first needed it.
     #[inline]
@@ -1617,20 +1635,13 @@ impl VirtualMachine {
         unsafe { self.transpiler.env.as_ref() }
     }
 
-    /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
-    /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;
-    /// callers previously open-coded `unsafe { &*vm.transpiler.fs }`.
+    /// The process-lifetime resolver `FileSystem` singleton.
     #[inline]
     pub fn fs(&self) -> &'static bun_resolver::fs::FileSystem {
-        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
-        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
-        // is installed.
-        unsafe { &*self.transpiler.fs }
+        bun_resolver::fs::FileSystem::get()
     }
 
-    /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
-    /// allocated once during VM init and never freed.
+    /// The process cwd string.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
         self.fs().top_level_dir()
@@ -1979,10 +1990,21 @@ impl VirtualMachine {
     }
 
     /// Acquires the JSC API lock for the duration of `f()`.
-    ///
+    pub fn run_with_api_lock<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        Self::hold_api_lock(self.jsc_vm(), f)
+    }
+
+    /// Like [`run_with_api_lock`](Self::run_with_api_lock), and lends `self` to `f`.
+    pub fn run_with_api_lock_mut<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        Self::hold_api_lock(VM::opaque_ref(self.jsc_vm), move || f(self))
+    }
+
     /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
     /// trampoline so the JSC API lock is held for the full duration of `f()`.
-    pub fn run_with_api_lock<F, R>(&self, f: F) -> R
+    fn hold_api_lock<F, R>(jsc_vm: &VM, f: F) -> R
     where
         F: FnOnce() -> R,
     {
@@ -2011,7 +2033,7 @@ impl VirtualMachine {
         };
         // `t` lives on this stack frame for the duration of the FFI call, which
         // invokes `call` exactly once before returning.
-        JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>);
+        JSC__VM__holdAPILock(jsc_vm, (&raw mut t).cast(), call::<F, R>);
         // SAFETY: `call` wrote `t.result` exactly once above.
         unsafe { t.result.assume_init() }
     }
@@ -2655,7 +2677,8 @@ impl VirtualMachine {
                 rare.detach_socket_groups_from_loop();
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
-            unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
+            let uws_loop = unsafe { &*vm.uws_loop() };
+            uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");
             #[cfg(windows)]
@@ -3232,7 +3255,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
-    fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3487,9 +3509,8 @@ impl VirtualMachine {
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
         // recover the JSC VM via `internal_loop_data`.
         // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
-        unsafe {
-            (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
-        }
+        let uws_loop = unsafe { &*uws::Loop::get() };
+        uws_loop.internal_loop_data.jsc_vm.set(jsc_vm.cast());
 
         // `ParentDeathWatchdog` install for the main thread.
         // Must run AFTER `ensure_waker()` (above) has set `event_loop_handle`,
@@ -3655,13 +3676,16 @@ impl VirtualMachine {
 
         if matches!(
             self.main_entry_point,
-            MainEntryPoint::File | MainEntryPoint::Compiled
+            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable
         ) {
-            let is_compiled = entry_path.is_some_and(crate::compiled_program::is_compiled_module);
-            self.main_entry_point = if is_compiled {
-                MainEntryPoint::Compiled
-            } else {
-                MainEntryPoint::File
+            self.main_entry_point = match entry_path {
+                Some(path) if crate::compiled_program::is_compiled_module(path) => {
+                    MainEntryPoint::Compiled
+                }
+                Some(path) if crate::compiled_program::refuses_code_at(self.global(), path) => {
+                    MainEntryPoint::OutsideExecutable
+                }
+                _ => MainEntryPoint::File,
             };
         }
         self.has_loaded = self.main_entry_point == MainEntryPoint::Compiled
@@ -3692,15 +3716,17 @@ impl VirtualMachine {
                 if self.has_patched_run_main
                     && matches!(
                         self.main_entry_point,
-                        MainEntryPoint::File | MainEntryPoint::Compiled
+                        MainEntryPoint::File
+                            | MainEntryPoint::Compiled
+                            | MainEntryPoint::OutsideExecutable
                     )
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let run_main_path = match (self.main_entry_point, self.main()) {
-                        (MainEntryPoint::Compiled, Some(main)) => main,
-                        _ => MAIN_FILE_NAME,
+                        (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
+                        (_, Some(main)) => main,
                     };
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
                     let promise: *mut JSInternalPromise =
@@ -3745,7 +3771,9 @@ impl VirtualMachine {
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
         let builtin = match self.main_entry_point {
-            MainEntryPoint::File | MainEntryPoint::Compiled => None,
+            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable => {
+                None
+            }
             MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
             MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
         };
@@ -3765,18 +3793,15 @@ impl VirtualMachine {
                 return Err(crate::CrateError::JSError);
             }
             p
-        } else if self.main_entry_point == MainEntryPoint::Compiled
+        } else if self.main_entry_point != MainEntryPoint::File
             && !self.transpiler.options.disable_transpilation
         {
-            // The path is the key of the module in the image: there is nothing to resolve.
-            let main = (self.main()).expect("a compiled entry point has a path");
+            // The path is the key of the module: there is nothing to resolve.
+            let main = (self.main()).expect("the entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
-                .ok_or(crate::CrateError::JSError)?;
-            // SAFETY: `promise` is a live JSC heap cell.
-            unsafe { Bun__lookForServerAfterEvaluation(self.global(), promise) };
-            promise
+                .ok_or(crate::CrateError::JSError)?
         } else if !self.transpiler.options.disable_transpilation {
             let name = bun_core::StringView::borrow_utf8(MAIN_FILE_NAME);
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
@@ -4366,6 +4391,13 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
+    }
+
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByFlags")]
+    pub(crate) extern "C" fn is_code_generation_disallowed_by_flags_for_cpp() -> bool {
+        bun_core::code_generation_from_strings_by_flags()
+            != bun_core::CodeGenerationFromStrings::Allowed
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]
@@ -5115,7 +5147,8 @@ impl VirtualMachine {
         // (no `&VM` reborrow).
         vm_ref.jsc_vm = JSGlobalObject::opaque_ref(new_global).vm_ptr();
         // SAFETY: per-thread uws loop is live.
-        unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
+        let uws_loop = unsafe { &*uws::Loop::get() };
+        uws_loop.internal_loop_data.jsc_vm.set(vm_ref.jsc_vm.cast());
         vm_ref.event_loop_mut().ensure_waker();
         if opts.smol {
             // SAFETY: process-global written once at startup.
@@ -5137,9 +5170,13 @@ impl VirtualMachine {
     }
 
     /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
-    /// stored in itself, so to it a file on disk is not part of the program.
+    /// stored in itself, so to it a file on disk is not part of the program. A test run is compiled in place from such files.
     pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
-        !in_standalone_executable && !path.starts_with(b"data:")
+        let runs_tests_in_place = isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+            && crate::compiled_program::Bun__AOT__allowsCodeFromDisk()
+            && bun_core::code_generation_from_strings_by_flags()
+                != bun_core::CodeGenerationFromStrings::Strict;
+        (!in_standalone_executable || runs_tests_in_place) && !path.starts_with(b"data:")
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
@@ -5427,6 +5464,8 @@ impl VirtualMachine {
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
+        let mut source_before_root: Option<&[u8]> = None;
+        let mut has_read_folders_again = false;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5448,14 +5487,24 @@ impl VirtualMachine {
                             .map(|graph| graph.base_public_path_with_default_suffix())
                             .filter(|root| !source_to_use.starts_with(root))
                     {
+                        source_before_root = Some(source_to_use);
                         source_to_use = root;
-                        retry_on_not_found = true;
+                        retry_on_not_found = !has_read_folders_again;
                         continue;
                     }
                     if !retry_on_not_found {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
+                    has_read_folders_again = true;
+                    // A file that was written since the folder of the importer was read is looked for from there again, and then from the root.
+                    if let Some(asked) = source_before_root
+                        .take()
+                        .filter(|asked| bun_paths::is_absolute(asked))
+                    {
+                        source_to_use = asked;
+                        may_retry_from_root = true;
+                    }
 
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
@@ -5486,8 +5535,27 @@ impl VirtualMachine {
                         if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
                             return Err(crate::CrateError::ModuleNotFound);
                         }
+                        // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
+                        let is_in_executable =
+                            bun_options_types::standalone_path::is_bun_standalone_file_path(
+                                source_to_use,
+                            );
+                        let folder_on_disk = match self.standalone_module_graph {
+                            Some(graph) if is_in_executable => {
+                                let root = graph.root_on_disk();
+                                let base = root.as_deref().unwrap_or(top_level_dir);
+                                let mut folders = graph
+                                    .directories_of_importer(source_to_use, base)
+                                    .into_iter();
+                                let resolver = &mut self.transpiler.resolver;
+                                let found = folders
+                                    .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
+                                Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
+                            }
+                            _ => None,
+                        };
                         let parts: [&[u8]; 3] = [
-                            source_to_use,
+                            folder_on_disk.as_deref().unwrap_or(source_to_use),
                             normalized_specifier,
                             bun_paths::path_literal!("..").as_bytes(),
                         ];
@@ -6098,16 +6166,16 @@ impl VirtualMachine {
     /// One sweep over the sockets a test file opened. What a close handler opens meanwhile stays open.
     fn close_test_file_sockets(&self) {
         // SAFETY: process-global usockets loop is live.
-        let data = unsafe { &raw mut (*uws::Loop::get()).internal_loop_data };
+        let data = unsafe { &(*uws::Loop::get()).internal_loop_data };
         // The next group is parked in the loop's iterator, which unlinking a group advances past
         // it: a close handler may unlink any group, and its owner then free it. One it links goes
         // to the head, behind the walk.
-        // SAFETY: as above; no reference into the loop is held across a close handler.
-        unsafe {
-            (*data).iterator = (*data).head;
-            while let Some(group) = NonNull::new((*data).iterator) {
-                let group = group.as_ptr();
-                (*data).iterator = (*group).next;
+        data.iterator.set(data.head());
+        while let Some(group) = NonNull::new(data.iterator.get()) {
+            let group = group.as_ptr();
+            // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+            unsafe {
+                data.iterator.set((*group).next);
                 if !self.is_test_runner_socket_group(group) {
                     (*group).close_all();
                 }
@@ -6118,7 +6186,7 @@ impl VirtualMachine {
     /// A group is linked into the loop while it has a socket.
     fn has_test_file_sockets(&self) -> bool {
         // SAFETY: process-global usockets loop is live.
-        let mut maybe_group = unsafe { (*uws::Loop::get()).internal_loop_data.head };
+        let mut maybe_group = unsafe { (*uws::Loop::get()).internal_loop_data.head() };
         while let Some(group) = NonNull::new(maybe_group) {
             if !self.is_test_runner_socket_group(group.as_ptr()) {
                 return true;
@@ -6127,6 +6195,14 @@ impl VirtualMachine {
             maybe_group = unsafe { (*group.as_ptr()).next };
         }
         false
+    }
+
+    /// `release` runs in the next [`swap_global_for_test_isolation`](Self::swap_global_for_test_isolation),
+    /// once the outgoing realm is retired: its close handlers and last microtasks have run, and
+    /// none of its script runs again.
+    pub fn release_at_retirement(&mut self, release: Box<dyn FnOnce()>) {
+        let at_retirement = &mut self.test_isolation_state.at_retirement;
+        at_retirement.get_or_insert_default().push(release);
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
@@ -6173,6 +6249,10 @@ impl VirtualMachine {
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
         let _ = self.stop_context_handles(crate::StopReason::Disposed);
+        let at_retirement = self.test_isolation_state.at_retirement.take();
+        for release in at_retirement.into_iter().flatten() {
+            release();
+        }
         // Nothing enters its script now, so no close handler dials again: this sweep leaves no socket.
         self.close_test_file_sockets();
         debug_assert!(!self.has_test_file_sockets());
@@ -6332,13 +6412,10 @@ impl VirtualMachine {
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list.
-            struct AggCtx<'a> {
-                formatter: *mut crate::console_object::Formatter<'a>,
-                writer: *mut bun_core::io::Writer,
-                exception_list: *mut ExceptionList,
+            struct AggCtx<'c, 'a> {
+                formatter: &'c mut crate::console_object::Formatter<'a>,
+                writer: &'c mut bun_core::io::Writer,
+                exception_list: Option<&'c mut ExceptionList>,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
                 printed_member: bool,
@@ -6350,22 +6427,10 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                // SAFETY: per-thread VM.
+                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get().as_mut();
-                let exception_list = if ctx.exception_list.is_null() {
-                    None
-                } else {
-                    // SAFETY: non-null branch; borrows the caller's stack
-                    // `ExceptionList`, live for the synchronous `for_each`.
-                    Some(unsafe { &mut *ctx.exception_list })
-                };
-                // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let formatter = unsafe { &mut *ctx.formatter };
-                // SAFETY: `ctx.writer` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let writer = unsafe { &mut *ctx.writer };
+                let formatter = &mut *ctx.formatter;
+                let writer = &mut *ctx.writer;
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
                 if next_value.is_cell()
@@ -6397,7 +6462,7 @@ impl VirtualMachine {
                     vm.print_errorlike_object(
                         next_value,
                         None,
-                        exception_list,
+                        ctx.exception_list.as_deref_mut(),
                         formatter,
                         writer,
                         ctx.allow_ansi_color,
@@ -6407,11 +6472,9 @@ impl VirtualMachine {
                 formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(&mut *formatter),
-                writer: std::ptr::from_mut(&mut *writer),
-                exception_list: exception_list
-                    .as_deref_mut()
-                    .map_or(core::ptr::null_mut(), std::ptr::from_mut::<ExceptionList>),
+                formatter: &mut *formatter,
+                writer: &mut *writer,
+                exception_list: exception_list.as_deref_mut(),
                 allow_ansi_color,
                 allow_side_effects,
                 printed_member: false,
@@ -7809,7 +7872,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

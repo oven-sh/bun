@@ -14,11 +14,11 @@
 // CHECK: [[result]] = [[cast]] [[copy]]
 // CHECK-NEXT: Return [[result]]
 
-// RUN(ENTRY): lower
-// ENTRY-NOT: kind=CommonJsModule{{*}}HasNewTarget
-// ENTRY-NOT: name="method"{{*}}HasNewTarget
-// ENTRY-NOT: kind=Arrow{{*}}HasNewTarget
-// ENTRY-NOT: GetEnvironmentField
+// RUN(MAIN): lower
+// MAIN-NOT: kind=CommonJsModule{{*}}HasNewTarget
+// MAIN-NOT: name="method"{{*}}HasNewTarget
+// MAIN-NOT: kind=Arrow{{*}}HasNewTarget
+// MAIN-NOT: GetEnvironmentField
 
 function F() {
   return () => new.target;

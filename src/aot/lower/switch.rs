@@ -91,6 +91,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         for (index, group) in groups.iter().enumerate() {
             self.continue_in(group.body);
+            self.count_case(cases.at(group.end as usize - 1));
             self.lower_statements(hir[cases.at(group.end as usize - 1)].body);
             let next = groups.get(index + 1).map_or(after, |next| next.body);
             self.jump(next);
@@ -125,7 +126,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut first = 0;
         while first < cases.len {
             let mut end = first + 1;
-            while end < cases.len && hir[cases.at(end as usize - 1)].body.is_empty() {
+            // A clause that counts how often it is entered has a block of its own.
+            while end < cases.len
+                && hir[cases.at(end as usize - 1)].body.is_empty()
+                && !self.file.counts_executions()
+            {
                 end += 1;
             }
             let body = self.create_block();

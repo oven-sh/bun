@@ -210,6 +210,67 @@ export function writePromisesAwaitedTogether(promiseCount: number): Program {
   };
 }
 
+// No function says what it returns, so the type of each is found through the next, all the way round.
+export function writeFunctionsThatCallTheNext(functionCount: number): Program {
+  return {
+    source: [
+      ...indexesUpTo(functionCount).map(
+        index => `function f${index}(x) { return x > 0 ? f${(index + 1) % functionCount}(x - 1) + ${index} : 0; }`,
+      ),
+      "console.log(f0(50));",
+    ].join("\n"),
+    output: "1225\n",
+  };
+}
+
+export function writeMethodsThatCallTheNext(methodCount: number): Program {
+  return {
+    source: [
+      "class Ring {",
+      ...indexesUpTo(methodCount).map(
+        index => `m${index}(x) { return x > 0 ? this.m${(index + 1) % methodCount}(x - 1) + ${index} : 0; }`,
+      ),
+      "}",
+      "console.log(new Ring().m0(50));",
+    ].join("\n"),
+    output: "1225\n",
+  };
+}
+
+export function writeConditionalsInsideOneAnother(conditionalCount: number): Program {
+  return {
+    source: [
+      "function find(x) {",
+      "return (",
+      ...indexesUpTo(conditionalCount).map(index => `x === ${index} ? ${index} + 1 :`),
+      "-1",
+      ");",
+      "}",
+      `console.log(find(7), find(${conditionalCount - 1}), find(-5));`,
+    ].join("\n"),
+    output: `8 ${conditionalCount} -1\n`,
+  };
+}
+
+export function writePromisesAwaitedTogetherAndWalked(promiseCount: number): Program {
+  const indexes = indexesUpTo(promiseCount);
+  return {
+    source: [
+      "async function answer(x) { return x; }",
+      "async function run() {",
+      "const all = await Promise.all([",
+      ...indexes.map(index => `answer(${index}),`),
+      "]);",
+      "let sum = 0;",
+      "for (const value of all) sum += value;",
+      "return sum;",
+      "}",
+      "run().then(sum => console.log(sum));",
+    ].join("\n"),
+    output: `${indexes.reduce((sum, index) => sum + index, 0)}\n`,
+  };
+}
+
 // The `try` block stores to every local, the `catch` block reads every local, and the second call throws halfway.
 function writeTryThatStoresToLocals(
   localCount: number,
@@ -218,6 +279,7 @@ function writeTryThatStoresToLocals(
   isReadBehindTry: (index: number) => boolean,
   initial = "0",
   numberOf = (local: string) => local,
+  isCalledInLoop = false,
 ): Program {
   const indexes = indexesUpTo(localCount);
   const readBehindTry = indexes.filter(isReadBehindTry);
@@ -247,6 +309,7 @@ function writeTryThatStoresToLocals(
       "}",
       "const numbers = [];",
       `for (let index = 0; index < ${localCount}; index++) numbers.push(${element("index * 7 + 1")});`,
+      ...(isCalledInLoop ? ["for (let turn = 0; turn < 100; turn++) run(numbers, false);"] : []),
       "console.log(run(numbers, false), run(numbers, true));",
     ].join("\n"),
     output: `${resultOfRun(false)} ${resultOfRun(true)}\n`,
@@ -268,6 +331,18 @@ export const writeFieldsStoredInTry = (localCount: number) =>
     number => `{ value: ${number} }`,
     ".value",
     index => index % 7 === 0,
+  );
+
+// The same in a function that a loop calls, so it is compiled as hot code: the locals that are read behind the `try` statement stay in registers or on the stack.
+export const writeFieldsStoredInTryOfHotFunction = (localCount: number) =>
+  writeTryThatStoresToLocals(
+    localCount,
+    number => `{ value: ${number} }`,
+    ".value",
+    index => index % 7 === 0,
+    undefined,
+    undefined,
+    true,
   );
 
 // What is stored is a string, and what is read of it are its length and its last character.

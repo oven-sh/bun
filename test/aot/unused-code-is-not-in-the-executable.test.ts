@@ -2,13 +2,15 @@
 // imports, through a namespace object, a barrel, the exports object of a CommonJS module, a class, an object of functions or
 // `import()`. Where the function object is still created, a stub of a few bytes stands in for its entry point. The files are
 // compiled one by one, not bundled, so nothing but the analysis of the whole program removes these bodies.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const largestStub = 64;
 
@@ -236,7 +238,18 @@ async function build(directory: string, entry: string) {
   const report = join(directory, "report.json");
   const flags = ["--aot-report=" + report, "--aot-report-detail=functions"];
   const built = await run(
-    [bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", executable],
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--no-builtin-modules",
+      ...flags,
+      ...withoutDebugInformation,
+      entry,
+      "--outfile",
+      executable,
+    ],
     directory,
   );
   expect({ errors: built.errors, exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });
@@ -257,7 +270,7 @@ for (const [title, { files, entry, unused }] of Object.entries(cases)) {
   });
 }
 
-test("a member that is read under a name nobody knows keeps every function", async () => {
+test.concurrent("a member that is read under a name nobody knows keeps every function", async () => {
   using dir = tempDir("aot-unused-code-control", {
     "main.mjs": `import * as functions from "./functions.mjs";\nconsole.log(functions[process.argv[2] ?? "usedOne"](process.argv.length + 1));\n`,
     "functions.mjs": functions,

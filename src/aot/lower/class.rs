@@ -21,11 +21,10 @@ use crate::ir::{LayoutId, PropertyKeyId, StringId, ValueId};
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
 pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
-pub(crate) use self::plan::class_slots;
 pub(in crate::lower) use self::plan::{
-    decorators_of, has_decorators, has_instance_brand, has_private_static_storage,
-    is_auto_accessor, is_declaration_only, is_decorated_private_name, is_derived_class,
-    runtime_members,
+    assigns_fields_in_constructor, brand_is_of_methods, class_slots, decorators_of, has_decorators,
+    has_instance_brand, has_private_static_storage, is_auto_accessor, is_declaration_only,
+    is_decorated_private_name, is_derived_class, is_evaluated_in_constructor, runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -111,7 +110,8 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(plan) = self.classes.plans.get(&class) {
             return Rc::clone(plan);
         }
-        let plan = plan::plan_class(self.hir, self.bound, self.compiled.settings, class);
+        let (settings, transpiled) = (self.compiled.settings, self.transpiled.as_ref());
+        let plan = plan::plan_class(self.hir, self.bound, settings, transpiled, class);
         let plan = Rc::new(plan);
         self.classes.plans.insert(class, Rc::clone(&plan));
         plan

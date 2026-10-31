@@ -1,5 +1,7 @@
 mod alternatives;
 mod call_sites;
+mod changed_files;
+mod encoders;
 mod import_uses;
 mod jsx;
 mod macro_calls;
@@ -10,10 +12,14 @@ mod statements;
 #[cfg(all(test, not(miri)))]
 mod tests;
 
-pub use call_sites::{RequireCall, RequireCallForm, find_require_call};
+pub use call_sites::{
+    RequireCall, RequireCallForm, find_module_printed_as_require, find_require_call,
+    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
+};
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
 };
+pub use encoders::{ENCODERS, Encoder};
 pub use jsx::{
     AutomaticJsx, JsxCallee, JsxImport, JsxImportSet, JsxMode, KeyAttribute, find_key_attribute,
     has_static_children, is_ignored_key, jsx_callee, jsx_children,
@@ -24,8 +30,10 @@ pub use made_requires::{
     holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
     is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
-pub(crate) use made_requires::{find_imported_export, settled_symbol};
-pub use parameters::{find_values_of_parameter, is_exported};
+pub(crate) use made_requires::{
+    find_imported_export, may_be_modified, names_own_file, settled_symbol,
+};
+pub use parameters::{find_values_of_parameter, find_values_passed_for, is_exported};
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
 
@@ -49,6 +57,9 @@ pub enum ImportSiteKind {
     ImportMetaRequire(ExprId),
     ImportMetaResolve(ExprId),
     GetBuiltinModule(ExprId),
+    /// `mock.module(specifier, factory)` of the test runner, which also goes by `jest.mock` and `vi.mock`. It loads nothing.
+    /// Also `build.module(specifier, factory)` in the `setup` of a plugin, which the loader keeps in the same table.
+    MockModule(ExprId),
 }
 
 impl ImportSiteKind {
@@ -59,7 +70,8 @@ impl ImportSiteKind {
             | ImportSiteKind::RequireResolve(call)
             | ImportSiteKind::ImportMetaRequire(call)
             | ImportSiteKind::ImportMetaResolve(call)
-            | ImportSiteKind::GetBuiltinModule(call) => Some(call),
+            | ImportSiteKind::GetBuiltinModule(call)
+            | ImportSiteKind::MockModule(call) => Some(call),
             _ => None,
         }
     }
@@ -82,6 +94,8 @@ pub enum ImportSpecifier {
 pub enum ResolvedForm {
     Path,
     Url,
+    /// A `URL` object whose `href` is that URL.
+    UrlObject,
 }
 
 /// A range of `FileAnalysis::alternatives`.
@@ -115,6 +129,9 @@ pub(crate) struct ImportScan<'s> {
     pub alternatives: &'s [ImportSpecifier],
     pub paths_from_own_directory: &'s [ExprId],
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
+    pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    pub paths_of_changed_files: &'s [(ExprId, ImportSpecifier)],
+    pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],
     pub jsx_imports: JsxImportSet,

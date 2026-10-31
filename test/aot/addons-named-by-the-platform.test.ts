@@ -16,7 +16,7 @@ import {
   targetOfRuntime,
   targets,
 } from "./addons-named-by-the-platform/loaders";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const here = join(import.meta.dir, "addons-named-by-the-platform");
@@ -212,7 +212,6 @@ const oneOfFew: Record<string, Program> = {
         .join("") +
       "};\nconst addon = require(names[process.platform]);\n" +
       prints("out of a table", "addon"),
-    false,
   ),
   // Of the files beside it the executable holds the one that the table names. The other one is no program, and a build that took it in would say so.
   "a name out of a table, joined to __dirname": {
@@ -276,12 +275,16 @@ const oneOfFew: Record<string, Program> = {
     libraries(["-glibc", "-musl"]).map(library => `@my/my-grown-${process.platform}-${process.arch}${library}`),
     () => "my-grown.node",
   );
-  oneOfFew["a name that grows in one arm of a condition"] = inPackage(
-    "my-grown",
-    { "package.json": manifest("my-grown"), "index.js": loaderWithNameThatGrows("my-grown", "@my") },
-    ofGrown.addons,
-    ofGrown.manifests,
-  );
+  oneOfFew["a name that grows in one arm of a condition"] = {
+    ...inPackage(
+      "my-grown",
+      { "package.json": manifest("my-grown"), "index.js": loaderWithNameThatGrows("my-grown", "@my") },
+      ofGrown.addons,
+      ofGrown.manifests,
+    ),
+    // The arm is for Linux. Elsewhere it is dead code, and the name is one string.
+    isConstant: process.platform !== "linux",
+  };
 }
 
 describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named-by-the-platform", () => {
@@ -321,6 +324,12 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     });
   });
 
+  // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time. On Windows a function of the library makes process.env.
+  const usesABuiltInModule = ({ files }: Program) =>
+    Object.values(files).some(text =>
+      /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b|\bprocess\.env\b/.test(text),
+    );
+
   async function run(title: string, program: Program, { passesAddons = false } = {}) {
     const file = title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
     const sources = join(folder, file);
@@ -347,6 +356,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
         "build",
         "--compile",
         "--aot",
+        ...(usesABuiltInModule(program) ? [] : ["--no-builtin-modules"]),
         join(sources, program.entry),
         ...(passesAddons ? program.addons.map(path => join(sources, path)) : []),
         "--outfile",
@@ -357,7 +367,9 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     );
     built(build);
     rmSync(sources, { recursive: true, force: true });
-    return { plain, build, compiled: said(await spawned([executable], away, bunEnv)) };
+    const compiled = said(await spawned([executable], away, bunEnv));
+    if (!isWindows) rmSync(executable, { force: true });
+    return { plain, build, compiled };
   }
 
   test.concurrent.each(Object.keys(programs))(
@@ -376,7 +388,8 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     title =>
       slot(async () => {
         const { plain, build, compiled } = await run(title, oneOfFew[title], { passesAddons: true });
-        expect(build.stderr).toContain("isn't a constant");
+        if (oneOfFew[title].isConstant) expect(build.stderr).not.toContain("isn't a constant");
+        else expect(build.stderr).toContain("isn't a constant");
         expect(compiled).toEqual(plain);
       }),
     600_000,

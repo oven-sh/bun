@@ -6,7 +6,7 @@ import { expect } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const files = {
@@ -200,27 +200,6 @@ describe.concurrent("the file of a stack frame", () => {
     const besideTheSources = await spawned([join(at.app, "../program"), "throw"], at.app, bunEnv);
     expect(besideTheSources.stderr).toBe(thrown.stderr);
   }, 120_000);
-
-  // TODO: a minified executable prints the file's name.
-  test.todo(
-    "in a minified executable the path's token follows the prefix",
-    async () => {
-      using at = project();
-      built(
-        await spawned(
-          [bunExe(), "build", "--compile", "--aot", "--minify", "main.ts", "--outfile", "../program"],
-          at.app,
-          bunEnv,
-        ),
-      );
-      const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
-      expect(compiled.exitCode).toBe(0);
-      for (const line of compiled.stdout.split("\n").filter(line => / at /.test(line) && !line.includes("node:events")))
-        expect(line).toMatch(new RegExp(`${pattern(under(""))}[A-Za-z0-9]+:\\d+:\\d+\\)?$`));
-      expect(compiled.stdout).not.toContain("typed.ts");
-    },
-    120_000,
-  );
 
   test.each([
     [

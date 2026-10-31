@@ -924,6 +924,190 @@ describe("bundler", () => {
       stdout: "ok",
     },
   });
+  // A specifier that starts with a slash can match a "paths" key of the
+  // importer's tsconfig.json. That tsconfig.json only resolves the alias. The
+  // file takes its JSX settings from the build options and then from the
+  // tsconfig.json nearest to it, as it does through a bare key.
+  const jsxRuntimeStub = (name: string) => ({
+    [`/Users/user/project/node_modules/${name}/jsx-runtime.js`]: /* js */ `
+      export const jsx = () => "${name}";
+      export const jsxs = jsx;
+      export const Fragment = "${name}";
+    `,
+    [`/Users/user/project/node_modules/${name}/jsx-dev-runtime.js`]: /* js */ `
+      export const jsxDEV = () => "${name}";
+      export const Fragment = "${name}";
+    `,
+  });
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`tsconfig/PathsAbsoluteSpecifierKeepsTargetJSX-${backend}`, {
+      backend,
+      files: {
+        "/Users/user/project/apps/web/entry.tsx": /* tsx */ `
+          import { Button } from "/@ui/button";
+          import { Label } from "/lib/label";
+          import { Card } from "/@solid/card";
+          console.log(Button(), Label(), Card());
+        `,
+        // "*" also matches a specifier that starts with a slash.
+        "/Users/user/project/apps/web/tsconfig.json": /* json */ `
+          {
+            "compilerOptions": {
+              "jsx": "react-jsx",
+              "jsxImportSource": "preact",
+              "paths": {
+                "/@ui/*": ["../../packages/ui/*"],
+                "/@solid/*": ["../../packages/solid/*"],
+                "*": ["../../*"]
+              }
+            }
+          }
+        `,
+        // This tsconfig.json sets no jsxImportSource.
+        "/Users/user/project/packages/ui/tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }`,
+        "/Users/user/project/packages/ui/button.tsx": `export const Button = () => <button />;`,
+        // This directory has no tsconfig.json.
+        "/Users/user/project/lib/label.tsx": `export const Label = () => <label />;`,
+        // This tsconfig.json sets a jsxImportSource of its own.
+        "/Users/user/project/packages/solid/tsconfig.json": /* json */ `
+          { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "solid-js" } }
+        `,
+        "/Users/user/project/packages/solid/card.tsx": `export const Card = () => <div />;`,
+        ...jsxRuntimeStub("react"),
+        ...jsxRuntimeStub("preact"),
+        ...jsxRuntimeStub("solid-js"),
+      },
+      entryPoints: ["/Users/user/project/apps/web/entry.tsx"],
+      run: {
+        stdout: "react react solid-js",
+      },
+    });
+    // A JSX option of the build is the start value, not the default. The
+    // tsconfig.json nearest to the file overrides the fields that it sets.
+    itBundled(`tsconfig/PathsAbsoluteSpecifierKeepsBuildJSX-${backend}`, {
+      backend,
+      jsx: {
+        importSource: "solid-js",
+      },
+      files: {
+        "/Users/user/project/apps/web/entry.tsx": /* tsx */ `
+          import { Button } from "/@ui/button";
+          import { Label } from "/@lib/label";
+          import { Card } from "/@react/card";
+          console.log(Button(), Label(), Card());
+        `,
+        "/Users/user/project/apps/web/tsconfig.json": /* json */ `
+          {
+            "compilerOptions": {
+              "jsx": "react-jsx",
+              "jsxImportSource": "preact",
+              "paths": {
+                "/@ui/*": ["../../packages/ui/*"],
+                "/@lib/*": ["../../lib/*"],
+                "/@react/*": ["../../packages/react/*"]
+              }
+            }
+          }
+        `,
+        // This tsconfig.json sets no jsxImportSource.
+        "/Users/user/project/packages/ui/tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }`,
+        "/Users/user/project/packages/ui/button.tsx": `export const Button = () => <button />;`,
+        // This directory has no tsconfig.json.
+        "/Users/user/project/lib/label.tsx": `export const Label = () => <label />;`,
+        // This tsconfig.json sets a jsxImportSource of its own.
+        "/Users/user/project/packages/react/tsconfig.json": /* json */ `
+          { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "react" } }
+        `,
+        "/Users/user/project/packages/react/card.tsx": `export const Card = () => <div />;`,
+        ...jsxRuntimeStub("react"),
+        ...jsxRuntimeStub("preact"),
+        ...jsxRuntimeStub("solid-js"),
+      },
+      entryPoints: ["/Users/user/project/apps/web/entry.tsx"],
+      run: {
+        stdout: "solid-js solid-js react",
+      },
+    });
+    itBundled(`tsconfig/PathsAbsoluteSpecifierKeepsTargetJSXClassic-${backend}`, {
+      backend,
+      files: {
+        "/Users/user/project/apps/web/entry.tsx": /* tsx */ `
+          import { Button } from "/@ui/button";
+          import { Field } from "/@forms/field";
+          import { Label } from "/@lib/label";
+          globalThis.h = type => "h(" + type + ")";
+          globalThis.Frag = "Frag";
+          globalThis.React = {
+            createElement: type => "React.createElement(" + type + ")",
+            Fragment: "React.Fragment",
+          };
+          console.log(Button(), Field(), Label());
+        `,
+        "/Users/user/project/apps/web/tsconfig.json": /* json */ `
+          {
+            "compilerOptions": {
+              "jsx": "react",
+              "jsxFactory": "h",
+              "jsxFragmentFactory": "Frag",
+              "paths": {
+                "/@ui/*": ["../../packages/ui/*"],
+                "/@forms/*": ["../../packages/forms/*"],
+                "/@lib/*": ["../../lib/*"]
+              }
+            }
+          }
+        `,
+        // This tsconfig.json sets the classic runtime and no factory.
+        "/Users/user/project/packages/ui/tsconfig.json": `{ "compilerOptions": { "jsx": "react" } }`,
+        "/Users/user/project/packages/ui/button.tsx": `export const Button = () => <></>;`,
+        // This tsconfig.json sets no JSX option.
+        "/Users/user/project/packages/forms/tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+        "/Users/user/project/packages/forms/field.tsx": `export const Field = () => <input />;`,
+        // This directory has no tsconfig.json.
+        "/Users/user/project/lib/label.tsx": `export const Label = () => <label />;`,
+        ...jsxRuntimeStub("react"),
+      },
+      entryPoints: ["/Users/user/project/apps/web/entry.tsx"],
+      run: {
+        stdout: "React.createElement(React.Fragment) react react",
+      },
+    });
+    // The first import of a file creates its module. The order of the two
+    // spellings must not change the settings of that module.
+    itBundled(`tsconfig/PathsAbsoluteSpecifierAgreesWithBareKey-${backend}`, {
+      backend,
+      files: {
+        "/Users/user/project/apps/web/entry.tsx": /* tsx */ `
+          import { SlashFirst } from "/@ui/slash-first";
+          import { SlashFirst as SlashFirstAgain } from "@ui/slash-first";
+          import { BareFirst } from "@ui/bare-first";
+          import { BareFirst as BareFirstAgain } from "/@ui/bare-first";
+          console.log(SlashFirst(), BareFirst(), SlashFirst === SlashFirstAgain, BareFirst === BareFirstAgain);
+        `,
+        "/Users/user/project/apps/web/tsconfig.json": /* json */ `
+          {
+            "compilerOptions": {
+              "jsx": "react-jsx",
+              "jsxImportSource": "preact",
+              "paths": {
+                "/@ui/*": ["../../packages/ui/*"],
+                "@ui/*": ["../../packages/ui/*"]
+              }
+            }
+          }
+        `,
+        "/Users/user/project/packages/ui/tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }`,
+        "/Users/user/project/packages/ui/slash-first.tsx": `export const SlashFirst = () => <button />;`,
+        "/Users/user/project/packages/ui/bare-first.tsx": `export const BareFirst = () => <button />;`,
+        ...jsxRuntimeStub("react"),
+        ...jsxRuntimeStub("preact"),
+      },
+      entryPoints: ["/Users/user/project/apps/web/entry.tsx"],
+      run: {
+        stdout: "react react true true",
+      },
+    });
+  }
   return;
   itBundled("tsconfig/NestedJSX", {
     // GENERATED

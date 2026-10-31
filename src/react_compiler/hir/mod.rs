@@ -1460,7 +1460,12 @@ impl NonLocalBinding {
                     Tag::ERequireMain => b"require.main",
                     Tag::EImportMetaMain => b"import.meta.main",
                     Tag::EBranchBoolean => b"feature()",
-                    Tag::ESpecial => b"module.exports",
+                    Tag::ESpecial => match e.data {
+                        bun_ast::ExprData::ESpecial(bun_ast::E::Special::ImportMetaRequire) => {
+                            b"import.meta.require"
+                        }
+                        _ => b"module.exports",
+                    },
                     _ => b"<bun-opaque>",
                 }
             }

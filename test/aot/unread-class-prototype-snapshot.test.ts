@@ -1,5 +1,5 @@
 // `expect(value).toMatchSnapshot()` and `Bun.inspect(value, { sorted: true })` list the properties of a value through one native function, in sorted order.
-// Under `bun test --aot` it lists the members of a class prototype from which nothing has been read, as under `bun test`: the methods and accessors, without `constructor`.
+// Under `bun test --aot` it lists the members of a class prototype from which nothing has been read, as under `bun test`: none, because none is enumerable.
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
@@ -58,12 +58,9 @@ test("bun test --debug-aot prints a class prototype that nothing has read from a
   ]);
 
   expect(plain.exitCode).toBe(0);
-  expect(plain.printed).toBe(
-    "Inspected {\n  alpha: [Function: alpha],\n  size: [Getter],\n  zeta: [Function: zeta],\n}\n",
-  );
-  for (const method of ["alpha", "zeta", "own"]) expect(plain.snapshots).toContain(`"${method}": `);
-  expect(plain.snapshots).not.toContain("constructor");
-  expect(plain.snapshots).not.toContain("inherited");
+  expect(plain.printed).toBe("Inspected {}\n");
+  for (const member of ["alpha", "zeta", "own", "constructor", "inherited"])
+    expect(plain.snapshots).not.toContain(`"${member}": `);
 
   expect(compiled).toEqual({ ...plain, usedImage: true });
 }, 120_000);

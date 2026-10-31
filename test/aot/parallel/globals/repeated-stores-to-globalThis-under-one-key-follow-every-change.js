@@ -94,7 +94,8 @@ console.log(
 
 const plain = {};
 const below = Object.create(globalThis);
-const other = vm.runInNewContext("globalThis");
+const context = vm.createContext({});
+const other = vm.runInContext("globalThis", context);
 for (let i = 0; i < 60; i++) {
   write(holder, key, "ours " + i);
   write(plain, key, "plain " + i);
@@ -108,7 +109,7 @@ console.log(
   below.keptHere,
   Object.hasOwn(below, key),
   other.keptHere,
-  vm.runInContext("keptHere", other),
+  vm.runInContext("keptHere", context),
 );
 
 vm.runInThisContext("var declaredByScript = 'declared'; function readDeclared() { return declaredByScript; }");

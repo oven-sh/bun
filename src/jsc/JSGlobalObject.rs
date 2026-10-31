@@ -343,12 +343,15 @@ impl JSGlobalObject {
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
         let err = self.to_invalid_arguments(args);
         self.throw_value(err)
     }
 
-    #[inline]
+    #[cold]
+    #[inline(never)]
     pub fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
         match arg_names.len() {
             0 => unreachable!("requires at least one argument"),
@@ -548,10 +551,22 @@ impl JSGlobalObject {
     /// "The {argname} argument must be of type {typename}. Received {value}"
     ///
     /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
+    #[inline]
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsError {
+        self.throw_invalid_argument_type_value_bytes(argname.as_ref(), typename.as_ref(), value)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn throw_invalid_argument_type_value_bytes(
+        &self,
+        argname: &[u8],
+        typename: &[u8],
         value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -562,8 +577,8 @@ impl JSGlobalObject {
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" argument must be of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
-                bstr::BStr::new(typename.as_ref()),
+                bstr::BStr::new(argname),
+                bstr::BStr::new(typename),
                 actual_string_value
             ),
         )
@@ -595,6 +610,8 @@ impl JSGlobalObject {
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
+    #[cold]
+    #[inline(never)]
     pub(crate) fn throw_invalid_property_type(
         &self,
         name: impl AsRef<[u8]>,
@@ -668,20 +685,6 @@ impl JSGlobalObject {
         crate::cpp::JSC__JSGlobalObject__jsDateNow(self)
     }
 
-    pub(crate) fn run_on_load_plugins(
-        &self,
-        namespace_: &BunString,
-        path: &BunString,
-    ) -> JsResult<Option<JSValue>> {
-        crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result = crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path))?;
-        if result.is_undefined_or_null() {
-            return Ok(None);
-        }
-        Ok(Some(result))
-    }
-
     pub(crate) fn run_on_resolve_plugins(
         &self,
         namespace_: &BunString,
@@ -699,8 +702,14 @@ impl JSGlobalObject {
     }
 
     /// Whether an `onResolve` or `onLoad` is registered.
-    pub fn has_plugins(&self) -> bool {
+    pub(crate) fn has_plugins(&self) -> bool {
         Bun__hasPlugins(self)
+    }
+
+    /// Returns (an `onResolve` is registered in the `file` namespace, one is registered in another namespace).
+    pub(crate) fn has_on_resolve(&self) -> (bool, bool) {
+        let namespaces = Bun__onResolveNamespaces(self);
+        (namespaces & 1 != 0, namespaces & 2 != 0)
     }
 
     /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
@@ -715,7 +724,7 @@ impl JSGlobalObject {
 
     /// Whether an `onLoad` would be called to load `key`.
     pub(crate) fn has_on_load(&self, key: &[u8]) -> JsResult<bool> {
-        let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
+        let Some((namespace_, path)) = crate::module_loader::on_load_namespace_and_path(key) else {
             return Ok(false);
         };
         let namespace_ = StringView::from_bytes(namespace_);
@@ -801,6 +810,8 @@ impl JSGlobalObject {
     ///
     /// Note: If you are throwing an error within somewhere in the Bun API,
     /// chances are you should be using `.err(...).throw()` instead.
+    #[cold]
+    #[inline(never)]
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
         self.throw_value(self.create_error_instance(args))
     }
@@ -829,6 +840,8 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_value(&self, value: JSValue) -> JsError {
         // A termination exception (e.g. stack overflow) may already be
         // pending. Don't try to override it — that would hit
@@ -839,6 +852,8 @@ impl JSGlobalObject {
         self.vm().throw_error(self, value)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_type_error(&self, args: Arguments<'_>) -> JsError {
         let instance = self.create_type_error_instance(args);
         self.throw_value(instance)
@@ -937,6 +952,8 @@ impl JSGlobalObject {
 
     /// Clears the current exception and returns that value. Requires compile-time
     /// proof of an exception via `JsError`.
+    #[cold]
+    #[inline(never)]
     pub fn take_exception(&self, proof: JsError) -> JSValue {
         match proof {
             JsError::Thrown => {}
@@ -964,6 +981,8 @@ impl JSGlobalObject {
 
     /// The taken exception as an error value; the VM's termination comes back as its (inert) cell —
     /// every reporter recognises and drops it.
+    #[cold]
+    #[inline(never)]
     pub fn take_error(&self, proof: JsError) -> JSValue {
         let exception = self.take_exception(proof);
         if exception.is_termination_exception() {
@@ -1338,6 +1357,62 @@ extern "C" fn Zig__GlobalObject__resolve(
     }
 }
 
+bun_core::declare_scope!(importMetaResolve, visible);
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__importMetaResolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
+) {
+    bun_core::scoped_log!(
+        importMetaResolve,
+        "source: {}, specifier: {}",
+        source,
+        specifier
+    );
+    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+}
+
+/// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
+/// Returns false when no plugin claims `specifier` or the plugin returns it unchanged.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__resolveWithOnResolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
+) -> bool {
+    crate::mark_binding();
+    // Skip plugins when an `onResolve` callback is the caller, or a catch-all filter would recurse forever.
+    if global.bun_vm().is_in_on_resolve.get() {
+        return false;
+    }
+    let path_of_url = |string: &BunString| {
+        string
+            .starts_with_ascii(b"file://")
+            .then(|| bun_url::path_from_file_url(string))
+    };
+    let (specifier_path, source_path) = (path_of_url(specifier), path_of_url(source));
+    match VirtualMachine::resolve_with_on_resolve::<true>(
+        global,
+        specifier_path.as_ref().unwrap_or(specifier),
+        source_path.as_ref().unwrap_or(source),
+        Some(query),
+        crate::virtual_machine::ResolveMode::Esm,
+        true,
+    ) {
+        Ok(None) => return false,
+        Ok(Some(Ok(path))) => *res = ErrorableString::ok(path),
+        Ok(Some(Err(value))) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
+    }
+    true
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
@@ -1390,11 +1465,6 @@ unsafe extern "C" {
     // to a nullable `*const BunString` via the guaranteed null-pointer
     // optimization (C++ reads `nullptr` as "no namespace"); `&BunString` is a
     // non-null `*const BunString` borrow.
-    safe fn Bun__runOnLoadPlugins(
-        global: &JSGlobalObject,
-        namespace_: Option<&BunString>,
-        path: &BunString,
-    ) -> JSValue;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
@@ -1402,6 +1472,7 @@ unsafe extern "C" {
         source: &BunString,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
+    safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
         specifier: &BunString,

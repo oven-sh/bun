@@ -209,6 +209,20 @@ impl ScriptExecutionContext {
                 .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
     }
 
+    /// As [`owns_nothing`](Self::owns_nothing), but for what only waits to be closed with the context.
+    pub(crate) fn owns_nothing_that_runs_script(&self) -> bool {
+        let mut handle = self.tail.get();
+        // SAFETY: a linked handle is live until it is unlinked.
+        while let Some(armed) = unsafe { handle.as_ref() } {
+            if !armed.only_waits_to_be_closed.get() {
+                return false;
+            }
+            handle = armed.prev.get();
+        }
+        self.socket_groups
+            .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
+    }
+
     /// The groups client sockets opened by a graph context's script join.
     pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
         self.socket_groups
@@ -290,6 +304,8 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
+    /// The owner never runs script by itself, like the sink of an idle `process.stdout`.
+    only_waits_to_be_closed: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -302,7 +318,12 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
+            only_waits_to_be_closed: core::cell::Cell::new(false),
         }
+    }
+
+    pub fn set_only_waits_to_be_closed(&self) {
+        self.only_waits_to_be_closed.set(true);
     }
 
     #[inline]

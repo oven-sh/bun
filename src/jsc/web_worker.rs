@@ -400,21 +400,18 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        let mut temp_log = bun_ast::Log::default();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
-        // are scoped to each statement.
-        let prev_log = unsafe {
-            let prev = (*parent).transpiler.log;
-            (*parent).transpiler.set_log(&raw mut temp_log);
-            prev
-        };
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
+        let prev_log = unsafe { (*parent).transpiler.log };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(temp_log, move |log| {
+        let mut restore = scopeguard::guard(bun_ast::Log::default(), move |log| {
             // SAFETY: `parent` outlives the guard (this call's frame).
             unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        let temp_log = &mut *restore;
+        // The log is inside the guard already, so `set_log` gets its final address.
+        // SAFETY: `parent` is the calling thread's live VM; the guard restores
+        // `prev_log` before the temp log drops.
+        unsafe { (*parent).transpiler.set_log(&raw mut *restore) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -432,15 +429,10 @@ impl WebWorker {
             let dot_slash = OnceCell::new();
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    utf8_slice.slice(),
-                    &dot_slash,
-                    error_message,
-                    temp_log,
-                )
-            } {
+            let preload = unsafe {
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash, error_message)
+            };
+            if let Some(preload) = preload {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
 
@@ -465,7 +457,6 @@ impl WebWorker {
                         specifier,
                         &dot_slash,
                         &mut ignored_message,
-                        temp_log,
                     )
                 };
                 // A text that the build knew is compiled.
@@ -483,7 +474,6 @@ impl WebWorker {
                     spec_slice.slice(),
                     &dot_slash,
                     &mut ignored_message,
-                    temp_log,
                 )
             };
             crate::compiled_program::image_of_worker(path)
@@ -1179,7 +1169,6 @@ impl WebWorker {
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
         let mut resolve_error = BunString::EMPTY;
-        let vm_log = vm.log_mut().unwrap();
         let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
@@ -1188,12 +1177,12 @@ impl WebWorker {
                 &self.unresolved_specifier,
                 &dot_slash,
                 &mut resolve_error,
-                vm_log,
             )
         } {
             Some(p) => p,
             None => {
                 vm.as_mut().exit_handler.exit_code = 1;
+                let vm_log = vm.log_mut().unwrap();
                 if vm_log.errors == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
                     // `Log::add_error` takes `impl IntoText`; pass an owned
@@ -1622,7 +1611,7 @@ fn on_unhandled_rejection(
 ///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM (its
+/// pointer (not `&mut`) because callers hold other borrows into the VM (not its
 /// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
 /// the single expression.
 unsafe fn resolve_entry_point_specifier<'s>(
@@ -1630,7 +1619,6 @@ unsafe fn resolve_entry_point_specifier<'s>(
     str: &'s [u8],
     dot_slash: &'s OnceCell<Vec<u8>>,
     error_message: &mut BunString,
-    log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
@@ -1701,6 +1689,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
+            // SAFETY: `transpiler.log` is never null, and per fn contract no caller
+            // holds a reference to that log across this call.
+            let log = unsafe { &*(*parent).transpiler.log };
             let out: jsc::JsResult<BunString> = (|| {
                 let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
                 out.to_bun_string(global)

@@ -50,5 +50,5 @@ export function separatePrograms(
     return run([executable, ...args], folder, { ...bunEnv, ...env, BUN_AOT_START_AT: entry });
   }
 
-  return { folder, build, start };
+  return { folder, executable, build, start };
 }

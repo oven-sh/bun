@@ -12,9 +12,15 @@ export function asyncIterator(this: Console) {
   var value: Uint8Array[];
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
+  var releasedLock = false;
 
   async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
+    // The reader of an earlier loop released its lock, which unref'd stdin: this loop takes that ref again.
+    if (releasedLock) {
+      releasedLock = false;
+      stream.$bunNativePtr?.updateRef?.(true);
+    }
     var deferredError: Error | undefined;
     try {
       if (i !== -1) {
@@ -102,6 +108,7 @@ export function asyncIterator(this: Console) {
       deferredError = e as Error;
     } finally {
       reader.releaseLock();
+      releasedLock = true;
     }
 
     if (deferredError) {

@@ -828,7 +828,7 @@ impl UDPSocket {
             callback,
             global_this,
             this_value,
-            &[err.to_error().unwrap_or(err)],
+            &[this_value, err.to_error().unwrap_or(err)],
         );
     }
 

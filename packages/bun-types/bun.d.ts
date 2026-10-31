@@ -9925,6 +9925,13 @@ declare module "bun" {
       quality?: number;
       /** Emit a progressive (multi-scan) JPEG. Default `false`. */
       progressive?: boolean;
+      /**
+       * Chroma subsampling. `"4:2:0"` stores colour at half resolution on
+       * both axes (smallest file). `"4:4:4"` keeps full colour resolution,
+       * which avoids colour bleed on saturated text and thin lines.
+       * Default `"4:2:0"`.
+       */
+      chromaSubsampling?: "4:2:0" | "4:4:4";
     }): this;
     /** Set output format to PNG. */
     png(options?: {

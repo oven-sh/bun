@@ -432,6 +432,20 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     })
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum ChromaSubsampling {
+    S420,
+    S444,
+}
+
+bun_core::comptime_string_map! {
+    pub(crate) static CHROMA_SUBSAMPLING_MAP: ChromaSubsampling = {
+        b"4:2:0" => ChromaSubsampling::S420,
+        b"4:4:4" => ChromaSubsampling::S444,
+    };
+}
+
 #[derive(Copy, Clone)]
 pub(crate) struct EncodeOptions {
     pub(crate) format: Format,
@@ -448,6 +462,8 @@ pub(crate) struct EncodeOptions {
     pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
+    /// JPEG only: chroma subsampling factor.
+    pub(crate) chroma_subsampling: ChromaSubsampling,
 }
 
 impl Default for EncodeOptions {
@@ -461,6 +477,7 @@ impl Default for EncodeOptions {
             colors: 256,
             dither: false,
             progressive: false,
+            chroma_subsampling: ChromaSubsampling::S420,
         }
     }
 }
@@ -533,7 +550,15 @@ pub(crate) fn encode(
     icc: Option<&[u8]>,
 ) -> Result<Encoded, Error> {
     match opts.format {
-        Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
+        Format::Jpeg => jpeg::encode(
+            rgba,
+            width,
+            height,
+            opts.quality,
+            opts.progressive,
+            opts.chroma_subsampling,
+            icc,
+        ),
         // PNG carries iCCP on both truecolour and indexed images — quantise
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the

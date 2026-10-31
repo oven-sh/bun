@@ -185,11 +185,7 @@ fn map_floyd_steinberg(
     k: u16,
     indices: &mut [u8],
 ) -> Result<(), AllocError> {
-    // Two rows of accumulated error, ×4 channels. i32 not i16: when the
-    // palette doesn't span the source range (e.g. colors:2, both entries near
-    // 0, source has 255s) the residual grows without bound across the row —
-    // each pixel's error is `cand − nearest`, and `cand = src + carried` keeps
-    // climbing. i16 overflows there; two w×4 i32 rows are still negligible.
+    // Two rows of accumulated error in sixteenths of a level, ×4 channels.
     // `cur` carries error pushed *into* the current row from the row above;
     // `nxt` collects error for the row below.
     let stride: usize = w as usize * 4;
@@ -205,12 +201,12 @@ fn map_floyd_steinberg(
             let px: usize = y as usize * w as usize + usize::try_from(x).expect("int cast");
             let off: usize = usize::try_from(x).expect("int cast") * 4;
 
-            // Candidate colour = source + accumulated error (clamped for the
-            // search; the *unclamped* error is what propagates so rounding
-            // doesn't accumulate bias).
+            // Source + carried error, in sixteenths, kept inside 0..255. `cand`: nearest level.
+            let mut wanted: [i32; 4] = [0; 4];
             let mut cand: [i32; 4] = [0; 4];
             for c in 0..4usize {
-                cand[c] = i32::from(rgba[px * 4 + c]) + cur[off + c];
+                wanted[c] = (16 * i32::from(rgba[px * 4 + c]) + cur[off + c]).clamp(0, 16 * 255);
+                cand[c] = (wanted[c] + 8) >> 4;
             }
 
             // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
@@ -228,20 +224,25 @@ fn map_floyd_steinberg(
             indices[px] = idx;
 
             for c in 0..4usize {
-                let err: i32 = cand[c] - i32::from(palette[idx as usize * 4 + c]);
+                let err: i32 = wanted[c] - 16 * i32::from(palette[idx as usize * 4 + c]);
+                // Three shares round toward zero; `below` takes the rest, so they sum to `err`.
+                let ahead = err * 7 / 16;
+                let below_behind = err * 3 / 16;
+                let below_ahead = err / 16;
+                let below = err - ahead - below_behind - below_ahead;
                 // Push to the four neighbours. `dir` is +1 for L→R, −1 for R→L.
                 let dir = step;
                 let xr = x + dir;
                 let xl = x - dir;
                 if xr >= 0 && xr < i64::from(w) {
-                    cur[usize::try_from(xr).expect("int cast") * 4 + c] += (err * 7) >> 4;
+                    cur[usize::try_from(xr).expect("int cast") * 4 + c] += ahead;
                 }
                 if xl >= 0 && xl < i64::from(w) {
-                    nxt[usize::try_from(xl).expect("int cast") * 4 + c] += (err * 3) >> 4;
+                    nxt[usize::try_from(xl).expect("int cast") * 4 + c] += below_behind;
                 }
-                nxt[off + c] += (err * 5) >> 4;
+                nxt[off + c] += below;
                 if xr >= 0 && xr < i64::from(w) {
-                    nxt[usize::try_from(xr).expect("int cast") * 4 + c] += err >> 4;
+                    nxt[usize::try_from(xr).expect("int cast") * 4 + c] += below_ahead;
                 }
             }
 

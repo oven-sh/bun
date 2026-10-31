@@ -727,6 +727,10 @@
     "typed": 560.2,
     "untyped": 560.3
   },
+  "everyday-code-out-of-run-time-text/get-time-called-on-a-date-that-the-text-made": {
+    "typed": 7,
+    "untyped": 7
+  },
   "everyday-code-out-of-run-time-text/get-time-called-on-an-object-that-the-text-made": {
     "typed": 256,
     "untyped": 258

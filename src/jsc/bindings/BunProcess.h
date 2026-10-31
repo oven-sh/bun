@@ -65,6 +65,8 @@ public:
     // Environment's own JS, so every worker warns once itself.
     bool m_warnedProcessBinding = false;
     bool m_warnedErrname = false;
+    // constructArgv() ran. Until then `bun test` has no process.argv[1] to update for the next file.
+    bool m_argvBuilt = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 

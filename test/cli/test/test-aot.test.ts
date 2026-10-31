@@ -124,6 +124,21 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
+  // The runner stores each file's path into the argv array that the first file built: compiled code has to read that element again.
+  test.concurrent("a file that runs after another sees its own path in process.argv", async () => {
+    const file = `
+      import { expect, test } from "bun:test";
+      const atLoad = [process.argv[1], Bun.argv[1]];
+      test("argv", () => {
+        expect(atLoad).toEqual([import.meta.path, import.meta.path]);
+        for (let i = 0; i < 1000; i++) expect(process.argv[1]).toBe(import.meta.path);
+      });
+    `;
+    const { stderr, exitCode } = await expectSameAsBunTest({ "a.test.ts": file, "b.test.ts": file, "c.test.ts": file });
+    expect(stderr).toContain(" 3 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a dependency with top-level await that is imported statically and dynamically", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "both.test.ts": `

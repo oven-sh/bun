@@ -3462,7 +3462,51 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
 
 static JSValue constructArgv(VM& vm, JSObject* processObject)
 {
+    uncheckedDowncast<Process>(processObject)->m_argvBuilt = true;
     return JSValue::decode(Bun__Process__createArgv(processObject->globalObject()));
+}
+
+// process.argv[1] is the entry path. Only the array that process.argv holds now is written: Bun.argv and the node:process export see the store while they hold that same array.
+extern "C" void Bun__Process__entryPointDidChange(Zig::GlobalObject* globalObject, const BunString* previous, const BunString* next)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+    auto* process = globalObject->processObject();
+    if (!process->m_argvBuilt) {
+        return;
+    }
+    // Not a get(): that would call a getter the program installed.
+    JSValue argv = process->getDirect(vm, Identifier::fromString(vm, "argv"_s));
+    auto* array = argv ? dynamicDowncast<JSArray>(argv) : nullptr;
+    if (!array) {
+        return;
+    }
+
+    // An accessor, or any value but the path the runner stored, is the program's and stays.
+    PropertySlot slot(array, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasEntry = array->methodTable()->getOwnPropertySlotByIndex(array, globalObject, 1, slot);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!hasEntry || !slot.isValue()) {
+        return;
+    }
+    JSValue entry = slot.getValue(globalObject, 1u);
+    String previousPath = previous->toWTFString(BunString::ZeroCopy);
+    // A rope of another length cannot be equal, and to resolve it can throw.
+    if (!entry.isString() || asString(entry)->length() != previousPath.length()) {
+        return;
+    }
+    auto path = asString(entry)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (path.data != previousPath) {
+        return;
+    }
+
+    // An assignment that does not throw: a frozen array keeps its element.
+    RELEASE_AND_RETURN(scope, void(array->putByIndexInline(globalObject, 1u, jsString(vm, next->toWTFString()), false)));
 }
 
 static JSValue constructExecArgv(VM& vm, JSObject* processObject)

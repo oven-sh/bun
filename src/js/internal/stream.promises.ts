@@ -25,7 +25,12 @@ function pipeline(...streams) {
       end = options.end;
     }
 
-    pl(
+    let lastStream = streams[streams.length - 1];
+    if (streams.length === 1 && $isArray(lastStream)) {
+      lastStream = lastStream[lastStream.length - 1];
+    }
+
+    const stream = pl(
       streams,
       (err, value) => {
         if (err) {
@@ -36,6 +41,11 @@ function pipeline(...streams) {
       },
       { signal, end },
     );
+
+    // Nothing consumes the proxy PassThrough of a function tail. Drain it (nodejs/node#65559).
+    if (typeof lastStream === "function" && stream.readable) {
+      stream.resume();
+    }
   });
 }
 

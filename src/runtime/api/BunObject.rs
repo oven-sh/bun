@@ -946,9 +946,16 @@ pub(crate) fn bun_resolve_sync_with_paths(
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    let has_importer = bun_vm
+        .transpiler
+        .resolver
+        .has_importing_file(&source_str.to_utf8());
+    bun_vm.transpiler.resolver.custom_dir_paths = Some(bun_resolver::LookupPaths {
+        // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
+        // this synchronous resolve call; lifetime is erased for the resolver slot.
+        dirs: unsafe { bun_ptr::detach_lifetime(paths) },
+        has_importer,
+    });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;

@@ -242,6 +242,66 @@ it("console.groupCollapsed starts a group, as console.group does", async () => {
   });
 });
 
+it("console.group and console.groupCollapsed do not start a group when the label throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "console-group-label-throws.fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The indent of a marker line is the group depth. The other lines of stdout are what a
+  // label printed before it threw.
+  const markers = stdout
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .filter(line => line.trimStart().startsWith("|"));
+  expect({ markers, stderr: stderr.replaceAll("\r\n", "\n"), exitCode }).toEqual({
+    markers: [
+      "|group(inspect.custom) throws Error",
+      "|group(text and inspect.custom) throws Error",
+      "|group(%s toString) throws Error",
+      "|group(%j toJSON) throws Error",
+      "|group(%j BigInt) throws TypeError",
+      "|group(Error property) throws Error",
+      "|groupCollapsed(inspect.custom) throws Error",
+      "|groupCollapsed(text and inspect.custom) throws Error",
+      "|groupCollapsed(%s toString) throws Error",
+      "|groupCollapsed(%j toJSON) throws Error",
+      "|groupCollapsed(%j BigInt) throws TypeError",
+      "|groupCollapsed(Error property) throws Error",
+      "|outer",
+      "  |group(inspect.custom) throws Error",
+      "  |group(text and inspect.custom) throws Error",
+      "  |group(%s toString) throws Error",
+      "  |group(%j toJSON) throws Error",
+      "  |group(%j BigInt) throws TypeError",
+      "  |group(Error property) throws Error",
+      "  |groupCollapsed(inspect.custom) throws Error",
+      "  |groupCollapsed(text and inspect.custom) throws Error",
+      "  |groupCollapsed(%s toString) throws Error",
+      "  |groupCollapsed(%j toJSON) throws Error",
+      "  |groupCollapsed(%j BigInt) throws TypeError",
+      "  |groupCollapsed(Error property) throws Error",
+      "  |inner",
+      "    |in inner",
+      "  |in outer",
+      "|after outer",
+      "|started by a label",
+      "  |group(starts a group, then throws) throws Error",
+      "|after groupEnd",
+      "|started by a label",
+      "    |group(starts a group, then returns) returns",
+      "|after groupEnd, groupEnd",
+      "  |group(no label) returns",
+      "  |groupCollapsed(no label) returns",
+      "|end",
+    ],
+    stderr: ["  |stderr in outer", "|stderr after outer", ""].join("\n"),
+    exitCode: 0,
+  });
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

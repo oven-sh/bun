@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isDebug, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { copyFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened, locksEnvironment } from "./hardened";
@@ -117,13 +117,13 @@ const folder = tempDir("aot-without-executable-memory", {
 afterAll(() => folder[Symbol.dispose]());
 const directory = String(folder);
 
-// The tests run side by side and share the processors, so each takes far longer than its commands take alone.
+// The commands of all tests start together and share the processors, so a command can take as long as the whole file.
+// A debug build is slow. On a Mac the first start of a new executable has taken seconds, and this file starts twenty of them at about the same time.
+const limitOfACommand = isMacOS || isDebug ? 240_000 : undefined;
+// A command that hangs is ended at its limit, and that fails its test at once. So a test only needs more time than a build and the run behind it may take.
 const limitOfATest = 600_000;
-// On a Mac the first start of a new executable has taken seconds, and this file starts twenty of them at about the same time.
-const limitOfACommand = isMacOS ? 240_000 : undefined;
 
 const env = { ...bunEnv, ...(locksEnvironment ? { BUN_ENABLE_CRASH_REPORTING: "0" } : { BUN_CRASH_REPORT_URL: "" }) };
-/** A command that hangs is ended at its limit, and that fails the test. */
 const run = (cmd: string[]) => spawned(cmd, directory, env, limitOfACommand);
 
 /** `bun build --compile <flags>` of a program of the folder. */
@@ -156,17 +156,6 @@ function whereItIsRefused(executable: string, onLinux: "refuse" | "kill" = "kill
   });
 }
 
-// A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so the control has nothing to show. The regions are counted all the same.
-async function isRefusedNowhere() {
-  if (!isMacOS || !isSupported) return false;
-  return (await whereItIsRefused(await build(control))).stdout === "granted\n";
-}
-const refusedNowhere = await isRefusedNowhere();
-if (refusedNowhere)
-  console.error(
-    "SKIPPED: the control of test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code",
-  );
-
 /** What a run that prints `stdout` and nothing else comes to. */
 const prints = (stdout: string | ReturnType<typeof expect.stringMatching>) => ({
   stdout,
@@ -174,6 +163,18 @@ const prints = (stdout: string | ReturnType<typeof expect.stringMatching>) => ({
   exitCode: 0,
   signal: null,
 });
+
+// A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so the control has nothing to show. The regions are counted all the same.
+// Only a run that prints `granted` and nothing else says so. Any other run is for the control to report.
+async function isRefusedNowhere() {
+  if (!isMacOS || !isSupported) return false;
+  return Bun.deepEquals(await whereItIsRefused(await build(control)), prints("granted\n"));
+}
+const refusedNowhere = await isRefusedNowhere();
+if (refusedNowhere)
+  console.error(
+    "SKIPPED: the control of test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code",
+  );
 
 describe.skipIf(!isSupported)("an executable needs no permission to make memory executable", () => {
   test.concurrent.skipIf(refusedNowhere)(

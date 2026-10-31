@@ -8,3 +8,11 @@ export const drainMicrotasks = b.fn({ capability: "js" });
 const reaction = { args: { value: b.any }, capability: "js" } as const;
 export const onResolveEntryPointResult = b.fn({ ...reaction, export: "Bun__onResolveEntryPointResult" });
 export const onRejectEntryPointResult = b.fn({ ...reaction, export: "Bun__onRejectEntryPointResult" });
+
+/** The reaction to a load that `Module.runMain` started, that failed, and that the entry point does not report. */
+export const onRunMainRejected = b.fn({
+  args: { reason: b.any },
+  capability: "js",
+  throws: true,
+  export: "Bun__onRunMainRejected",
+});

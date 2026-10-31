@@ -342,5 +342,78 @@ module.exports = debugMode => {
         }
       }
     },
+
+    test_v8_value_number_value() {
+      const valueOfError = new RangeError("valueOf threw");
+      const cases = [
+        ["'3000'", "3000"],
+        ["' 42 '", " 42 "],
+        ["'0x10'", "0x10"],
+        ["'1e3'", "1e3"],
+        ["'12px'", "12px"],
+        ["'abc'", "abc"],
+        ["''", ""],
+        ["-1", -1],
+        ["4294967296", 4294967296],
+        ["4294967297.5", 4294967297.5],
+        ["1e21", 1e21],
+        ["NaN", NaN],
+        ["Infinity", Infinity],
+        ["-Infinity", -Infinity],
+        ["-0", -0],
+        ["true", true],
+        ["null", null],
+        ["undefined", undefined],
+        ["[]", []],
+        ["[7]", [7]],
+        ["object with valueOf returning 77.9", { valueOf: () => 77.9 }],
+        ["Date", new Date(1234567890123)],
+        ["Symbol", Symbol("symbol")],
+        ["10n", 10n],
+        [
+          "object with throwing valueOf",
+          {
+            valueOf() {
+              throw valueOfError;
+            },
+          },
+        ],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        try {
+          nativeModule.perform_number_value(value);
+        } catch (e) {
+          // V8 and JSC word the TypeError differently, so print only its class.
+          console.log("threw", e === valueOfError ? "the valueOf error" : e.constructor.name);
+        }
+      }
+    },
+
+    test_v8_value_boolean_value() {
+      const cases = [
+        ["0", 0],
+        ["-0", -0],
+        ["NaN", NaN],
+        ["''", ""],
+        ["'0'", "0"],
+        ["'false'", "false"],
+        ["[]", []],
+        ["{}", {}],
+        ["null", null],
+        ["undefined", undefined],
+        ["0n", 0n],
+        ["1n", 1n],
+        ["Symbol", Symbol("symbol")],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        try {
+          nativeModule.perform_boolean_value(value);
+        } catch (e) {
+          console.log("threw", e.constructor.name);
+        }
+      }
+    },
   };
 };

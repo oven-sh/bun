@@ -2200,6 +2200,36 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Prints NumberValue of the first argument with every digit of the double.
+// Leaves the exception pending when the conversion throws, so the JS caller
+// sees it.
+void perform_number_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Maybe<double> maybe = info[0]->NumberValue(context);
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsNothing()) {
+    return;
+  }
+  double number = maybe.FromJust();
+  char buf[32];
+  if (number != number) {
+    // the sign bit of a NaN is not part of the conversion's result
+    snprintf(buf, sizeof(buf), "NaN");
+  } else {
+    snprintf(buf, sizeof(buf), "%.17g", number);
+  }
+  std::cout << "maybe.FromJust() = " << buf << std::endl;
+}
+
+// Prints BooleanValue of the first argument. The conversion cannot throw.
+void perform_boolean_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  LOG_EXPR(info[0]->BooleanValue(isolate));
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2307,6 +2337,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_cpu_profiler_overlapping_sessions);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
                   test_v8_cpu_profiler_title_api);
+  NODE_SET_METHOD(exports, "perform_number_value", perform_number_value);
+  NODE_SET_METHOD(exports, "perform_boolean_value", perform_boolean_value);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

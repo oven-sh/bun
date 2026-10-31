@@ -522,6 +522,22 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });
   });
+
+  describe("Value::NumberValue", () => {
+    it("converts values like the JS ToNumber operation", async () => {
+      const out = await checkSameOutput("test_v8_value_number_value");
+      // every digit of the double that valueOf returned
+      expect(out).toContain("maybe.FromJust() = 77.900000000000006");
+    });
+  });
+
+  describe("Value::BooleanValue", () => {
+    it("converts values like the JS ToBoolean operation", async () => {
+      const out = await checkSameOutput("test_v8_value_boolean_value");
+      // the truthy ones: "0", "false", [], {}, 1n and a Symbol
+      expect(out.match(/ = 1$/gm)).toHaveLength(6);
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {

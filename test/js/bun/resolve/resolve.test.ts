@@ -756,6 +756,120 @@ describe("package.json exports target percent-encoding", () => {
   });
 });
 
+describe("package.json exports and imports key order", () => {
+  const resolveOrCode = (spec: string, from: string) => {
+    try {
+      return Bun.resolveSync(spec, from);
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+  const pkg = (name: string, exports: Record<string, string>, file: string) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", exports }),
+    [`node_modules/${name}/${file}`]: "module.exports = 2;",
+  });
+
+  // Node's patternKeyCompare counts the "*" in the base length of a key. So "./a/b*" ties with the
+  // folder key "./a/b/", and the "*" key wins the tie. A map of two keys is sorted with one comparison.
+  it.concurrent('a "*" key wins a tie against a folder key', () => {
+    using dir = tempDir("resolver-pattern-key-tie", {
+      "package.json": JSON.stringify({
+        name: "host",
+        imports: { "#a/b/": "./nomatch/", "#a/b*": "./subpath*.js" },
+      }),
+      "subpath/dir1/dir1.js": "module.exports = 1;",
+      ...pkg("tie-folder-first", { "./a/b/": "./nomatch/", "./a/b*": "./subpath*.js" }, "subpath/dir1/dir1.js"),
+      ...pkg("tie-star-first", { "./a/b*": "./subpath*.js", "./a/b/": "./nomatch/" }, "subpath/dir1/dir1.js"),
+      ...pkg("longer-folder-first", { "./a/bc/": "./lib/", "./a/b*": "./nomatch*.js" }, "lib/file.js"),
+      ...pkg("longer-star-first", { "./a/b*": "./nomatch*.js", "./a/bc/": "./lib/" }, "lib/file.js"),
+      ...pkg("catch-all", { "./*": "./nomatch/*", "./folder/": "./lib/" }, "lib/file.js"),
+    });
+    const root = String(dir);
+    const modules = join(root, "node_modules");
+
+    expect({
+      folderKeyFirst: resolveOrCode("tie-folder-first/a/b/dir1/dir1", root),
+      starKeyFirst: resolveOrCode("tie-star-first/a/b/dir1/dir1", root),
+      imports: resolveOrCode("#a/b/dir1/dir1", root),
+      // Not a tie: a folder key longer than the base of the "*" key keeps its rank, as in TypeScript and Node 16.
+      longerFolderKeyFirst: resolveOrCode("longer-folder-first/a/bc/file.js", root),
+      longerFolderKeyLast: resolveOrCode("longer-star-first/a/bc/file.js", root),
+      catchAllStarKey: resolveOrCode("catch-all/folder/file.js", root),
+    }).toEqual({
+      folderKeyFirst: join(modules, "tie-folder-first/subpath/dir1/dir1.js"),
+      starKeyFirst: join(modules, "tie-star-first/subpath/dir1/dir1.js"),
+      imports: join(root, "subpath/dir1/dir1.js"),
+      longerFolderKeyFirst: join(modules, "longer-folder-first/lib/file.js"),
+      longerFolderKeyLast: join(modules, "longer-star-first/lib/file.js"),
+      catchAllStarKey: join(modules, "catch-all/lib/file.js"),
+    });
+  });
+
+  // A "*" capture is text from the specifier. It can start with a separator or, on Windows, with a drive.
+  // The join with the package directory must not take it as a new root.
+  it.concurrent('a rooted "*" capture does not leave the package', () => {
+    using dir = tempDir("resolver-pattern-rooted-capture", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "outside.js": "module.exports = 1;",
+      ...pkg("all", { "./*": "./*" }, "inside.js"),
+      ...pkg("tie", { "./a/b/": "./nomatch/", "./a/b*": "./*.js" }, "file.js"),
+    });
+    const root = String(dir);
+    const modules = join(root, "node_modules");
+    // The path of outside.js from the root of its drive, with "/" separators and no leading one.
+    const drive = isWindows ? root.slice(0, 2) : "";
+    const outside = join(root, "outside.js").slice(drive.length).replaceAll("\\", "/").replace(/^\/+/, "");
+    const escapes: Record<string, string> = {
+      slash: `all//${outside}`,
+      backslash: `all/\\${outside}`,
+    };
+    if (isWindows) {
+      escapes.drive = `all/${drive}/${outside}`;
+      escapes.driveRelative = `all/${drive}inside.js`;
+    }
+    const resolved: Record<string, string> = {};
+    const notFound: Record<string, string> = {};
+    for (const [name, spec] of Object.entries(escapes)) {
+      resolved[name] = resolveOrCode(spec, root);
+      notFound[name] = "ERR_MODULE_NOT_FOUND";
+    }
+
+    expect({
+      inside: resolveOrCode("all/inside.js", root),
+      // The capture of a tie starts with "/". It resolves, and it stays in the package.
+      tie: resolveOrCode("tie/a/b/file", root),
+      ...resolved,
+    }).toEqual({
+      inside: join(modules, "all/inside.js"),
+      tie: join(modules, "tie/file.js"),
+      ...notFound,
+    });
+  });
+
+  // The "Path patterns" rows of Node's test/es-module/test-esm-exports.mjs, on Node's own fixture.
+  it.concurrent("resolves the path patterns of Node's pkgexports fixture", () => {
+    const fixtures = join(import.meta.dir, "../../node/test/fixtures");
+    const pkgexports = join(fixtures, "node_modules/pkgexports");
+    const rows = {
+      "pkgexports/subpath/sub-dir1": "subpath/dir1/dir1.js",
+      "pkgexports/subpath/sub-dir1.js": "subpath/dir1/dir1.js",
+      "pkgexports/features/dir1": "subpath/dir1/dir1.js",
+      "pkgexports/dir1/dir1/trailer": "subpath/dir1/dir1.js",
+      "pkgexports/dir2/dir2/trailer": "subpath/dir2/index.js",
+      "pkgexports/a/dir1/dir1": "subpath/dir1/dir1.js",
+      "pkgexports/a/b/dir1/dir1": "subpath/dir1/dir1.js",
+    };
+    const resolved: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [spec, file] of Object.entries(rows)) {
+      resolved[spec] = resolveOrCode(spec, fixtures);
+      expected[spec] = join(pkgexports, file);
+    }
+
+    expect(resolved).toEqual(expected);
+  });
+});
+
 describe("package.json exports targets longer than the maximum path length", () => {
   it.concurrent("reports a resolution error for an oversized string exports target", async () => {
     using dir = tempDir("resolver-exports-long-target", {

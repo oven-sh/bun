@@ -740,6 +740,84 @@ describe("bundler", () => {
     });
   }
 
+  // The compiler evaluates a default value ahead of its place in the source,
+  // so it takes an arrow function there only when its body is an expression
+  // that is safe to move, or a block with no statement. Two forms that
+  // babel-plugin-react-compiler takes were refused, because of what the parser
+  // keeps of them:
+  // - `() => undefined`: the visit pass makes its body a `return` with no value.
+  // - a block of directives or comments: they are in its statement list.
+  // minify.syntax drops the directive, so a component with that default was
+  // memoized in a minified build only.
+  //
+  // Each entry is an arrow function and the number of cache hooks in a render
+  // of a component that has it as a default.
+  const arrowDefaults: Record<string, [arrow: string, cacheHooks: 0 | 1]> = {
+    Expression: [`() => null`, 1],
+    ExpressionUndefined: [`() => undefined`, 1],
+    // The same node as `undefined` after the visit pass. Upstream refuses it.
+    ExpressionVoid: [`() => void 0`, 1],
+    EmptyBlock: [`() => {}`, 1],
+    BlockOfAComment: [`() => { /* nothing */ }`, 1],
+    BlockOfALegalComment: [`() => { /*! nothing */ }`, 1],
+    BlockOfADirective: [`() => { "use example"; }`, 1],
+    BlockOfTwoDirectives: [`() => { "use example"\n 'use other' }`, 1],
+    BlockOfAStatement: [`() => { debugger; }`, 0],
+    BlockOfADirectiveAndAStatement: [`() => { "use example"; debugger; }`, 0],
+    BlockOfAReturn: [`() => { return; }`, 0],
+  };
+  for (const minifySyntax of [false, true]) {
+    itBundled(`react-compiler/ArrowFunctionInADefault-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render } from "react/compiler-runtime";
+
+          ${Object.entries(arrowDefaults)
+            .map(
+              ([name, [arrow]]) => /* jsx */ `
+          function ${name}(props) {
+            const { label, onClick = ${arrow} } = props;
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }`,
+            )
+            .join("\n")}
+
+          const forms = { ${Object.keys(arrowDefaults).join(", ")} };
+          for (const [name, form] of Object.entries(forms)) {
+            console.log(name + ": " + render(form, { label: "a" }));
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `export {};`,
+        "/node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+        "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          let cacheHooks = 0;
+          export function c(size) {
+            cacheHooks++;
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+          /** The number of cache hooks that a render of the component calls. */
+          export function render(component, props) {
+            cacheHooks = 0;
+            component(props);
+            return cacheHooks;
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "browser",
+      minifySyntax,
+      run: {
+        stdout: Object.entries(arrowDefaults)
+          .map(([name, [, cacheHooks]]) => `${name}: ${cacheHooks}`)
+          .join("\n"),
+      },
+    });
+  }
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.

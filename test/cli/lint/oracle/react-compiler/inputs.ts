@@ -348,6 +348,24 @@ export function F({ text = css\`a\` }) {
 }
 `;
 
+/**
+ * One component on each line. An arrow function can be evaluated earlier if its body is an expression that can, or a
+ * block with no statement. A directive is not a statement.
+ */
+const arrowDefaults = [
+  ["OneReturn", "() => { return null; }"],
+  ["EmptyStatement", "() => { ; }"],
+  ["Expression", "() => null"],
+  ["Undefined", "() => undefined"],
+  ["EmptyBlock", "() => {}"],
+  ["Directive", `() => { "use example"; }`],
+]
+  .map(
+    ([name, arrow]) =>
+      `export function ${name}({ label, onClick = ${arrow} }) { return <button onClick={onClick}>{label}</button>; }\n`,
+  )
+  .join("");
+
 /** Reads a ref during render at the top, followed by `n` copies of `unit`. */
 export const long = (
   n: number,
@@ -644,6 +662,7 @@ function Component(props) {
     "callback-of-map.jsx": callbackOfMap,
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  arrows: { ".oxlintrc.json": rc(), "arrows.jsx": arrowDefaults, "arrows.tsx": arrowDefaults },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,
@@ -728,6 +747,8 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "writes.jsx": writes,
   "own-hooks.tsx": ownHooks,
   "defaults-with-jsx.jsx": defaultsWithJsx,
+  "arrows.jsx": arrowDefaults,
+  "arrows.tsx": arrowDefaults,
   "react-by-its-name.jsx": reactByItsName,
   "fbt.jsx": duplicateFbtTags,
   "callback-of-map.jsx": callbackOfMap,

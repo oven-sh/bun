@@ -4284,6 +4284,88 @@
     ]
    }
   },
+  "arrows": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "arrows.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 46,
+         "length": 7,
+         "line": 1,
+         "offset": 45
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 51,
+         "length": 7,
+         "line": 2,
+         "offset": 176
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "arrows.tsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 46,
+         "length": 7,
+         "line": 1,
+         "offset": 45
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 51,
+         "length": 7,
+         "line": 2,
+         "offset": 176
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,
@@ -4533,6 +4615,56 @@
    ]
   },
   "small": {
+   "arrows.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n\n> 1 | export function OneReturn({ label, onClick = () => { return null; } }) { return <button onClick={onClick}>{label}</button>; }\n    |                                              ^^^^^^^^^^^^^^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n  2 | export function EmptyStatement({ label, onClick = () => { ; } }) { return <button onClick={onClick}>{label}</button>; }\n  3 | export function Expression({ label, onClick = () => null }) { return <button onClick={onClick}>{label}</button>; }\n  4 | export function Undefined({ label, onClick = () => undefined }) { return <button onClick={onClick}>{label}</button>; }\n\n",
+      "line": 1,
+      "column": 46,
+      "endLine": 1,
+      "endColumn": 68,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n\n  1 | export function OneReturn({ label, onClick = () => { return null; } }) { return <button onClick={onClick}>{label}</button>; }\n> 2 | export function EmptyStatement({ label, onClick = () => { ; } }) { return <button onClick={onClick}>{label}</button>; }\n    |                                                   ^^^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n  3 | export function Expression({ label, onClick = () => null }) { return <button onClick={onClick}>{label}</button>; }\n  4 | export function Undefined({ label, onClick = () => undefined }) { return <button onClick={onClick}>{label}</button>; }\n  5 | export function EmptyBlock({ label, onClick = () => {} }) { return <button onClick={onClick}>{label}</button>; }\n\n",
+      "line": 2,
+      "column": 51,
+      "endLine": 2,
+      "endColumn": 62,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "arrows.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n\n<dir>/arrows.tsx:1:46\n> 1 | export function OneReturn({ label, onClick = () => { return null; } }) { return <button onClick={onClick}>{label}</button>; }\n    |                                              ^^^^^^^^^^^^^^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n  2 | export function EmptyStatement({ label, onClick = () => { ; } }) { return <button onClick={onClick}>{label}</button>; }\n  3 | export function Expression({ label, onClick = () => null }) { return <button onClick={onClick}>{label}</button>; }\n  4 | export function Undefined({ label, onClick = () => undefined }) { return <button onClick={onClick}>{label}</button>; }\n\n",
+      "line": 1,
+      "column": 46,
+      "endLine": 1,
+      "endColumn": 68,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n\n<dir>/arrows.tsx:2:51\n  1 | export function OneReturn({ label, onClick = () => { return null; } }) { return <button onClick={onClick}>{label}</button>; }\n> 2 | export function EmptyStatement({ label, onClick = () => { ; } }) { return <button onClick={onClick}>{label}</button>; }\n    |                                                   ^^^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n  3 | export function Expression({ label, onClick = () => null }) { return <button onClick={onClick}>{label}</button>; }\n  4 | export function Undefined({ label, onClick = () => undefined }) { return <button onClick={onClick}>{label}</button>; }\n  5 | export function EmptyBlock({ label, onClick = () => {} }) { return <button onClick={onClick}>{label}</button>; }\n\n",
+      "line": 2,
+      "column": 51,
+      "endLine": 2,
+      "endColumn": 62,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "casts.tsx": {
     "messages": [
      {

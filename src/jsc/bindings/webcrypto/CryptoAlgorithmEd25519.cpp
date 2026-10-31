@@ -67,7 +67,9 @@ static ExceptionOr<bool> verifyEd25519(const Vector<uint8_t>& key, size_t keyLen
 
     // WPT WebCryptoAPI/sign_verify/eddsa_small_order_points.js
     auto pkey = ncrypto::EVPKeyPointer::NewRawPublic(EVP_PKEY_ED25519, { key.begin(), key.size() });
-    return pkey && !pkey.hasSmallOrderEdDsaPoint({ signature.begin(), signature.size() });
+    if (!pkey)
+        return Exception { OperationError };
+    return !pkey.hasSmallOrderEdDsaPoint({ signature.begin(), signature.size() });
 }
 
 ExceptionOr<bool> CryptoAlgorithmEd25519::platformVerify(const CryptoKeyOKP& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)

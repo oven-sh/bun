@@ -314,6 +314,22 @@ test.concurrent.skipIf(!isLinux).each([
       throw new Error("the bug");
     `,
   ]),
+  // A timer of the first run keeps the loop alive, so the loop reports the failed reload right before the poll of a turn.
+  ...[
+    ["a tick", `process.nextTick(() => writeFileSync("../ran", ""));`],
+    ["a microtask", `Promise.resolve().then(() => writeFileSync("../ran", ""));`],
+  ].map(([work, start]) => [
+    `in a live loop while ${work} of an unhandledRejection listener waits`,
+    `
+      const { writeFileSync } = require("node:fs");
+      process.on("unhandledRejection", () => {
+        ${start}
+        writeFileSync("../queued", "");
+      });
+      throw new Error("the bug");
+    `,
+    "live",
+  ]),
   // The sleep itself reports a rejection that the last turn left.
   [
     "while the report of a rejection from a timer waits",
@@ -352,6 +368,7 @@ test.concurrent.skipIf(!isLinux).each([
       setTimeout(() => Promise.reject(new Error("late")), 0);
     `,
   ],
+  // Ten batches: the error of the failed run can be reported after the first ones.
   [
     "after a failed run between the batches of a MessageChannel",
     `
@@ -360,23 +377,29 @@ test.concurrent.skipIf(!isLinux).each([
       let received = 0;
       port2.onmessage = () => {
         if (++received === 1) writeFileSync("../queued", "");
-        if (received === 3000) writeFileSync("../ran", "");
+        if (received === 10000) writeFileSync("../ran", "");
       };
-      for (let i = 0; i < 3000; i++) port1.postMessage(i);
+      for (let i = 0; i < 10000; i++) port1.postMessage(i);
       throw new Error("the bug");
     `,
   ],
-])("--hot does not sleep %s", async (_, main) => {
+  // `live` has a default, so bun:test does not pass a `done` callback for the rows without it.
+])("--hot does not sleep %s", async (_, main, live = "") => {
   using dir = tempDir("hot-sleep-with-work", {
     "trace.log": "",
     "src/fence/f.js": "",
-    "src/main.js": `console.log("first run");`,
+    "src/main.js": `console.log("first run");` + (live ? ` setInterval(() => {}, 1e6);` : ``),
   });
   const root = String(dir);
-  await using runner = start("--hot", join(root, "src"), { ...bunEnv, BUN_WATCHER_TRACE: join(root, "trace.log") });
+  await using runner = start("--hot", join(root, "src"), {
+    ...bunEnv,
+    BUN_WATCHER_TRACE: join(root, "trace.log"),
+    // Nothing else must end the poll of a live loop. The idle GC timer would, within a second.
+    ...(live ? { BUN_GC_TIMER_DISABLE: "1" } : {}),
+  });
   const child = alive(runner);
   await child.until(() => child.output.stdout.includes("first run"));
-  // The sleep of the idle loop, and its timeout. A loop that has not slept yet has nothing to poll, and the poll
+  // The poll where the loop waits, and its timeout. A loop that has not slept yet has nothing to poll, and the poll
   // before its sleep would leave the wakeup alone.
   let sleep: string | undefined;
   await child.until(() => (sleep = blockingPoll(runner.pid)) !== undefined);

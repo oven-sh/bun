@@ -224,12 +224,14 @@ If you encounter issues, you can:
 ### From npm/Yarn
 
 ```bash terminal icon="terminal"
-# Remove existing node_modules and lockfiles
-rm -rf node_modules package-lock.json yarn.lock
+# Remove the existing node_modules
+rm -rf node_modules
 
 # Install with isolated linker
 bun install --linker isolated
 ```
+
+Keep `package-lock.json` or `yarn.lock` around for this first install: Bun converts it to `bun.lock`, so you keep the versions npm or Yarn had resolved. Bun does not convert a `package-lock.json` from npm 6 or older (`lockfileVersion` 1). See [Automatic lockfile migration](/pm/lockfile#automatic-lockfile-migration) for the lockfile versions Bun converts.
 
 ### From pnpm
 

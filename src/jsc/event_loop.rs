@@ -838,6 +838,7 @@ impl EventLoop {
         self.plugin_request_refills_left = Self::CONCURRENT_REFILLS_PER_TICK;
         self.tick_concurrent();
         self.process_gc_timer();
+        crate::bun_cpu_profiler::drain_cpu_profiler_if_needed(self.vm_ref().as_mut().jsc_vm_mut());
 
         // Note: reshaped for borrowck — `vm_ref()` is `&'static`, so the
         // global borrow detaches from `&self` and survives the `&mut self` call.

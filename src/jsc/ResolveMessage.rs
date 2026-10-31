@@ -38,7 +38,6 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
         ImportKind::Url => b"url-token",
         ImportKind::Composes => b"composes",
         ImportKind::Internal => b"internal",
-        ImportKind::HtmlManifest => b"html_manifest",
     }
 }
 
@@ -99,8 +98,7 @@ impl ResolveMessage {
                             }
                         }
 
-                        ImportKind::HtmlManifest
-                        | ImportKind::EntryPointRun
+                        ImportKind::EntryPointRun
                         | ImportKind::EntryPointBuild
                         | ImportKind::At
                         | ImportKind::AtConditional

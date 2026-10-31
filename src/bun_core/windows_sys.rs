@@ -40,9 +40,7 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // `bun_windows_sys` leaf and are re-exported here for the
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_windows_sys::{
-    CURDIR, PEB, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
-};
+pub use bun_windows_sys::{CURDIR, PEB, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb};
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` callers resolve.

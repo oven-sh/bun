@@ -73,8 +73,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    if (cipher->m_kind == CipherKind::Decipher && cipher->isAuthenticatedMode()) {
-        ASSERT(cipher->maybePassAuthTagToOpenSSL());
+    if (cipher->m_kind == CipherKind::Decipher && cipher->isAuthenticatedMode() && !cipher->maybePassAuthTagToOpenSSL()) {
+        throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
+        return {};
     }
 
     const int32_t blockSize = cipher->m_ctx.getBlockSize();
@@ -94,19 +95,20 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    RefPtr<ArrayBuffer> outBuf = JSC::ArrayBuffer::tryCreateUninitialized(bufLen, 1);
+    RefPtr<ArrayBuffer> outBuf = JSC::ArrayBuffer::tryCreateUninitialized(cipher->m_heldBackBlock.size() + bufLen, 1);
     if (!outBuf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
+    const size_t heldBack = cipher->takeHeldBackBlock(outBuf->mutableSpan());
 
     buf = {
         .data = reinterpret_cast<uint8_t*>(dataView->vector()),
         .len = dataView->byteLength(),
     };
 
-    bool res = cipher->m_ctx.update(buf, static_cast<unsigned char*>(outBuf->data()), &bufLen);
-    ASSERT(static_cast<size_t>(bufLen) <= outBuf->byteLength());
+    bool res = cipher->m_ctx.update(buf, static_cast<unsigned char*>(outBuf->data()) + heldBack, &bufLen);
+    ASSERT(heldBack + bufLen <= outBuf->byteLength());
 
     if (!res && cipher->m_kind == CipherKind::Decipher && cipher->m_ctx.isCcmMode()) {
         cipher->m_pendingAuthFailed = true;
@@ -118,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, bufLen)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, heldBack + bufLen)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -148,11 +150,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     };
 
     int32_t outLen = cipher->m_ctx.getBlockSize();
-    RefPtr<ArrayBuffer> outBuf = ArrayBuffer::tryCreateUninitialized(outLen, 1);
+    RefPtr<ArrayBuffer> outBuf = ArrayBuffer::tryCreateUninitialized(cipher->m_heldBackBlock.size() + outLen, 1);
     if (!outBuf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
+    const size_t heldBack = cipher->takeHeldBackBlock(outBuf->mutableSpan());
 
     if (cipher->m_kind == CipherKind::Decipher && Cipher::FromCtx(cipher->m_ctx).isSupportedAuthenticatedMode()) {
         cipher->maybePassAuthTagToOpenSSL();
@@ -168,8 +171,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         ok = !cipher->m_pendingAuthFailed;
         outLen = 0;
     } else {
-        ok = cipher->m_ctx.update({}, static_cast<unsigned char*>(outBuf->data()), &outLen, true);
-        ASSERT(outLen <= outBuf->byteLength());
+        ok = cipher->m_ctx.update({}, static_cast<unsigned char*>(outBuf->data()) + heldBack, &outLen, true);
+        ASSERT(heldBack + outLen <= outBuf->byteLength());
 
         if (ok && cipher->m_kind == CipherKind::Cipher && cipher->isAuthenticatedMode()) {
             ASSERT(cipher->m_authTagLen.has_value());
@@ -185,7 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, outLen)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, heldBack + outLen)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -207,6 +210,14 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalOb
     MarkPopErrorOnReturn popError;
     if (!cipher->m_ctx.setPadding(padding)) {
         return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAutoPadding"_s);
+    }
+
+    if (!padding) {
+        cipher->m_heldBackBlock.append(cipher->m_ctx.heldBackBlock());
+        cipher->m_ctx.setHeldBackBlock({});
+    } else if (!cipher->m_heldBackBlock.isEmpty()) {
+        cipher->m_ctx.setHeldBackBlock(cipher->m_heldBackBlock.span());
+        cipher->m_heldBackBlock.clear();
     }
 
     return JSValue::encode(jsUndefined());

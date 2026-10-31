@@ -88,6 +88,15 @@ public:
         return ncrypto::Cipher::FromCtx(m_ctx).isSupportedAuthenticatedMode();
     }
 
+    // Moves m_heldBackBlock to the front of `out` and returns its size.
+    size_t takeHeldBackBlock(std::span<uint8_t> out)
+    {
+        size_t size = m_heldBackBlock.size();
+        std::ranges::copy(m_heldBackBlock, out.begin());
+        m_heldBackBlock.clear();
+        return size;
+    }
+
     ncrypto::CipherCtxPointer m_ctx;
     const CipherKind m_kind;
     AuthTagState m_authTagState;
@@ -95,6 +104,8 @@ public:
     char m_authTag[EVP_GCM_TLS_TAG_LEN];
     bool m_pendingAuthFailed;
     int32_t m_maxMessageSize;
+    // Taken from m_ctx by setAutoPadding(false); the next update() or final() emits it.
+    WTF::Vector<uint8_t, EVP_MAX_BLOCK_LENGTH> m_heldBackBlock;
     size_t m_sizeForGC { 0 };
 
 private:

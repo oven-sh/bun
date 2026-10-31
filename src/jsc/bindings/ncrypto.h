@@ -641,6 +641,10 @@ public:
         unsigned char* out,
         int* out_len,
         bool finalize = false);
+    // The plaintext block a padded decryption keeps back until it knows whether it holds the
+    // padding. BoringSSL forgets it once padding is turned off; OpenSSL 3 still emits it.
+    std::span<const unsigned char> heldBackBlock() const;
+    void setHeldBackBlock(std::span<const unsigned char> block);
     bool getAeadTag(size_t len, unsigned char* out);
 
 private:

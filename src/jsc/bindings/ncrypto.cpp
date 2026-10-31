@@ -2747,6 +2747,19 @@ bool CipherCtxPointer::update(const Buffer<const unsigned char>& in,
     return EVP_CipherFinal_ex(ctx_.get(), out, out_len) == 1;
 }
 
+std::span<const unsigned char> CipherCtxPointer::heldBackBlock() const
+{
+    if (!ctx_ || !ctx_->final_used) return {};
+    return std::span { ctx_->final }.first(EVP_CIPHER_CTX_block_size(ctx_.get()));
+}
+
+void CipherCtxPointer::setHeldBackBlock(std::span<const unsigned char> block)
+{
+    if (!ctx_ || block.size() > sizeof(ctx_->final)) return;
+    std::ranges::copy(block, ctx_->final);
+    ctx_->final_used = !block.empty();
+}
+
 bool CipherCtxPointer::getAeadTag(size_t len, unsigned char* out)
 {
     if (!ctx_) return false;

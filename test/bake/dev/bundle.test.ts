@@ -913,6 +913,34 @@ devTest("build error in a file imported by a 'use client' component", {
     await dev.fetch("/").equals("object");
   },
 });
+// The SSR graph bundles its own copy of what a client component imports. The parser reads only the
+// local name `useState`, and this route does not render with React, so a stand-in for `react` is enough.
+devTest("useState in a package is not a build error in the server graph or in the SSR graph", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "node_modules/react/index.js": `export const useState = initial => [initial, () => {}];`,
+    "node_modules/some-lib/index.js": `
+      import { useState } from "react";
+      export const useCounter = () => useState(0);
+      export const label = () => "some-lib";
+    `,
+    "Counter.ts": `
+      "use client";
+      import { useCounter } from "some-lib";
+      export const Counter = () => "count=" + useCounter()[0];
+    `,
+    "routes/index.ts": `
+      import { label } from "some-lib";
+      import { Counter } from "../Counter" with { bunBakeGraph: "ssr" };
+      export default function () {
+        return new Response(label() + " " + Counter());
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("some-lib count=0");
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

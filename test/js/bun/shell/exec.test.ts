@@ -42,6 +42,22 @@ describe("bun exec", () => {
     )
     .runAsTest("write a lot of data");
 
+  TestBuilder.command`${BUN} exec ${'false; echo $? "$?"'}`
+    .env(bunEnv)
+    .stdout("1 1\n")
+    .runAsTest("$? is the last exit code");
+
+  test("$$ is the process ID of bun exec", async () => {
+    await using proc = Bun.spawn({
+      cmd: [BUN, "exec", 'echo $$ "$$"'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${proc.pid} ${proc.pid}\n`, stderr: "", exitCode: 0 });
+  });
+
   describe("--help works", () => {
     // prettier-ignore
     const programs = [

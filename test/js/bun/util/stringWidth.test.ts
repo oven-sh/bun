@@ -1102,8 +1102,7 @@ describe("stringWidth extended", () => {
     });
 
     test("consistency holds for pseudo-random escape-heavy UTF-16 input", () => {
-      // Math.imul keeps the state exact: the plain product passes 2^53 and loses its low bits.
-      // The high bits are returned because bit k of an LCG repeats every 2^(k+1) draws.
+      // Math.imul: the plain product exceeds 2^53. High bits: an LCG's low bits have short periods.
       let seed = 0x5eed1234;
       const next = () => {
         seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
@@ -1617,8 +1616,7 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
 
   test("matches the scalar reference on pseudo-random escape-heavy inputs", () => {
     // Deterministic LCG so failures are reproducible.
-    // Math.imul keeps the state exact: the plain product passes 2^53 and loses its low bits.
-    // The high bits are returned because bit k of an LCG repeats every 2^(k+1) draws.
+    // Math.imul: the plain product exceeds 2^53. High bits: an LCG's low bits have short periods.
     let seed = 0x12345678;
     const next = () => {
       seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;

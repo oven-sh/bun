@@ -14,10 +14,9 @@ const SEND_BUFFER = 64 * 1024;
 
 function patternBuffer(len: number, seed: number): Buffer {
   const b = Buffer.allocUnsafe(len);
-  let x = seed | 1;
-  // Math.imul keeps the state exact: the plain product passes 2^53, and the rounded state
-  // falls into a loop of 419 draws for most seeds.
+  let x = seed;
   for (let i = 0; i < len; i++) {
+    // Math.imul: the plain product exceeds 2^53.
     x = (Math.imul(x, 1103515245) + 12345) >>> 0;
     b[i] = x >>> 24;
   }

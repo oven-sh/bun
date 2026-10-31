@@ -97,3 +97,59 @@ describe("assert.deepEqual(actual, expected)", () => {
     });
   });
 });
+
+describe("assert.throws(fn, message)", () => {
+  const boom = () => {
+    throw new Error("boom");
+  };
+  const failureOf = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  };
+
+  // A string in the `error` position is only the failure message. The empty
+  // string is a message like any other.
+  it.each(["", "failed"])("with the message %p, passes when fn throws", message => {
+    expect(() => assert.throws(boom, message)).not.toThrow();
+    expect(() => assert.strict.throws(boom, message)).not.toThrow();
+  });
+
+  it.each([
+    ["", "Missing expected exception."],
+    ["failed", "Missing expected exception: failed"],
+  ])("with the message %p, fails with an AssertionError when fn does not throw", (message, expected) => {
+    expect(failureOf(() => assert.throws(() => {}, message))).toEqual({
+      name: "AssertionError",
+      code: "ERR_ASSERTION",
+      message: expected,
+    });
+  });
+
+  it("an empty message that is identical to the thrown value is ambiguous", () => {
+    expect(
+      failureOf(() =>
+        assert.throws(() => {
+          throw new Error("");
+        }, ""),
+      ),
+    ).toEqual({
+      name: "TypeError",
+      code: "ERR_AMBIGUOUS_ARGUMENT",
+      message: 'The "error/message" argument is ambiguous. The error message "" is identical to the message.',
+    });
+    expect(
+      failureOf(() =>
+        assert.throws(() => {
+          throw "";
+        }, ""),
+      ),
+    ).toEqual({
+      name: "TypeError",
+      code: "ERR_AMBIGUOUS_ARGUMENT",
+      message: 'The "error/message" argument is ambiguous. The error "" is identical to the message.',
+    });
+  });
+});

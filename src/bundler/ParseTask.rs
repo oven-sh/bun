@@ -1292,10 +1292,7 @@ pub mod parse_worker {
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
 
-                const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
-                let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
-                    && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
-                        == CSS_MODULE_SUFFIX;
+                let enable_css_modules = source.path.is_css_module();
                 let parser_options = {
                     let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
                     if enable_css_modules {

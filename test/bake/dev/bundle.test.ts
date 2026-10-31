@@ -877,6 +877,88 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
     },
   });
 }
+// The dev server prints an importer once. Its `require()` and `import()` must not depend on how the
+// dev server got the target: bundled with the importer, from the cache, or failed and repaired later.
+{
+  const targets: Record<string, string> = {
+    "a.css": `.a { color: red; }`,
+    "data.json": `{"a":1}`,
+    "esm.ts": `export const esm = true;`,
+    "legacy.cjs": `module.exports = { cjs: true };`,
+  };
+  const broken: Record<string, string> = {
+    "a.css": `.a { color: red; }}`,
+    "data.json": `{"a":`,
+    "esm.ts": `export const = ;`,
+    "legacy.cjs": `module.exports = = 1;`,
+  };
+  const names = Object.keys(targets);
+  // `lowered` is never called. The test reads its printed text.
+  const importer = (pass: string) => `
+    export function lowered() {
+      return [
+        ${JSON.stringify(pass)},
+        ${names.map(name => `require("./${name}"), import("./${name}"),`).join("\n        ")}
+      ];
+    }
+  `;
+  // The printed lines of `lowered` after the name of the pass.
+  const lines = (text: string, pass: string) => {
+    const marker = JSON.stringify(pass) + ",";
+    const start = text.indexOf(marker);
+    if (start === -1) throw new Error(`The importer of the pass "${pass}" is not in:\n${text.slice(-1500)}`);
+    return text
+      .slice(start + marker.length, text.indexOf("];", start))
+      .split("\n")
+      .map(line => line.trim())
+      .filter(Boolean);
+  };
+  const route = (attribute: string) => `
+    import { lowered } from "../app.ts"${attribute};
+    export default () => new Response(lowered.toString());
+  `;
+  const routeText = (dev: Dev) => dev.fetch("/").text();
+  for (const { graph, framework, files, read } of [
+    {
+      graph: "client",
+      framework: undefined,
+      files: { "index.html": emptyHtmlFile({ scripts: ["app.ts"] }) },
+      read: clientBundle,
+    },
+    { graph: "server", framework: minimalFramework, files: { "routes/index.ts": route("") }, read: routeText },
+    {
+      graph: "SSR",
+      framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+      files: { "routes/index.ts": route(` with { bunBakeGraph: "ssr" }`) },
+      read: routeText,
+    },
+  ]) {
+    devTest(`require() and import() are printed the same however the target was built (${graph} graph)`, {
+      framework,
+      files: { ...targets, ...files, "app.ts": importer("bundled together") },
+      async test(dev) {
+        const together = lines(await read(dev), "bundled together");
+        // The dev server has no module for a stylesheet. The importer holds the value.
+        expect(together.slice(0, 2)).toEqual(["({}),", "Promise.resolve().then(() => ({ default: {} })),"]);
+
+        await dev.write("app.ts", importer("importer edited"));
+        expect(lines(await read(dev), "importer edited")).toEqual(together);
+
+        // Each target fails in the pass that bundles the importer. The targets are then repaired alone.
+        {
+          await using batch = await dev.batchChanges({ errors: null });
+          await dev.write("app.ts", importer("targets failed"));
+          for (const name of names) await dev.write(name, broken[name], { dedent: false });
+        }
+        {
+          await using batch = await dev.batchChanges({ errors: null });
+          for (const name of names) await dev.write(name, targets[name], { dedent: false });
+        }
+        expect(lines(await read(dev), "targets failed")).toEqual(together);
+      },
+    });
+  }
+}
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,
   files: {

@@ -1230,6 +1230,12 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
+                E::EROFS if bun_sys::removal_target_is_missing(dirfd, path.as_bytes()) => {
+                    if self.opts.force {
+                        return self.verbose_deleted(parent_dir_task, path.as_bytes());
+                    }
+                    Err(bun_sys::Error::from_code(E::ENOENT, e.syscall).with_path(path.as_bytes()))
+                }
                 E::EISDIR => vtable.on_is_dir(parent_dir_task, path, is_absolute, buf),
                 // This might happen if the file is actually a directory.
                 E::EPERM => {

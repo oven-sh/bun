@@ -400,16 +400,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
-        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
+        if p.has_react_hooks_suppression(|| func.open_parens_loc) {
             func.flags.insert(Flags::Function::HasReactHooksSuppression);
-            // next-line semantics: a suppression marks the enclosing top-level
-            // function and is consumed; it never reaches that function's siblings.
-            if p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = false;
-            }
         }
 
         Ok(func)
+    }
+
+    /// Whether a `react-hooks` eslint suppression covers the function that closes here. `start` is where it starts.
+    #[inline]
+    fn has_react_hooks_suppression(&mut self, start: impl FnOnce() -> bun_ast::Loc) -> bool {
+        (self.lexer.has_react_hooks_suppression_before
+            && self.take_react_hooks_suppression(start()))
+            || self.lexer.has_react_hooks_block_suppression
+    }
+
+    /// next-line semantics: a suppression marks the enclosing top-level function and is consumed; it never reaches that function's siblings.
+    #[cold]
+    #[inline(never)]
+    fn take_react_hooks_suppression(&mut self, start: bun_ast::Loc) -> bool {
+        debug_assert!(self.current_scope.kind == js_ast::scope::Kind::FunctionArgs);
+        let covered = start.start <= self.lexer.react_hooks_suppression_taken_at;
+        if self.fn_or_arrow_data_parse.is_top_level {
+            let mut scope = self.current_scope.parent;
+            while let Some(outer) = scope
+                && outer.kind != js_ast::scope::Kind::FunctionArgs
+            {
+                scope = outer.parent;
+            }
+            if scope.is_none() {
+                self.lexer.has_react_hooks_suppression_before = false;
+            } else if covered {
+                // In a parameter list: the function that owns the list closes later and needs the suppression.
+                self.lexer.react_hooks_suppression_taken_at = self.lexer.loc().start;
+            }
+        }
+        covered
     }
 
     pub(crate) fn parse_fn_expr(
@@ -552,11 +578,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
-            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
-                || p.lexer.has_react_hooks_block_suppression;
-            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = false;
-            }
+            let has_react_hooks_suppression = p.has_react_hooks_suppression(|| {
+                let first = args_slice.slice().first();
+                first.map_or(arrow_loc, |arg| arg.binding.loc)
+            });
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
@@ -591,11 +616,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
-        let has_react_hooks_suppression =
-            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
-        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
-            p.lexer.has_react_hooks_suppression_before = false;
-        }
+        let has_react_hooks_suppression = p.has_react_hooks_suppression(|| {
+            let first = args_slice.slice().first();
+            first.map_or(arrow_loc, |arg| arg.binding.loc)
+        });
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,

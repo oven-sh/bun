@@ -120,6 +120,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             func.flags
                 .contains(flags::Function::HasReactHooksSuppression),
             body_stmts,
+            body_loc,
         );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
@@ -142,7 +143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        let rc_binding = self.react_compiler_candidate_name.take();
+        let rc_binding = self.take_react_compiler_claim(body_loc);
         if rc_binding.is_some() {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,

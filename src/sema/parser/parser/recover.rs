@@ -208,7 +208,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseErrorAtRange`. Without recovery: `fail`.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn error(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
         if !self.recovers() {
             return self.fail();
@@ -345,7 +345,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseErrorAtCurrentToken`
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn error_at_token(&mut self, code: u32, args: &[&[u8]]) {
         self.error(code, self.range_of_token(), args);
     }
@@ -361,7 +361,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseExpected`, when the current token isn't `token`.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn expected(&mut self, token: T) {
         self.expected_in_list(token, b"");
     }
@@ -382,7 +382,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseExpectedMatchingBrackets`, when the current token isn't `close`.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn unmatched(&mut self, (open, close): (T, T), open_at: Option<u32>) {
         // Otherwise a scanner error could be mistaken for the error reported here.
         self.take_scanner_errors();
@@ -403,7 +403,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// For places where TypeScript's parser reports nothing and leaves the token to its caller.
     /// Some caller will report the token, so without recovery the parse fails right here.
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn fail_unless_recovering(&mut self) {
         if !self.recovers() {
             self.fail();
@@ -413,7 +413,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseErrorAtRange`, for text that's parsed normally despite the error. Without recovery: `report`.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn error_and_continue(&mut self, code: u32, at: (u32, u32)) {
         match self.recovers() {
             true => self.error(code, at, &[]),
@@ -426,7 +426,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `code_of_private_name`: `privateIdentifierDiagnosticMessage`, or 0.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn missing_identifier(
         &mut self,
         code: u32,
@@ -463,7 +463,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseIdentifier`, at a token that isn't an identifier. Returns the name and the node's position.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn missing_name(&mut self) -> (Atom, u32) {
         let full = self.full_start();
         match self.missing_identifier(0, 0) {
@@ -475,7 +475,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseIdentifierWithDiagnostic(code)` as an expression, at a token that isn't an identifier.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn missing_expression(&mut self, code: u32) -> ExprId {
         if self.token() == T::CloseParen && self.options.dialect.oxc && self.recovers() {
             self.empty_parentheses_like_oxc();

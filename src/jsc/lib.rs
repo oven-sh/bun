@@ -1245,7 +1245,7 @@ pub use self::Node as node;
 /// Note: `#[track_caller]` only surfaces file/line, so no function name is
 /// logged. Prefer the `mark_binding!()` macro form (re-exported above) which
 /// captures `module_path!()` at the call site.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn mark_binding() {
     if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {

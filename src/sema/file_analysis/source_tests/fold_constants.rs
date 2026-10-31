@@ -809,7 +809,7 @@ fn calls_of(s: &Analyzed<'_>, name: &str) -> Vec<ExprId> {
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_argument(s: &Analyzed<'_>, name: &str) -> ExprId {
     let calls = calls_of(s, name);
     let [call] = calls[..] else {
@@ -825,7 +825,7 @@ fn only_argument(s: &Analyzed<'_>, name: &str) -> ExprId {
     argument
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn probe(s: &Analyzed<'_>) -> ExprId {
     only_argument(s, "v")
 }
@@ -838,7 +838,7 @@ fn is_value(s: &Analyzed<'_>, found: Constant, expected: &Data<'_>) -> bool {
     found.to_data_value() == *s.workspace.data(expected)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_folded(s: &Analyzed<'_>, e: ExprId, expected: Expected, text: &str) {
     let found = constant(s, e);
     let is_expected = match (found, expected) {
@@ -865,7 +865,7 @@ fn data_value<'s>(s: &Analyzed<'s>, e: ExprId) -> FoldedData<'s> {
     data_value_of(&s.hir, &s.analysis.decisions, e, &w.atoms, w.arena)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn data_text(s: &Analyzed<'_>, e: ExprId, text: &str) -> String {
     match data_value(s, e) {
         FoldedData::Known(value) => s.workspace.describe_data(&value),
@@ -885,7 +885,7 @@ fn to_import_specifier(w: &Workspace<'_>, specifier: Specifier) -> ImportSpecifi
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn last_site(s: &Analyzed<'_>, text: &str) -> ImportSite {
     match s.analysis.import_sites.last() {
         Some(site) => *site,

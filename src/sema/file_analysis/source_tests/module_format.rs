@@ -773,7 +773,7 @@ fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_site(s: &Analyzed<'_>, row: &str) -> ImportSite {
     let [site] = s.analysis.import_sites else {
         panic!("{row}: {:?}", s.analysis.import_sites);
@@ -781,7 +781,7 @@ fn only_site(s: &Analyzed<'_>, row: &str) -> ImportSite {
     *site
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn call_of<'s>(w: &Workspace<'s>, hir: &File<'s>, name: &str) -> ExprId {
     let callee = w.ident(hir, name, 0);
     let calls = find_exprs(
@@ -792,7 +792,7 @@ fn call_of<'s>(w: &Workspace<'s>, hir: &File<'s>, name: &str) -> ExprId {
     calls[0]
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn last_call_argument(s: &Analyzed<'_>) -> ExprId {
     let calls = find_exprs(&s.hir, |kind| {
         matches!(kind, ExprKind::Call(_) | ExprKind::ImportCall { .. })
@@ -822,7 +822,7 @@ fn analyzed_with_main(
     analyzed_source(&source, test);
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn comparison_decision<'s>(s: &Analyzed<'s>) -> Decision<'s> {
     let comparisons = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Binary { .. }));
     let [comparison] = comparisons[..] else {

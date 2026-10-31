@@ -709,7 +709,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Its decorators become statements before it in the list being parsed.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn missing_declaration(&mut self, start: Start, base: usize) -> StmtId {
         if !self.recovers() {
             self.fail();

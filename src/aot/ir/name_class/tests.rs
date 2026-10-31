@@ -11,7 +11,7 @@ const SHARED_VECTORS: &[u8] = include_bytes!(concat!(
     "/../../test/aot/builtins/name-classes.json"
 ));
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_class(expected: NameClass, texts: &[&str]) {
     for text in texts {
         assert_eq!(classify_name(text.as_bytes()), expected, "{text:?}");

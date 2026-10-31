@@ -75,7 +75,7 @@ pub(super) fn print_alone(function: &Function) -> String {
     text
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub(super) fn assert_graph(
     parameters: &[TypeId],
     expected: &str,

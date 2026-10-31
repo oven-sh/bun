@@ -20,7 +20,7 @@ impl JSMap {
         JSC__JSMap__create(global)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn set(&mut self, global: &JSGlobalObject, key: JSValue, value: JSValue) -> JsResult<()> {
         crate::cpp::JSC__JSMap__set(self, global, key, value)
     }
@@ -29,19 +29,19 @@ impl JSMap {
     ///
     /// Note this shares semantics with the JS `Map.prototype.get` method, and
     /// will return `JSValue::UNDEFINED` if a value is not found.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn get(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<JSValue> {
         crate::cpp::JSC__JSMap__get(self, global, key)
     }
 
     /// Attempt to remove a key from this JS Map object.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn remove(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
         crate::cpp::JSC__JSMap__remove(self, global, key)
     }
 
     /// Clear all entries from this JS Map object.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn clear(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         crate::cpp::JSC__JSMap__clear(self, global)
     }

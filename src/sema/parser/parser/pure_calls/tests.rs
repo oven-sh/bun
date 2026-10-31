@@ -8,7 +8,7 @@ fn pure_calls(text: &str) -> Vec<bool> {
     file.calls.iter().map(|call| call.is_pure).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn expect(cases: &[(&str, &[bool])]) {
     for &(text, expected) in cases {
         assert_eq!(pure_calls(text), expected, "{text}");

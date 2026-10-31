@@ -1140,20 +1140,20 @@ fn boolean(b: bool) -> Decision<'static> {
     Decision::Constant(Constant::Boolean(b))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn last_expr(s: &Analyzed<'_>, test: impl Fn(&ExprKind) -> bool) -> ExprId {
     let found = find_exprs(&s.hir, test);
     *found.last().expect("the expression is in the file")
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn last_member(s: &Analyzed<'_>) -> ExprId {
     last_expr(s, |kind| {
         matches!(kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn last_call(s: &Analyzed<'_>) -> ExprId {
     last_expr(s, |kind| matches!(kind, ExprKind::Call(_)))
 }
@@ -1168,7 +1168,7 @@ fn calls_of(s: &Analyzed<'_>, name: &str) -> Vec<ExprId> {
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn call_of(s: &Analyzed<'_>, name: &str) -> ExprId {
     let calls = calls_of(s, name);
     let [call] = calls[..] else {
@@ -1184,7 +1184,7 @@ fn statements_of_expr(s: &Analyzed<'_>, e: ExprId) -> Vec<StmtId> {
     )
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn statement_of(s: &Analyzed<'_>, name: &str) -> StmtId {
     let statements = statements_of_expr(s, call_of(s, name));
     let [statement] = statements[..] else {
@@ -1197,7 +1197,7 @@ fn kinds(s: &Analyzed<'_>) -> Vec<FoldErrorKind> {
     s.analysis.errors.iter().map(|error| error.kind).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn arguments(s: &Analyzed<'_>, call: ExprId) -> Vec<ExprId> {
     match s.hir[call].kind {
         ExprKind::Call(call) => s.hir.ids(s.hir[call].args).collect(),
@@ -1206,7 +1206,7 @@ fn arguments(s: &Analyzed<'_>, call: ExprId) -> Vec<ExprId> {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_argument(s: &Analyzed<'_>, call: ExprId) -> ExprId {
     let found = arguments(s, call);
     let [argument] = found[..] else {
@@ -1215,7 +1215,7 @@ fn only_argument(s: &Analyzed<'_>, call: ExprId) -> ExprId {
     argument
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn member_object(s: &Analyzed<'_>, member: ExprId) -> ExprId {
     let ExprKind::Dot { obj, .. } = s.hir[member].kind else {
         panic!("{:?} is not a Dot", s.hir[member].kind);
@@ -1223,7 +1223,7 @@ fn member_object(s: &Analyzed<'_>, member: ExprId) -> ExprId {
     obj
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn data_text(s: &Analyzed<'_>, found: Decision<'_>) -> String {
     let Decision::Data(value) = found else {
         panic!("{found:?} is not data");
@@ -1231,7 +1231,7 @@ fn data_text(s: &Analyzed<'_>, found: Decision<'_>) -> String {
     s.workspace.describe_data(value)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn argument_text(s: &Analyzed<'_>, argument: ExprId) -> String {
     assert_eq!(decision(s, argument), Decision::Unknown, "{argument:?}");
     match data_value(s, argument) {
@@ -1240,7 +1240,7 @@ fn argument_text(s: &Analyzed<'_>, argument: ExprId) -> String {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn is_dead(s: &Analyzed<'_>, name: &str) -> bool {
     let decisions = &s.analysis.decisions;
     let call = call_of(s, name);
@@ -1251,7 +1251,7 @@ fn is_dead(s: &Analyzed<'_>, name: &str) -> bool {
     is_call_dead
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_dead_calls(s: &Analyzed<'_>, text: &str, dead: &[&str], alive: &[&str]) {
     for name in dead {
         assert!(is_dead(s, name), "{name} is alive: {text}");
@@ -1290,7 +1290,7 @@ fn check_dead_calls(rows: &[DeadCalls]) {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn method(s: &Analyzed<'_>, name: &str) -> FnId {
     let atom = s.workspace.atom(name);
     let found = s
@@ -1304,7 +1304,7 @@ fn method(s: &Analyzed<'_>, name: &str) -> FnId {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn check_import_meta_main(text: &str, main: Option<bool>, expected: Decision<'static>) {
     with_workspace(|w| {
         let source = Source {
@@ -1580,7 +1580,7 @@ fn conditions_of_unknown_values() {
     check_dead_calls(CONDITIONS_OF_UNKNOWN_VALUES);
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn last_statement_expression(s: &Analyzed<'_>) -> ExprId {
     let statements = find_stmts(&s.hir, |kind| matches!(kind, StmtKind::Expr(_)));
     match statements.last().map(|&statement| s.hir[statement].kind) {

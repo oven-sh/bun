@@ -180,13 +180,13 @@ struct CallOperation {
     name: Option<StringId>,
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn panic_at(operation: ValueView<'_>, expected: Opcode) -> ! {
     let (id, found) = (operation.id, operation.opcode.name());
     panic!("{id} is a {found}, not a {}", expected.name());
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn decode_read(operation: ValueView<'_>) -> PropertyRead {
     let (Opcode::PropGet, &[flags, object, key]) = (operation.opcode, operation.fields) else {
         panic_at(operation, Opcode::PropGet);
@@ -200,7 +200,7 @@ fn decode_read(operation: ValueView<'_>) -> PropertyRead {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn decode_store(operation: ValueView<'_>) -> PropertyStore {
     let (Opcode::PropSet, &[flags, object, key, mode, value]) =
         (operation.opcode, operation.fields)
@@ -216,7 +216,7 @@ fn decode_store(operation: ValueView<'_>) -> PropertyStore {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn decode_delete(operation: ValueView<'_>) -> PropertyDelete {
     let (Opcode::PropDelete, &[flags, object, key, mode]) = (operation.opcode, operation.fields)
     else {
@@ -230,7 +230,7 @@ fn decode_delete(operation: ValueView<'_>) -> PropertyDelete {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn decode_call(operation: ValueView<'_>) -> CallOperation {
     let (Opcode::Call, &[_, callee, this, argument_count, ref rest @ ..]) =
         (operation.opcode, operation.fields)
@@ -288,7 +288,7 @@ impl Probe {
         self.all(opcode).len()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn only(&self, opcode: Opcode) -> ValueView<'_> {
         let [operation] = self.all(opcode)[..] else {
             panic!("expected one {}:\n{self}", opcode.name());
@@ -305,14 +305,14 @@ impl Probe {
         }
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn definition(&self, value: ValueId) -> ValueView<'_> {
         let value = self.skip_requests(value);
         let operation = self.operations().find(|operation| operation.id == value);
         operation.unwrap_or_else(|| panic!("no operation defines {value}:\n{self}"))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn returned(&self) -> ValueId {
         let blocks = self.function().body.blocks();
         let returns: Vec<TerminatorView<'_>> = blocks
@@ -334,13 +334,13 @@ impl Probe {
         BStr::new(self.fragment.strings.get(string))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn key_text(&self, key: PropertyKeyId) -> &BStr {
         let text = self.fragment.property_keys.get(key).text;
         self.string_text(text.expect("the key is a text"))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn builtin_of(&self, value: ValueId) -> Option<BuiltinId> {
         let operation = self.definition(value);
         let (Opcode::Builtin, &[_, builtin]) = (operation.opcode, operation.fields) else {
@@ -349,12 +349,12 @@ impl Probe {
         BuiltinId::from_wire(builtin)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_builtin(&self, value: ValueId, builtin: BuiltinId) {
         assert_eq!(self.builtin_of(value), Some(builtin), "{self}");
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_parameter(&self, value: ValueId) {
         let position = EntryPosition::new(EntryParameter::Parameter, 0);
         let index = self.function().entry_parameter_index(position);
@@ -362,7 +362,7 @@ impl Probe {
         assert_eq!(self.skip_requests(value), parameter, "{self}");
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_path(&self, value: ValueId, path: &[&str]) {
         assert_eq!(self.read_path(value), path, "{self}");
     }
@@ -382,12 +382,12 @@ impl Probe {
         &expected.builtins
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_prediction(&self, conversion: ValueView<'_>, builtin: BuiltinId) {
         assert_eq!(self.expected_builtins(conversion), [builtin], "{self}");
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn integer_of(&self, value: ValueId) -> Option<i64> {
         let operation = self.definition(value);
         let (Opcode::Integer, &[low, high]) = (operation.opcode, operation.fields) else {
@@ -416,17 +416,17 @@ impl Probe {
         reads
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn read_of(&self, value: ValueId) -> PropertyRead {
         decode_read(self.definition(value))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn only_store(&self) -> PropertyStore {
         decode_store(self.only(Opcode::PropSet))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn read_path(&self, value: ValueId) -> Vec<&BStr> {
         let read = self.read_of(value);
         let mut path = if read.is_free_name {
@@ -796,7 +796,7 @@ fn delete_defined_path() {
     assert_eq!(deleted.mode, ECMAMode::Sloppy, "{sloppy}");
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn lower_defined_callee(path: &'static str) -> (Probe, CallOperation) {
     let defines = [("settle", GlobalPath(path))];
     let probe = lower_body(&defines, "return settle(1);");

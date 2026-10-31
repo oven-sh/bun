@@ -86,7 +86,7 @@ fn analyzed_module<'s>(w: &Workspace<'s>, data: &DataModule<'s>) -> Analyzed<'s>
     analyze(w, module(w, data))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn analyzed_root<'s>(w: &Workspace<'s>, data: &DataModule<'s>) -> (Analyzed<'s>, ExprId) {
     let tree = module(w, data);
     let [(root, _)] = *tree.host_values else {
@@ -107,7 +107,7 @@ fn exports(s: &Analyzed<'_>) -> Vec<String> {
     names
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn export_default_value(hir: &File<'_>) -> ExprId {
     let statements = find_stmts(hir, |kind| matches!(kind, StmtKind::ExportDefault(_)));
     let [statement] = statements[..] else {
@@ -119,7 +119,7 @@ fn export_default_value(hir: &File<'_>) -> ExprId {
     value
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn number_at(hir: &File<'_>, expr: ExprId) -> f64 {
     let ExprKind::Number(index) = hir[expr].kind else {
         panic!("not a number: {:?}", hir[expr].kind);
@@ -127,7 +127,7 @@ fn number_at(hir: &File<'_>, expr: ExprId) -> f64 {
     hir.numbers[index as usize]
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn negated_number(hir: &File<'_>, expr: ExprId) -> f64 {
     let ExprKind::Unary {
         op: UnOp::Minus,
@@ -150,14 +150,14 @@ fn value_module<'s>(w: &Workspace<'s>, value: &Data<'_>, exports_keys: bool) -> 
     )
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn leaf<'s>(w: &Workspace<'s>, value: Data<'_>) -> Analyzed<'s> {
     let s = value_module(w, &value, false);
     assert_eq!(exports(&s), ["default"]);
     s
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn first_declared_symbol(s: &Analyzed<'_>) -> SymbolId {
     let statement = s.hir.ids(s.hir.body).next();
     let Some(StmtKind::Var(declarations)) = statement.map(|id: StmtId| s.hir[id].kind) else {
@@ -167,7 +167,7 @@ fn first_declared_symbol(s: &Analyzed<'_>) -> SymbolId {
     s.bound.declared_symbol(Decl::Var(pat))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn exported_binding_of(s: &Analyzed<'_>, name: Atom) -> Binding {
     let found = (0u32..)
         .zip(s.hir.export_specs.iter())
@@ -185,7 +185,7 @@ fn export_pairs<'a>(s: &'a Analyzed<'_>) -> Vec<(&'a str, &'a str)> {
         .collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn declared_names<'a>(s: &'a Analyzed<'_>) -> Vec<&'a str> {
     let declarations = s.hir.var_decls.iter();
     let names = declarations.map(|declaration| match s.hir[declaration.pat].kind {
@@ -497,7 +497,7 @@ fn runtime_require() {
     });
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_runtime_require(s: &Analyzed<'_>, loader_type: Option<&str>, member: Option<&str>) {
     let w = &s.workspace;
     let [site] = s.analysis.import_sites else {

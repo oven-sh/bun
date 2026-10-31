@@ -138,7 +138,7 @@ pub mod options {
     }
     impl<T> AssumeOk<T> for Result<T> {
         #[inline]
-        #[track_caller]
+        #[cfg_attr(debug_assertions, track_caller)]
         fn assume_ok(self) -> T {
             match self {
                 Ok(v) => v,

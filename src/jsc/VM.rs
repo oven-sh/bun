@@ -150,7 +150,7 @@ impl VM {
         JSC__VM__terminationException(self)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn throw_error(&self, global_object: &JSGlobalObject, value: JSValue) -> JsError {
         crate::validation_scope!(scope, global_object);
         scope.assert_no_exception();

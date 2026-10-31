@@ -139,7 +139,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `start`, with the modifiers on the stack from `base` on.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn missing_declaration_expression(&mut self, start: u32, base: usize) -> ExprId {
         if !self.recovers() {
             self.fail();
@@ -159,7 +159,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// store them, so they're discarded.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn discard_type_arguments(&mut self) {
         if !self.recovers() {
             return self.reject(Rejection::Reported);
@@ -496,7 +496,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// name of a member that isn't followed by parameters.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn is_constructor_without_parameters(&mut self, name: T) -> bool {
         if self.recovers() {
             return name == T::Constructor;

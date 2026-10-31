@@ -60,7 +60,7 @@ pub fn classify_rel_t<T: PathChar>(rel: &[T], fmt: PathFormat) -> RelPathFacts {
 mod tests {
     use super::*;
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn check(rel: &str, fmt: PathFormat, want: (bool, bool, bool)) {
         let f = classify_rel_t(rel.as_bytes(), fmt);
         assert_eq!(

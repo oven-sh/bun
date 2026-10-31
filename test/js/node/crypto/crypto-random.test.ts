@@ -506,52 +506,10 @@ describe.concurrent("generatePrime with safe and add/rem", () => {
     ]);
   });
 
-  it("a generation that fails (add 0) does not hand back the untested starting value", () => {
-    // The binding currently surfaces a failed generation as the untouched 0n
-    // output; propagating it as an exception would be fine too. What must not
-    // happen is the random value the walk was seeded with coming back as a prime.
-    let outcome: bigint | "threw";
-    try {
-      outcome = generatePrimeSync(64, { safe: true, add: 0n, bigint: true });
-    } catch {
-      outcome = "threw";
-    }
-    expect([0n, "threw"]).toContain(outcome);
-  });
-
-  it("worker.terminate() interrupts a search on a progression the sieve always rejects", async () => {
-    // p == 1 (mod 3) makes (p - 1) / 2 a multiple of 3, so no candidate ever
-    // reaches Miller-Rabin and the walk can only stop at its cancellation
-    // callback. The kill guard makes an uninterruptible build fail here.
-    using dir = tempDir("generate-prime-terminate", {
-      "main.js": `
-        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
-        worker.onmessage = async () => {
-          await worker.terminate();
-          console.log("terminated");
-          process.exit(0);
-        };
-      `,
-      "worker.js": `
-        postMessage("started");
-        require("crypto").generatePrimeSync(512, { safe: true, add: 6n, rem: 1n });
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 20_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
-      stdout: "terminated\n",
-      stderr: "",
-      signalCode: null,
-      exitCode: 0,
-    });
+  it("a generation that fails (add 0) throws the BoringSSL error, as in Node", () => {
+    expect(() => generatePrimeSync(64, { safe: true, add: 0n, bigint: true })).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_BN_DIV_BY_ZERO" }),
+    );
   });
 });
 

@@ -548,6 +548,45 @@ describe.concurrent("otp", () => {
     30_000,
   );
 
+  // EF BB BF is the encoding signature of the program that wrote the OTP. PowerShell can write two of them.
+  test.each([
+    { from: "a pipe", args: [], stdin: "\uFEFF424242\n", asked: true },
+    { from: "a pipe, behind two marks", args: [], stdin: "\uFEFF\uFEFF424242\n", asked: true },
+    { from: "--otp", args: ["--otp", "\uFEFF424242"], stdin: "", asked: false },
+  ])("a byte order mark in front of an OTP is not part of the OTP (from $from)", async ({ args, stdin, asked }) => {
+    const otp = "424242";
+    using mock = mockRegistry((req, recorded) => {
+      if (req.method === "PUT" && recorded.otp === otp) {
+        return new Response("OK", { status: 200 });
+      }
+      // The 401 has no web login url, so `bun publish` asks for the OTP on stdin.
+      return Response.json({}, { status: 401, headers: { "www-authenticate": "OTP" } });
+    });
+    using dir = tempDir("publish-otp-mark", {
+      "package.json": JSON.stringify({ name: "otp-pkg-mark", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish", ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: Buffer.from(stdin),
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toBe("");
+    const question = asked ? "\nThis operation requires a one-time password.\nEnter OTP: " : "";
+    expect(out).toEndWith(question + "\n + otp-pkg-mark@1.0.0\n");
+    expect(mock.requests).toEqual([
+      ...(asked ? [request("PUT", "/otp-pkg-mark")] : []),
+      request("PUT", "/otp-pkg-mark", { authType: "legacy", otp }),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // Situation: user has 2FA enabled account with faceid sign-in.
   // They run `bun publish` with --auth-type=legacy, prompting them
   // to enter their OTP. Because they have faceid sign-in, they don't

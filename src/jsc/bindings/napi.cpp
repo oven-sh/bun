@@ -3468,6 +3468,22 @@ extern "C" void NapiEnv__deref(napi_env env)
 // ctor/dtor are JS_EXPORT_PRIVATE when ENABLE_EXCEPTION_SCOPE_VERIFICATION
 // is on) are confined to a single TU instead of inlined into every
 // translation unit that includes napi.h.
+void NapiEnv::trackRef(Zig::NapiRef* ref)
+{
+    m_refs.append(ref);
+}
+
+void NapiEnv::releaseHeldValues()
+{
+    // release() never deletes a reference, so the list does not change while iterating.
+    for (auto& ref : m_refs)
+        ref.release();
+
+    WTF::Locker locker { m_threadSafeFunctionsLock };
+    for (void* tsfn : m_threadSafeFunctions)
+        Bun__napi_threadsafe_function_release_js(tsfn);
+}
+
 void NapiEnv::clearExceptionsBetweenFinalizers()
 {
     // VM::clearException (via TopExceptionScope::clearException) also

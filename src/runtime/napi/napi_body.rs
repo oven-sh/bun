@@ -3308,6 +3308,22 @@ impl ThreadSafeFunction {
     }
 }
 
+/// Called from `NapiEnv::releaseHeldValues` (JS thread) for every threadsafe
+/// function still registered with an env whose realm is done. Drops the
+/// callback this function holds so the realm can be collected; the function
+/// itself, its finalizer and its queue are left to `env_teardown`.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__napi_threadsafe_function_release_js(tsfn: *mut c_void) {
+    let this = tsfn.cast::<ThreadSafeFunction>();
+    // SAFETY: the registry only holds live TSFN pointers, and the JS thread
+    // is the only one that reads the callback.
+    match unsafe { &mut (*this).callback } {
+        TsfnCallback::Js(strong) | TsfnCallback::C { js: strong, .. } => {
+            strong.clear_without_deallocation()
+        }
+    }
+}
+
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
 #[unsafe(no_mangle)]

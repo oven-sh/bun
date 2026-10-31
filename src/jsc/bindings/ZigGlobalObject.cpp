@@ -4890,6 +4890,12 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
         return;
     for (auto& env : oldGlobal->m_napiEnvs)
         env->retargetGlobalObject(this);
+    // The envs are not torn down here: work the file started can still be in flight, and running an addon's cleanup
+    // hooks and finalizers under it aborts (#34663). Drop the values they still hold instead, as Node does at
+    // teardown: napi-rs keeps its class constructors in references nothing deletes, and its threadsafe function holds a
+    // callback. Either pins this global and the file's whole module graph for the rest of the run.
+    for (auto& env : oldGlobal->m_napiEnvs)
+        env->releaseHeldValues();
     // Ref<NapiEnv> is move-only; the rvalue appendVector overload moves each
     // element out, and we make the source explicitly empty afterwards so
     // ~GlobalObject on the old cell is a no-op here.

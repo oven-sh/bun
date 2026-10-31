@@ -138,6 +138,8 @@ use bun_event_loop::ConcurrentTask;
 type BlobSizeType = u64;
 /// `maxInt(u52)` == 2^52 - 1.
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
+/// The most that `readFile` reserves for a file before it reads it.
+const READ_FILE_RESERVE_MAX: u64 = 1024 * 1024 * 1024 * 8;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
 /// Backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
@@ -7519,6 +7521,64 @@ impl NodeFS {
         }
     }
 
+    /// Reads a Blob slice (a FormData part, a `fetch` body) with `pread`. `None`: the caller seeks.
+    #[cfg(not(windows))]
+    #[cold]
+    fn pread_slice(fd: FD, args: &args::ReadFile) -> Option<Maybe<ret::ReadFileWithOptions>> {
+        debug_assert!(args.encoding == Encoding::Buffer);
+        let stat = Syscall::fstat(fd).ok()?;
+        let size = stat.st_size.max(0) as u64;
+        let is_regular = sys::S::ISREG(stat.st_mode as u32);
+        if !webcore::blob::read_file::slice_reads_with_pread(is_regular, size, args.offset) {
+            return None;
+        }
+        let in_file = size.saturating_sub(args.offset);
+        // Like the other buffer of `read_file_with_options`: 16 bytes past `st_size`, and one cap.
+        let limit = args
+            .max_size
+            .unwrap_or(BLOB_SIZE_MAX)
+            .min(in_file.saturating_add(16))
+            .min(READ_FILE_RESERVE_MAX) as usize;
+        let mut bytes: Vec<u8> = Vec::new();
+        if bytes.try_reserve_exact(limit).is_err() {
+            return Some(Err(with_path_like(
+                sys::Error::from_code(E::ENOMEM, sys::Tag::read),
+                &args.path,
+            )));
+        }
+        loop {
+            let read = bytes.len();
+            // SAFETY: write-only until `commit_spare` exposes the bytes `pread` wrote.
+            let spare = unsafe { bun_core::vec::spare_bytes_mut(&mut bytes) };
+            let want = spare.len().min(limit - read);
+            match Syscall::pread(fd, &mut spare[..want], (args.offset + read as u64) as i64) {
+                // A file with no offsets: the caller reads it in order, as it reads a pipe.
+                Err(err) if read == 0 && err.get_errno() == E::ESPIPE => return None,
+                Err(err) => {
+                    return Some(Err(sys::Error {
+                        syscall: sys::Tag::read,
+                        ..err
+                    }));
+                }
+                Ok(0) => break,
+                // SAFETY: `pread` filled the first `n` bytes of the spare capacity.
+                Ok(n) => unsafe { bun_core::vec::commit_spare(&mut bytes, n) },
+            }
+            if bytes.len() >= limit {
+                break;
+            }
+        }
+        if bytes.is_empty() {
+            return Some(Ok(ret::ReadFileWithOptions::Buffer(Buffer::EMPTY)));
+        }
+        let raw = bun_core::heap::into_raw(bytes.into_boxed_slice());
+        // SAFETY: ownership moves to the `Buffer`, as at the returns of `read_file_with_options`.
+        Some(Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
+            unsafe { &mut *raw },
+            bun_jsc::JSType::Uint8Array,
+        ))))
+    }
+
     pub(crate) fn read_file_with_options(
         &mut self,
         args: &args::ReadFile,
@@ -7582,8 +7642,14 @@ impl NodeFS {
             return Err(abort_err());
         }
 
-        // Only used in DOMFormData
         if args.offset > 0 {
+            // Not on Windows: a read at an offset moves the file pointer there too.
+            #[cfg(not(windows))]
+            if string_type == ReadFileStringType::Default
+                && let Some(slice) = Self::pread_slice(fd, args)
+            {
+                return slice;
+            }
             let _ = sys::set_file_offset(fd, args.offset as u64);
         }
 
@@ -7739,7 +7805,7 @@ impl NodeFS {
             .max(size)
             .saturating_add(16)
             .min(max_size)
-            .min(1024 * 1024 * 1024 * 8) as usize;
+            .min(READ_FILE_RESERVE_MAX) as usize;
         if buf.try_reserve_exact(initial_cap).is_err() {
             return Err(with_path_like(
                 sys::Error::from_code(E::ENOMEM, sys::Tag::read),

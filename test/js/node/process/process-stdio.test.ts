@@ -5,6 +5,46 @@ import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
+  test.skipIf(isWindows).each([1, 2])("setBlocking supports native writes on fd %i", async fd => {
+    const source = `
+      const assert = require("node:assert/strict");
+      const { writeSync } = require("node:fs");
+      const stream = ${fd === 1 ? "process.stdout" : "process.stderr"};
+      assert.equal(stream._handle.fd, ${fd});
+      assert.equal(stream._handle.setBlocking(false), 0);
+      assert.equal(stream._handle.setBlocking(true), 0);
+      const payload = Buffer.alloc(512 * 1024, "x");
+      assert.equal(writeSync(${fd}, payload), payload.length);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.bytes(), proc.exited]);
+    expect(fd === 1 ? stdout : stderr).toEqual(Buffer.alloc(512 * 1024, "x"));
+    expect(fd === 1 ? stderr : stdout).toHaveLength(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("setBlocking returns EBADF for a closed stdio descriptor", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const handle = process.stdout._handle;
+         require("node:fs").closeSync(1);
+         require("node:assert/strict").equal(handle.setBlocking(true), -require("node:os").constants.errno.EBADF);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
   test("process.stdin", () => {
     expect(process.stdin).toBeDefined();
     expect(process.stdin.isTTY).toBe<boolean | undefined>(isatty(0) ? true : undefined);

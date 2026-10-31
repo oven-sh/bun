@@ -204,8 +204,13 @@ console.log(JSON.stringify({ ...built, told }));
 
   /** What the build of a program and its run yield for one of its cases. */
   function of({ told, stdout, ...rest }: Record<string, any>, program: Case[], index: number) {
-    const starts = new RegExp(`^(?:${program.map(it => it.folder).join("|")}):\n`, "m");
-    const printed = (all: string) => (program[index].folder ? all.split(starts)[index + 1] : all);
+    const printed = (all: string) => {
+      if (!program[index].folder) return all;
+      const parts = all.split(new RegExp(`^(?:${program.map(it => it.folder).join("|")}):\n`, "m"));
+      // A program of several cases names each folder once, in turn, and prints nothing in front of the first. Where it prints
+      // anything else, no part is a case's own, and each case is shown all of it.
+      return program.map((it, at) => `${it.folder}:\n${parts[at + 1]}`).join("") === all ? parts[index + 1] : all;
+    };
     return { ...rest, ...(told && { told: told[index] }), ...(stdout !== undefined && { stdout: printed(stdout) }) };
   }
 
@@ -234,6 +239,8 @@ console.log(JSON.stringify({ ...built, told }));
           { how: "aot", ...yields },
         ]);
       },
+      // As in build-both-ways.ts. spawned() ends each of the four children of a test at its own limit, and the test fails by that.
+      // At this folder's default of 120 s the test would end first, and a child would go on behind it.
       600_000,
     );
   });

@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -749,5 +750,51 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
       },
     });
+  });
+
+  // Nothing parses a copied asset: its module is one string. The parser's symbol tables were
+  // sized from the length of the file all the same, about 7 bytes for each byte of the asset.
+  test.concurrent("the module of a copied asset reserves no parser tables for the bytes of the asset", async () => {
+    const assetSize = 64 * 1024 * 1024;
+    using dir = tempDir("loader-asset-presize", {
+      "entry-small.js": `import url from "./small.bin"; console.log(url);`,
+      "entry-big.js": `import url from "./big.bin"; console.log(url);`,
+      "small.bin": "x",
+      "big.bin": "HEAD",
+      "build-fixture.ts": `
+        import { heapStats } from "bun:jsc";
+        const build = async (entry: string) => {
+          const result = await Bun.build({ entrypoints: [import.meta.dir + "/" + entry], throw: false });
+          return { success: result.success, size: result.outputs.find(output => output.kind === "asset")?.size };
+        };
+        // The first build starts the thread pool and the allocator's arenas.
+        const small = await build("entry-small.js");
+        const before = heapStats().mimalloc.committed.peak;
+        const big = await build("entry-big.js");
+        const growth = heapStats().mimalloc.committed.peak - before;
+        console.log(JSON.stringify({ small, big, growth }));
+      `,
+    });
+    // A hole: the file takes no disk space.
+    fs.truncateSync(join(String(dir), "big.bin"), assetSize);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { growth, ...builds } = stdout ? JSON.parse(stdout) : {};
+    expect({ ...builds, stderr, exitCode }).toEqual({
+      small: { success: true, size: 1 },
+      big: { success: true, size: assetSize },
+      stderr: "",
+      exitCode: 0,
+    });
+    // The bytes that the build read are in the measure: 1.1 times the asset in an ASAN build,
+    // 2.2 times with the copy for the output file. The tables took it past 9 times the asset.
+    expect(growth).toBeGreaterThan(assetSize / 2);
+    expect(growth).toBeLessThan(5 * assetSize);
   });
 });

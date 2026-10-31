@@ -322,7 +322,6 @@ const aotTestsThatAskTheSystem = [
   "aot/a-worker-in-a-loop-is-terminated",
   "aot/a-loop-that-calls-nothing-is-terminated",
   "aot/no-thread-can-be-started",
-  "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off",
   "aot/parallel/workers/",
   // Files and paths.
   "aot/entry-point-names",

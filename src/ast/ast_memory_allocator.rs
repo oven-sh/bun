@@ -26,8 +26,7 @@ use crate::stmt;
 // it here; the next `ASTMemoryAllocator` on this thread reclaims it, reusing
 // its committed pages. The pool holds at most one arena (nested scopes — rare
 // — fall back to a fresh `Arena::new()`). `#[thread_local]` (not the
-// `thread_local!` macro) so there is no destructor: a parked arena at thread
-// exit is reclaimed by mimalloc's own thread-teardown, avoiding an unspecified
+// `thread_local!` macro) so there is no destructor, avoiding an unspecified
 // destructor-ordering hazard with `mi_heap_destroy`.
 #[thread_local]
 static ARENA_POOL: Cell<Option<Arena>> = Cell::new(None);

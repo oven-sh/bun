@@ -26,7 +26,7 @@ pub struct TripleSlashReference {
     types: Policy,
 }
 
-const TRIPLE_SLASH_REFERENCE: Message = Message::new(
+const TRIPLE_SLASH_REFERENCE: &Message = &Message::new(
     "tripleSlashReference",
     "Do not use a triple slash reference for {{module}}, use `import` style instead.",
 );

@@ -10,7 +10,7 @@ use bun_lint_oxlint::ast_util::{callee_name, is_global_reference, static_string}
 /// assets" in webpack's asset modules guide.
 pub struct PreferUrlForSiblingFiles;
 
-const JOINED_PATH: Message = Message::new(
+const JOINED_PATH: &Message = &Message::new(
     "joinedPath",
     "Bundlers cannot follow this path. Use `new URL(\"./file\", import.meta.url)`.",
 );

@@ -9,13 +9,13 @@ use bun_lint::formats::{Formatted, FormatterKind, Reason, Request};
 use bun_lint::prelude::*;
 use bun_text_diff::{CharDiff, Hunk};
 
-const INSERT: Message = Message::new("insert", "Insert `{{ insertText }}`");
-const DELETE: Message = Message::new("delete", "Delete `{{ deleteText }}`");
-const REPLACE: Message = Message::new(
+const INSERT: &Message = &Message::new("insert", "Insert `{{ insertText }}`");
+const DELETE: &Message = &Message::new("delete", "Delete `{{ deleteText }}`");
+const REPLACE: &Message = &Message::new(
     "replace",
     "Replace `{{ deleteText }}` with `{{ insertText }}`",
 );
-const UNCHECKED: Message = Message::new(
+const UNCHECKED: &Message = &Message::new(
     "unchecked",
     "This file was not checked because {{ reason }}.",
 );

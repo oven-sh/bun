@@ -196,8 +196,8 @@ function f17 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
     v0 = Undefined
     Return v0
 }
-function f18 name="next" module=m3 position=7366 role=Library flags=[IsChecked] enclosingRuntimeFunction=43 captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f19 name="return" module=m3 position=7441 role=Library flags=[IsChecked] enclosingRuntimeFunction=43 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f18 name="next" module=m3 position=7366 role=Library flags=[IsChecked] enclosingRuntimeFunction=42 captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f19 name="return" module=m3 position=7441 role=Library flags=[IsChecked] enclosingRuntimeFunction=42 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f20 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
 function f21 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
 function f22 module=m4 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -426,7 +426,7 @@ function f23 name="Tick" module=m4 position=1114 kind=BaseConstructor role=Libra
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m3 position=7366 role=Library flags=[IsChecked] enclosingRuntimeFunction=43 captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m3 position=7366 role=Library flags=[IsChecked] enclosingRuntimeFunction=42 captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="recurseThroughArityFixup"
 # CHECK: module=m0 position=654 role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f2, v1: anything):

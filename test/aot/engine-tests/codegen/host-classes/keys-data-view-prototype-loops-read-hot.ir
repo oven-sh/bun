@@ -401,7 +401,7 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f26 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f26 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -641,7 +641,7 @@ function f33 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
     v173 = Convert v172 declared={type=number site=w65}
     Jump -> next b30(v165, v166, v167, v168, v169, v170, v171, v173)
 }
-runtimefunction id=65 function=f26
+runtimefunction id=64 function=f26
 runtimefunction id=131091 function=f33 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 role=

@@ -840,8 +840,8 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f39]
 function f61 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f51] builtinMembers=[MathHypot, MathMax]
 function f62 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f64 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f64 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -1104,8 +1104,8 @@ function f71 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b74(v194):
     Return v194
 }
-runtimefunction id=65 function=f64
-runtimefunction id=69 function=f63
+runtimefunction id=64 function=f64
+runtimefunction id=68 function=f63
 runtimefunction id=131091 function=f71 visibility=Private
 # -- generated: byTernary say adder scaler orElse both above count tests f26 f27 f29 f33 twoElements
 # CHECK-LABEL: function {{*}}name="byTernary"

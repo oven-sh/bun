@@ -1,7 +1,6 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { linkSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { unsupported } from "./harness/compiler";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
@@ -266,7 +265,7 @@ function executables() {
   let builtOfMany: Promise<Built | undefined> | undefined;
   /**
    * Only a canary build of Bun reads BUN_AOT_START_AT. A Bun that does not read it starts an executable at its first entry
-   * point, which says so here. The answer is nothing then, and `start` builds each program by itself.
+   * point, which says so here. The answer is nothing then, and `start` builds a program for each of its starts.
    */
   function buildOfMany() {
     return (builtOfMany ??= (async () => {
@@ -294,11 +293,17 @@ function executables() {
   /** Runs a program in a process of its own. `command` is what starts the executable. */
   async function start(name: string, env: Record<string, string> = {}, command = (executable: string) => [executable]) {
     if (!(name in programs)) throw new Error(`no test starts ${name} with this Bun, so it was not built`);
-    // Where the file runs as a whole, the first test has started the build of many. Elsewhere the program has a build of its
-    // own, which is through sooner.
-    const ofMany = programsByThemselves.has(name) ? undefined : await builtOfMany;
-    const { executable, cwd } = ofMany ?? (await buildByItself(name));
-    return run(command(executable), cwd, ofMany ? { ...env, BUN_AOT_START_AT: name } : env);
+    if (programsByThemselves.has(name)) {
+      const { executable, cwd } = await buildByItself(name);
+      return run(command(executable), cwd, env);
+    }
+    // Where the file runs as a whole, the first test has started the build of many.
+    const ofMany = await builtOfMany;
+    if (ofMany) return run(command(ofMany.executable), ofMany.cwd, { ...env, BUN_AOT_START_AT: name });
+    // Elsewhere the program is built for this one start and removed behind it, as it was before there was a build of many:
+    // an executable is the size of Bun, and there may be one for each test.
+    using folder = tempDir("aot-heap-limit", { [name]: programs[name] });
+    return await run(command(await build(String(folder), "program", 1, name)), String(folder), env);
   }
 
   // node:worker_threads brings the streams of Node.js along, which makes a build thirty times dearer. The programs that import it are files of one program: its entry points import the files of
@@ -330,11 +335,8 @@ function executables() {
       files["worker.ts"] = importsTheCase("worker.ts");
       const folder = tempDir("aot-heap-limit-together", files);
       folders.push(folder);
-      // On a machine with cores to spare this build is what the file waits for longest. So it has two threads, and four where
-      // the machine has eight cores or more: the programs beside it need a core each. With AddressSanitizer it keeps two: it
-      // is through before the tests of Workers start.
-      const threads = isASAN || availableParallelism() < 8 ? 2 : 4;
-      return build(String(folder), "program", threads, "program.ts", "worker.ts", ...alone);
+      // Of all the builds this one takes longest, so it has a second thread.
+      return build(String(folder), "program", 2, "program.ts", "worker.ts", ...alone);
     })());
   }
   /** Puts the executable of all those programs into `cwd` as ./program. */
@@ -372,8 +374,6 @@ function executables() {
 
 // TODO: with AddressSanitizer these run out of room where a release build does not.
 const runsOutOfRoomEarly = isASAN;
-// `bun test` runs five tests at a time with AddressSanitizer and twenty without.
-const fewTestsRunAtATime = isASAN;
 // `ulimit -v` limits the address space of a process on Linux. A Bun with AddressSanitizer does not start under such a limit.
 const canLimitAddressSpace = isLinux && !isASAN;
 /** The file of the program of a row of a table. */
@@ -1370,14 +1370,8 @@ console.log(answers.join("\\n"));
       120_000,
     );
 
-    // This program takes more than a third of the time of the build of many. Where few tests run at a time, a test that waits
-    // for that build keeps the next from starting. So there this program has a build of its own beside it, and its test is one
-    // of the first: the build of many is through a third sooner, and this build before it.
-    const callsValuesNobodyKnowsProgram = (fewTestsRunAtATime ? byItself : oneOfMany)(
-      "calls-values-nobody-knows.js",
-      callsValuesNobodyKnows,
-    );
-    (fewTestsRunAtATime ? inPartFirst : inPart)(test)(
+    const callsValuesNobodyKnowsProgram = oneOfMany("calls-values-nobody-knows.js", callsValuesNobodyKnows);
+    inPart(test)(
       "so does one that calls values nobody knows",
       async () => {
         const { stdout, stderr, exitCode } = await start(callsValuesNobodyKnowsProgram, smallHeap);

@@ -408,6 +408,42 @@ impl DevServer {
         Ok(gop.value_ptr)
     }
 
+    /// True if `owner` has a failure on record that the running bundle did not file during its scan.
+    pub(super) fn has_failure_from_earlier_bundle(
+        &self,
+        owner: serialized_failure::OwnerPacked,
+    ) -> bool {
+        if !self.bundling_failures.contains(&owner) {
+            return false;
+        }
+        let filed_by_this_bundle =
+            |failure: &SerializedFailure| match (owner.side(), failure.get_owner()) {
+                (bake::Side::Client, serialized_failure::Owner::Client(file)) => {
+                    file.get() == owner.file()
+                }
+                (bake::Side::Server, serialized_failure::Owner::Server(file)) => {
+                    file.get() == owner.file()
+                }
+                _ => false,
+            };
+        if self
+            .incremental_result
+            .failures_added
+            .iter()
+            .any(filed_by_this_bundle)
+        {
+            return false;
+        }
+        // Until the bundle is finalized, its resolution failures are only logs.
+        let Some(bundle) = self.current_bundle.as_ref() else {
+            return true;
+        };
+        !bundle
+            .resolution_failure_entries
+            .get(&owner)
+            .is_some_and(Log::has_errors)
+    }
+
     fn mark_all_route_children_failed(&mut self, route_index: router::RouteIndex) {
         let mut next = self.router.route_ptr(route_index).first_child;
         while let Some(child_index) = next {

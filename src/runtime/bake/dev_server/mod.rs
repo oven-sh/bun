@@ -436,6 +436,8 @@ pub(crate) struct CurrentBundle {
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
     pub(crate) resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
+    /// The css roots `join_holders_of_repaired` handed to the bundler in this bundle: each is asked once.
+    pub(crate) joined_css_roots: Vec<incremental_graph::ClientFileIndex>,
 }
 
 pub(crate) struct NextBundle {

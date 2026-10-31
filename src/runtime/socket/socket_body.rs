@@ -1169,7 +1169,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Unix-path connect errors keep their real code (a non-socket file
             // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
             // ENOENT, an inexpressible path is EINVAL), and a connect that was
-            // closed rather than failed is ECANCELED; everything else stays
+            // closed rather than failed is ECANCELED, a refused one EISCONN; everything else stays
             // ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
@@ -1180,6 +1180,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
                 || errno == sys::SystemErrno::ECONNABORTED as c_int
                 || errno == sys::SystemErrno::ECANCELED as c_int
+                || errno == sys::SystemErrno::EISCONN as c_int
             {
                 errno
             } else {
@@ -1203,6 +1204,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("ECONNABORTED")
             } else if errno == sys::SystemErrno::ECANCELED as c_int {
                 BunString::static_("ECANCELED")
+            } else if errno == sys::SystemErrno::EISCONN as c_int {
+                BunString::static_("EISCONN")
             } else {
                 BunString::static_("ECONNREFUSED")
             };
@@ -1318,6 +1321,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
+    /// `detach_for_reconnect` can free this wrapper: an `upgradeTLS` half shares its native socket, whose ext slot names the TLS half.
+    pub(crate) fn can_reconnect(&self) -> bool {
+        !self.flags.get().contains(Flags::BYPASS_TLS)
+            && self.twin.get().is_none()
+            && matches!(
+                self.socket.get().socket,
+                uws::InternalSocket::Detached
+                    | uws::InternalSocket::Connected(_)
+                    | uws::InternalSocket::Connecting(_)
+            )
+    }
+
     /// Discard a still-live native socket so this wrapper can be reused for a
     /// fresh connect. `node:net` permits `socket.connect()` on an
     /// already-connected socket; without this the previous `us_socket_t`'s
@@ -1328,9 +1343,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
     /// took. Caller must hold an independent +1 across this call. Only
     /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
-    /// not live in the ext slot so those are left for the caller's existing
-    /// `debug_assert!` to catch.
+    /// not live in the ext slot, so `can_reconnect` turns those away.
     pub(crate) fn detach_for_reconnect(&self) {
+        assert!(self.can_reconnect());
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
             return;

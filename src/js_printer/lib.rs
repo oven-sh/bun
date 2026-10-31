@@ -1327,6 +1327,8 @@ pub struct Options<'a> {
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
+    /// The output is a script, so it must not use `import.meta`.
+    pub repl_mode: bool,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
@@ -1408,6 +1410,7 @@ impl<'a> Default for Options<'a> {
             indent: Indentation::default(),
             source_map_handler: None,
             target: bun_ast::Target::Browser,
+            repl_mode: false,
             runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
@@ -3288,6 +3291,7 @@ pub(crate) mod __gated_printer {
                 ExprData::EImportMetaMain(data) => {
                     if self.options.module_type == bundle_opts::Format::Esm
                         && self.options.target != bun_ast::Target::Node
+                        && !self.options.repl_mode
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
@@ -3333,7 +3337,7 @@ pub(crate) mod __gated_printer {
                             self.print_whitespacer(ws!(b".main == "));
                         }
 
-                        if self.options.target == bun_ast::Target::Node {
+                        if self.options.target == bun_ast::Target::Node && !self.options.repl_mode {
                             // "__require.module"
                             if let Some(require) = self.options.require_ref {
                                 self.print_symbol(require);
@@ -7839,6 +7843,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
         && printer.options.target == bun_ast::Target::Bun
+        && !printer.options.repl_mode
     {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which

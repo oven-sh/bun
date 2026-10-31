@@ -4483,6 +4483,234 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "true 1 true later" },
     });
   }
+  // https://github.com/oven-sh/bun/issues/36564
+  // `const req = createRequire(import.meta.url)` resolves relative to the
+  // current module, so calls with a static string must be bundled like
+  // require(). The entry lives in /src while the output is /out.js, so an
+  // unbundled runtime lookup would fail to find the files.
+  itBundled("edgecase/CreateRequireImportMetaUrl", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require = createRequire(import.meta.url);
+        const data = require("./data.json");
+        const util = require("./util.cjs");
+        console.log(JSON.stringify(data), util.add(1, 2));
+      `,
+      "/src/data.json": `{ "hello": "world" }`,
+      "/src/util.cjs": /* js */ `
+        module.exports.add = (a, b) => a + b;
+      `,
+    },
+    target: "bun",
+    run: { stdout: `{"hello":"world"} 3` },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The calls were bundled, not left as runtime lookups.
+      expect(out).not.toContain('("./data.json")');
+      expect(out).not.toContain('("./util.cjs")');
+      // With every call bundled, the binding and import tree-shake away.
+      expect(out).not.toContain("createRequire");
+    },
+  });
+  itBundled("edgecase/CreateRequireImportMetaUrlCjsFormat", {
+    // With CJS output format the visit pass inlines import.meta.url to a
+    // string, which must not defeat the createRequire detection.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require2 = createRequire(import.meta.url);
+        console.log(require2("./data.json").value);
+      `,
+      "/src/data.json": `{ "value": "cjs-ok" }`,
+    },
+    target: "node",
+    format: "cjs",
+    run: { stdout: "cjs-ok" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain('("./data.json")');
+    },
+  });
+  itBundled("edgecase/CreateRequireNodeModuleAliased", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire as cr } from "node:module";
+        const myRequire = cr(import.meta.filename);
+        console.log(myRequire("./data.json").value);
+      `,
+      "/src/data.json": `{ "value": 42 }`,
+    },
+    target: "node",
+    run: { stdout: "42" },
+  });
+  itBundled("edgecase/CreateRequireMultipleImports", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        import { createRequire as cr2 } from "node:module";
+        const req1 = createRequire(import.meta.url);
+        const req2 = cr2(import.meta.url);
+        console.log(req1("./one.json").n + req2("./two.json").n);
+      `,
+      "/src/one.json": `{ "n": 1 }`,
+      "/src/two.json": `{ "n": 2 }`,
+    },
+    target: "bun",
+    run: { stdout: "3" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain('("./one.json")');
+      expect(out).not.toContain('("./two.json")');
+    },
+  });
+  itBundled("edgecase/CreateRequireFoldedAndTernaryArguments", {
+    // require() force-folds constant arguments even without --minify-syntax
+    // and transposes ternaries; calls through a createRequire binding must
+    // behave the same.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const req = createRequire(import.meta.url);
+        const a = req("./a" + ".json");
+        const b = req(\`./b.json\`);
+        const c = req(process.env.BUNDLER_TEST_PICK ? "./a.json" : "./b.json");
+        console.log(a.name, b.name, c.name);
+      `,
+      "/src/a.json": `{ "name": "a" }`,
+      "/src/b.json": `{ "name": "b" }`,
+    },
+    target: "bun",
+    run: { stdout: "a b b", env: { BUNDLER_TEST_PICK: "" } },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain('("./a.json")');
+      expect(out).not.toContain('("./b.json")');
+    },
+  });
+  itBundled("edgecase/CreateRequireResolveString", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const req = createRequire(import.meta.url);
+        const p = req.resolve("./util.cjs");
+        const q = req.resolve(process.env.BUNDLER_TEST_PICK ? "./other.cjs" : "./util.cjs");
+        const r = req.resolve("./ut" + "il.cjs");
+        console.log(typeof p, p.endsWith("util.cjs"), q === p, r === p);
+      `,
+      "/src/util.cjs": /* js */ `
+        module.exports.x = 1;
+      `,
+      "/src/other.cjs": /* js */ `
+        module.exports.x = 2;
+      `,
+    },
+    target: "bun",
+    run: { stdout: "string true true true", env: { BUNDLER_TEST_PICK: "" } },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain('resolve("./util.cjs")');
+      expect(out).not.toContain('"./other.cjs"');
+    },
+  });
+  itBundled("edgecase/CreateRequireResolveTernaryTrueArm", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const req = createRequire(import.meta.url);
+        const p = req.resolve("./util.cjs");
+        const q = req.resolve(process.env.BUNDLER_TEST_PICK ? "./other.cjs" : "./util.cjs");
+        console.log(q === p, q.endsWith("other.cjs"));
+      `,
+      "/src/util.cjs": /* js */ `
+        module.exports.x = 1;
+      `,
+      "/src/other.cjs": /* js */ `
+        module.exports.x = 2;
+      `,
+    },
+    target: "bun",
+    run: { stdout: "false true", env: { BUNDLER_TEST_PICK: "1" } },
+  });
+  itBundled("edgecase/RequireResolveFoldedStringArgument", {
+    // A folded "a" + "b" is a rope; require.resolve must read the whole rope,
+    // not just its head.
+    files: {
+      "/src/entry.cjs": /* js */ `
+        const p = require.resolve("./da" + "ta.json");
+        console.log(p.endsWith("data.json"));
+      `,
+      "/src/data.json": `{ "v": 7 }`,
+    },
+    target: "bun",
+    run: { stdout: "true" },
+  });
+  itBundled("edgecase/CreateRequireDynamicArgumentUntouched", {
+    files: {
+      // A non-string argument keeps calling the binding at runtime; the target
+      // file sits next to the output so the runtime lookup still resolves.
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require2 = createRequire(import.meta.url);
+        const name = "./dy" + "namic.cjs";
+        console.log(require2(name).x);
+      `,
+      "/dynamic.cjs": /* js */ `
+        module.exports.x = "dyn";
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dyn" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("require2(name)");
+    },
+  });
+  itBundled("edgecase/CreateRequireTernaryWithDynamicLeafUntouched", {
+    // A ternary is only bundled when every leaf is a string literal.
+    // Otherwise the whole call stays on the binding.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const req = createRequire(import.meta.url);
+        const name = "./dyn.cjs";
+        console.log(req(process.env.BUNDLER_TEST_PICK ? "./never.cjs" : name).x);
+      `,
+      "/dyn.cjs": /* js */ `
+        module.exports.x = "dyn";
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dyn", env: { BUNDLER_TEST_PICK: "" } },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('? "./never.cjs" : name)');
+      expect(out).toContain("createRequire");
+    },
+  });
+  itBundled("edgecase/CreateRequireNonConstAndShadowedUntouched", {
+    // A `let` binding and a shadowing local are not createRequire bindings.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        let req = createRequire(import.meta.url);
+        const a = req("./data.cjs");
+        function inner() {
+          const req = (s) => ({ x: "shadow:" + s });
+          return req("./data.cjs");
+        }
+        console.log(a.x, inner().x);
+      `,
+      "/data.cjs": /* js */ `
+        module.exports.x = "root";
+      `,
+    },
+    target: "bun",
+    run: { stdout: "root shadow:./data.cjs" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('req("./data.cjs")');
+      expect(out).toContain("createRequire");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

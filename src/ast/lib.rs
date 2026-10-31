@@ -1603,12 +1603,23 @@ impl Log {
         loc: Loc,
         args: fmt::Arguments<'_>,
     ) {
-        if !Kind::Warn.should_print(self.level) {
+        self.add_fmt_no_excerpt(Kind::Warn, source, loc, args);
+    }
+
+    #[cold]
+    pub fn add_fmt_no_excerpt(
+        &mut self,
+        kind: Kind,
+        source: &Source,
+        loc: Loc,
+        args: fmt::Arguments<'_>,
+    ) {
+        if !kind.should_print(self.level) {
             return;
         }
         let range = Range { loc, len: 1 };
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        self.add_formatted_msg(kind, Some(source), range, text, Box::default(), false);
         if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
             location.line_text = None;
         }

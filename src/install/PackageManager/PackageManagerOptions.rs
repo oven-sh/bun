@@ -56,6 +56,7 @@ pub struct Options {
     pub(crate) remote_package_features: Features,
     pub local_package_features: Features,
     pub(crate) patch_features: PatchFeatures,
+    pub(crate) allow_unused_patches: bool,
 
     pub filter_patterns: &'static [&'static [u8]],
     pub add_catalog: Option<&'static [u8]>,
@@ -158,6 +159,7 @@ impl Default for Options {
                 ..Features::default()
             },
             patch_features: PatchFeatures::Nothing,
+            allow_unused_patches: false,
             filter_patterns: &[],
             add_catalog: None,
             pack_destination: b"",
@@ -880,6 +882,10 @@ impl Options {
                 self.max_concurrent_lifecycle_scripts = jobs as usize;
             }
 
+            if let Some(allow_unused_patches) = config.allow_unused_patches {
+                self.allow_unused_patches = allow_unused_patches;
+            }
+
             if let Some(ignore_scripts) = config.ignore_scripts {
                 if ignore_scripts {
                     self.do_.set(Do::RUN_SCRIPTS, false);
@@ -1096,6 +1102,8 @@ impl Options {
                 self.remote_package_features.peer_dependencies = false;
             }
         }
+
+        self.allow_unused_patches |= cli.allow_unused_patches;
 
         if cli.ignore_scripts {
             self.do_.set(Do::RUN_SCRIPTS, false);

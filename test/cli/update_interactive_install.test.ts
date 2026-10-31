@@ -251,6 +251,7 @@ describe.concurrent("bun update --interactive installs from the package.json tha
     // gets a warning after the install.
     const { stderr, exitCode, packageJson } = await updateFirstRowToLatest(
       {
+        "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\nsaveTextLockfile = true\nallowUnusedPatches = true\n`,
         "package.json": `{
   "name": "root",
   "workspaces": ["packages/*"],

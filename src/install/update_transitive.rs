@@ -784,12 +784,13 @@ pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[
 
 /// A `patchedDependencies` key without a version matches no package, so its patch is never applied.
 #[cold]
-fn warn_patch_key_without_version(
+fn report_patch_key_without_version(
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
     name: &[u8],
     lockfile: &Lockfile,
+    allow_unused: bool,
 ) {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let installed: &[PackageID] = lockfile
@@ -810,93 +811,105 @@ fn warn_patch_key_without_version(
     if keys.is_empty() {
         let _ = write!(keys, "{}@<version>", BStr::new(name));
     }
-    log.add_range_warning_fmt(
-        Some(source),
-        source.range_of_string(key_loc),
-        format_args!(
-            "patchedDependencies keys need a version: {}",
-            bun_core::fmt::for_terminal(BStr::new(&keys))
-        ),
+    let message = format_args!(
+        "patchedDependencies keys need a version: {}",
+        bun_core::fmt::for_terminal(BStr::new(&keys))
     );
+    let kind = if allow_unused {
+        bun_ast::Kind::Warn
+    } else {
+        bun_ast::Kind::Err
+    };
+    log.add_fmt_no_excerpt(kind, source, key_loc, message);
 }
 
-/// Runs after the lockfile is cleaned. Prints one warning per `patchedDependencies` key that
-/// doesn't match an installed package.
-pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
-    if manager.lockfile.patched_dependencies.count() == 0
-        || manager.options.log_level == LogLevel::Silent
-    {
-        return;
-    }
+pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Result<()> {
+    let allow_unused = manager.options.allow_unused_patches;
+    let silent = manager.options.log_level == LogLevel::Silent;
     let log = manager.log_mut();
     let root_dir = manager.root_dir.dir;
     let Some((source, patched)) =
         root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
     else {
-        return;
+        return Ok(());
     };
     let mut keys: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::with_capacity(patched.property_count());
-    patched.for_each_property(|key, loc, _| keys.push((Box::from(key), loc)));
+    patched.for_each_property(|key, loc, value| {
+        if value.is_string() {
+            keys.push((Box::from(key), loc));
+        }
+    });
 
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
+    let resolutions = lockfile.packages.items_resolution();
+    let mut unused = false;
+    let mut resolution_buf = Vec::new();
     for (key, key_loc) in keys {
-        // Split at the first `@` after the scope's. A URL in place of the version can contain more.
         let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
-            warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
-            continue;
-        };
-        let Some(patch) = lockfile
-            .patched_dependencies
-            .get(&Semver::string::Builder::string_hash(&key))
-        else {
+            unused = true;
+            if !silent {
+                report_patch_key_without_version(
+                    log,
+                    source,
+                    key_loc,
+                    &key,
+                    lockfile,
+                    allow_unused,
+                );
+            }
             continue;
         };
         let (name, version) = (&key[..at], &key[at + 1..]);
-        let installed: &[PackageID] = lockfile
+        let matched = lockfile
             .package_index
             .get(&Semver::string::Builder::string_hash(name))
-            .map_or(&[], PackageIndexEntry::as_slice);
-        // `file:` folders, `link:` dependencies and workspaces are never patched.
-        if installed
+            .map_or(&[][..], PackageIndexEntry::as_slice)
             .iter()
-            .any(|&id| !pkg_res[id as usize].can_enqueue_install_task())
-        {
+            .any(|&id| {
+                let resolution = &resolutions[id as usize];
+                if !resolution.can_enqueue_install_task() {
+                    return false;
+                }
+                resolution_buf.clear();
+                write!(
+                    resolution_buf,
+                    "{}",
+                    resolution.fmt(buf, bun_core::fmt::PathSep::Posix)
+                )
+                .expect("formatting into a Vec is infallible");
+                resolution_buf == version
+            });
+        if matched {
             continue;
         }
-        let mut now: Vec<u8> = Vec::new();
-        let mut still_applies = false;
-        for &id in installed {
-            let current = text(pkg_res[id as usize].fmt(buf, bun_core::fmt::PathSep::Posix));
-            if &*current == version {
-                still_applies = true;
-                break;
-            }
-            if !now.is_empty() {
-                now.extend_from_slice(b", ");
-            }
-            now.extend_from_slice(&current);
-        }
-        if still_applies {
+        unused = true;
+        if silent {
             continue;
         }
-        if now.is_empty() {
+        if allow_unused {
             bun_core::warn!(
-                "{} no longer applies ({} is no longer installed)",
-                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
-                bun_core::fmt::EscapeControlChars(BStr::new(name))
+                "patch \"{}\" was not used",
+                bun_core::fmt::for_terminal(BStr::new(&key))
             );
-        } else {
-            bun_core::warn!(
-                "{} no longer applies ({} is now {})",
-                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
-                bun_core::fmt::EscapeControlChars(BStr::new(name)),
-                bun_core::fmt::for_terminal(BStr::new(&now))
-            );
+            continue;
         }
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: patch \"{}\" was not used",
+            bun_core::fmt::for_terminal(BStr::new(&key))
+        );
+    }
+    if !unused || allow_unused {
+        Output::flush();
+        return Ok(());
+    }
+    if !silent {
+        bun_core::note!(
+            "Remove or regenerate unused patches, or use --allow-unused-patches to keep them"
+        );
     }
     Output::flush();
+    Err(crate::Error::InstallFailed)
 }
 
 /// Newest release the rows still resolving to `pkg_id` allow, when it is newer than the installed one.

@@ -1,5 +1,6 @@
 import { tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
+import vm from "vm";
 const assert = require("assert");
 const os = require("os");
 const fs = require("fs");
@@ -259,8 +260,7 @@ test("fs.promises async stack through Promise subclass", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Subclass .then() may not preserve the reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  expect(caught.stack).toContain("at async caller");
 });
 
 test("fs.promises async stack through custom thenable", async () => {
@@ -282,8 +282,32 @@ test("fs.promises async stack through custom thenable", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Custom thenables break the direct reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  expect(caught.stack).toContain("at async caller");
+});
+
+// Bun 1.3.14 had these frames and 1.4.0 lost them: since then JSC awaits a
+// promise of another realm through then(resolve, reject).
+test("errors from fs.promises include async stack frames in a node:vm context", async () => {
+  const loadConfig = vm.runInNewContext(
+    `(async function loadConfig(fs) {
+      return await fs.promises.readFile("/nonexistent-path/does-not-exist.txt");
+    })`,
+  );
+  async function start() {
+    await loadConfig(fs);
+  }
+
+  let caught;
+  try {
+    await start();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toContain("at async loadConfig");
+  expect(caught.stack).toContain("at async start");
 });
 
 test("fs.promises async stack with Promise.all", async () => {

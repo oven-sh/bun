@@ -4505,10 +4505,9 @@ describe("bundler", () => {
     outdir: "/out",
     external: ["{{root}}/lib/sub/ext.js"],
     onAfterBundle(api) {
-      expect(api.readFile("/out/index.js").match(/^(?:import|export \* from) ?"[^"]+";/gm)).toEqual([
-        `import"./ext.js";`,
-        `export * from "./ext.js";`,
-      ]);
+      const statements = (file: string) => api.readFile(file).match(/^(?:import|export \* from) ?"[^"]+";/gm);
+      expect(statements("/out/index.js")).toEqual([`import"./ext.js";`, `export * from "./ext.js";`]);
+      expect(statements("/out/sub/mid.js")).toEqual([`export * from "./ext.js";`]);
     },
     run: { file: "/check.js", stdout: `{"a":1,"c":3}` },
   });

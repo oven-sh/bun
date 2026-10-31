@@ -11,10 +11,16 @@ setDefaultTimeout(240_000);
 
 const refusal = "EvalError: Code generation from strings disallowed for this context";
 const files = {
-  "main.ts": `import { createRequire } from "node:module";
+  "main.ts": `import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import * as vm from "node:vm";
 const onDisk = process.cwd() + "/disk.js";
 const data = process.cwd() + "/data.json";
+// A handler is code of the executable. What it hands to module._compile is a text from the disk.
+const extensions = createRequire(import.meta.url)("node:module")._extensions;
+extensions[".answered"] = (module: { exports: unknown }) => void (module.exports = "a handler answered");
+extensions[".compiled"] = (module: { _compile(text: string, name: string): void }, name: string) =>
+  module._compile(readFileSync(name, "utf8"), name);
 // A constant text is compiled when the executable is built. This one is made when the program runs.
 const made = (text: string) => text + " ".repeat(Number(process.argv.length > 99));
 const roads: [string, () => unknown][] = [
@@ -27,6 +33,8 @@ const roads: [string, () => unknown][] = [
   ["import.meta.require of code on the disk", () => import.meta.require(onDisk)],
   ["import() of code on the disk", () => import(onDisk)],
   ["require of data on the disk", () => createRequire(import.meta.url)(data).kind],
+  ["require of a file on the disk that a handler answers", () => createRequire(import.meta.url)(process.cwd() + "/disk.answered")],
+  ["require of a file on the disk that a handler compiles", () => createRequire(import.meta.url)(process.cwd() + "/disk.compiled")],
   ["require of a file that is not there", () => createRequire(import.meta.url)(onDisk + ".absent.js")],
 ];
 for (const [name, run] of roads) {
@@ -39,6 +47,8 @@ for (const [name, run] of roads) {
 }
 `,
   "disk.js": `console.log("disk.js ran");\nmodule.exports = 5;\n`,
+  "disk.answered": `console.log("disk.answered ran");\n`,
+  "disk.compiled": `console.log("disk.compiled ran");\n`,
   "data.json": `{ "kind": "data" }\n`,
   "before.js": `console.log("before.js ran");\n`,
 };
@@ -83,7 +93,9 @@ describe.each([
     for (const road of ["require", "import.meta.require", "import()"])
       expect(lines).toContain(`${road} of code on the disk => ${refusal} undefined`);
     expect(lines).toContain("require of data on the disk => data");
-    expect(ran.with.stdout).not.toContain("disk.js ran");
+    expect(lines).toContain("require of a file on the disk that a handler answers => a handler answered");
+    expect(lines).toContain(`require of a file on the disk that a handler compiles => ${refusal} undefined`);
+    expect(ran.with.stdout).not.toMatch(/disk\.\w+ ran/);
   });
 
   test.each([
@@ -115,9 +127,12 @@ test("without the flag an executable built with --aot says what to do about it",
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", named("app")], cwd);
   expect(built.exitCode).toBe(0);
   const app = join(cwd, named("app"));
-  expect((await run([app], cwd)).stdout).toMatch(
+  const { stdout } = await run([app], cwd);
+  expect(stdout).toMatch(
     /^require of code on the disk => Error: Cannot load '.*disk\.js': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\. MODULE_NOT_FOUND$/m,
   );
+  // A handler is code of the executable. It answers for a file on the disk in this executable too.
+  expect(stdout.split("\n")).toContain("require of a file on the disk that a handler answers => a handler answered");
   expect(await run([app], cwd, { BUN_OPTIONS: "--preload ./before.js" })).toEqual({
     stdout: "",
     stderr:

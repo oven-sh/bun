@@ -33,6 +33,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <wtf/SetForScope.h>
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
@@ -645,11 +646,13 @@ JSValue resolveAndFetchBuiltinModule(
     return {};
 }
 
+// `filename` is the key without its `?query`, or null when the key has none.
 void evaluateCommonJSCustomExtension(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
-    String filename,
-    JSValue filenameValue,
+    const String& key,
+    JSValue keyValue,
+    const String& filename,
     JSValue extension)
 {
     auto& vm = globalObject->vm();
@@ -663,9 +666,12 @@ void evaluateCommonJSCustomExtension(
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
     }
+    // A handler gets a path, as in Node: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/modules/cjs/loader.js#L1596
+    ExtensionHandlerCall call { keyValue, key, filename };
+    SetForScope handlerCall(currentExtensionHandlerCall, &call);
     MarkedArgumentBuffer arguments;
     arguments.append(target);
-    arguments.append(filenameValue);
+    arguments.append(filename.isNull() ? keyValue : JSValue(jsString(vm, filename)));
     JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, target, arguments);
     RETURN_IF_EXCEPTION(scope, );
 }
@@ -920,7 +926,9 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
-        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
+        // `source_url` is the file name for the handler when the key has a `?query`.
+        String filename = res->result.value.source_url.isEmpty() ? String() : res->result.value.source_url.toWTFString(BunString::ZeroCopy);
+        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, filename, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

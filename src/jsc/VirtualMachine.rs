@@ -397,10 +397,9 @@ pub struct VirtualMachine {
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
-    /// A set of extensions that exist in the require.extensions map.
-    pub commonjs_custom_extensions:
+    /// The functions that `JSCommonJSExtensions` saw stored in `require.extensions`.
+    pub(crate) commonjs_custom_extensions:
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
-    pub has_mutated_built_in_extensions: u32,
 
     pub initial_script_execution_context_identifier: i32,
 
@@ -1779,6 +1778,12 @@ impl VirtualMachine {
 
     pub fn has_run_cleanup_hooks(&self) -> bool {
         self.has_run_cleanup_hooks
+    }
+
+    /// Whether `commonjs_custom_extensions` has an entry for a `require()` to select.
+    #[inline]
+    pub fn has_commonjs_custom_extensions(&self) -> bool {
+        !self.commonjs_custom_extensions.is_empty()
     }
 
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
@@ -4220,6 +4225,15 @@ fn normalize_specifier_for_resolution<'a>(
     } else {
         specifier_
     }
+}
+
+/// The path of a module key: the key without its `?query`. A `data:` URL has no path.
+pub(crate) fn path_of_module_key(key: &[u8]) -> Option<&[u8]> {
+    if bun_core::strings::has_prefix_comptime(key, b"data:") {
+        return None;
+    }
+    let mut query: &[u8] = b"";
+    Some(normalize_specifier_for_resolution(key, &mut query))
 }
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.

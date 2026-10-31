@@ -5,6 +5,14 @@
 
 namespace Bun {
 
+// The `Module._extensions` handler that `require()` is calling on this thread. `filename` is null unless `key` has a `?query`.
+struct ExtensionHandlerCall {
+    JSC::JSValue keyValue;
+    const WTF::String& key;
+    const WTF::String& filename;
+};
+extern thread_local const ExtensionHandlerCall* currentExtensionHandlerCall;
+
 // require.extensions & Module._extensions
 class JSCommonJSExtensions : public JSC::JSDestructibleObject {
 public:

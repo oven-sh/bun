@@ -1,9 +1,9 @@
+use crate::virtual_machine::path_of_module_key;
 use crate::{
     self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_ast::Loader;
-use bun_bundler::options::DEFAULT_LOADERS;
 use bun_core::{String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
@@ -152,11 +152,6 @@ pub(crate) fn builtin_handler_loader(
     }
 }
 
-/// Whether an entry under `key` (`.ts`, or a compound `.spec.ts`) overrides a default loader.
-fn shadows_default_loader(key: &[u8]) -> bool {
-    DEFAULT_LOADERS.get(file_ext_of_key(key)).is_some()
-}
-
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],
@@ -165,7 +160,6 @@ fn on_require_extension_modify(
 ) -> Result<(), bun_alloc::AllocError> {
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
     let vm = global.bun_vm().as_mut();
-    let is_built_in = shadows_default_loader(str);
     let builtin = (loader != ApiLoader::NONE)
         .then(|| builtin_handler_loader(vm, file_ext_of_key(str), loader));
 
@@ -173,10 +167,6 @@ fn on_require_extension_modify(
     if !gop.found_existing {
         // `gop.key_ptr` already owns a duped `Box<[u8]>` (StringArrayHashMap
         // boxes the key on insert).
-        if is_built_in {
-            vm.has_mutated_built_in_extensions += 1;
-        }
-
         *gop.value_ptr = match builtin {
             Some(loader) => CustomLoader::Loader(loader),
             None => CustomLoader::Custom(Strong::create(value, global)),
@@ -209,13 +199,9 @@ fn on_require_extension_modify_non_function(
 ) -> Result<(), bun_alloc::AllocError> {
     // SAFETY: see `on_require_extension_modify`.
     let vm = global.bun_vm().as_mut();
-    let is_built_in = shadows_default_loader(str);
 
     if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {
         // `prev.key: Box<[u8]>` — freed on drop.
-        if is_built_in {
-            vm.has_mutated_built_in_extensions -= 1;
-        }
         // `prev.value` drops here, releasing any held `Strong`.
         drop(prev);
     }
@@ -229,7 +215,17 @@ fn on_require_extension_modify_non_function(
     Ok(())
 }
 
-pub fn find_longest_registered_extension<'a>(
+/// The `require.extensions` entry for the module `key`, and the key without its `?query`.
+pub fn registered_extension_for_require<'a, 'k>(
+    vm: &'a VirtualMachine,
+    key: &'k [u8],
+) -> Option<(&'k [u8], &'a CustomLoader)> {
+    let filename = path_of_module_key(key)?;
+    Some((filename, find_longest_registered_extension(vm, filename)?))
+}
+
+// https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L545
+fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,
     filename: &[u8],
 ) -> Option<&'a CustomLoader> {
@@ -245,6 +241,7 @@ pub fn find_longest_registered_extension<'a>(
             return Some(value);
         }
     }
+    // Node ends with its `.js` handler. Bun does not: a file with no entry loads without a handler.
     None
 }
 
@@ -280,6 +277,7 @@ extern "C" fn NodeModuleModule__builtinHandlerLoader(
     filename: &BunString,
 ) -> ApiLoader {
     let filename = filename.to_utf8();
-    let ext = bun_paths::fs::PathName::find_extname(filename.slice());
+    let path = path_of_module_key(filename.slice()).unwrap_or_else(|| filename.slice());
+    let ext = bun_paths::fs::PathName::find_extname(path);
     ApiLoader(builtin_handler_loader(global.bun_vm(), ext, handler).to_api() as u8)
 }

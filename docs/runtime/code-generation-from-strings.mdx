@@ -185,6 +185,7 @@ A compiled executable is stored in itself. With `=strict`, what it loads from di
 | `import()` or `require()` of a `.json`, `.jsonc`, `.json5`, `.toml`, `.yaml` or `.xml` file on disk | works: Bun makes the value without making code        |
 | `import()` of a database on disk with `{ type: "sqlite" }`                                          | works                                                 |
 | `import()` or `require()` of a `.txt` or `.md` file on disk, or of any file with `{ type: "text" }` | refused: read the file with `Bun.file()` instead      |
+| `require()` of a file on disk whose extension has a `require.extensions` handler                    | the handler runs, `module._compile()` is refused      |
 
 ### `data:` URLs written in the source
 

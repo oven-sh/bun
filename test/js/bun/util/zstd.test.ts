@@ -1606,6 +1606,50 @@ describe("the output is that of zstd 1.5.7", () => {
     `);
   });
 
+  it("where the rows of a dictionary have candidates and those of the input have none", () => {
+    // Noise of so many bits. What follows the dictionary has pieces of it, and of itself, among the noise.
+    const withPieces = (bits: number) => {
+      let x = 5;
+      const next = () => {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        return (x >>>= 0);
+      };
+      const all = Buffer.alloc(42_000);
+      for (let at = 0; at < all.length;) {
+        for (let n = 4 + (next() % 24); n > 0; n--) all[at++] = next() >>> (32 - bits);
+        if (at < 30_000) continue;
+        const from = next() % 4 ? next() % 29_000 : 30_000 + (next() % (at - 30_000 + 1));
+        const length = 4 + (next() % 12);
+        all.copyWithin(at, from, from + length);
+        at += length;
+      }
+      return all;
+    };
+    // Rows of 16 entries up to level 8, then of 32 and of 64.
+    const digests = (all: Buffer) =>
+      [5, 6, 7, 9, 10].map(n =>
+        digest(zlib.zstdCompressSync(all.subarray(30_000), { params: level(n), dictionary: all.subarray(0, 30_000) })),
+      );
+    expect([6, 3].map(bits => digests(withPieces(bits)))).toEqual([
+      [
+        "7108 e6ce3932970435bf",
+        "7106 33de66f30821afb9",
+        "7105 94b0e055b688b475",
+        "7105 94b0e055b688b475",
+        "7105 94b0e055b688b475",
+      ],
+      [
+        "4799 cea9496d4270b5a1",
+        "4733 b9472094002e88fd",
+        "4685 d7691fb52ce63095",
+        "4623 2532b3477d8a5f2d",
+        "4624 856abd3827ed1af8",
+      ],
+    ]);
+  });
+
   it("where the kind of data changes within a block, for rows of 64 entries", () => {
     let x = 11;
     const next = () => {

@@ -1564,6 +1564,19 @@ impl<'a> RowDict<'a> {
             lowest_index: dms.ms.window.dict_limit,
         }
     }
+
+    /// The entries of the row for `hash` that have its tag.
+    #[inline(always)]
+    fn candidates<const ROW_ENTRIES: usize>(
+        &self,
+        hash: u32,
+    ) -> Option<RowCandidates<'a, ROW_ENTRIES>> {
+        let start = rel_row::<ROW_ENTRIES>(hash);
+        let tags = self.tags.get(start..start + ROW_ENTRIES)?;
+        let tags = tags.first_chunk::<ROW_ENTRIES>()?;
+        let indices = self.indices.get(start..start + ROW_ENTRIES)?;
+        RowCandidates::new(indices.first_chunk()?, tags, hash as u8)
+    }
 }
 
 /// The tables of the row-based match finder, and what it takes to add to them.
@@ -1581,9 +1594,33 @@ struct RowIndex<'a> {
     nb_inserted: u32,
 }
 
+/// The hash of the position at `index`, from the caches of [`RowIndex`], where `new_hash` takes its place: the hash of the
+/// position 8 bytes further.
+#[inline(always)]
+fn replace_cached_hash<const SECOND_TAGS: bool>(
+    hash_cache: &mut [u32; ZSTD_ROW_HASH_CACHE_SIZE],
+    second_tag_cache: &mut [u8; ZSTD_ROW_HASH_CACHE_SIZE],
+    index: u32,
+    new_hash: RowHash,
+) -> RowHash {
+    let cached = (index & ZSTD_ROW_HASH_CACHE_MASK) as usize;
+    let (Some(hash), Some(second_tag)) =
+        (hash_cache.get_mut(cached), second_tag_cache.get_mut(cached))
+    else {
+        return new_hash;
+    };
+    RowHash {
+        hash: core::mem::replace(hash, new_hash.hash),
+        second_tag: if SECOND_TAGS {
+            core::mem::replace(second_tag, new_hash.second_tag)
+        } else {
+            0
+        },
+    }
+}
+
 impl RowIndex<'_> {
-    /// `ZSTD_row_nextCachedHash`: the hash of `pos`, from the cache, where `new_hash` takes its place: the hash of the
-    /// position 8 bytes further.
+    /// `ZSTD_row_nextCachedHash`: [`replace_cached_hash`] for `pos`, and a prefetch of the row for `new_hash`.
     #[inline(always)]
     fn next_cached_hash<const ROW_ENTRIES: usize, const SECOND_TAGS: bool>(
         &mut self,
@@ -1592,21 +1629,12 @@ impl RowIndex<'_> {
     ) -> RowHash {
         self.rows
             .prefetch::<ROW_ENTRIES, SECOND_TAGS>(new_hash.hash);
-        let cached = (self.base_index.wrapping_add(pos) & ZSTD_ROW_HASH_CACHE_MASK) as usize;
-        let (Some(hash), Some(second_tag)) = (
-            self.hash_cache.get_mut(cached),
-            self.second_tag_cache.get_mut(cached),
-        ) else {
-            return new_hash;
-        };
-        RowHash {
-            hash: core::mem::replace(hash, new_hash.hash),
-            second_tag: if SECOND_TAGS {
-                core::mem::replace(second_tag, new_hash.second_tag)
-            } else {
-                0
-            },
-        }
+        replace_cached_hash::<SECOND_TAGS>(
+            &mut self.hash_cache,
+            &mut self.second_tag_cache,
+            self.base_index.wrapping_add(pos),
+            new_hash,
+        )
     }
 
     /// `ZSTD_row_fillHashCache`: the hashes of the 8 positions from `next_to_update` on, or fewer so as not to go past
@@ -1625,9 +1653,11 @@ impl RowIndex<'_> {
         Some(())
     }
 
-    /// `ZSTD_row_update_internalImpl`: inserts the positions from `next_to_update` up to `end`.
+    /// `ZSTD_row_update_internalImpl`: inserts the positions from `next_to_update` up to `end`. `COPIES` is for the
+    /// largest functions, where the loop would read the fields again after every write to the tables. In the others it
+    /// does not, and with copies, 4 MB of base64 take 3% longer at level 11.
     #[inline(always)]
-    fn insert_up_to<const ROW_ENTRIES: usize, const SECOND_TAGS: bool>(
+    fn insert_up_to<const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const COPIES: bool>(
         &mut self,
         end: u32,
     ) -> Option<()> {
@@ -1635,15 +1665,38 @@ impl RowIndex<'_> {
         if end as usize + 2 * ZSTD_ROW_HASH_CACHE_SIZE > bytes.len() {
             return None;
         }
-        for pos in self.next_to_update..end {
-            let ahead = pos as usize + ZSTD_ROW_HASH_CACHE_SIZE;
-            let ahead = bytes.get(ahead..ahead + 8)?.first_chunk()?;
-            let new_hash = self.hasher.of::<SECOND_TAGS>(u64::from_le_bytes(*ahead));
-            let hash = self.next_cached_hash::<ROW_ENTRIES, SECOND_TAGS>(pos, new_hash);
-            let index = self.base_index.wrapping_add(pos);
-            self.rows
-                .row::<ROW_ENTRIES, SECOND_TAGS>(hash.hash)?
-                .insert(hash, index);
+        if COPIES {
+            let (hasher, base_index) = (self.hasher, self.base_index);
+            let mut rows = Rows {
+                indices: &mut *self.rows.indices,
+                tags: &mut *self.rows.tags,
+            };
+            for pos in self.next_to_update..end {
+                let ahead = pos as usize + ZSTD_ROW_HASH_CACHE_SIZE;
+                let ahead = bytes.get(ahead..ahead + 8)?.first_chunk()?;
+                let new_hash = hasher.of::<SECOND_TAGS>(u64::from_le_bytes(*ahead));
+                rows.prefetch::<ROW_ENTRIES, SECOND_TAGS>(new_hash.hash);
+                let index = base_index.wrapping_add(pos);
+                let hash = replace_cached_hash::<SECOND_TAGS>(
+                    &mut self.hash_cache,
+                    &mut self.second_tag_cache,
+                    index,
+                    new_hash,
+                );
+                rows.row::<ROW_ENTRIES, SECOND_TAGS>(hash.hash)?
+                    .insert(hash, index);
+            }
+        } else {
+            for pos in self.next_to_update..end {
+                let ahead = pos as usize + ZSTD_ROW_HASH_CACHE_SIZE;
+                let ahead = bytes.get(ahead..ahead + 8)?.first_chunk()?;
+                let new_hash = self.hasher.of::<SECOND_TAGS>(u64::from_le_bytes(*ahead));
+                let hash = self.next_cached_hash::<ROW_ENTRIES, SECOND_TAGS>(pos, new_hash);
+                let index = self.base_index.wrapping_add(pos);
+                self.rows
+                    .row::<ROW_ENTRIES, SECOND_TAGS>(hash.hash)?
+                    .insert(hash, index);
+            }
         }
         if SECOND_TAGS {
             self.nb_inserted += end.saturating_sub(self.next_to_update);
@@ -1653,15 +1706,18 @@ impl RowIndex<'_> {
     }
 
     /// `ZSTD_row_update_internal`: inserts the positions from `next_to_update` up to `ip`, but not all of them if they
-    /// are many.
+    /// are many. See [`Self::insert_up_to`] for `COPIES`.
     #[inline(always)]
-    fn update<const ROW_ENTRIES: usize, const SECOND_TAGS: bool>(&mut self, ip: u32) -> Option<()> {
+    fn update<const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const COPIES: bool>(
+        &mut self,
+        ip: u32,
+    ) -> Option<()> {
         const K_SKIP_THRESHOLD: u32 = 384;
 
         if ip.wrapping_sub(self.next_to_update) > K_SKIP_THRESHOLD {
             self.skip::<ROW_ENTRIES, SECOND_TAGS>(ip)?;
         }
-        self.insert_up_to::<ROW_ENTRIES, SECOND_TAGS>(ip)
+        self.insert_up_to::<ROW_ENTRIES, SECOND_TAGS, COPIES>(ip)
     }
 
     /// The part of `ZSTD_row_update_internal` for a long way up to `ip`.
@@ -1672,7 +1728,7 @@ impl RowIndex<'_> {
         const K_MAX_MATCH_END_POSITIONS_TO_UPDATE: u32 = 32;
 
         let end = self.next_to_update + K_MAX_MATCH_START_POSITIONS_TO_UPDATE;
-        self.insert_up_to::<ROW_ENTRIES, SECOND_TAGS>(end)?;
+        self.insert_up_to::<ROW_ENTRIES, SECOND_TAGS, false>(end)?;
         self.next_to_update = ip - K_MAX_MATCH_END_POSITIONS_TO_UPDATE;
         self.fill_hash_cache::<ROW_ENTRIES, SECOND_TAGS>(ip + 1)
     }
@@ -1687,7 +1743,19 @@ struct RowCandidates<'a, const ROW_ENTRIES: usize> {
     matches: u64,
 }
 
-impl<const ROW_ENTRIES: usize> RowCandidates<'_, ROW_ENTRIES> {
+impl<'a, const ROW_ENTRIES: usize> RowCandidates<'a, ROW_ENTRIES> {
+    /// The entries of a row that have the tag `tag`.
+    #[inline(always)]
+    fn new(indices: &'a [u32; ROW_ENTRIES], tags: &[u8; ROW_ENTRIES], tag: u8) -> Option<Self> {
+        let head = u32::from(*tags.first()?) & (ROW_ENTRIES as u32 - 1);
+        let matches = row_get_match_mask(tags, tag, head);
+        Some(Self {
+            indices,
+            head,
+            matches: matches & row_entries_mask::<ROW_ENTRIES>(head),
+        })
+    }
+
     /// The most recent one. There is one.
     #[inline(always)]
     fn first(&self) -> u32 {
@@ -1776,7 +1844,8 @@ impl RowSearch<'_> {
             }
 
             if DICT_MODE == DICT_MATCH_STATE {
-                self.longest_dict_match::<ROW_ENTRIES>(dict_hash, ip, nb_attempts, &mut longest)?;
+                let in_dict = self.dms?.candidates::<ROW_ENTRIES>(dict_hash)?;
+                self.longest_dict_match(in_dict, ip, nb_attempts, &mut longest)?;
             }
             let best = longest.best();
             if all || best.len >= SECOND_TAG_LENGTH || floor.len + 1 >= SECOND_TAG_LENGTH {
@@ -1787,29 +1856,38 @@ impl RowSearch<'_> {
         }
     }
 
+    /// [`Self::longest_match`] where the row has no candidate, and that of the dictionary has `in_dict`.
+    #[inline(always)]
+    fn longest_match_in_dict_alone<const ROW_ENTRIES: usize, const BY_GAIN: bool>(
+        &self,
+        in_dict: RowCandidates<'_, ROW_ENTRIES>,
+        ip: u32,
+        wanted: Wanted,
+    ) -> Option<Found> {
+        let block = &self.block;
+        let curr = block.base_index.wrapping_add(ip);
+        let low_limit = block.reach.low_limit(curr);
+        let segment = block.near.tail(low_limit.wrapping_sub(block.base_index))?;
+        let floor = Best {
+            len: wanted.floor::<BY_GAIN>(curr, low_limit),
+            off_base: 0,
+        };
+        let mut longest = Longest::new(segment, low_limit, curr, floor)?;
+        self.longest_dict_match(in_dict, ip, self.nb_attempts, &mut longest)?;
+        longest.best().found()
+    }
+
     /// The part of `ZSTD_RowFindBestMatch` that searches the dictionary.
     #[inline(always)]
     fn longest_dict_match<const ROW_ENTRIES: usize>(
         &self,
-        hash: u32,
+        mut candidates: RowCandidates<'_, ROW_ENTRIES>,
         ip: u32,
         mut nb_attempts: u32,
         longest: &mut Longest<'_>,
     ) -> Option<()> {
         let block = &self.block;
         let dms = self.dms?;
-        let start = rel_row::<ROW_ENTRIES>(hash);
-        let tags = dms.tags.get(start..start + ROW_ENTRIES)?;
-        let tags = tags.first_chunk::<ROW_ENTRIES>()?;
-        let indices = dms.indices.get(start..start + ROW_ENTRIES)?;
-        let head = u32::from(*tags.first()?) & (ROW_ENTRIES as u32 - 1);
-        let matches = row_get_match_mask(tags, hash as u8, head);
-        let mut candidates = RowCandidates {
-            indices: indices.first_chunk::<ROW_ENTRIES>()?,
-            head,
-            matches: matches & row_entries_mask::<ROW_ENTRIES>(head),
-        };
-
         while candidates.matches != 0 && nb_attempts > 0 {
             let match_index = candidates.first();
             candidates.remove_first();
@@ -1943,7 +2021,15 @@ impl<'a, const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const DICT_MODE: u8>
             index.hasher.of::<SECOND_TAGS>(bytes)
         } else {
             if index.next_to_update != ip {
-                index.update::<ROW_ENTRIES, SECOND_TAGS>(ip).ok_or(BUG)?;
+                if DICT_MODE == DICT_MATCH_STATE {
+                    index
+                        .update::<ROW_ENTRIES, SECOND_TAGS, true>(ip)
+                        .ok_or(BUG)?;
+                } else {
+                    index
+                        .update::<ROW_ENTRIES, SECOND_TAGS, false>(ip)
+                        .ok_or(BUG)?;
+                }
             }
             let ahead = index.near.read64(ip + ZSTD_ROW_HASH_CACHE_SIZE as u32);
             let new_hash = index.hasher.of::<SECOND_TAGS>(ahead.ok_or(BUG)?);
@@ -1959,19 +2045,23 @@ impl<'a, const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const DICT_MODE: u8>
             .rows
             .row::<ROW_ENTRIES, SECOND_TAGS>(hash.hash)
             .ok_or(BUG)?;
-        let head = u32::from(*row.tags.first().ok_or(BUG)?) & (ROW_ENTRIES as u32 - 1);
-        let matches = row_get_match_mask(row.tags, hash.hash as u8, head)
-            & row_entries_mask::<ROW_ENTRIES>(head);
+        let candidates = RowCandidates::new(row.indices, row.tags, hash.hash as u8).ok_or(BUG)?;
+        let RowCandidates { head, matches, .. } = candidates;
         let curr = index.base_index.wrapping_add(ip);
-        if DICT_MODE != DICT_MATCH_STATE && matches == 0 {
+        if matches == 0 {
+            if DICT_MODE == DICT_MATCH_STATE {
+                let dms = search.dms.ok_or(BUG)?;
+                let in_dict = dms.candidates::<ROW_ENTRIES>(dict_hash).ok_or(BUG)?;
+                if in_dict.matches != 0 {
+                    let found = search
+                        .longest_match_in_dict_alone::<ROW_ENTRIES, BY_GAIN>(in_dict, ip, wanted);
+                    row.insert(hash, curr);
+                    return Ok(found);
+                }
+            }
             row.insert(hash, curr);
             return Ok(None);
         }
-        let candidates = RowCandidates {
-            indices: row.indices,
-            head,
-            matches,
-        };
         let second_tags = row.second_tags.as_ref();
         let long_matches = second_tags
             .map(|tags| matches & row_get_second_match_mask(tags, hash.second_tag, head));
@@ -2481,6 +2571,70 @@ mod tests {
         let few = (TRIAL / 4, 0);
         assert_eq!(nb_kept(&[few, few]), 1);
         assert_eq!(nb_kept(&[few, (TRIAL / 4, TRIAL), few]), 3);
+    }
+
+    #[test]
+    fn positions_are_inserted_in_the_rows_the_same_with_copies_of_the_fields() -> Result<()> {
+        type Inserted = (Vec<u32>, Vec<u8>, [u32; 8], [u8; 8], u32, u32);
+        fn inserted<const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const COPIES: bool>(
+            bytes: &[u8],
+        ) -> Result<Inserted> {
+            const ROW_HASH_LOG: u32 = 4;
+            let mut indices = vec![0; ROW_ENTRIES << ROW_HASH_LOG];
+            let mut tags = vec![0; 2 * indices.len()];
+            let hash_bits = ROW_HASH_LOG + ZSTD_ROW_HASH_TAG_BITS;
+            let mut index = RowIndex {
+                rows: Rows {
+                    indices: &mut indices,
+                    tags: &mut tags,
+                },
+                hash_cache: [0; ZSTD_ROW_HASH_CACHE_SIZE],
+                second_tag_cache: [0; ZSTD_ROW_HASH_CACHE_SIZE],
+                hasher: RowHasher(Hash8::new(4, hash_bits, 7)),
+                near: Near::new(bytes)?,
+                base_index: 1_003,
+                next_to_update: 2,
+                nb_inserted: 0,
+            };
+            index
+                .fill_hash_cache::<ROW_ENTRIES, SECOND_TAGS>(400)
+                .ok_or(BUG)?;
+            for end in [3, 60, 60, 400] {
+                index
+                    .insert_up_to::<ROW_ENTRIES, SECOND_TAGS, COPIES>(end)
+                    .ok_or(BUG)?;
+            }
+            let (hashes, second_tags) = (index.hash_cache, index.second_tag_cache);
+            let (next, nb_inserted) = (index.next_to_update, index.nb_inserted);
+            Ok((indices, tags, hashes, second_tags, next, nb_inserted))
+        }
+
+        let mut x = 9_u32;
+        let bytes: Vec<u8> = core::iter::repeat_with(|| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 30) as u8
+        })
+        .take(500)
+        .collect();
+        let with_copies = inserted::<16, false, true>(&bytes)?;
+        assert_eq!(with_copies.4, 400);
+        assert!(with_copies.0.contains(&(1_003 + 399)));
+        assert_eq!(with_copies, inserted::<16, false, false>(&bytes)?);
+        assert_eq!(
+            inserted::<32, false, true>(&bytes)?,
+            inserted::<32, false, false>(&bytes)?
+        );
+        assert_eq!(
+            inserted::<64, false, true>(&bytes)?,
+            inserted::<64, false, false>(&bytes)?
+        );
+        assert_eq!(
+            inserted::<64, true, true>(&bytes)?,
+            inserted::<64, true, false>(&bytes)?
+        );
+        Ok(())
     }
 
     #[test]

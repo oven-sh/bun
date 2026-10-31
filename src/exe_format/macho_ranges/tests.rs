@@ -498,7 +498,8 @@ fn room_stays_for_signature_command() {
         size: room + 1,
         room,
     };
-    let written = macho_info_plist::write(&mut unsigned.clone(), &vec![b'x'; room + 1]);
+    let mut overfull = unsigned;
+    let written = macho_info_plist::write(&mut overfull, &vec![b'x'; room + 1]);
     assert_eq!(written, Err(error));
     assert_no_cuts(&full, NoCutReason::HeaderRoomExhausted);
 }

@@ -2585,7 +2585,8 @@ pub(crate) fn inject<'a>(
                     }
                 },
             };
-            if !additions.edit_template(&mut template) {
+            if !additions.edit_info_plist(&mut template) || !additions.edit_template(&mut template)
+            {
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
@@ -2606,7 +2607,7 @@ pub(crate) fn inject<'a>(
 
             let file = bun_sys::File::borrow(&cloned_executable_fd);
             let holds_template =
-                !additions.has_code && !additions.trims() && !additions.embeds_info_plist();
+                !additions.has_code && !additions.trims() && !additions.has_edited_info_plist;
             let written = match macho_file.build_and_sign_into(file, holds_template) {
                 Ok(n) => n,
                 Err(e) => {

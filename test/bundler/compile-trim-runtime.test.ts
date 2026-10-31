@@ -16,7 +16,6 @@ const { folder, build } = sharedBuilds("compile-trim-runtime", {
     console.log("hello world");
     if (process.argv[2] === "deep") console.log({ a: { b: { c: 1 } } });
   `,
-  // CoreFoundation would read a file called Info.plist beside an executable.
   "embedded.plist": `<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>sh.bun.test.trimmed</string></dict></plist>`,
   "helper.ts": `export function double(x: number): number { return x * 2; }`,
   "entry.ts": `import { double } from "./helper"; console.log(double(21));`,

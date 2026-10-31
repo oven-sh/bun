@@ -4162,6 +4162,9 @@ declare module "bun" {
        * The file has to fit in about 8 KB. The build fails if it does not.
        * This option works when cross-compiling.
        *
+       * An executable that a compiled executable builds does not inherit the
+       * file.
+       *
        * Equivalent CLI flag: `--macos-info-plist <path>`
        *
        * @see https://bun.com/docs/compiler/executables#embed-an-info-plist-on-macos

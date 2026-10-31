@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/32159 — the ad-hoc signer must hash the last partial page unpadded and end the file at the signature.
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { linkSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { join } from "path";
@@ -459,6 +459,53 @@ describe.concurrent("--macos-info-plist", () => {
     expect(sig.mismatches).toEqual([]);
   });
 
+  test("does not inherit the Info.plist that the executable it copies was given", async () => {
+    // Large enough that the end of __TEXT, where the file goes, is not written together with the load commands.
+    const textSize = 0x400000;
+    const linked = { name: "__info_plist", offset: 0x200000, size: 0x100 };
+    using dir = tempDir("compile-macho-info-plist-inherited", {
+      "entry.ts": bundles.tiny,
+      "Info.plist": infoPlist,
+      "template": machoTemplate(textSize),
+      "linked": machoTemplate(textSize, [{ name: "__text", offset: 0x2000, size: 0x1000 }, linked]),
+      "plain": {},
+      "from-compiled": {},
+    });
+    const cwd = String(dir);
+
+    // The name of the file is in the payload, so those that are compared are called `out`.
+    await build(crossCompile("template", "--outfile=plain/out"), cwd);
+    await build(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=compiled"), cwd);
+    await build(crossCompile("compiled", "--outfile=from-compiled/out"), cwd);
+    await build(crossCompile("linked", "--outfile=from-linked"), cwd);
+    const [plain, fromCompiled, fromLinked] = ["plain/out", "from-compiled/out", "from-linked"].map(path =>
+      readFileSync(join(cwd, path)),
+    );
+    const summarize = (out: Buffer) => {
+      const { specialSlots, mismatches, dataoff, datasize } = parseAndVerifySignature(out);
+      return {
+        sections: readSections(out),
+        specialSlots,
+        mismatches,
+        bytesBehindSignature: out.length - dataoff - datasize,
+      };
+    };
+
+    expect(summarize(fromCompiled)).toEqual(summarize(plain));
+    expect(summarize(plain)).toMatchObject({ specialSlots: [], mismatches: [], bytesBehindSignature: 0 });
+    expect(fromCompiled.subarray(textSize - infoPlist.length, textSize)).toEqual(Buffer.alloc(infoPlist.length));
+
+    // One that the runtime was linked with is for every program of that runtime.
+    const linkedInfoPlist = fromLinked.subarray(linked.offset, linked.offset + linked.size);
+    expect(linkedInfoPlist).toEqual(Buffer.alloc(linked.size, 0xc3));
+    expect(summarize(fromLinked)).toMatchObject({
+      sections: [{ name: "__text" }, { name: "__info_plist", offset: linked.offset }, { name: "__bun" }],
+      specialSlots: [createHash("sha256").update(linkedInfoPlist).digest("hex")],
+      mismatches: [],
+      bytesBehindSignature: 0,
+    });
+  });
+
   test("Bun.build embeds compile.macos.infoPlist, for macOS only", async () => {
     using dir = tempDir("compile-macho-info-plist-api", {
       "entry.ts": bundles.tiny,
@@ -607,8 +654,13 @@ describe.concurrent("--macos-info-plist", () => {
 
   test.skipIf(!isMacOS)("CoreFoundation reads the Info.plist of a natively compiled executable", async () => {
     using dir = tempDir("compile-macho-info-plist-native", {
-      // Not Info.plist: CoreFoundation reads a file of that name beside an executable before the section.
       "embedded.plist": infoPlist,
+      "unnamed": { "Info.plist": infoPlist.replace("sh.bun.test.info-plist", "sh.bun.test.beside") },
+      "named": {
+        "Info.plist": infoPlist
+          .replace("sh.bun.test.info-plist", "sh.bun.test.beside")
+          .replace("<dict>", "<dict><key>CFBundleExecutable</key><string>out</string>"),
+      },
       "entry.ts": `
           import { CString, dlopen, ptr } from "bun:ffi";
           const { symbols: cf } = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", {
@@ -650,6 +702,26 @@ describe.concurrent("--macos-info-plist", () => {
       const described = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
       expect(described.stderr).toContain("Info.plist entries=2");
       expect(described.exitCode).toBe(0);
+    }
+
+    // CoreFoundation prefers a file named Info.plist beside the executable, if that file names the executable.
+    for (const [directory, identifier] of [
+      ["unnamed", "sh.bun.test.info-plist"],
+      ["named", "sh.bun.test.beside"],
+    ]) {
+      linkSync(join(cwd, "out"), join(cwd, directory, "out"));
+      expect(await run([join(cwd, directory, "out")], cwd)).toEqual({
+        stdout: identifier + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+
+    // A program that an executable with an Info.plist compiles is not that executable.
+    await build([bunExe(), "build", "--compile", "--compile-executable-path=out", "entry.ts", "--outfile=child"], cwd);
+    expect(await run([join(cwd, "child")], cwd)).toEqual({ stdout: "no identifier\n", stderr: "", exitCode: 0 });
+    if (isArm64) {
+      expect(await run(["codesign", "--verify", "child"], cwd)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     }
 
     // What a developer does to ship it: codesign takes the identifier from the embedded Info.plist.

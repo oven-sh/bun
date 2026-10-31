@@ -5,7 +5,7 @@ use core::ops::Range;
 
 use crate::macho::MachoError;
 use crate::macho_ranges::{
-    HEADER_SIZE, MAX_SECTIONS, Parsed, SECTION_SIZE, SEGMENT_COMMAND_SIZE, SYMBOL_SIZE,
+    HEADER_SIZE, MAX_SECTIONS, Parsed, SECTION_SIZE, SEGMENT_COMMAND_SIZE, SYMBOL_SIZE, Segment,
     find_contents_start, find_symbols, parse, room_for_signature_command,
 };
 use crate::macho_types::{
@@ -47,18 +47,23 @@ pub(crate) fn find(macho: &[u8]) -> Option<Range<usize>> {
     macho.get(range.clone()).map(|_| range)
 }
 
-/// Replaces the Info.plist of an executable that has one. Moves nothing but load commands.
-pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
-    let parsed = parse(macho).map_err(|_| MachoError::InvalidObject)?;
+/// `__TEXT` and the offset of its load command.
+fn find_text(parsed: &Parsed) -> Result<(usize, &Segment), MachoError> {
     let segment_commands = parsed
         .commands
         .iter()
         .filter_map(|(kind, range)| matches!(kind, CommandKind::Segment).then_some(range.start));
-    let (command_at, text) = segment_commands
+    segment_commands
         .zip(&parsed.segments)
         .find(|(_, segment)| is_text(&segment.command))
         .filter(|(_, segment)| segment.command.fileoff == 0)
-        .ok_or(MachoError::InvalidObject)?;
+        .ok_or(MachoError::InvalidObject)
+}
+
+/// Replaces the Info.plist of an executable that has one. Moves nothing but load commands.
+pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
+    let parsed = parse(macho).map_err(|_| MachoError::InvalidObject)?;
+    let (command_at, text) = find_text(&parsed)?;
 
     let replaced = text.sections.iter().position(is_info_plist);
     let room_end = find_contents_start(text, |section| !is_info_plist(section));
@@ -92,15 +97,12 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
         }
         None => {
             // It has the lowest address of the segment, and linkers write sections in the order of their addresses.
-            make_room_for_ordinal(macho, &parsed, text.first_ordinal)?;
+            if parsed.segments[parsed.linkedit].first_ordinal > MAX_SECTIONS {
+                return Err(MachoError::InvalidObject);
+            }
+            shift_ordinals(macho, &parsed, text.first_ordinal, 1)?;
             macho.copy_within(sections_at..old_commands_end, sections_at + SECTION_SIZE);
-            let mut command = text.command;
-            command.cmdsize += SECTION_SIZE as u32;
-            command.nsects += 1;
-            write_struct(&mut macho[command_at..], &command);
-            let mut header = parsed.header;
-            header.sizeofcmds += SECTION_SIZE as u32;
-            write_struct(macho, &header);
+            count_sections(macho, &parsed, command_at, text, 1);
             sections_at
         }
     };
@@ -123,16 +125,62 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
     Ok(())
 }
 
-/// Symbols name their section by its ordinal among the sections of all segments.
-fn make_room_for_ordinal(
+/// Takes the section that `write` added out of a copy of that executable. True: the file has changed.
+/// An Info.plist that is not in the padding stays. A linker put it there, for every program of that runtime.
+pub fn remove_written(macho: &mut [u8]) -> bool {
+    let Some(contents) = find(macho) else {
+        return false;
+    };
+    let Ok(parsed) = parse(macho) else {
+        return false;
+    };
+    let Ok((command_at, text)) = find_text(&parsed) else {
+        return false;
+    };
+    let Some(index) = text.sections.iter().position(is_info_plist) else {
+        return false;
+    };
+    let commands_end = HEADER_SIZE + parsed.header.sizeofcmds as usize;
+    let room_end = find_contents_start(text, |section| !is_info_plist(section));
+    let is_in_padding = contents.start >= commands_end && contents.end as u64 == room_end;
+    let next_ordinal = text.first_ordinal + index + 1;
+    if !is_in_padding || shift_ordinals(macho, &parsed, next_ordinal, -1).is_err() {
+        return false;
+    }
+
+    macho[contents].fill(0);
+    let section_at = command_at + SEGMENT_COMMAND_SIZE + index * SECTION_SIZE;
+    macho.copy_within(section_at + SECTION_SIZE..commands_end, section_at);
+    macho[commands_end - SECTION_SIZE..commands_end].fill(0);
+    count_sections(macho, &parsed, command_at, text, -1);
+    true
+}
+
+fn count_sections(
     macho: &mut [u8],
     parsed: &Parsed,
-    ordinal: usize,
+    command_at: usize,
+    text: &Segment,
+    added: i32,
+) {
+    let size = added * SECTION_SIZE as i32;
+    let mut command = text.command;
+    command.cmdsize = command.cmdsize.wrapping_add_signed(size);
+    command.nsects = command.nsects.wrapping_add_signed(added);
+    write_struct(&mut macho[command_at..], &command);
+    let mut header = parsed.header;
+    header.sizeofcmds = header.sizeofcmds.wrapping_add_signed(size);
+    write_struct(macho, &header);
+}
+
+/// Symbols name their section by its ordinal among the sections of all segments.
+fn shift_ordinals(
+    macho: &mut [u8],
+    parsed: &Parsed,
+    first: usize,
+    by: i8,
 ) -> Result<(), MachoError> {
     let ordinal_end = parsed.segments[parsed.linkedit].first_ordinal;
-    if ordinal_end > MAX_SECTIONS {
-        return Err(MachoError::InvalidObject);
-    }
     let symbols = find_symbols(macho, parsed).map_err(|_| MachoError::InvalidObject)?;
     for bytes in macho[symbols].as_chunks_mut::<SYMBOL_SIZE>().0 {
         let mut symbol: nlist_64 = read_struct(bytes);
@@ -141,8 +189,8 @@ fn make_room_for_ordinal(
             // Linkers put the CPU subtype of the object file there.
             _ => symbol.n_type != N_OSO,
         };
-        if names_section && (ordinal..ordinal_end).contains(&usize::from(symbol.n_sect)) {
-            symbol.n_sect += 1;
+        if names_section && (first..ordinal_end).contains(&usize::from(symbol.n_sect)) {
+            symbol.n_sect = symbol.n_sect.wrapping_add_signed(by);
             write_struct(bytes, &symbol);
         }
     }
@@ -155,7 +203,7 @@ mod tests {
     use crate::image::Architecture;
     use crate::macho::MachoFile;
     use crate::macho_ranges::tests::toy_macho;
-    use crate::macho_types::{CodeDirectory, linkedit_data_command};
+    use crate::macho_types::{CodeDirectory, S_ZEROFILL, linkedit_data_command};
 
     const ARCHITECTURES: [Architecture; 2] = [Architecture::X86_64, Architecture::Aarch64];
     const PLIST: &[u8] =
@@ -287,6 +335,48 @@ mod tests {
             assert_eq!(find(&macho), Some(contents_at - first_size..contents_at));
             write(&mut macho, PLIST).unwrap();
             assert!(macho == expected);
+        }
+    }
+
+    #[test]
+    fn removes_what_it_wrote() {
+        for architecture in ARCHITECTURES {
+            let original = toy_macho(architecture);
+            let mut macho = original.clone();
+            assert!(!remove_written(&mut macho));
+            assert!(macho == original);
+
+            write(&mut macho, PLIST).unwrap();
+            assert!(remove_written(&mut macho));
+            assert!(macho == original);
+        }
+    }
+
+    #[test]
+    fn keeps_info_plist_outside_padding() {
+        let mut written = toy_macho(Architecture::Aarch64);
+        write(&mut written, PLIST).unwrap();
+        let section_at = find_text(&parse(&written).unwrap()).unwrap().0 + SEGMENT_COMMAND_SIZE;
+        let section: section_64 = read_struct(&written[section_at..]);
+        let text_at = first_section_offset(&toy_macho(Architecture::Aarch64)) as u32;
+        let at = |offset: u32, size: u64, flags: u32| section_64 {
+            offset,
+            addr: section.addr - u64::from(section.offset) + u64::from(offset),
+            size,
+            flags,
+            ..section
+        };
+        for moved in [
+            at(text_at, section.size, S_REGULAR),
+            at(section.offset, section.size - 1, S_REGULAR),
+            // `parse` does not look at the offset of such a section, and this one is over the load commands.
+            at(0, u64::from(text_at), S_ZEROFILL),
+        ] {
+            let mut linked = written.clone();
+            write_struct(&mut linked[section_at..], &moved);
+            let before = linked.clone();
+            assert!(!remove_written(&mut linked));
+            assert!(linked == before);
         }
     }
 

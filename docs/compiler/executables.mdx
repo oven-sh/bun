@@ -1215,11 +1215,13 @@ An executable that is not inside an `.app` bundle has no `Info.plist` file next 
 
 Bun copies the file into the executable without parsing it. The result is the same as linking a native program with `-sectcreate __TEXT __info_plist Info.plist`.
 
-- CoreFoundation's `CFBundleGetMainBundle()` returns a bundle that has the keys of the embedded file.
+- CoreFoundation's `CFBundleGetMainBundle()` returns a bundle that has the keys of the embedded file. A file named `Info.plist` next to the executable can take its place: CoreFoundation uses that file when its `CFBundleExecutable` is the name of the executable.
 - On arm64, the ad-hoc signature that Bun writes covers the embedded file. `codesign --display --verbose=2 ./myapp` prints `Info.plist entries=3` for the file above.
 - When you [sign the executable](#code-signing-on-macos) yourself, `codesign` uses `CFBundleIdentifier` as the signing identifier.
 
 The flag works when cross-compiling to `bun-darwin-arm64` or `bun-darwin-x64` from any platform. With `Bun.build`, targets other than macOS ignore `compile.macos`.
+
+The embedded file is not inherited. When a compiled executable calls `Bun.build` with `compile`, or is passed as `--compile-executable-path`, the result does not have its `Info.plist`.
 
 <Note>
   The file has to fit in the padding after the executable's Mach-O load commands, which is about 8 KB. The build fails

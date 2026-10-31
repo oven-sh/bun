@@ -52,7 +52,7 @@ pub struct ExecutableOutcome {
 pub struct ExecutableAdditions<'a> {
     pub compiled_program: Option<&'a CompiledProgramInput<'a>>,
     pub trim: Option<&'a bun_trim::TrimPlan>,
-    /// The contents of the file. The target is macOS.
+    /// The contents of the file, for macOS.
     pub info_plist: Option<&'a [u8]>,
     /// Filled once the copy of the executable is written. Meaningful if the result is `Success`.
     pub details: ExecutableDetails,
@@ -73,6 +73,7 @@ pub(crate) struct InjectionAdditions<'a> {
     trim: Option<&'a bun_trim::TrimPlan>,
     trim_summary: Option<bun_trim::TrimSummary>,
     info_plist: Option<&'a [u8]>,
+    pub(crate) has_edited_info_plist: bool,
     /// Why `inject` returned `None`, where it has not printed that itself.
     pub(crate) failure: Option<CompileError>,
 }
@@ -96,6 +97,7 @@ impl<'a> ExecutableAdditions<'a> {
             trim: self.trim,
             trim_summary: None,
             info_plist: self.info_plist,
+            has_edited_info_plist: false,
             failure: None,
         }
     }
@@ -115,21 +117,30 @@ impl InjectionAdditions<'_> {
             .filter(|id| bun_exe_format::build_id::write(template, id));
     }
 
-    /// False: the error has been printed, or is in `failure`.
+    /// A template that is a compiled executable has the Info.plist of that program, which this one does not inherit.
+    /// Comes before `edit_template`, whose trimming takes the rest of the room behind the load commands.
+    /// False: the error is in `failure`.
+    pub(crate) fn edit_info_plist(&mut self, template: &mut [u8]) -> bool {
+        use bun_exe_format::macho_info_plist::{remove_written, write};
+        let Some(plist) = self.info_plist else {
+            self.has_edited_info_plist = remove_written(template);
+            return true;
+        };
+        self.has_edited_info_plist = true;
+        if let Err(error) = write(template, plist) {
+            self.failure = Some(CompileError::fmt(format_args!(
+                "failed to embed the Info.plist: {error}"
+            )));
+        }
+        self.failure.is_none()
+    }
+
+    /// False: the error has been printed.
     pub(crate) fn edit_template(
         &mut self,
         template: &mut dyn bun_exe_format::image::ImageBytes,
     ) -> bool {
         self.write_build_id(template);
-        // Before the trimming, which takes the rest of the room behind the load commands.
-        if let Some(plist) = self.info_plist
-            && let Err(error) = bun_exe_format::macho_info_plist::write(template, plist)
-        {
-            self.failure = Some(CompileError::fmt(format_args!(
-                "failed to embed the Info.plist: {error}"
-            )));
-            return false;
-        }
         let Some(plan) = self.trim else {
             return true;
         };
@@ -152,10 +163,6 @@ impl InjectionAdditions<'_> {
             file.add_symbols(symbols.table, symbols.image_offset)
                 .is_some()
         });
-    }
-
-    pub(crate) fn embeds_info_plist(&self) -> bool {
-        self.info_plist.is_some()
     }
 
     pub(crate) fn trims(&self) -> bool {

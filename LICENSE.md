@@ -55,6 +55,7 @@ Bun statically links these libraries:
 | `bun lint` uses the error messages of [`ajv`](https://github.com/ajv-validator/ajv), [`acorn`](https://github.com/acornjs/acorn) and [`optionator`](https://github.com/gkz/optionator), and the lists in [`globals`](https://github.com/sindresorhus/globals) and [`is-core-module`](https://github.com/inspect-js/is-core-module) | MIT |
 | `bun lint` uses the error messages of [`espree`](https://github.com/eslint/js/tree/main/packages/espree) | BSD 2-Clause |
 | `bun lint` uses the `JSON.parse` error messages of [V8](https://github.com/v8/v8) | BSD 3-Clause |
+| `util.inspect` names a value with a port of `JSReceiver::GetConstructorName` and `JSReceiver::class_name` of [V8](https://github.com/v8/v8) | BSD 3-Clause |
 | `bun lint` has ports of parts of [`@eslint/plugin-kit`, `@eslint/config-array`, `@eslint/config-helpers` and `@eslint/compat`](https://github.com/eslint/rewrite) | Apache 2.0 |
 | `bun lint` and `bun fmt` have a port of the pattern-to-regular-expression table of [`ignore`](https://github.com/kaelzhang/node-ignore) | MIT |
 | `bun lint` and `bun fmt` have ports of [`is-glob`](https://github.com/micromatch/is-glob) and [`is-extglob`](https://github.com/jonschlinkert/is-extglob) | MIT |

@@ -563,6 +563,13 @@ describe("malformed JPEG", () => {
       ],
     ],
     [
+      "a first scan of a coefficient that has had one, down to a lower bit",
+      [
+        [0, 0, 0x01],
+        [0, 0, 0x00],
+      ],
+    ],
+    [
       "a first scan of a band that overlaps an earlier one",
       [
         [0, 0, 0x00],
@@ -571,11 +578,26 @@ describe("malformed JPEG", () => {
       ],
     ],
     [
+      "a first scan of a band with an earlier one in its middle",
+      [
+        [0, 0, 0x00],
+        [5, 10, 0x00],
+        [1, 63, 0x00],
+      ],
+    ],
+    [
       "a refinement scan that adds no bit",
       [
         [0, 0, 0x01],
         [0, 0, 0x10],
         [0, 0, 0x10],
+      ],
+    ],
+    [
+      "a refinement scan of a bit above the last one coded",
+      [
+        [0, 0, 0x00],
+        [0, 0, 0x21],
       ],
     ],
   ])("%s is refused", async (_, scans) => {
@@ -588,9 +610,13 @@ describe("malformed JPEG", () => {
   test.each([
     ["baseline", 0xc0],
     ["extended sequential", 0xc1],
+    ["progressive", 0xc2],
     ["lossless", 0xc3],
     ["arithmetic-coded", 0xc9],
+    ["progressive and arithmetic-coded", 0xca],
   ])("%s: a second scan of a component is refused", async (_, sof) => {
+    // In a lossless stream Ss picks the predictor. Only the DC coefficient has progressive scans of several components.
+    const band = sof === 0xc3 ? [1, 0, 0] : sof === 0xc2 || sof === 0xca ? [0, 0, 0] : [0, 63, 0];
     /** Three components and no entropy-coded data. Each of `scans` lists the components in it. */
     const withScans = (...scans: number[][]) =>
       Buffer.from([
@@ -599,14 +625,17 @@ describe("malformed JPEG", () => {
         ...segment(sof, 8, 0, 16, 0, 16, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0),
         ...segment(0xc4, 0x00, ...table),
         ...segment(0xc4, 0x10, ...table),
-        // In a lossless stream Ss picks the predictor.
-        ...scans.flatMap(ids =>
-          segment(0xda, ids.length, ...ids.flatMap(id => [id, 0x00]), ...(sof === 0xc3 ? [1, 0, 0] : [0, 63, 0])),
-        ),
+        ...scans.flatMap(ids => segment(0xda, ids.length, ...ids.flatMap(id => [id, 0x00]), ...band)),
         ...[0xff, 0xd9],
       ]);
     expect(await new Bun.Image(withScans([1], [2], [3])).png().bytes()).toBeInstanceOf(Uint8Array);
-    for (const jpeg of [withScans([1], [2], [3], [1]), withScans([1], [2, 3], [3]), withScans([1, 2], [3], [2])]) {
+    for (const jpeg of [
+      withScans([1], [2], [3], [1]),
+      withScans([1], [2, 3], [3]),
+      withScans([1, 2], [3], [2]),
+      withScans([1], [1, 2]),
+      withScans([2], [1, 2]),
+    ]) {
       await expect(new Bun.Image(jpeg).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
     }
   });

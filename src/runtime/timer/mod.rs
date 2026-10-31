@@ -105,6 +105,7 @@ macro_rules! impl_timer_object {
             pub(crate) fn init_with(
                 cx: &bun_jsc::JsThread<'_>,
                 id: u64,
+                async_hooks_id: u64,
                 kind: super::Kind,
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
@@ -124,9 +125,22 @@ macro_rules! impl_timer_object {
                 // owned here; `internals.init()` writes every field.
                 unsafe {
                     (*payload).internals.init(
-                        js_value, cx, id, kind, interval, callback, arguments,
+                        js_value,
+                        cx,
+                        id,
+                        async_hooks_id,
+                        kind,
+                        interval,
+                        callback,
+                        arguments,
                     );
                 }
+                super::timer_object_internals::emit_async_hooks_timer_init(
+                    cx.global(),
+                    js_value,
+                    async_hooks_id,
+                    kind,
+                );
                 if cx.vm().as_mut().is_inspector_enabled() {
                     ::bun_jsc::Debugger::did_schedule_async_call(
                         cx.global(),
@@ -514,6 +528,7 @@ pub(crate) struct All {
     pub(crate) last_id: u64,
     /// `last_id` at the latest `--hot` reload.
     pub(crate) first_id_of_hot_run: u64,
+    pub(crate) last_async_hooks_id: u64,
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
@@ -541,6 +556,7 @@ impl All {
         Self {
             last_id: 1,
             first_id_of_hot_run: 0,
+            last_async_hooks_id: 1,
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
             active_timer_count: 0,
@@ -566,6 +582,16 @@ impl All {
         let id = self.last_id;
         self.last_id = id.wrapping_add(1);
         id
+    }
+
+    pub(crate) fn next_async_hooks_id(&mut self) -> u64 {
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        self.last_async_hooks_id = if self.last_async_hooks_id == MAX_SAFE_INTEGER {
+            2
+        } else {
+            self.last_async_hooks_id + 1
+        };
+        self.last_async_hooks_id
     }
 
     #[inline]

@@ -126,7 +126,7 @@ Every machine sorts the discovered test files by path and takes a deterministic 
 
 ### Balancing with `--timings`
 
-File count is a poor proxy for duration: one shard can end up with all the slow integration tests. Give `bun test` a record of how long each file takes and it cuts shards by total time instead, keeping neighbouring files (which share imports) together:
+File count is a poor proxy for duration: one shard can end up with all the slow integration tests. Give `bun test` a record of how long each file takes and it cuts shards by total time instead, keeping neighboring files (which share imports) together:
 
 ```sh terminal icon="terminal"
 # Record durations (any run can do this; --parallel is fine)

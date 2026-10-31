@@ -145,15 +145,11 @@ impl Range {
                 && version.minor == self.right.version.minor
                 && version.major == self.right.version.major);
 
-        if !self.left.satisfies(version, range_buf, version_buf) {
-            return false;
-        }
-
-        if has_right && !self.right.satisfies(version, range_buf, version_buf) {
-            return false;
-        }
-
-        true
+        // node-semver drops `>=0.0.0` without `includePrerelease`, so a prerelease of 0.0.0 passes it.
+        let passes = |comparator: Comparator| {
+            comparator.is_gte_zero() || comparator.satisfies(version, range_buf, version_buf)
+        };
+        passes(self.left) && (!has_right || passes(self.right))
     }
 }
 
@@ -317,6 +313,11 @@ impl Comparator {
         }
     }
 
+    /// A written or derived `>=0.0.0`.
+    pub(crate) fn is_gte_zero(self) -> bool {
+        self.op == Op::Gte && self.version.is_zero() && !self.version.tag.has_pre()
+    }
+
     pub(crate) fn satisfies(
         self,
         version: Version,
@@ -328,11 +329,7 @@ impl Comparator {
         match order {
             Ordering::Equal => matches!(self.op, Op::Lte | Op::Gte | Op::Eql),
             Ordering::Greater => matches!(self.op, Op::Gt | Op::Gte),
-            // node-semver treats `>=0.0.0` as matching any version, so `0.0.0-a` satisfies it.
-            Ordering::Less => match self.op {
-                Op::Gte => self.version.is_zero() && !self.version.tag.has_pre(),
-                op => matches!(op, Op::Lt | Op::Lte),
-            },
+            Ordering::Less => matches!(self.op, Op::Lt | Op::Lte),
         }
     }
 }

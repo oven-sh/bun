@@ -749,3 +749,312 @@ test("my-test", () => {
     });
   }
 });
+
+// https://github.com/oven-sh/bun/issues/14644
+describe("an error that reaches a test while its async body still runs", () => {
+  async function run(source: string) {
+    using dir = tempDir("error-during-async-body", { "a.test.js": source });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "a.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      log: stdout.split("\n").filter(line => line !== "" && !line.startsWith("bun test ")),
+      errors: stderr.match(/^error: .*$/gm) ?? [],
+      results: stderr.match(/^\((pass|fail)\) [^[\n]*[^[\n ]/gm) ?? [],
+      stderr,
+      exitCode,
+    };
+  }
+
+  test.concurrent("afterEach and the next test wait for the body", async () => {
+    const { log, errors, results, exitCode } = await run(`
+      import { beforeEach, afterEach, test } from "bun:test";
+
+      beforeEach(() => { console.log("beforeEach"); });
+      afterEach(() => { console.log("afterEach"); });
+
+      test("a", async () => {
+        console.log("test a start");
+        ;(async () => { throw 123; })();
+        await Bun.sleep(1);
+        console.log("test a end");
+      });
+
+      test("b", async () => {
+        console.log("test b");
+        await Bun.sleep(1);
+      });
+    `);
+    expect({ log, errors, results, exitCode }).toEqual({
+      log: ["beforeEach", "test a start", "test a end", "afterEach", "beforeEach", "test b", "afterEach"],
+      errors: ["error: 123"],
+      results: ["(fail) a", "(pass) b"],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("however the error is reported", async () => {
+    const { log, results, exitCode } = await run(`
+      import { afterEach, test } from "bun:test";
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      afterEach(() => console.log("afterEach"));
+
+      const reports = {
+        "floating rejection": () => void (async () => { throw new Error("floating rejection"); })(),
+        "reportError": () => reportError(new Error("reportError")),
+        "throwing event listener": () => {
+          const target = new EventTarget();
+          target.addEventListener("event", () => { throw new Error("throwing event listener"); });
+          target.dispatchEvent(new Event("event"));
+        },
+        "throwing microtask": () => queueMicrotask(() => { throw new Error("throwing microtask"); }),
+        "throwing nextTick": () => process.nextTick(() => { throw new Error("throwing nextTick"); }),
+        "throwing timer": () => new Promise(resolve => setTimeout(() => { resolve(); throw new Error("throwing timer"); })),
+      };
+      for (const [name, report] of Object.entries(reports)) {
+        test(name, async () => {
+          console.log(name + ": start");
+          await report();
+          await tick();
+          console.log(name + ": end");
+        });
+      }
+      test("next", () => { console.log("next"); });
+    `);
+    const failed = [
+      "floating rejection",
+      "reportError",
+      "throwing event listener",
+      "throwing microtask",
+      "throwing nextTick",
+      "throwing timer",
+    ];
+    expect({ log, results, exitCode }).toEqual({
+      log: [...failed.flatMap(name => [`${name}: start`, `${name}: end`, "afterEach"]), "next", "afterEach"],
+      results: [...failed.map(name => `(fail) ${name}`), "(pass) next"],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("a later failure in the body is reported on the same test", async () => {
+    const { errors, results, stderr, exitCode } = await run(`
+      import { expect, test } from "bun:test";
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+
+      test("fails twice", async () => {
+        Promise.reject(new Error("first failure"));
+        await tick();
+        expect("second").toBe("failure");
+      });
+      test("next", () => {});
+    `);
+    expect(stderr).not.toContain("Unhandled error between tests");
+    expect({ errors, results, exitCode }).toEqual({
+      errors: ["error: first failure", "error: expect(received).toBe(expected)"],
+      results: ["(fail) fails twice", "(pass) next"],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("a retry starts after the attempt's body, and a stale completion does not end it", async () => {
+    const { log, results, exitCode } = await run(`
+      import { afterEach, describe, expect, test } from "bun:test";
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+
+      describe("attempts", () => {
+        afterEach(() => console.log("afterEach"));
+        let attempts = 0;
+        test("do not overlap", { retry: 1 }, async () => {
+          const attempt = ++attempts;
+          console.log("attempt " + attempt + ": start");
+          Promise.reject(new Error("attempt " + attempt));
+          await tick();
+          console.log("attempt " + attempt + ": end");
+        });
+      });
+
+      // In each of these, attempt 1 leaves a completion behind. Attempt 2 fails on its own, later.
+      let synchronous = 0;
+      test("a synchronous attempt", { retry: 1 }, async () => {
+        if (++synchronous === 1) return reportError(new Error("attempt 1"));
+        await tick();
+        expect("attempt 2").toBe("a failure");
+      });
+      let doneOnly = 0;
+      test("an attempt that called done(err)", { retry: 1 }, done => {
+        if (++doneOnly === 1) return done(new Error("attempt 1"));
+        setImmediate(() => {
+          try {
+            expect("attempt 2").toBe("a failure");
+            done();
+          } catch (error) {
+            done(error);
+          }
+        });
+      });
+      let timedOut = 0;
+      let settleAttempt1;
+      test("an attempt that timed out", { retry: 1, timeout: 50 }, async () => {
+        if (++timedOut === 1) return await new Promise(resolve => (settleAttempt1 = resolve));
+        settleAttempt1();
+        await tick();
+        await tick();
+        expect("attempt 2").toBe("a failure");
+      });
+    `);
+    expect({ log, results, exitCode }).toEqual({
+      log: ["attempt 1: start", "attempt 1: end", "afterEach", "attempt 2: start", "attempt 2: end", "afterEach"],
+      results: [
+        "(fail) attempts > do not overlap (attempt 2)",
+        "(fail) a synchronous attempt (attempt 2)",
+        "(fail) an attempt that called done(err) (attempt 2)",
+        "(fail) an attempt that timed out (attempt 2)",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("with a done callback", async () => {
+    const { log, results, stderr, exitCode } = await run(`
+      import { afterEach, test } from "bun:test";
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      afterEach(() => console.log("afterEach"));
+
+      test("the promise ends a failed test, done() is not awaited too", async done => {
+        console.log("1: start");
+        Promise.reject(new Error("1"));
+        await tick();
+        console.log("1: end");
+      });
+      test("done() first, then the error", async done => {
+        console.log("2: start");
+        done();
+        Promise.reject(new Error("2"));
+        await tick();
+        console.log("2: end");
+      });
+      test("the next test does not start inside done(err)", async done => {
+        console.log("3: start");
+        await tick();
+        done(new Error("3"));
+        console.log("3: after done(err)");
+      });
+      test("done(err) ends a test whose promise never settles", done => {
+        console.log("4: start");
+        done(new Error("4"));
+        return new Promise(() => {});
+      });
+      test("a late done(err) ends a test whose promise never settles", done => {
+        console.log("5: start");
+        setImmediate(() => done(new Error("5")));
+        return new Promise(() => {});
+      });
+      test("a test that only waits for done() still ends at the error", done => {
+        console.log("6: start");
+        setImmediate(() => { throw new Error("6"); });
+      });
+      test("next", () => { console.log("next"); });
+    `);
+    expect(stderr).not.toContain("timed out");
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        ...["1: start", "1: end", "afterEach"],
+        ...["2: start", "2: end", "afterEach"],
+        ...["3: start", "3: after done(err)", "afterEach"],
+        ...["4: start", "afterEach"],
+        ...["5: start", "afterEach"],
+        ...["6: start", "afterEach"],
+        ...["next", "afterEach"],
+      ],
+      results: [
+        "(fail) the promise ends a failed test, done() is not awaited too",
+        "(fail) done() first, then the error",
+        "(fail) the next test does not start inside done(err)",
+        "(fail) done(err) ends a test whose promise never settles",
+        "(fail) a late done(err) ends a test whose promise never settles",
+        "(fail) a test that only waits for done() still ends at the error",
+        "(pass) next",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("a body that never settles ends at the test's deadline", async () => {
+    const { log, results, stderr, exitCode } = await run(`
+      import { afterEach, describe, test } from "bun:test";
+
+      // 50 ms: the deadline is the only thing left that ends these tests.
+      describe("errored", () => {
+        afterEach(() => console.log("afterEach"));
+        test("ends at its deadline", async () => {
+          console.log("errored: start");
+          Promise.reject(new Error("errored"));
+          await new Promise(() => {});
+        }, 50);
+      });
+      describe("timed out", () => {
+        afterEach(done => {
+          console.log("afterEach(done)");
+          setImmediate(done);
+        });
+        test("its promise does not hold the hook's done()", async () => {
+          console.log("timed out: start");
+          await new Promise(() => {});
+        }, 50);
+      });
+      test("next", () => { console.log("next"); });
+    `);
+    expect({ log, results, timeouts: stderr.match(/\^ .*timed out.*/g), exitCode }).toEqual({
+      log: ["errored: start", "afterEach", "timed out: start", "afterEach(done)", "next"],
+      results: [
+        "(fail) errored > ends at its deadline",
+        "(fail) timed out > its promise does not hold the hook's done()",
+        "(pass) next",
+      ],
+      timeouts: ["^ this test timed out after 50ms.", "^ this test timed out after 50ms."],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("hooks and concurrent tests are as before", async () => {
+    const { log, errors, results, stderr, exitCode } = await run(`
+      import { beforeEach, describe, test } from "bun:test";
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+
+      describe("hook", () => {
+        beforeEach(async () => {
+          console.log("beforeEach: start");
+          Promise.reject(new Error("in a hook"));
+          await tick();
+          console.log("beforeEach: end");
+        });
+        test("runs after it", () => { console.log("test"); });
+      });
+      describe("concurrent", () => {
+        test.concurrent("a", async () => {
+          console.log("a: start");
+          Promise.reject(new Error("in a"));
+          await tick();
+          console.log("a: end");
+        });
+        test.concurrent("b", async () => {
+          console.log("b: start");
+          await tick();
+          console.log("b: end");
+        });
+      });
+    `);
+    expect(stderr.match(/Unhandled error between tests/g)).toHaveLength(2);
+    expect({ log, errors, results, exitCode }).toEqual({
+      log: ["beforeEach: start", "beforeEach: end", "test", "a: start", "b: start", "a: end", "b: end"],
+      errors: ["error: in a hook", "error: in a"],
+      results: ["(pass) hook > runs after it", "(pass) concurrent > a", "(pass) concurrent > b"],
+      exitCode: 1,
+    });
+  });
+});

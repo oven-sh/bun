@@ -720,7 +720,7 @@ impl BunTest {
                     entry_data: Some(EntryData {
                         sequence_index: active_sequence_index,
                         entry: active_entry.as_ptr().cast::<()>(),
-                        remaining_repeat_count: sequence.remaining_repeat_count as i64,
+                        attempt: sequence.attempt,
                     }),
                 }
             }
@@ -769,7 +769,14 @@ impl BunTest {
         if is_catch {
             this.on_uncaught_exception(global_this, Some(result), true, &refdata.phase);
         }
-        if !has_one_ref && !is_catch {
+        // A reaction of an earlier attempt, or one that comes after the deadline, names no sequence.
+        let mut failed = is_catch;
+        if let Some((sequence, _)) = this.execution.get_current_and_valid_execution_sequence(&refdata.phase) {
+            sequence.promise_pending = false;
+            failed |= sequence.maybe_skip;
+        }
+        // An entry that has failed does not wait for `done()` as well.
+        if !has_one_ref && !failed {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
             return Ok(());
         }
@@ -818,6 +825,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
+                this.errored.set(true);
                 let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
             }
         }
@@ -841,7 +849,14 @@ impl BunTest {
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
-        strong.get().add_result(ref_in.phase);
+        let buntest = strong.get();
+        if was_error {
+            // `done(err)` ends its entry, whatever the callback returned.
+            if let Some((sequence, _)) = buntest.execution.get_current_and_valid_execution_sequence(&ref_in.phase) {
+                sequence.promise_pending = false;
+            }
+        }
+        buntest.add_result(ref_in.phase);
         Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
         Ok(())
@@ -1176,8 +1191,10 @@ impl BunTest {
         // over-count and the done-callback path would never observe
         // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
+        let mut done_errored = false;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
+                done_errored = dcb_data.errored.get();
                 if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
                 } else {
@@ -1202,6 +1219,13 @@ impl BunTest {
                 // S012: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
                 match bun_jsc::JSPromise::opaque_mut(promise).status() {
                     PromiseStatus::Pending => {
+                        // `done(err)` was called in the callback: the token that its error queued ends the entry.
+                        if !done_errored {
+                            // SAFETY: `UnsafeCell`-derived; the callback and the drains have returned, so no other `&mut` is live.
+                            if let Some((sequence, _)) = unsafe { (*this).execution.get_current_and_valid_execution_sequence(&cfg_data) } {
+                                sequence.promise_pending = true;
+                            }
+                        }
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefPtr<RefData> = if let Some(dcb_ref_value) = dcb_ref {
                             // SAFETY: `dcb_ref_value` aliases the live RefData
@@ -1394,7 +1418,7 @@ impl Drop for BunTest {
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
-    pub(crate) remaining_repeat_count: i64,
+    pub(crate) attempt: u32,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1459,8 +1483,8 @@ impl fmt::Display for RefDataValue {
                 if let Some(ed) = entry_data {
                     write!(
                         f,
-                        "execution: group_index={},sequence_index={},entry_index={:x},remaining_repeat_count={}",
-                        group_index, ed.sequence_index, ed.entry as usize, ed.remaining_repeat_count
+                        "execution: group_index={},sequence_index={},entry_index={:x},attempt={}",
+                        group_index, ed.sequence_index, ed.entry as usize, ed.attempt
                     )
                 } else {
                     write!(f, "execution: group_index={}", group_index)

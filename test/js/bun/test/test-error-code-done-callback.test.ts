@@ -80,7 +80,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
     (fail) error done callback (async)
     43 |   });
     44 | });

@@ -1,4 +1,6 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import assert from "node:assert";
+import util from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -145,6 +147,230 @@ describe("Bun.deepEquals strict mode", () => {
   // against Object.prototype.
   it.failing("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
+  });
+});
+
+// A Set member or Map key that the other side does not hold by identity needs a deep-equal entry there.
+// As in Jest's iterableEquality, a Map entry matches on its key and its value together.
+describe("Set and Map entries without an identical counterpart", () => {
+  type Check = (a: unknown, b: unknown, equal: boolean) => void;
+  // The fourth argument of Bun.deepEquals is not in the public types.
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const jestRule: Record<string, Check> = {
+    "Bun.deepEquals": (a, b, equal) => expect(deepEquals(a, b)).toBe(equal),
+    "Bun.deepEquals strict": (a, b, equal) => expect(deepEquals(a, b, true)).toBe(equal),
+    "Bun.deepEquals strict, skipPrototype": (a, b, equal) => expect(deepEquals(a, b, true, true)).toBe(equal),
+    "expect().toEqual": (a, b, equal) => (equal ? expect(a).toEqual(b) : expect(a).not.toEqual(b)),
+    "expect().toStrictEqual": (a, b, equal) => (equal ? expect(a).toStrictEqual(b) : expect(a).not.toStrictEqual(b)),
+  };
+  // assert.deepEqual has Bun.deepEquals semantics. It is here only for the answers that node gives too.
+  const legacy: Record<string, Check> = {
+    "assert.deepEqual": (a, b, equal) =>
+      equal ? assert.deepEqual(a, b) : expect(() => assert.deepEqual(a, b)).toThrow(assert.AssertionError),
+  };
+  const nodeStrict: Record<string, Check> = {
+    "assert.deepStrictEqual": (a, b, equal) =>
+      equal ? assert.deepStrictEqual(a, b) : expect(() => assert.deepStrictEqual(a, b)).toThrow(assert.AssertionError),
+    "util.isDeepStrictEqual": (a, b, equal) => expect(util.isDeepStrictEqual(a, b)).toBe(equal),
+    "util.isDeepStrictEqual, skipPrototype": (a, b, equal) => expect(util.isDeepStrictEqual(a, b, true)).toBe(equal),
+  };
+  const everyEntryPoint = { ...jestRule, ...legacy, ...nodeStrict };
+
+  const set = (...members: unknown[]) => new Set(members);
+  const map = (...entries: [unknown, unknown][]) => new Map(entries);
+  const shared = { a: 1 };
+
+  // [name, a, b, equal]: the same answer from every entry point, in both argument orders.
+  const cases: [string, unknown, unknown, boolean][] = [
+    ["Set: same members, other order", set({ a: 1 }, { a: 2 }, { a: 3 }), set({ a: 3 }, { a: 1 }, { a: 2 }), true],
+    ["Set: equal duplicate counts", set({ a: 1 }, { a: 1 }, { a: 2 }), set({ a: 2 }, { a: 1 }, { a: 1 }), true],
+    ["Set: one member differs", set({ a: 1 }, { a: 2 }), set({ a: 1 }, { a: 3 }), false],
+    ["Set: a primitive only one side holds", set(1, { a: 1 }), set(2, { a: 1 }), false],
+    ["Map: one value differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 1 }, "z"]), false],
+    ["Map: one key differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 2 }, "y"]), false],
+    ["Map: a key both sides hold, different values", map([shared, 1]), map([shared, 2]), false],
+    ["Map: a primitive key only one side holds", map(["p", 1], [{ k: 1 }, 1]), map(["q", 1], [{ k: 1 }, 1]), false],
+    ["Map: undefined values", map(["a", undefined], ["b", 1]), map(["b", 1], ["a", undefined]), true],
+    [
+      "Map: an undefined value under a key only one side holds",
+      map(["a", undefined], ["b", 1]),
+      map(["c", undefined], ["b", 1]),
+      false,
+    ],
+    [
+      "Map: an undefined value under a key both sides hold, after an equal key",
+      map([{ a: 1 }, 1], [shared, undefined]),
+      map([{ a: 1 }, 1], [shared, undefined]),
+      true,
+    ],
+    ["Map: undefined against a value under the same key", map(["a", undefined]), map(["a", 1]), false],
+  ];
+
+  // A Map entry matches on its key and its value together. node's strict entry points do not have these rows yet: they need node's one-to-one pairing.
+  const keyAndValueCases: [string, unknown, unknown, boolean][] = [
+    [
+      "Map: equal keys, values in the other order",
+      map([{ k: 1 }, "x"], [{ k: 1 }, "y"]),
+      map([{ k: 1 }, "y"], [{ k: 1 }, "x"]),
+      true,
+    ],
+    // https://github.com/oven-sh/bun/issues/34830
+    ["Map: equal RegExp keys in the same order", map([/a/, "x"], [/a/, "y"]), map([/a/, "x"], [/a/, "y"]), true],
+    [
+      "Map: three equal keys, values rotated",
+      map([{ k: 1 }, 1], [{ k: 1 }, 2], [{ k: 1 }, 3]),
+      map([{ k: 1 }, 3], [{ k: 1 }, 1], [{ k: 1 }, 2]),
+      true,
+    ],
+    [
+      "Map: a key both sides hold, its value under an equal key",
+      map([shared, 1], [{ a: 1 }, 2]),
+      map([shared, 2], [{ a: 1 }, 1]),
+      true,
+    ],
+    [
+      "Map: object and primitive keys, other order",
+      map(["p", 0], [{ k: 1 }, 1], [{ k: 1 }, 2]),
+      map([{ k: 1 }, 2], ["p", 0], [{ k: 1 }, 1]),
+      true,
+    ],
+  ];
+
+  describe.each(Object.entries(everyEntryPoint))("%s", (_, check) => {
+    it.each(cases)("%s", (_, a, b, equal) => {
+      check(a, b, equal);
+      check(b, a, equal);
+    });
+  });
+
+  describe.each(Object.entries({ ...jestRule, ...legacy }))("%s", (_, check) => {
+    it.each(keyAndValueCases)("%s", (_, a, b, equal) => {
+      check(a, b, equal);
+      check(b, a, equal);
+    });
+  });
+
+  // [name, a, b, answer for (a, b), answer for (b, a)]: every left entry needs some equal right entry, and two entries can share one.
+  const unequalCounts: [string, unknown, unknown, boolean, boolean][] = [
+    ["Set: a duplicate in place of a distinct member", set({ a: 1 }, { a: 1 }), set({ a: 1 }, { a: 2 }), true, false],
+    [
+      "Set: different duplicate counts",
+      set({ a: 1 }, { a: 1 }, { a: 2 }),
+      set({ a: 1 }, { a: 2 }, { a: 2 }),
+      true,
+      true,
+    ],
+    ["Set: a member both sides hold, equal to a second one", set(shared, { a: 1 }), set(shared, { a: 2 }), true, false],
+    [
+      "Map: a duplicate entry in place of a distinct one",
+      map([{ k: 1 }, 1], [{ k: 1 }, 1]),
+      map([{ k: 1 }, 1], [{ k: 2 }, 1]),
+      true,
+      false,
+    ],
+    [
+      "Map: different duplicate counts",
+      map([{ k: 1 }, 1], [{ k: 1 }, 1], [{ k: 1 }, 2]),
+      map([{ k: 1 }, 1], [{ k: 1 }, 2], [{ k: 1 }, 2]),
+      true,
+      true,
+    ],
+  ];
+
+  describe.each(Object.entries(jestRule))("%s", (_, check) => {
+    it.each(unequalCounts)("%s", (_, a, b, forward, backward) => {
+      check(a, b, forward);
+      check(b, a, backward);
+    });
+  });
+
+  // {} equals both other members, which do not equal each other. Pairing members one-to-one would make the answer depend on the order.
+  it.each(["Bun.deepEquals", "expect().toEqual"])(
+    "%s: the insertion order of either side does not change the answer",
+    name => {
+      const undefinedGetter = () => ({
+        get a() {
+          return undefined;
+        },
+      });
+      const inherited = () => Object.create({ a: 1 });
+      jestRule[name](set({}, undefinedGetter()), set(inherited(), {}), true);
+      jestRule[name](set({}, undefinedGetter()), set({}, inherited()), true);
+      jestRule[name](set(undefinedGetter(), {}), set(inherited(), {}), true);
+      jestRule[name](set(undefinedGetter(), {}), set({}, inherited()), true);
+    },
+  );
+
+  describe("cycles that run through Set members, Map keys or Map values only", () => {
+    function selfSet() {
+      const self = new Set<unknown>();
+      self.add(self);
+      return self;
+    }
+    function setCycle(tag: number) {
+      const outer = new Set<unknown>();
+      const inner = new Set<unknown>([tag]);
+      outer.add(inner);
+      inner.add(outer);
+      return set(outer);
+    }
+    function mapValueCycle(tag: number) {
+      const outer = new Map<unknown, unknown>();
+      const inner = new Map<unknown, unknown>([["tag", tag]]);
+      outer.set("inner", inner);
+      inner.set("outer", outer);
+      return map(["start", outer]);
+    }
+    function mapKeyCycle(tag: number) {
+      const outer = new Map<unknown, unknown>();
+      const inner = new Map<unknown, unknown>([["tag", tag]]);
+      outer.set(inner, 1);
+      inner.set(outer, 1);
+      return map([outer, 1]);
+    }
+    // Every Map in the cycle is the value of a key that is only deep-equal to its counterpart.
+    function valueUnderEqualKeyCycle(tag: number) {
+      const outer = new Map<unknown, unknown>();
+      const inner = new Map<unknown, unknown>([["tag", tag]]);
+      outer.set({ k: 1 }, inner);
+      inner.set({ k: 2 }, outer);
+      return map([{ k: 0 }, outer]);
+    }
+
+    it.each(Object.entries(everyEntryPoint))("%s", (_, check) => {
+      check(selfSet(), selfSet(), true);
+      check(set(selfSet(), { a: 1 }), set(selfSet(), { a: 2 }), false);
+      for (const cycle of [setCycle, mapValueCycle, mapKeyCycle, valueUnderEqualKeyCycle]) {
+        check(cycle(1), cycle(1), true);
+        check(cycle(1), cycle(2), false);
+      }
+    });
+  });
+
+  it.each(Object.entries(everyEntryPoint))("%s: an exception thrown while comparing entries propagates", (_, check) => {
+    const throwing = () => ({
+      get x(): number {
+        throw new Error("boom");
+      },
+    });
+    expect(() => check(set(throwing()), set(throwing()), true)).toThrow("boom");
+    expect(() => check(map([throwing(), 1]), map([throwing(), 1]), true)).toThrow("boom");
+    expect(() => check(map(["k", throwing()]), map(["k", throwing()]), true)).toThrow("boom");
+    expect(() => check(map([{ k: 1 }, throwing()]), map([{ k: 1 }, throwing()]), true)).toThrow("boom");
+  });
+
+  // A key that holds undefined was read as an absent key, so every such entry walked the other Map.
+  it.each(Object.entries(everyEntryPoint))("%s: an undefined value is settled by the key lookup", (_, check) => {
+    let reads = 0;
+    const keys = Array.from({ length: 64 }, (_, id) => ({
+      get id() {
+        reads++;
+        return id;
+      },
+    }));
+    const entries = keys.map(key => [key, undefined] as [unknown, unknown]);
+    check(map(...entries), map(...entries.toReversed()), true);
+    expect(reads).toBe(0);
   });
 });
 

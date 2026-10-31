@@ -111,24 +111,18 @@ describe("what bunfig.toml lists in `external`", () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "bunfig.toml": `external = ["p", "./unchecked.ts"]\n`,
-      "node_modules/p/package.json": JSON.stringify({
-        name: "p",
-        version: "1.0.0",
-        main: "index.js",
-        types: "index.d.ts",
-      }),
-      "node_modules/p/index.js": `module.exports = "p";`,
-      "node_modules/p/index.d.ts": `declare const name: string;\nexport default name;\n`,
-      // A type error, which stops the build of a file that it compiles.
+      // Each has a type error. The build reports it for what it compiles: a warning for a package, an error for a file.
+      "node_modules/p/package.json": JSON.stringify({ name: "p", version: "1.0.0", main: "index.ts" }),
+      "node_modules/p/index.ts": `const name: number = "p";\nexport default name;\n`,
       "unchecked.ts": `export const port: number = "8080";\n`,
       "main.ts":
         declarations +
         `import name from "p";\nimport { port } from "./unchecked.ts";\nconsole.log(name, "loaded", port);`,
     });
     const ran = await bun(String(dir), "run", "--aot", "main.ts");
-    const errors = ran.stderr.split("\n").filter(line => line.startsWith("error: "));
-    expect({ errors, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-      errors: [],
+    const reported = ran.stderr.split("\n").filter(line => /^(error|warn): /.test(line));
+    expect({ reported, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+      reported: [],
       stdout: "p loaded 8080\n",
       exitCode: 0,
     });

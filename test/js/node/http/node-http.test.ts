@@ -6996,6 +6996,158 @@ describe("res.strictContentLength", () => {
     });
     expect(result).toEqual([undefined, MISMATCH]);
   });
+
+  // What became of the callbacks of two end() calls that threw, once the rest of the body and a last end() have finished the response.
+  async function callbacksAfterMismatch(
+    prepare: (res: http.ServerResponse) => void,
+    chunk: string | Buffer,
+    rest: string,
+  ) {
+    return await inServer(res => {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const events: unknown[] = [];
+      res.strictContentLength = true;
+      prepare(res);
+      events.push(code(() => res.end(chunk, (err?: Error | null) => void events.push(`with a chunk: ${err}`))));
+      events.push(code(() => res.end((err?: Error | null) => void events.push(`without a chunk: ${err}`))));
+      res.write(rest);
+      res.end((err?: Error | null) => resolve([...events, `last: ${err}`]));
+      return promise;
+    });
+  }
+
+  test("an end() that mismatched keeps its callback, but for a chunk that follows the head", async () => {
+    const result = await callbacksAfterMismatch(
+      res => {
+        res.setHeader("Content-Length", 5);
+        res.write("he");
+      },
+      "x",
+      "llo",
+    );
+    expect(result).toEqual([MISMATCH, MISMATCH, "without a chunk: null", "last: null"]);
+  });
+
+  test("an end() that mismatched keeps its callback, but for a chunk after writeHead()", async () => {
+    const result = await callbacksAfterMismatch(res => void res.writeHead(200, { "Content-Length": 5 }), "x", "hello");
+    expect(result).toEqual([MISMATCH, MISMATCH, "without a chunk: null", "last: null"]);
+  });
+
+  test("an end() that mismatched keeps its callback, also with the chunk that renders the head", async () => {
+    const result = await callbacksAfterMismatch(
+      res => void res.setHeader("Content-Length", 5),
+      Buffer.alloc(0),
+      "hello",
+    );
+    expect(result).toEqual([MISMATCH, MISMATCH, "with a chunk: null", "without a chunk: null", "last: null"]);
+  });
+
+  // Node.js throws there. What matters is that nothing reports a finish.
+  test("end() on a destroyed response that is short of its length reports no finish", async () => {
+    const result = await inServer(res => {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const events: unknown[] = [];
+      res.on("finish", () => events.push("finish"));
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      res.write("he", () => {
+        res.destroy();
+        try {
+          res.end((err?: Error | null) => void events.push(`callback: ${err}`));
+        } catch {}
+        res.on("close", () => setImmediate(() => resolve([...events, res.writableFinished])));
+      });
+      return promise;
+    });
+    expect(result).toEqual([false]);
+  });
+
+  test("end() on a destroyed response that has its whole length finishes", async () => {
+    const result = await inServer(res => {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const events: unknown[] = [];
+      res.on("finish", () => resolve([...events, "finish", res.writableFinished]));
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      res.write("hello", () => {
+        res.destroy();
+        events.push(code(() => res.end((err?: Error | null) => void events.push(`callback: ${err}`))));
+      });
+      return promise;
+    });
+    expect(result).toEqual([undefined, "callback: null", "finish", true]);
+  });
+
+  // Node's write_() counts a chunk and then drops it on a closed connection, so none of these is a mismatch.
+  describe("a whole body whose end the connection did not see does not throw", () => {
+    // There the connection has closed and the response is not destroyed yet.
+    test.each([
+      ["end(chunk) after a part of the body", true, undefined, "llo"],
+      ["end(chunk) with the head and the whole body", false, undefined, "hello"],
+      ["write() and end(chunk) after a part of the body", true, "l", "lo"],
+      ["write() and end(chunk) with the head and the whole body", false, "he", "llo"],
+      ["write() and end() with the head and the whole body", false, "hello", undefined],
+    ])("in the request's 'aborted' listener: %s", async (_, started, first, last) => {
+      const ended = Promise.withResolvers<unknown[]>();
+      const handled = Promise.withResolvers<void>();
+      await using server = http.createServer((req, res) => {
+        res.strictContentLength = true;
+        res.setHeader("Content-Length", 5);
+        if (started) res.write("he");
+        req.on("aborted", () =>
+          ended.resolve([res.destroyed, code(() => first && res.write(first)), code(() => res.end(last))]),
+        );
+        handled.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await handled.promise;
+      socket.destroy();
+      expect(await ended.promise).toEqual([false, undefined, undefined]);
+    });
+
+    test("right after req.socket.destroy()", async () => {
+      const result = await inServer(res => {
+        res.strictContentLength = true;
+        res.setHeader("Content-Length", 5);
+        res.req.socket.destroy();
+        return [code(() => res.write("he")), code(() => res.end("llo"))];
+      });
+      expect(result).toEqual([undefined, undefined]);
+    });
+
+    // There write_() drops the chunk ahead of _implicitHeader(): without a head there is no length to compare.
+    test("right after res.destroy(), ahead of the head", async () => {
+      const result = await inServer(res => {
+        res.strictContentLength = true;
+        res.setHeader("Content-Length", 5);
+        res.destroy();
+        return code(() => res.end("hello"));
+      });
+      expect(result).toBeUndefined();
+    });
+  });
+
+  test("end() after a socket from emit('connection') closed with the whole length out finishes", async () => {
+    const socket = new Duplex({ read() {}, write: (_chunk, _encoding, callback) => callback() });
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    const events: unknown[] = [];
+    const server = http.createServer((req, res) => {
+      res.on("finish", () => resolve([...events, "finish"]));
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      res.write("hello");
+      socket.on("close", () => {
+        events.push(code(() => res.end((err?: Error | null) => void events.push(`callback: ${err}`))));
+      });
+      setImmediate(() => socket.destroy());
+    });
+    server.emit("connection", socket);
+    socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(await promise).toEqual([undefined, "callback: null", "finish"]);
+  });
 });
 
 describe("connectionListener maxRequestsPerSocket", () => {
@@ -7921,4 +8073,165 @@ it("a listener can cancel Readable.toWeb(req) and end the response in the same t
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// Node.js v26.12.1 skips the other callbacks and 'finish' after such a callback, which leaves the connection stuck on that response.
+it.concurrent.each(["in the handler", "after the handler"])(
+  "an end() callback that throws is an uncaught exception, and the connection serves its next request (end() %s)",
+  async when => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const net = require("node:net");
+        const events = [];
+        process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
+        const server = http.createServer((req, res) => {
+          res.on("finish", () => events.push("finish " + req.url));
+          res.on("close", () => events.push("close " + req.url));
+          const end = () => {
+            res.end("ok", () => {
+              events.push("end callback " + req.url);
+              if (req.url === "/first") throw new Error("from the end() callback");
+            });
+            res.end(() => events.push("second end callback " + req.url));
+          };
+          if (${JSON.stringify(when)} === "in the handler") end();
+          else setImmediate(end);
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          let received = "";
+          let responses = 0;
+          client.on("data", chunk => {
+            received += chunk.toString("latin1");
+            const complete = received.split("\\r\\n\\r\\nok").length - 1;
+            if (complete === responses) return;
+            responses = complete;
+            if (responses === 1) client.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+          });
+          client.on("close", () => {
+            console.log(JSON.stringify({ responses, events }));
+            server.close();
+          });
+          client.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout || "null"), stderr }).toEqual({
+      result: {
+        responses: 2,
+        events: [
+          "end callback /first",
+          "second end callback /first",
+          "finish /first",
+          "uncaughtException: from the end() callback",
+          "close /first",
+          "end callback /second",
+          "second end callback /second",
+          "finish /second",
+          "close /second",
+        ],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Not in Node.js, where a response without assignSocket() sends nothing: here it answers through the request's handle.
+it("a ServerResponse made by the handler for its request closes after 'finish'", async () => {
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  const events: string[] = [];
+  await using server = http.createServer(req => {
+    const res = new http.ServerResponse(req);
+    res.on("finish", () => events.push("finish"));
+    res.on("close", () => resolve([...events, "close"]));
+    res.end("hello", (err?: Error | null) => void events.push(`end callback: ${err}`));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+  expect(await response.text()).toBe("hello");
+  expect(await promise).toEqual(["end callback: null", "finish", "close"]);
+});
+
+// Node.js leaves the string to the socket, which sends one byte here under a Content-Length of 2.
+it("a socket from emit('connection') with another defaultEncoding gets the bytes that Content-Length counts", async () => {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const chunks: Buffer[] = [];
+  const socket = new Duplex({
+    defaultEncoding: "latin1",
+    read() {},
+    write(chunk, _encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+  const server = http.createServer((req, res) => {
+    res.on("finish", resolve);
+    res.end("\xe9");
+  });
+  server.emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  await promise;
+  socket.destroy();
+  const [head, body] = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n");
+  expect({ length: /^Content-Length: (\d+)$/m.exec(head)?.[1], body }).toEqual({ length: "2", body: "\xc3\xa9" });
+});
+
+// Node.js never calls back here: its end() leaves 'finish' to a write that a destroyed socket drops.
+it.each([
+  [
+    "still holds a write gets an error, and there is no 'finish'",
+    false,
+    ["end: Cannot call write after a stream was destroyed"],
+  ],
+  ["has taken every write gets null, then 'finish'", true, ["end: null", "finish"]],
+])("end(cb) after a socket from emit('connection') closed that %s", async (_, completes, expected) => {
+  const socket = new Duplex({ read() {}, write: (_chunk, _encoding, callback) => void (completes && callback()) });
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const events: string[] = [];
+  const server = http.createServer((req, res) => {
+    res.on("finish", () => events.push("finish"));
+    res.setHeader("Content-Length", 5);
+    res.write("hello");
+    socket.on("close", () => {
+      res.end((err?: Error | null) => {
+        events.push(`end: ${err ? err.message : err}`);
+        // 'finish' follows the callbacks in the same tick.
+        process.nextTick(resolve);
+      });
+    });
+    setImmediate(() => socket.destroy());
+  });
+  server.emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  await promise;
+  expect(events).toEqual(expected);
+});
+
+// Node.js calls neither callback here: a write that never completes holds both back.
+it("a socket from emit('connection') that closes with a write in flight fails write() and end() callbacks by name", async () => {
+  const socket = new Duplex({ read() {}, write() {} });
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  const messages: string[] = [];
+  const server = http.createServer((req, res) => {
+    res.on("close", () => resolve(messages));
+    res.write(Buffer.alloc(socket.writableHighWaterMark, "a"), err => void messages.push(`write: ${err?.message}`));
+    res.end("tail", (err?: Error | null) => void messages.push(`end: ${err?.message}`));
+    socket.destroy();
+  });
+  server.emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  expect(await promise).toEqual([
+    "write: Cannot call write after a stream was destroyed",
+    "end: Cannot call end after a stream was destroyed",
+  ]);
 });

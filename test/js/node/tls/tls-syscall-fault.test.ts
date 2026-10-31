@@ -924,6 +924,45 @@ describe.skipIf(skip)("node:https server under injected syscall faults", () => {
     // Only fault-injection (debug/ASAN) builds run this, and there the child took 3.3 to 6.5 s to load node:https and answer.
     30_000,
   );
+
+  // The teardown of a VM closes a TLS connection with a FIN, so that what the kernel holds still arrives. Not this
+  // one: the batch tail is dropped with the socket, and a FIN would pass the cut for the end of the stream.
+  // The timeout is for the same child start-up as in the test above.
+  test("a connection torn down with a batch tail in userspace is reset", async () => {
+    const fixture = /* js */ `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const options = { key: process.env.KEY, cert: process.env.CERT };
+        const server = require("node:https").createServer(options, (req, res) => {
+          fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1 });
+          res.end(Buffer.alloc(256 * 1024, "a"));
+          process.exit(0);
+        });
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, KEY: certs.key, CERT: certs.cert, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    let portLine = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      portLine += chunk;
+      if (portLine.includes("\n")) break;
+    }
+    const events: string[] = [];
+    const socket = tls.connect({ port: Number(portLine), host: "127.0.0.1", ca: certs.cert }, () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    });
+    socket.resume();
+    socket.on("end", () => events.push("end"));
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error: ${err.code}`));
+    const closed = Promise.withResolvers<void>();
+    socket.on("close", () => closed.resolve());
+    await closed.promise;
+    expect(events).toEqual(["error: ECONNRESET"]);
+    expect(await proc.exited).toBe(0);
+  }, 30_000);
 });
 
 describe.skipIf(skip)("the final handshake flight and the first write leave in one send()", () => {

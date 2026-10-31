@@ -194,6 +194,37 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The head and a small first write leave once the handler has returned, so write() cannot tell what the kernel takes.
+  test("end(cb) after the connection closed with a small write stuck in the socket's buffer gets an error", async () => {
+    const events: string[] = [];
+    const ended = Promise.withResolvers<void>();
+    await using server = http.createServer((req, res) => {
+      res.on("finish", () => events.push("finish"));
+      res.setHeader("Content-Length", 5);
+      // The client has sent all it ever sends, so this only refuses the server's bytes.
+      fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1 });
+      res.write("hello");
+      req.socket.on("close", () => {
+        res.end((err?: NodeJS.ErrnoException | null) => {
+          events.push(`end callback: ${err ? err.code : err}`);
+          // 'finish' follows the callbacks in the same tick.
+          process.nextTick(ended.resolve);
+        });
+      });
+      setImmediate(() => req.socket.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    try {
+      await ended.promise;
+    } finally {
+      client.destroy();
+    }
+    expect(events).toEqual(["end callback: ERR_STREAM_DESTROYED"]);
+  });
 });
 
 describe.skipIf(skip)("node:http pipelining under short sends", () => {

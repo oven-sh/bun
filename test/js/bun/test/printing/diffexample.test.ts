@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 function cleanOutput(output: string) {
   return output
@@ -899,4 +899,655 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(0, 120)).toContain("\n  [\n-   0,\n+   1,\n    1,\n");
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
+});
+
+// A matcher diff has to cost what the arrays store, not the `length` they
+// claim: a long run of holes is one line, and the formatter finds the end of
+// the run in the array's storage. Without that, an array of length 2**32 - 1
+// needs about 56 GB of text per side and the child below never finishes.
+async function diffArrayHoles(group: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/diff-array-holes.fixture.ts", group],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch, so a formatter that walks every claimed index fails the
+    // assertions below instead of hanging the test runner.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, signalCode: proc.signalCode, exitCode };
+}
+
+test.concurrent("a run of more than 8 array holes is one line in a matcher diff", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("runs");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## 8 holes keep one line each
+    expect(received).toEqual(expected)
+
+      [
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+    -   2,
+    +   1,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## 9 holes are one line
+    expect(received).toEqual(expected)
+
+      [
+        9 x empty items,
+    -   2,
+    +   1,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## [1, , 3] is unchanged
+    expect(received).toEqual(expected)
+
+      [
+        1,
+    -   2,
+    +   undefined,
+        3,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## leading, middle and trailing runs
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   20 x empty items,
+    +   "a",
+    +   30 x empty items,
+    +   "b",
+    +   40 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## nested
+    expect(received).toEqual(expected)
+
+      {
+        "list": [
+          [
+            12 x empty items,
+    -       2,
+    +       1,
+          ],
+        ],
+      }
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## a long run against explicit undefined
+    expect(received).toStrictEqual(expected)
+
+      [
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    -   undefined,
+    +   9 x empty items,
+        1,
+      ]
+
+    - Expected  - 9
+    + Received  + 1
+
+
+    ## class extends Array
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   50 x empty items,
+    +   "x",
+    +   49 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## frozen
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## circular
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   [Circular],
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## an own index accessor runs once
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   1,
+    +   15 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 8
+
+
+    ## indices in the sparse map
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   1000000 x empty items,
+    +   0,
+    +   19 x empty items,
+    +   1,
+    +   19 x empty items,
+    +   2,
+    +   19 x empty items,
+    +   3,
+    +   19 x empty items,
+    +   4,
+    + ]
+
+    - Expected  - 1
+    + Received  + 12
+
+
+    ## a Promise after 9 holes
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   9 x empty items,
+    +   
+    +   Promise {},
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## a Promise after 9 undefined
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   
+    +   Promise {},
+    + ]
+
+    - Expected  - 1
+    + Received  + 13
+
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff of an array of length 2**32 - 1 follows what the array stores", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("longest");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## toEqual, index 0 differs
+    expect(received).toEqual(expected)
+
+      [
+    -   2,
+    +   1,
+        4294967294 x empty items,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+
+
+    ## toEqual, other type
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   4294967294 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## not.toEqual
+    expect(received).not.toEqual(expected)
+
+    Expected: not [
+      4294967294 x empty items,
+      1,
+    ]
+
+
+    ## toStrictEqual, other length
+    expect(received).toStrictEqual(expected)
+
+    - []
+    + [
+    +   4294967295 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 3
+
+
+    ## toMatchObject
+    expect(received).toMatchObject(expected)
+
+      {
+    -   "a": 0,
+    +   "a": [
+    +     4294967294 x empty items,
+    +     1,
+    +   ],
+      }
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## toHaveProperty
+    expect(received).toHaveProperty(path, value)
+
+    - 0
+    + [
+    +   4294967294 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## toHaveBeenCalledWith
+    expect(received).toHaveBeenCalledWith(...expected)
+
+      [
+    -   0,
+    +   [
+    +     4294967294 x empty items,
+    +     1,
+    +   ],
+      ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## toHaveBeenLastCalledWith
+    expect(received).toHaveBeenLastCalledWith(...expected)
+
+      [
+    -   0,
+    +   [
+    +     4294967294 x empty items,
+    +     1,
+    +   ],
+      ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## toHaveBeenNthCalledWith
+    expect(received).toHaveBeenNthCalledWith(n, ...expected)
+
+    Call #1:
+      [
+    -   0,
+    +   [
+    +     4294967294 x empty items,
+    +     1,
+    +   ],
+      ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## matcherHint
+    expect(received).toBeZero()
+
+    expect(received).toBeZero(expected)
+
+    - 0
+    + [
+    +   4294967294 x empty items,
+    +   1,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    ## frozen class extends Array
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   "x",
+    +   4294967287 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 11
+
+
+    ## an index accessor that throws
+    thrown by the accessor
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff of an array that changes while it prints", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("mutation");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## an accessor stores a later index
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   999989 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## a Proxy element stores a later index
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   200000 x empty items,
+    +   {},
+    +   99999 x empty items,
+    +   "early",
+    +   699999 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## an accessor deletes a later index
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   599989 x empty items,
+    +   "kept",
+    +   399999 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## an accessor swaps one later index for another
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   599989 x empty items,
+    +   "kept",
+    +   399999 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## an accessor shrinks the array
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   10 x empty items,
+    +   "getter",
+    +   999989 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 5
+
+
+    ## a Proxy element grows the vector past the length
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   {},
+    +   26 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    ## a Proxy element stores a sparse index past the length
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   undefined,
+    +   undefined,
+    +   undefined,
+    +   {},
+    +   999996 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 7
+
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff prints an index that only Array.prototype has as a hole", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("prototype");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## an index only Array.prototype has is a hole
+    expect(received).toEqual(expected)
+
+    - 0
+    + [
+    +   0,
+    +   4294967294 x empty items,
+    + ]
+
+    - Expected  - 1
+    + Received  + 4
+
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a matcher diff reads every way an array can store its elements", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("storage");
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "## int32
+    as its own keys say
+
+    ## double
+    as its own keys say
+
+    ## contiguous
+    as its own keys say
+
+    ## no elements
+    as its own keys say
+
+    ## array storage, in the vector
+    as its own keys say
+
+    ## array storage, in the sparse map
+    as its own keys say
+
+    ## array storage, in both
+    as its own keys say
+
+    ## frozen
+    as its own keys say
+
+    ## runs of 8 and 9
+    as its own keys say
+
+    "
+  `);
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+// Not concurrent: it measures time.
+test("a matcher diff of a sparse array takes time that follows what the array stores", async () => {
+  const { stdout, stderr, signalCode, exitCode } = await diffArrayHoles("scale");
+  expect(stderr).toBe("");
+  const { baseline, ms } = JSON.parse(stdout);
+  // Measured for 20,000 sparse entries against a dense array of 20,000 elements.
+  // A machine too slow for `limit` still passes within 20x of the dense array.
+  const limit = isDebug || isASAN ? 5_000 : 500;
+  expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
+  expect(signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+// Snapshots are a file format shared with jest and with every .snap on disk,
+// so they keep one line per hole however long the run is.
+test("a snapshot still prints one line per array hole", () => {
+  const nine: unknown[] = [];
+  nine.length = 9;
+  nine.push(1);
+  expect([1, , 3]).toMatchInlineSnapshot(`
+    [
+      1,
+      undefined,
+      3,
+    ]
+  `);
+  expect(nine).toMatchInlineSnapshot(`
+    [
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+    ]
+  `);
+  expect({ nested: [nine] }).toMatchInlineSnapshot(`
+    {
+      "nested": [
+        [
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          1,
+        ],
+      ],
+    }
+  `);
 });

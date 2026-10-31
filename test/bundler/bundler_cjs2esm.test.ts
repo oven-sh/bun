@@ -369,7 +369,7 @@ describe("bundler", () => {
   // A require() of an unwrapped package that initializes a destructuring
   // declaration is kept as a require expression that remembers it was
   // unwrapped, and prints as the namespace object. One inside try/catch is
-  // never unwrapped and prints as an ordinary require.
+  // never unwrapped and stays a call, which returns that same object.
   itBundled("cjs2esm/UnwrappedModuleRequireDestructuredAndInTry", {
     files: {
       "/entry.js": /* js */ `
@@ -396,10 +396,764 @@ describe("bundler", () => {
     onAfterBundle: api => {
       const code = api.readFile("out.js");
       expect(code).toMatch(/\{ react: named \} = \(?exports_react\)?;/);
-      expect(code).toContain("__toCommonJS(exports_react)).react");
+      expect(code).toContain("(init_react(), exports_react).react");
+      expect(code).not.toContain("__toCommonJS");
     },
     run: {
       stdout: "react\nreact",
+    },
+  });
+
+  // A require() that stays a call, of a CommonJS file of an unwrapped package
+  // that was lifted to an ES module, returns the file's namespace object.
+  // That object stands in for `module.exports`: it has no `__esModule` unless
+  // the file sets one, every require() of the file returns it, and a write
+  // reaches the lifted binding. A `__toCommonJS` copy has none of these.
+  //
+  // `matchesBunRun` also runs the entry point of a case with `bun run`, which
+  // must print the stdout that the case expects of the bundle.
+  const reactWithCounter = {
+    "/node_modules/react/package.json": /* json */ `
+      { "name": "react", "version": "19.0.0", "main": "index.js" }
+    `,
+    "/node_modules/react/index.js": /* js */ `
+      exports.make = x => "F" + x;
+      exports.count = 0;
+      exports.inc = () => ++exports.count;
+    `,
+  };
+  for (const backend of ["cli", "api"] as const) {
+    // The call stays in a `try` body and in a `catch` body. The same file
+    // under a name off the unwrap list keeps its `__commonJS` wrapper.
+    itBundled(`cjs2esm/KeptRequireOfLiftedCommonJS-${backend}`, {
+      matchesBunRun: true,
+      files: {
+        "/entry.js": /* js */ `
+          const unwrapped = require("react");
+          let inTry, inCatch, other;
+          try { inTry = require("react"); } catch {}
+          try { throw 1; } catch { inCatch = require("react"); }
+          try { other = require("other"); } catch {}
+          console.log(inTry.__esModule, typeof inTry.default, other.__esModule, typeof other.default);
+          console.log((inTry.__esModule ? inTry.default : inTry).make("A"), Object.keys(inTry).join());
+          console.log(inTry === unwrapped, inCatch === unwrapped);
+          inTry.count = 41;
+          console.log(inTry.count, inTry.inc(), unwrapped.count);
+        `,
+        ...reactWithCounter,
+        "/node_modules/other/package.json": /* json */ `
+          { "name": "other", "version": "19.0.0", "main": "index.js" }
+        `,
+        "/node_modules/other/index.js": reactWithCounter["/node_modules/react/index.js"],
+      },
+      backend,
+      onAfterBundle(api) {
+        const code = api.readFile("out.js");
+        expect(code).toContain("inTry = (init_react(), exports_react);");
+        expect(code).toContain("inCatch = (init_react(), exports_react);");
+        expect(code).toContain("other = require_other();");
+        expect(code).not.toContain("__toCommonJS");
+      },
+      run: {
+        stdout: "undefined undefined undefined undefined\nFA make,count,inc\ntrue true\n41 42 42",
+      },
+    });
+  }
+  // A specifier that is not on the unwrap list can resolve to a file of a
+  // listed package. The parser keeps such a call with no `try` around it.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSThroughAlias", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { viaRelativePath } from "sibling";
+        const unwrapped = require("react");
+        const viaTsconfigPaths = require("tsconfig-alias");
+        const viaPackageImports = require("#react");
+        for (const m of [viaTsconfigPaths, viaPackageImports, viaRelativePath()]) {
+          console.log(m.__esModule, m === unwrapped, (m.count = m.count + 40), m.inc());
+        }
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "baseUrl": ".", "paths": { "tsconfig-alias": ["./node_modules/react/index.js"] } } }
+      `,
+      "/package.json": /* json */ `
+        { "name": "app", "imports": { "#react": "react" } }
+      `,
+      "/node_modules/sibling/package.json": /* json */ `
+        { "name": "sibling", "version": "1.0.0", "main": "index.js" }
+      `,
+      "/node_modules/sibling/index.js": /* js */ `
+        exports.viaRelativePath = () => require("../react");
+      `,
+      ...reactWithCounter,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("viaTsconfigPaths = (init_react(), exports_react);");
+      expect(code).toContain("viaPackageImports = (init_react(), exports_react);");
+      expect(code).toContain("viaRelativePath = () => (init_react(), exports_react);");
+      expect(code).not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "undefined true 40 41\nundefined true 81 82\nundefined true 122 123",
+    },
+  });
+  // The parser binds names read off a require() result, but it leaves
+  // `__esModule` and `default` to the object that the call returns.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSReadsEsModuleOffNamespace", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          const m = require("react");
+          console.log(m.__esModule, typeof m.default, m.make("A"));
+          const { make, __esModule } = require("react");
+          console.log(__esModule, make("B"));
+        } catch (e) {
+          console.log(e);
+        }
+      `,
+      ...reactWithCounter,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "undefined undefined FA\nundefined FB",
+    },
+  });
+  // A lifted file that sets `exports.__esModule` exports that name itself.
+  // It is enumerable, as on `module.exports`, and not on a `__toCommonJS` copy.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSThatSetsEsModule", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react"); } catch {}
+        console.log(m.__esModule, Object.keys(m).join(), (m.__esModule ? m.default : m).tag, m.named);
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = { tag: "default" };
+        exports.named = 1;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "true __esModule,default,named default 1",
+    },
+  });
+  // The shape of react-dom/server.node.js, read the way Babel and TypeScript
+  // compile `import Server from "react-dom/server"`. With a synthetic
+  // `__esModule`, `Server.default` is `undefined`.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSThroughInteropHelper", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+        let Server;
+        try { Server = _interopRequireDefault(require("react-dom/server")); } catch {}
+        console.log(typeof Server.default, Server.default.renderToString("x"), Server.default.version);
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/server.js": /* js */ `
+        'use strict';
+        module.exports = require('./server.node');
+      `,
+      "/node_modules/react-dom/server.node.js": /* js */ `
+        'use strict';
+        var l;
+        if (process.env.NODE_ENV === 'production') {
+          l = require('./cjs/react-dom-server-legacy.node.production.js');
+        } else {
+          l = require('./cjs/react-dom-server-legacy.node.development.js');
+        }
+        exports.version = l.version;
+        exports.renderToString = l.renderToString;
+      `,
+      "/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js": /* js */ `
+        exports.version = "19.0.0";
+        exports.renderToString = x => "<" + x + ">";
+      `,
+      "/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js": /* js */ `
+        exports.version = "19.0.0-development";
+        exports.renderToString = x => "<development " + x + ">";
+      `,
+    },
+    env: {
+      NODE_ENV: "production",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("_interopRequireDefault((init_server_node(), exports_server_node))");
+    },
+    run: {
+      stdout: "object <x> 19.0.0",
+    },
+  });
+  // The shape of react-dom/index.js. With `--minify-syntax` and a production
+  // NODE_ENV, `module.exports = require()` after the side effect is lifted to
+  // `export * from`. The file is as much CommonJS as the file it re-exports.
+  const reactDomIndex = {
+    "/node_modules/react-dom/package.json": /* json */ `
+      { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+    `,
+    "/node_modules/react-dom/index.js": /* js */ `
+      'use strict';
+      function checkDCE() {
+        if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ === 'undefined') {
+          console.log('checkDCE');
+        }
+      }
+      if (process.env.NODE_ENV === 'production') {
+        checkDCE();
+        module.exports = require('./cjs/react-dom.production.js');
+      } else {
+        module.exports = require('./cjs/react-dom.development.js');
+      }
+    `,
+    "/node_modules/react-dom/cjs/react-dom.production.js": /* js */ `
+      exports.createRoot = function createRoot() { return "production root"; };
+      exports.version = "19.0.0";
+    `,
+    "/node_modules/react-dom/cjs/react-dom.development.js": /* js */ `
+      'use strict';
+      (function () {
+        exports.createRoot = function createRoot() { return "development root"; };
+        exports.version = "19.0.0";
+      })();
+    `,
+  };
+  itBundled("cjs2esm/KeptRequireOfLiftedModuleExportsEqualsRequire", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react-dom"); } catch {}
+        console.log(m.__esModule, Object.keys(m).join(), m.createRoot());
+      `,
+      ...reactDomIndex,
+    },
+    minifySyntax: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("m = (init_react_dom(), exports_react_dom)");
+      expect(code).not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "checkDCE\nundefined createRoot,version production root",
+    },
+  });
+  // The namespace of such a file has a getter and no setter for a name that
+  // it re-exports, and it is not the object of the file it re-exports.
+  itBundled("cjs2esm/KeptRequireOfLiftedModuleExportsEqualsRequireWriteAndIdentity", {
+    matchesBunRun: true,
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react-dom"); } catch {}
+        m.version = "patched";
+        console.log(m.version, m === require("react-dom/cjs/react-dom.production.js"));
+      `,
+      ...reactDomIndex,
+    },
+    minifySyntax: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    run: {
+      stdout: "checkDCE\npatched true",
+    },
+  });
+  // The kept call, an unwrapped require() and the `default` of an import() of
+  // such a file are one object.
+  itBundled("cjs2esm/KeptRequireOfLiftedModuleExportsEqualsRequireIdentity", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let kept;
+        try { kept = require("react-dom"); } catch {}
+        const unwrapped = require("react-dom");
+        const ns = await import("react-dom");
+        console.log(kept === unwrapped, ns.default === kept);
+      `,
+      ...reactDomIndex,
+    },
+    minifySyntax: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    run: {
+      stdout: "checkDCE\ntrue true",
+    },
+  });
+  // The file that such a module re-exports can be a CommonJS file of a
+  // package outside the list. The parser lifts the exports of that file too.
+  itBundled("cjs2esm/KeptRequireOfLiftedModuleExportsEqualsRequireOfOtherPackage", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react-is"); } catch {}
+        const ns = await import("react-is");
+        console.log(m.__esModule, Object.keys(m).join(), m.bump(), m.value, globalThis.sideEffect, ns.default === m);
+      `,
+      "/node_modules/react-is/package.json": /* json */ `
+        { "name": "react-is", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        globalThis.sideEffect = true;
+        module.exports = require("other");
+      `,
+      "/node_modules/other/package.json": /* json */ `
+        { "name": "other", "version": "1.0.0", "main": "index.js" }
+      `,
+      "/node_modules/other/index.js": /* js */ `
+        exports.value = "v";
+        exports.bump = () => (exports.value += "!");
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("m = (init_react_is(), exports_react_is)");
+      expect(code).not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "undefined value,bump v! v! true true",
+    },
+  });
+  // Control: a file with no JavaScript exports, here an empty one, is not a
+  // lifted CommonJS file. `bun run` loads it as an ES module.
+  itBundled("cjs2esm/KeptRequireOfLiftedModuleExportsEqualsRequireOfEmptyFile", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react-is"); } catch {}
+        console.log(m.__esModule, JSON.stringify(Object.keys(m)), globalThis.sideEffect);
+      `,
+      "/node_modules/react-is/package.json": /* json */ `
+        { "name": "react-is", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        globalThis.sideEffect = true;
+        module.exports = require("./empty.js");
+      `,
+      "/node_modules/react-is/empty.js": "",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("m = (init_react_is(), __toCommonJS(exports_react_is));");
+    },
+    run: {
+      stdout: "true [] true",
+    },
+  });
+  // Controls for the same file. Without `--minify-syntax` the `if` stays, and
+  // the file keeps its `__commonJS` wrapper. In a development build the
+  // wrapper also converts the development file, which is another defect.
+  itBundled("cjs2esm/KeptRequireOfModuleExportsEqualsRequireInAnIfKeepsWrapper", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react-dom"); } catch {}
+        console.log(m.__esModule, Object.keys(m).join(), m.createRoot());
+      `,
+      ...reactDomIndex,
+    },
+    env: {
+      NODE_ENV: "production",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("m = require_react_dom();");
+    },
+    run: {
+      stdout: "checkDCE\nundefined createRoot,version production root",
+    },
+  });
+  itBundled("cjs2esm/KeptRequireOfModuleExportsEqualsRequireDevelopmentKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react-dom"); } catch {}
+        console.log(m.createRoot());
+      `,
+      ...reactDomIndex,
+    },
+    env: {
+      NODE_ENV: "development",
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("m = require_react_dom();");
+      expect(code).toContain("__toESM(require_react_dom_development())");
+    },
+    run: {
+      stdout: "development root",
+    },
+  });
+  // `bun run` loads a file with no exports as CommonJS when it calls
+  // require(), or when it starts with "use strict".
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSWithNoExports", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m, n;
+        try { m = require("react"); } catch {}
+        try { n = require("scheduler"); } catch {}
+        console.log(m.__esModule, Object.keys(m).length, globalThis.fromDependency);
+        console.log(n.__esModule, Object.keys(n).length, globalThis.sideEffect);
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        const dependency = require("./dependency");
+        globalThis.fromDependency = dependency.value;
+      `,
+      "/node_modules/react/dependency.js": /* js */ `
+        exports.value = "value";
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        { "name": "scheduler", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        'use strict';
+        globalThis.sideEffect = true;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "undefined 0 value\nundefined 0 true",
+    },
+  });
+  // `bun run` loads a file that assigns `exports.x` as CommonJS, also in a
+  // package with "type": "module".
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSInTypeModulePackage", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react"); } catch {}
+        console.log(m.__esModule, m.make("A"));
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js", "type": "module" }
+      `,
+      "/node_modules/react/index.js": reactWithCounter["/node_modules/react/index.js"],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "undefined FA",
+    },
+  });
+  // Two files that re-export each other never reach a file that decides.
+  itBundled("cjs2esm/KeptRequireOfLiftedModuleExportsEqualsRequireCycle", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react"); } catch {}
+        console.log(m.__esModule, Object.keys(m).length, globalThis.loaded);
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        globalThis.loaded = (globalThis.loaded ?? 0) + 1;
+        module.exports = require("./other");
+      `,
+      "/node_modules/react/other.js": /* js */ `
+        globalThis.loaded = (globalThis.loaded ?? 0) + 1;
+        module.exports = require("./index");
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toCommonJS");
+    },
+    run: {
+      stdout: "undefined 0 2",
+    },
+  });
+  // Controls: an ES module by syntax is an ES module to `bun run` too, so
+  // require() of it has `__esModule` and keeps the `__toCommonJS` copy. The
+  // same holds for a lifted `module.exports = require()` of an ES module.
+  itBundled("cjs2esm/KeptRequireOfESModuleInUnwrappedPackageKeepsEsModule", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        const loaded = [];
+        try { loaded.push(require("scheduler")); } catch {}
+        try { loaded.push(require("react-is")); } catch {}
+        for (const m of loaded) console.log(m.__esModule, JSON.stringify(Object.keys(m)));
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        { "name": "scheduler", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        const dependency = require("./dependency.js");
+        export const value = dependency.value;
+      `,
+      "/node_modules/scheduler/dependency.js": /* js */ `
+        exports.value = "value";
+      `,
+      "/node_modules/react-is/package.json": /* json */ `
+        { "name": "react-is", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        globalThis.sideEffect = true;
+        module.exports = require("./impl.mjs");
+      `,
+      "/node_modules/react-is/impl.mjs": /* js */ `
+        export const isElement = () => true;
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      for (const name of ["scheduler", "react_is"]) {
+        expect(code).toContain(`__toCommonJS(exports_${name})`);
+      }
+    },
+    run: {
+      stdout: 'true ["value"]\ntrue ["isElement"]',
+    },
+  });
+  // An `import()` of the file in the same bundle resolves to a namespace
+  // whose `default` is that same object.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSIsDefaultOfImport", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react"); } catch {}
+        const ns = await import("react");
+        console.log(m.__esModule, ns.default === m, ns.make === m.make);
+      `,
+      ...reactWithCounter,
+    },
+    run: {
+      stdout: "undefined true true",
+    },
+  });
+  // The same with code splitting, when the lifted file stays in a chunk that
+  // the caller imports: with `splitRequire: false`, and for a target that
+  // cannot split a require().
+  for (const [name, options] of [
+    ["SplitRequireOff", { target: "bun", splitRequire: false }],
+    ["TargetNode", { target: "node" }],
+  ] as const) {
+    itBundled(`cjs2esm/KeptRequireOfLiftedCommonJSWithSplitting-${name}`, {
+      matchesBunRun: true,
+      files: {
+        "/main.ts": /* ts */ `
+          let m;
+          try { m = require("react"); } catch {}
+          m.count = 41;
+          const ns = await import("react");
+          console.log(m.__esModule, m.inc(), ns.default === m);
+        `,
+        ...reactWithCounter,
+      },
+      entryPoints: ["/main.ts"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      onAfterBundle(api) {
+        api.expectFile("/out/main.js").toContain("m = (init_react(), exports_react);");
+        api.expectFile("/out/main.js").not.toContain("__toCommonJS");
+      },
+      run: { file: "/out/main.js", stdout: "undefined 42 true" },
+    });
+  }
+  // With `target: "bun"` and the default `splitRequire`, the lifted file is a
+  // chunk of its own. The chunk exports the exports object of the file as
+  // "module.exports", which `import.meta.require` returns.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSWithSplitting-SplitRequire", {
+    matchesBunRun: true,
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try { m = require("react"); } catch {}
+        let write = "ok";
+        try { m.count = 41; } catch (e) { write = e.constructor.name; }
+        console.log(m.__esModule, write, m.inc());
+      `,
+      ...reactWithCounter,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").toMatch(/m = import\.meta\.require\("\.\/[^"]+"\);/);
+    },
+    run: { file: "/out/main.js", stdout: "undefined ok 42" },
+  });
+  // Only ESM output lifts. With CommonJS output the file keeps its wrapper.
+  // With IIFE output a file with no exports is an ES module, as under any
+  // other package name.
+  itBundled("cjs2esm/KeptRequireOfCommonJSFormatCjs", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        const unwrapped = require("react");
+        let m;
+        try { m = require("react"); } catch {}
+        m.count = 41;
+        console.log(m.__esModule, m === unwrapped, m.inc());
+      `,
+      ...reactWithCounter,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("m = require_react();");
+    },
+    run: {
+      stdout: "undefined true 42",
+    },
+  });
+  itBundled("cjs2esm/KeptRequireOfFileWithNoExportsFormatIife", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        import "./side-effect.js";
+        let m;
+        try { m = require("react"); } catch {}
+        console.log(m.__esModule, globalThis.sideEffect);
+      `,
+      "/side-effect.js": /* js */ `
+        globalThis.entryLoaded = true;
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        globalThis.sideEffect = true;
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toCommonJS(exports_react)");
+    },
+    run: {
+      stdout: "true true",
+    },
+  });
+  // Where the namespace object is not `module.exports`. Each comment gives
+  // what `bun run` prints.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSDiffersFromBunRun", {
+    files: {
+      "/entry.js": /* js */ `
+        let m, plain, typeModule;
+        try { m = require("react"); } catch {}
+        try { plain = require("scheduler"); } catch {}
+        try { typeModule = require("react-is"); } catch {}
+        // 65 70: the module reads the property that was defined.
+        Object.defineProperty(m, "x", { value: 65, writable: true, enumerable: true, configurable: true });
+        console.log(m.x, m.sum());
+        // true NaN: the module reads the property that was deleted.
+        console.log(delete m.y, m.sum());
+        // 3: a frozen object ignores the write.
+        Object.freeze(m);
+        m.z = 66;
+        console.log(m.z);
+        // true: a file with no exports, no require() and no "use strict" is an ES module to Bun. Node prints undefined.
+        console.log(plain.__esModule);
+        // true value: so is a file that only calls require(), in a package with "type": "module".
+        console.log(typeModule.__esModule, globalThis.fromDependency);
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1;
+        exports.y = 2;
+        exports.z = 3;
+        exports.sum = () => exports.x + exports.y + exports.z;
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        { "name": "scheduler", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        globalThis.sideEffect = true;
+      `,
+      "/node_modules/react-is/package.json": /* json */ `
+        { "name": "react-is", "version": "19.0.0", "main": "index.js", "type": "module" }
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        const dependency = require("./dependency.cjs");
+        globalThis.fromDependency = dependency.value;
+      `,
+      "/node_modules/react-is/dependency.cjs": /* js */ `
+        exports.value = "value";
+      `,
+    },
+    run: {
+      stdout: "65 6\ntrue 6\n66\nundefined\nundefined value",
+    },
+  });
+  // A write after `Object.freeze()` still reaches the lifted binding, through
+  // the setter of the namespace object. `bun run` prints `3 true 6`.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSWriteAfterFreeze", {
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react"); } catch {}
+        Object.freeze(m);
+        try { m.z = 66; } catch (e) { console.log(e.constructor.name); }
+        console.log(m.z, Object.isFrozen(m), m.sum());
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1;
+        exports.y = 2;
+        exports.z = 3;
+        exports.sum = () => exports.x + exports.y + exports.z;
+      `,
+    },
+    run: {
+      stdout: "66 true 69",
+    },
+  });
+  // A lifted file can set a property named "module.exports". The call returns
+  // the whole object, as for any CommonJS file.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSWithModuleExportsName", {
+    matchesBunRun: true,
+    files: {
+      "/entry.js": /* js */ `
+        let m;
+        try { m = require("react"); } catch {}
+        console.log(m.__esModule, m["module.exports"], m.named);
+      `,
+      "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
+      "/node_modules/react/index.js": /* js */ `
+        exports["module.exports"] = 5;
+        exports.named = 1;
+      `,
+    },
+    run: {
+      stdout: "undefined 5 1",
+    },
+  });
+  // `import * as ns` of a lifted file is that same object. `bun run` prints false.
+  itBundled("cjs2esm/KeptRequireOfLiftedCommonJSIsTheImportStarObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "react";
+        let m;
+        try { m = require("react"); } catch {}
+        console.log(m === ns);
+      `,
+      ...reactWithCounter,
+    },
+    run: {
+      stdout: "true",
     },
   });
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package

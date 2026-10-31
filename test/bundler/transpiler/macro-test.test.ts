@@ -6,6 +6,11 @@ import path from "node:path";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
+  boxedBoolean,
+  boxedNumber,
+  boxedNumberPromise,
+  boxedNumberWithValueOf,
+  boxedPrimitives,
   default as defaultMacroAlias,
   escape,
   identity,
@@ -37,6 +42,21 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+// A Number, Boolean or String object is inlined as its primitive value.
+test("boxed primitives", async () => {
+  expect(boxedNumber()).toBe(5);
+  expect(boxedBoolean()).toBe(false);
+  expect(boxedPrimitives()).toEqual({
+    numbers: [5, 1.5, NaN, Infinity, 9],
+    negativeZero: -0,
+    booleans: [true, false, false],
+    string: "a",
+  });
+  expect(await boxedNumberPromise()).toBe(1.5);
+  // A Number object is converted with ToNumber, as in JSON.stringify, so its valueOf is called.
+  expect(boxedNumberWithValueOf()).toBe(42);
 });
 
 // A Symbol key has no source form. The inlined object keeps the string keys
@@ -740,6 +760,56 @@ test("bun build reports a macro result that is nested too deeply", async () => {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("error: The value returned by this macro is nested too deeply");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun build inlines a Number, Boolean or String object as its primitive value", async () => {
+  using dir = tempDir("bundler-macro-boxed-primitives", {
+    "macro.ts": [
+      `export function bf() {\n  return new Boolean(false);\n}`,
+      `export function n5() {\n  return new Number(5);\n}`,
+      `export function s() {\n  return new String("a");\n}`,
+      ``,
+    ].join("\n"),
+    "entry.ts": `import { bf, n5, s } from "./macro.ts" with { type: "macro" };\nconsole.log(bf(), n5(), s());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain(`console.log(false, 5, "a");`);
+  expect(exitCode).toBe(0);
+});
+
+// The conversion is ToNumber, so it can throw. The build fails, as it does when toString() of a String object throws.
+test.concurrent("bun build fails when the conversion of a Number object throws", async () => {
+  using dir = tempDir("bundler-macro-boxed-number-throws", {
+    "macro.ts": [
+      `export function m() {`,
+      `  const number = new Number(5);`,
+      `  number.valueOf = () => {`,
+      `    throw new Error("valueOf threw");`,
+      `  };`,
+      `  return number;`,
+      `}`,
+      ``,
+    ].join("\n"),
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // Nothing is bundled. Debug builds still print "[macro] call m" to stdout.
+  expect(stdout).not.toContain("console.log(");
   expect(exitCode).toBe(1);
 });
 

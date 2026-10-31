@@ -660,9 +660,15 @@ impl<'a> Run<'a> {
             );
             return Err(MacroError::MacroFailed);
         }
+        let classified = T::get(value, self.global)?;
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
-        match T::get(value, self.global)?.tag.tag() {
+        match classified.tag.tag() {
+            // The console classifier files a Number object under Double and a Boolean object
+            // under Boolean. `cell` is `JSType::Cell` for a value that is not a cell.
+            T::Boolean | T::Double if classified.cell != jsc::JSType::Cell => {
+                self.run_boxed_primitive(value)
+            }
             T::Error => self.coerce(T::Error, value),
             T::Undefined => self.coerce(T::Undefined, value),
             T::Null => self.coerce(T::Null, value),
@@ -691,6 +697,16 @@ impl<'a> Run<'a> {
                 Err(MacroError::MacroFailed)
             }
         }
+    }
+
+    /// A Number or Boolean object is inlined as its primitive value, unwrapped as `JSON.stringify` unwraps it.
+    /// Out of line: the Boolean and Double arms of [`run`](Self::run) stay free of calls.
+    #[cold]
+    #[inline(never)]
+    fn run_boxed_primitive(&mut self, value: JSValue) -> Result<Expr, MacroError> {
+        let primitive = value.unwrap_boxed_primitive(self.global)?;
+        debug_assert!(!primitive.is_cell());
+        self.run(primitive)
     }
 
     // Runtime `tag` param — every call site in `run` already matches once.
@@ -758,7 +774,7 @@ impl<'a> Run<'a> {
             T::Boolean => {
                 return Ok(Expr {
                     data: ExprData::EBoolean(E::Boolean {
-                        value: value.to_boolean(),
+                        value: value.as_boolean(),
                     }),
                     loc: self.caller.loc,
                 });
@@ -878,7 +894,7 @@ impl<'a> Run<'a> {
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number::new(value.as_number()),
+                    E::Number::new(value.as_double()),
                     self.caller.loc,
                 ));
             }

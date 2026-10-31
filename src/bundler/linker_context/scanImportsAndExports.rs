@@ -1896,6 +1896,11 @@ mod __css_validation {
                     return;
                 }
 
+                // `Log::add_msg` neither checks the level nor counts the message, as the `Log` warning helpers do.
+                if !bun_ast::Kind::Warn.should_print(self.log.level) {
+                    return;
+                }
+
                 let local_original_name: &[u8] = self
                     .all_symbols
                     .get_const(local)
@@ -1903,8 +1908,9 @@ mod __css_validation {
                     .original_name
                     .slice();
 
+                self.log.warnings += 1;
                 let _ = self.log.add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Err,
+                    kind: bun_ast::Kind::Warn,
                     data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,

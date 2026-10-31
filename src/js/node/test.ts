@@ -1424,6 +1424,8 @@ class TestPlan {
   expected: number;
   actual = 0;
   wait: boolean | number;
+  // The error of the wait's timer, once that timer has fired.
+  timeoutError: unknown = undefined;
   #pending:
     { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | undefined } | undefined;
 
@@ -1464,9 +1466,11 @@ class TestPlan {
       if (typeof wait === "number") {
         timer = realSetTimeout(() => {
           this.#pending = undefined;
-          reject(
-            makeTestFailure(`plan timed out after ${wait}ms with ${this.actual} assertions when expecting ${expected}`),
+          const error = makeTestFailure(
+            `plan timed out after ${wait}ms with ${this.actual} assertions when expecting ${expected}`,
           );
+          this.timeoutError = error;
+          reject(error);
         }, wait);
         // Not unref'd: count()/cancel()/the timer callback always clear it, and
         // on Windows an unref'd timer alone under bun:test busy-spins (8664279d).
@@ -1579,6 +1583,11 @@ class TestNode {
   subtestChain: Promise<unknown> = Promise.resolve();
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
+  // Tests at or below this one that Node counts as cancelled, in the current run.
+  cancelledTests = 0;
+  firstCancelError: unknown = undefined;
+  // bun:test runs the same node again for a retry.
+  run = 0;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
   #ctx: TestContext | undefined;
@@ -2177,11 +2186,15 @@ function createStopController(timeout: number | undefined) {
   const promise = new Promise<never>((_, reject) => {
     // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
     // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
-    timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+    timer = realSetTimeout(() => {
+      stop.error = makeTestFailure(`test timed out after ${timeout}ms`);
+      reject(stop.error);
+    }, timeout);
   });
   // Swallow the rejection when nothing is racing it anymore.
   promise.catch(() => {});
-  return { promise, dispose: () => realClearTimeout(timer) };
+  const stop = { promise, error: undefined as unknown, dispose: () => realClearTimeout(timer) };
+  return stop;
 }
 
 // Runs `run` racing Node's test timeout; the timer starts before the body so a
@@ -2295,6 +2308,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
+  // Node's Test.cancelled: the test's own timeout or the wait of its plan ended it.
+  let cancelled = false;
+  node.run++;
+  node.cancelledTests = 0;
+  node.firstCancelError = undefined;
 
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
@@ -2361,6 +2379,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       stop?.dispose();
       node.plan?.cancel();
     }
+    cancelled = failure !== undefined && (failure === stop?.error || failure === node.plan?.timeoutError);
 
     const { failedSubtests, firstSubtestError } = node;
     if (failure === undefined && failedSubtests > 0) {
@@ -2415,11 +2434,24 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
+  // Node counts a cancel after skip and todo, whatever expectFailure accepted (utils.js:496-502).
+  if (cancelled && !node.skipped && !node.todoFlag) {
+    node.cancelledTests++;
+    node.firstCancelError ??= bodyFailure;
+  }
   reportNodeToRunParent(node, started);
   return failure;
 }
 
+// A subtest of an earlier run can end during a retry: its count is not for that run.
+function addCancelledTests(parent: TestNode, parentRun: number, child: TestNode) {
+  if (parent.run !== parentRun) return;
+  parent.cancelledTests += child.cancelledTests;
+  parent.firstCancelError ??= child.firstCancelError;
+}
+
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
+  const parentRun = parent.run;
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
@@ -2440,6 +2472,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
       parent.failedSubtests++;
       parent.firstSubtestError ??= failure;
     }
+    addCancelledTests(parent, parentRun, child);
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2467,6 +2500,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
+  const parentRun = parent.run;
   const run = async () => {
     if (build !== undefined) {
       try {
@@ -2519,6 +2553,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
+    addCancelledTests(parent, parentRun, suite);
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2569,6 +2604,11 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     const todoBefore = node.todoFlag;
     executeTestNode(node, fn).then(
       failure => {
+        // bun:test has no cancelled count, so the failure of this entry carries it.
+        if (node.cancelledTests > 0) {
+          done(failure ?? node.firstCancelError);
+          return;
+        }
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
         // (Node counts these as skip/todo even when the body threw); a declared
         // todo body's failure must reach bun:test's own todo accounting instead.
@@ -2634,6 +2674,8 @@ function addTest(
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
+    // test.todo() has the directive in `mode`, not in the options. Subtests inherit the mark (test.js:737).
+    if (effectiveMode === "todo") node.todoFlag = true;
     // Under a run() child, register skip as an ordinary test so its directive
     // event fires in execution order (not at collection time).
     if (runChildReporterEnabled && effectiveMode === "skip") {
@@ -2651,9 +2693,6 @@ function addTest(
     // run() child registers them as ordinary tests and marks the result at the
     // end (what createTopLevelTestRunner already does for a runtime t.todo()).
     if (runChildReporterEnabled && effectiveMode === "todo") {
-      // The test.todo() spelling carries the directive in `mode`, not in the
-      // options, so the node has to be marked for the runner to report it.
-      node.todoFlag = true;
       const runner = createTopLevelTestRunner(node, fn);
       if (passOptions !== undefined) test(name, runner, passOptions);
       else test(name, runner);

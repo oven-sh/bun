@@ -142,6 +142,16 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// ES module output: the external `export *` statements each file reaches through `export *`, in source order. A file that is not an entry point lists those of entry points only.
+    pub(crate) external_export_stars: ArrayHashMap<crate::IndexInt, Vec<ExternalExportStar>>,
+}
+
+/// An `export * from "path"` statement whose `path` is not bundled.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ExternalExportStar {
+    /// The file that has the statement.
+    pub(crate) source_index: crate::IndexInt,
+    pub(crate) import_record_index: u32,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -182,7 +192,22 @@ impl<'a> LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            external_export_stars: ArrayHashMap::new(),
         }
+    }
+
+    /// The `external_export_stars` of `source_index`. An entry point re-exports them.
+    #[inline]
+    pub(crate) fn external_export_stars_of(
+        &self,
+        source_index: crate::IndexInt,
+    ) -> &[ExternalExportStar] {
+        if self.external_export_stars.is_empty() {
+            return &[];
+        }
+        self.external_export_stars
+            .get(&source_index)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
@@ -565,6 +590,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.external_export_stars.clear();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -4038,8 +4064,15 @@ impl<'a> LinkerContext<'a> {
 
                         // A name read off `import()` / `require()` is `undefined`
                         // at run time too, so there is nothing to say.
-                        if self.is_call_record(prev_source_index, named_import.import_record_index)
-                        {
+                        let is_call_item = self
+                            .is_call_record(prev_source_index, named_import.import_record_index);
+                        // In node that result has the names of an external `export *`, which does not re-export `default`.
+                        let lacks_external_names = is_call_item
+                            && alias != b"default"
+                            && !self
+                                .external_export_stars_of(next_tracker.source_index.get())
+                                .is_empty();
+                        if is_call_item && !lacks_external_names {
                         } else if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
@@ -4058,6 +4091,15 @@ impl<'a> LinkerContext<'a> {
                                 r,
                             );
                         } else {
+                            // A name read off a call has no location of its own.
+                            let r = if is_call_item {
+                                self.graph.ast.items_import_records()[prev_source_index as usize]
+                                    .as_slice()
+                                    [named_import.import_record_index as usize]
+                                    .range
+                            } else {
+                                r
+                            };
                             self.log_disjoint().add_range_warning_fmt(
                                 Some(source), r,
                                 format_args!(
@@ -4239,6 +4281,67 @@ impl<'a> LinkerContext<'a> {
             .as_slice()
             .get(record_index as usize)
             .is_some_and(|record| matches!(record.kind, ImportKind::Dynamic | ImportKind::Require))
+    }
+
+    /// A re-export that TypeScript lets the linker drop as a type can be a value of an external `export *` of an entry point.
+    fn warn_dropped_reexport_of_external_export_star(
+        &mut self,
+        source_index: crate::IndexInt,
+        named_import: &NamedImport,
+    ) {
+        let Some(alias) = named_import.alias else {
+            return;
+        };
+        let alias = alias.slice();
+        let import_records = self.graph.ast.items_import_records();
+        let target = import_records[source_index as usize].as_slice()
+            [named_import.import_record_index as usize]
+            .source_index;
+        if !target.is_valid() {
+            return;
+        }
+        let stars = self.external_export_stars_of(target.get());
+        // `export *` does not re-export `default`. A name that `target` has was dropped further down its chain, not here.
+        if stars.is_empty()
+            || alias == b"default"
+            || self.graph.meta.items_resolved_exports()[target.get() as usize].contains(alias)
+        {
+            return;
+        }
+        // The linker does not know which of these modules has the name.
+        let mut modules: Vec<&[u8]> = Vec::new();
+        for star in stars {
+            let path = import_records[star.source_index as usize].as_slice()
+                [star.import_record_index as usize]
+                .path
+                .text;
+            if !modules.contains(&path) {
+                modules.push(path);
+            }
+        }
+        let source = self.get_source(source_index);
+        let r = source.range_of_identifier(named_import.alias_loc);
+        let alias = bstr::BStr::new(alias);
+        let target_path = bstr::BStr::new(&self.get_source(target.get()).path.pretty);
+        let is_typescript =
+            self.parse_graph().input_files.items_loader()[source_index as usize].is_typescript();
+        let type_hint = if is_typescript {
+            " Use \"export type\" for a type."
+        } else {
+            ""
+        };
+        self.log_disjoint().add_range_warning_fmt_with_note(
+            Some(source),
+            r,
+            format_args!(
+                "Re-export \"{alias}\" is dropped because there is no matching export in \"{target_path}\""
+            ),
+            format_args!(
+                "\"{target_path}\" re-exports \"{}\" with \"export *\". Re-export a value from the module that has it.{type_hint}",
+                bun_core::fmt::fmt_slice(&modules, "\", \""),
+            ),
+            r,
+        );
     }
 
     /// An item read off an `import()` / `require()` result is bound only to an
@@ -4572,6 +4675,7 @@ impl<'a> LinkerContext<'a> {
                     );
                 }
                 MatchImportKind::ProbablyTypescriptType => {
+                    self.warn_dropped_reexport_of_external_export_star(source_index, named_import);
                     self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
                         .put(import_ref, ())
                         .expect("unreachable");

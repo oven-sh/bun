@@ -190,6 +190,30 @@ describe("bundler", () => {
       },
     });
 
+    // `entry.ts` imports `lib.ts` statically too, so the code of `lib.ts` is not in the chunk that `import("./lib")`
+    // loads. That chunk re-exports "node:path" at its end, and the chunk with the code has a bare import: each module
+    // record must say what its own chunk prints.
+    itBundled("compile/splitting/ExternalExportStarOfDynamicImportTarget", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import { own } from "./lib";
+          const lib = await import("./lib");
+          console.log(own, lib.own, typeof lib.join);
+        `,
+        "/lib.ts": /* js */ `
+          export * from "node:path";
+          export const own = 1;
+        `,
+      },
+      run: {
+        stdout: "1 1 function",
+      },
+    });
+
     // The embedded module graph is laid out in load order: the entry point's
     // static imports (dependencies first), then each dynamic import's closure,
     // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,

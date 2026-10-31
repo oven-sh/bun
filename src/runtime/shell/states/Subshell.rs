@@ -85,12 +85,11 @@ impl Subshell {
                     let me = interp.as_subshell(this);
                     (me.base.shell, me.io.clone(), me.node)
                 };
-                let script_node: *const ast::Script = &raw const node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // `node.redirect` is always `None` here: the parser rejects
                 // subshells with redirections ("Subshells with redirections
                 // are currently not supported", shell_parser/parse.rs).
-                let script = Script::init(interp, shell, script_node, this, io);
+                let script = Script::init(interp, shell, &node.script, this, io);
                 Script::start(interp, script)
             }
             SubshellState::Exec => Yield::suspended(),

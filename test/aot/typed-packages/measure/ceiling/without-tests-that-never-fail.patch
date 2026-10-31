@@ -1,0 +1,158 @@
+--- a/Source/JavaScriptCore/aot/codegen/AOTBranchCounterNumbers.cpp
++++ b/Source/JavaScriptCore/aot/codegen/AOTBranchCounterNumbers.cpp
+@@ -96,8 +96,115 @@
+     RELEASE_ASSERT_NOT_REACHED();
+ }
+ 
++} } } // namespace JSC::AOT::Typed
++#include <cstdio>
++#include <cstdlib>
++#include <string_view>
++namespace JSC { namespace AOT { namespace Typed {
++
++struct CountsOfARun {
++    Vector<uint32_t> first;
++    Vector<uint64_t> counts;
++    const char* modules { nullptr };
++};
++static CountsOfARun* s_countsOfARun;
++
++bool isTestOfTypeOrState(Opcode opcode)
++{
++    if (opcode == Opcode::TypeTest)
++        return true;
++    if (familyOf(opcode) != OperationFamily::Guard)
++        return false;
++    return opcode != Opcode::IsInBounds && opcode != Opcode::IsElementPresent && opcode != Opcode::IsInsideView && opcode != Opcode::IsEnumeratorCurrent;
++}
++
++static void readCountsOfARun(const Program& program)
++{
++    const char* path = getenv("STB_COUNTS");
++    if (!path || s_countsOfARun)
++        return;
++    auto* run = new CountsOfARun;
++    uint32_t total = 0;
++    for (const Function& function : program.functions) {
++        run->first.append(total);
++        total += 2 * static_cast<uint32_t>(findCountedBranches(program, function).size());
++    }
++    run->counts.fill(0, total);
++    FILE* file = fopen(path, "r");
++    RELEASE_ASSERT(file);
++    char line[512];
++    unsigned long long read = 0;
++    while (fgets(line, sizeof(line), file)) {
++        unsigned long long count = 0;
++        unsigned long long index = 0;
++        if (sscanf(line, "%llu\tbranch:%llu", &count, &index) == 2 && index < total) {
++            run->counts[index] += count;
++            ++read;
++        }
++    }
++    fclose(file);
++    run->modules = getenv("STB_MODULES");
++    fprintf(stderr, "STB: %llu counts read, %u counters in this program\n", read, total);
++    s_countsOfARun = run;
++
++    struct Sum { unsigned long long places = 0, placesDropped = 0, placesAlwaysFailing = 0, executed = 0, executedDropped = 0, failed = 0; };
++    Vector<Sum> sums;
++    sums.fill(Sum { }, numberOfEnumerators<Opcode>);
++    for (unsigned index = 0; index < program.functions.size(); ++index) {
++        const Function& function = program.functions[index];
++        Vector<CountedBranch> branches = findCountedBranches(program, function);
++        for (uint32_t ordinal = 0; ordinal < branches.size(); ++ordinal) {
++            const CountedBranch& branch = branches[ordinal];
++            if (!branch.test || !isTestOfTypeOrState(function.at(branch.test).opcode) || !countsOfARunCover(program, branch.module))
++                continue;
++            unsigned passing = branch.isNegated ? 1 : 0;
++            unsigned long long passed = countOfARun(FunctionID(index), ordinal, passing);
++            unsigned long long failed = countOfARun(FunctionID(index), ordinal, 1 - passing);
++            Sum& sum = sums[static_cast<size_t>(function.at(branch.test).opcode)];
++            sum.places++;
++            sum.executed += passed + failed;
++            sum.failed += failed;
++            if (passed && !failed) {
++                sum.placesDropped++;
++                sum.executedDropped += passed;
++            }
++            if (failed && !passed)
++                sum.placesAlwaysFailing++;
++        }
++    }
++    for (size_t index = 0; index < sums.size(); ++index) {
++        const Sum& sum = sums[index];
++        if (sum.places)
++            fprintf(stderr, "STB: %s: places %llu, never failed %llu, always failed %llu; executed %llu, of them at places that never failed %llu, failed %llu\n", nameOf(static_cast<Opcode>(index)).characters(), sum.places, sum.placesDropped, sum.placesAlwaysFailing, sum.executed, sum.executedDropped, sum.failed);
++    }
++}
++
++bool hasCountsOfARun() { return s_countsOfARun; }
++
++bool countsOfARunCover(const Program& program, ModuleID module)
++{
++    if (!s_countsOfARun->modules || !*s_countsOfARun->modules)
++        return true;
++    auto text = program.string(program.at(module).path);
++    std::string_view path(reinterpret_cast<const char*>(text.data()), text.size());
++    std::string_view wanted(s_countsOfARun->modules);
++    while (!wanted.empty()) {
++        size_t end = wanted.find(',');
++        if (path.find(wanted.substr(0, end)) != std::string_view::npos)
++            return true;
++        wanted = end == std::string_view::npos ? std::string_view() : wanted.substr(end + 1);
++    }
++    return false;
++}
++
++uint64_t countOfARun(FunctionID function, uint32_t ordinal, unsigned side)
++{
++    return s_countsOfARun->counts[s_countsOfARun->first[function.index()] + 2 * ordinal + side];
++}
++
+ BranchCounterNumbers numberBranchCounters(const Program& program, BuildContext& build)
+ {
++    readCountsOfARun(program);
+     if (!build.recordedOptions().countsBranches)
+         return { };
+ 
+--- a/Source/JavaScriptCore/aot/codegen/AOTBranchCounterNumbers.h
++++ b/Source/JavaScriptCore/aot/codegen/AOTBranchCounterNumbers.h
+@@ -35,6 +35,9 @@
+ 
+ Vector<CountedBranch> findCountedBranches(const Program&, const Function&);
+ unsigned counterSideOf(const Terminator&, uint32_t targetIndex);
++bool hasCountsOfARun();
++bool countsOfARunCover(const Program&, ModuleID);
++uint64_t countOfARun(FunctionID, uint32_t ordinal, unsigned side);
+ 
+ JS_EXPORT_PRIVATE BranchCounterNumbers numberBranchCounters(const Program&, BuildContext&);
+ 
+--- a/Source/JavaScriptCore/aot/codegen/AOTControlEmitter.cpp
++++ b/Source/JavaScriptCore/aot/codegen/AOTControlEmitter.cpp
+@@ -39,8 +39,25 @@
+     generator().generateBranchCondition(terminator, terminator->conditionOperand(), branchTargetsOf(terminator));
+ }
+ 
++bool isTestOfTypeOrState(Opcode);
++
+ BranchTargets ControlEmitter::branchTargetsOf(const TerminatorContext& terminator)
+ {
++    if (hasCountsOfARun()) {
++        if (!m_countedBranches)
++            m_countedBranches = findCountedBranches(m_program, m_function);
++        auto* countedBranch = tryBinarySearch<CountedBranch, BlockID>(*m_countedBranches, m_countedBranches->size(), terminator.block(), [](const CountedBranch* candidate) {
++            return candidate->block;
++        });
++        if (countedBranch && countedBranch->test && isTestOfTypeOrState(m_function.at(countedBranch->test).opcode) && countsOfARunCover(m_program, countedBranch->module)) {
++            uint32_t ordinal = static_cast<uint32_t>(countedBranch - m_countedBranches->begin());
++            unsigned passing = countedBranch->isNegated ? 1 : 0;
++            if (countOfARun(m_id, ordinal, passing) && !countOfARun(m_id, ordinal, 1 - passing)) {
++                B3::FrequentedBlock edge = generator().edgeTo(terminator, passing);
++                return { edge, edge };
++            }
++        }
++    }
+     return { countedEdgeTo(terminator, 0), countedEdgeTo(terminator, 1) };
+ }
+ 

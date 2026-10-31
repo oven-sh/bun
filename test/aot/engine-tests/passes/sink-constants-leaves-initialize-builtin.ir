@@ -1,0 +1,22 @@
+# The constant moves to the one block that uses it. InitializeBuiltin stays where the program read the member
+# FORM: Prepared optimizing
+# RUN: pass SinkConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="usedInOneBranch" parameters=[{type=boolean}] results=[{type=anything}] {
+    InitializeBuiltin builtin=ProcessNextTick
+    v2 = Builtin builtin=ProcessNextTick
+    v3 = Undefined
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f0 name="usedInOneBranch"
+# CHECK: b0(
+# CHECK-NEXT: InitializeBuiltin builtin=ProcessNextTick
+# CHECK-NOT: = Builtin
+# CHECK: b1():
+# CHECK-NEXT: = Builtin builtin=ProcessNextTick

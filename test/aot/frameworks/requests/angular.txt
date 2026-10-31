@@ -1,0 +1,13 @@
+GET /
+GET /data x-asked-by:smoke
+GET /person/21?greeting=hi
+GET /person/abc
+GET /api/hello?name=ada
+POST /api/hello {"numbers":[1,2,3]}
+GET /old
+GET /hello.txt
+GET /nowhere
+GET /lazy
+HEAD /data
+GET /hello.txt range:bytes=2-5
+GET /hello.txt if-none-match:"nothing"

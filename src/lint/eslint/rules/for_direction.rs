@@ -4,7 +4,7 @@ use bun_lint::utils::eslint_utils::{StaticValue, get_static_value};
 /// Enforce `for` loop update clause moving the counter in the right direction.
 pub struct ForDirection;
 
-const INCORRECT_DIRECTION: Message = Message::new(
+const INCORRECT_DIRECTION: &Message = &Message::new(
     "incorrectDirection",
     "The update clause in this loop moves the variable in the wrong direction.",
 );

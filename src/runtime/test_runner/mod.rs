@@ -198,7 +198,7 @@ pub(crate) mod expect {
     pub(crate) trait JSValueTestExt {
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
-        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
+        fn as_big_int_compare(self, other: JSValue) -> BigIntCompare;
         fn bind(
             self,
             global: &JSGlobalObject,
@@ -237,12 +237,9 @@ pub(crate) mod expect {
             self.is_cell() && self.js_type() == bun_jsc::JSType::RegExpObject
         }
         #[inline]
-        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare {
-            // Trait keeps the matcher modules' `(other, global)` ordering; the upstream
-            // inherent is `(global, other)` — adapt here so 75 matcher
-            // call-sites stay untouched.
+        fn as_big_int_compare(self, other: JSValue) -> BigIntCompare {
             use bun_jsc::ComparisonResult as R;
-            match JSValue::as_big_int_compare(self, global, other) {
+            match JSValue::as_big_int_compare(self, other) {
                 R::Equal => BigIntCompare::Equal,
                 R::Undefined => BigIntCompare::Undefined,
                 R::GreaterThan => BigIntCompare::GreaterThan,
@@ -364,9 +361,9 @@ pub(crate) mod expect {
             let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
                 rel.cmp_f64(value.as_number(), other_value.as_number())
             } else if value.is_big_int() {
-                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value, global))
+                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value))
             } else {
-                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value, global))
+                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value))
             };
 
             if not { pass = !pass; }

@@ -1,0 +1,201 @@
+# const box: any[] = JSON.parse("[null]");
+# function hide(x: any): any { box[0] = x; return box[0]; }
+# const emptyText: string = hide("{}");
+# const keys: string[] = hide(["alpha", "beta", "gamma", "delta", "epsilon"]);
+# function build(v: number): any {
+#   const o = hide(JSON.parse(emptyText));
+#   for (let i = 0; i < keys.length; i++) o[keys[i]] = v;
+#   return o;
+# }
+# const turns = Number(argv[2]);
+# const kept = build(1);
+# collect();
+# let sum = 0;
+# for (let i = 0; i < turns; i++) sum += build(1).epsilon;
+# report(sum === turns && Object.keys(kept).join() === Object.keys(build(2)).join());
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "2500"]; globalThis.collect = () => fullGC(); globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["PutByValGeneric", "PutByVal", "PutByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 200 ? "seldom" : calls); } print(aotOperationCount("operationAOTPutByValGeneric") + aotOperationCount("operationAOTPutByVal") + aotOperationCount("operationAOTPutByValAndCache") > 0 ? "asked at first" : "never asked"); };
+# An object is built key by key once, then a full collection comes. The 2,500 objects that are built the same way after it take their five keys without the run time.
+# CHECK: true
+# CHECK-NEXT: PutByValGeneric seldom
+# CHECK-NEXT: PutByVal seldom
+# CHECK-NEXT: PutByValAndCache seldom
+# CHECK-NEXT: asked at first
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=143 kind=Variable
+typesite w1 module=m0 position=242 kind=Variable
+typesite w2 module=m0 position=280 kind=Variable
+typesite w3 module=m0 position=564 kind=Variable
+typesite w4 module=m0 position=366 kind=Parameter function=f2
+typesite w5 module=m0 position=516 kind=Element
+typesite w6 module=m0 position=509 kind=CallResult
+typesite w7 module=m0 position=582 kind=Variable
+typesite w8 module=m0 position=654 kind=CallResult
+typesite w9 module=m0 position=683 kind=CallResult
+typesite w10 module=m0 position=436 kind=Variable
+typesite w11 module=m0 position=447 kind=PropertyRead
+typesite w12 module=m0 position=467 kind=Element
+variable g0 name="hide" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="box" module=m0 declared={type=undefined|null|absent|Array site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="emptyText" module=m0 declared={type=undefined|null|string|absent site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g3 name="keys" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w2 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="parse"
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v5 = String string="[null]"
+    v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse"
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v8 variable=g1
+    v10 = GetModuleVariable variable=g0
+    v11 = String string="{}"
+    v12 = Call v10, -, v11 calleeName="hide"
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v14 variable=g2
+    v16 = GetModuleVariable variable=g0
+    v17 = Data data=d0
+    v18 = Call v16, -, v17 calleeName="hide"
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v20 variable=g3
+    v22 = Builtin builtin=Number
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="argv" [isFreeName]
+    v25 = Integer integer=2
+    v26 = ElemGet v24, v25
+    v27 = Convert v26 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v28 = Call v22, -, v27 calleeName="Number"
+    v29 = Convert v28 declared={type=number site=w6} illTypedCause=DeclarationWithoutBody
+    v30 = Integer integer=1
+    v31 = Call v1, -, v30 calleeName="build"
+    v32 = Builtin builtin=GlobalThis
+    v33 = PropGet v32 key="collect" [isFreeName]
+    v34 = Call v33 calleeName="collect"
+    v35 = Integer
+    v36 = Convert v35 declared={type=number site=w3}
+    v37 = Integer
+    v38 = Convert v37 declared={type=number site=w7}
+    Jump -> next b2(v36, v38)
+  b2(v39: number, v40: number):
+    LoopHint
+    v42 = Less v40, v29
+    Branch v42 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v43, v44):
+    Jump -> next b4()
+  b4():
+    v45 = Integer integer=1
+    v46 = Call v1, -, v45 calleeName="build"
+    v47 = Convert v46 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v48 = PropGet v47 key="epsilon"
+    v49 = Add v39, v48
+    v50 = Convert v49 declared={type=number site=w3} illTypedCause=FromLooseType
+    Jump -> next b5()
+  b5():
+    v51 = Increment v43
+    v52 = Convert v51 declared={type=number site=w7}
+    Jump -> next b2(v50, v52)
+  b6(v53, v54):
+    Jump -> next b7()
+  b7():
+    v55 = Builtin builtin=GlobalThis
+    v56 = PropGet v55 key="report" [isFreeName]
+    v57 = StrictEq v39, v54
+    v58 = ToBoolean v57
+    Branch v58 -> taken b8(| 0), notTaken b10(| 0)
+  b8(v59):
+    Jump -> next b9()
+  b9():
+    v60 = Builtin builtin=Object
+    v61 = Builtin builtin=ObjectKeys
+    v62 = Call v61, v60, v31 calleeName="Object.keys"
+    v63 = Convert v62 declared={type=undefined|null|Array<undefined|null|string> site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v64 = PropGet v63 key="join"
+    v65 = Call v64, v63 calleeKey="join" calleeName="join"
+    v66 = Convert v65 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v67 = Builtin builtin=Object
+    v68 = Builtin builtin=ObjectKeys
+    v69 = Integer integer=2
+    v70 = Call v1, -, v69 calleeName="build"
+    v71 = Call v68, v67, v70 calleeName="Object.keys"
+    v72 = Convert v71 declared={type=undefined|null|Array<undefined|null|string> site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v73 = PropGet v72 key="join"
+    v74 = Call v73, v72 calleeKey="join" calleeName="join"
+    v75 = Convert v74 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v76 = StrictEq v66, v75
+    Jump -> next b11(v76)
+  b10(v77):
+    Jump -> next b11(v77)
+  b11(v78):
+    v79 = Call v56, -, v78 calleeName="report"
+    v80 = Undefined
+    Return v80
+}
+function f1 name="hide" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="box"
+    v3 = Integer
+    ElemSet v2, v3, v0
+    v5 = GetModuleVariable variable=g1
+    v6 = CheckInitialized v5 name="box"
+    v7 = Integer
+    v8 = ElemGet v6, v7
+    Return v8
+}
+function f2 name="build" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="parse"
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g2
+    v6 = CheckInitialized v5 name="emptyText"
+    v7 = Call v4, v2, v6 calleeKey="parse" calleeName="JSON.parse"
+    v8 = Call v1, -, v7 calleeName="hide"
+    v9 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]}
+    v10 = Integer
+    v11 = Convert v10 declared={type=number site=w10}
+    Jump -> next b2(v11)
+  b2(v12: number):
+    LoopHint
+    v14 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v15 = GetModuleVariable variable=g3
+    v16 = CheckInitialized v15 name="keys"
+    v17 = PropGet v16 key="length"
+    v18 = Convert v17 declared={type=number site=w11} illTypedCause=Assertion
+    v19 = Less v14, v18
+    Branch v19 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v20):
+    Jump -> next b4()
+  b4():
+    v21 = GetModuleVariable variable=g3
+    v22 = CheckInitialized v21 name="keys"
+    v23 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    v24 = ElemGet v22, v23
+    v25 = Convert v24 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    ElemSet v9, v25, v0
+    Jump -> next b5()
+  b5():
+    v27 = Increment v23
+    v28 = Convert v27 declared={type=number site=w10}
+    Jump -> next b2(v28)
+  b6(v29):
+    Jump -> next b7()
+  b7():
+    Return v9
+}
+data d0 root=Array{contents=anything elements=[String{value="alpha"}, String{value="beta"}, String{value="gamma"}, String{value="delta"}, String{value="epsilon"}]} module=m0

@@ -1,0 +1,140 @@
+# -- source: main.js
+# const queue = ["four", [1, 2, 3], new Float64Array(2), new Int8Array(5), new Uint16Array(7), new Int32Array(1), "ab", [4]];
+# const total = { sum: 0 };
+# function addLengths(n) {
+#   for (let i = 0; i < n; i++) {
+#     const list = queue[i & 7];
+#     if (list.length === 0) continue;
+#     total.sum = (total.sum + list.length) & 0xffff;
+#   }
+#   return total.sum;
+# }
+# globalThis.answer = addLengths(input);
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-air loops f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+# CHECK-LABEL: name="addLengths" role=Source
+# CHECK: loop #
+# CHECK-NOT: entered rarely
+# CHECK-NOT: EnterFrame
+# CHECK-NOT: LeaveFrame
+# CHECK: end of loop
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=138 fields=[{key="sum" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=4}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="sum" value=Number{}}]} module=m0
+variable g0 name="queue" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string|Array<number>|Float64Array|Int32Array|Int8Array|Uint16Array> flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="total" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = String string="four" @15
+    v3 = Data data=d0 @23
+    v4 = Convert v3 declared={type=undefined|null|Array<number> flags=[IsExpected]} @23
+    v5 = Builtin builtin=Float64Array @38
+    v6 = Integer integer=2 @51
+    v7 = Construct v5, -, v6 calleeName="Float64Array" @38 constructs
+    v8 = Convert v7 declared={type=undefined|null|Float64Array flags=[IsExpected]} @34
+    v9 = Builtin builtin=Int8Array @59
+    v10 = Integer integer=5 @69
+    v11 = Construct v9, -, v10 calleeName="Int8Array" @59 constructs
+    v12 = Convert v11 declared={type=undefined|null|Int8Array flags=[IsExpected]} @55
+    v13 = Builtin builtin=Uint16Array @77
+    v14 = Integer integer=7 @89
+    v15 = Construct v13, -, v14 calleeName="Uint16Array" @77 constructs
+    v16 = Convert v15 declared={type=undefined|null|Uint16Array flags=[IsExpected]} @73
+    v17 = Builtin builtin=Int32Array @97
+    v18 = Integer integer=1 @108
+    v19 = Construct v17, -, v18 calleeName="Int32Array" @97 constructs
+    v20 = Convert v19 declared={type=undefined|null|Int32Array flags=[IsExpected]} @93
+    v21 = String string="ab" @112
+    v22 = Data data=d1 @118
+    v23 = Convert v22 declared={type=undefined|null|Array<number> flags=[IsExpected]} @118
+    v24 = NewArray v2, v4, v8, v12, v16, v20, v21, v23 contents=undefined|null|string|Array<number>|Float64Array|Int32Array|Int8Array|Uint16Array @14
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|string|Array<number>|Float64Array|Int32Array|Int8Array|Uint16Array> flags=[IsExpected]} @14
+    PutModuleVariable v25 variable=g0 @6
+    v27 = Data data=d2 @138
+    v28 = Convert v27 declared={type=undefined|null|L0 flags=[IsExpected]} @138
+    PutModuleVariable v28 variable=g1 @130
+    v30 = Builtin builtin=GlobalThis @353
+    v31 = PropGet v30 key="globalThis" [isFreeName] @353
+    v32 = Convert v31 declared={type=builtin(GlobalThis) flags=[IsExpected]} @353
+    v33 = Builtin builtin=GlobalThis @389
+    v34 = PropGet v33 key="input" [isFreeName] @389
+    v35 = Call v1, -, v34 calleeName="addLengths" @373
+    v36 = Convert v35 declared={type=number flags=[IsExpected]} @373
+    PropSet v32, v36 key="answer" @353
+    v38 = Undefined @353
+    Return v38 @353
+}
+function f1 name="addLengths" module=m0 position=150 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @150
+  b1():
+    v1 = Integer @190
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @190
+    Jump -> next b2(v2) @186
+  b2(v3):
+    LoopHint @186
+    v5 = Convert v0 declared={type=number flags=[IsExpected]} @197
+    v6 = Less v3, v5 @193
+    Branch v6 -> taken b3(| 0, 1), notTaken b10(| 0, 1) @193
+  b3(v7, v8):
+    Jump -> next b4() @193
+  b4():
+    v9 = GetModuleVariable variable=g0 @224
+    v10 = CheckInitialized v9 name="queue" @224
+    v11 = Integer integer=7 @234
+    v12 = BitAnd v7, v11 @230
+    v13 = ElemGet v10, v12 @224
+    v14 = Convert v13 declared={type=undefined|null|string|Array<number>|Float64Array|Int32Array|Int8Array|Uint16Array flags=[IsExpected]} @224
+    v15 = PropGet v14 key="length" @246
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @246
+    v17 = Integer @262
+    v18 = StrictEq v16, v17 @246
+    Branch v18 -> taken b5(| 0), notTaken b7(| 0) @246
+  b5(v19):
+    v20 = NarrowByField v14, v19 key="length" @246
+    Jump -> next b6() @246
+  b6():
+    Jump -> next b9() @265
+  b7(v21):
+    v22 = NarrowByField v14, v21 key="length" @246
+    Jump -> next b8() @246
+  b8():
+    v23 = GetModuleVariable variable=g1 @279
+    v24 = CheckInitialized v23 name="total" @279
+    v25 = GetModuleVariable variable=g1 @292
+    v26 = CheckInitialized v25 name="total" @292
+    v27 = PropGet v26 key="sum" @292
+    v28 = Convert v27 declared={type=number flags=[IsExpected]} @292
+    v29 = PropGet v22 key="length" @304
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @304
+    v31 = Add v28, v30 @292
+    v32 = Integer integer=65535 @319
+    v33 = BitAnd v31, v32 @292
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @279
+    PropSet v24, v34 key="sum" @279
+    Jump -> next b9() @279
+  b9():
+    v36 = Increment v7 @279
+    v37 = Convert v36 declared={type=i32 flags=[IsExpected]} @200
+    Jump -> next b2(v37) @200
+  b10(v38, v39):
+    Jump -> next b11() @193
+  b11():
+    v40 = GetModuleVariable variable=g1 @340
+    v41 = CheckInitialized v40 name="total" @340
+    v42 = PropGet v41 key="sum" @340
+    v43 = Convert v42 declared={type=number flags=[IsExpected]} @340
+    Return v43 @340
+}
+# -- generated: *

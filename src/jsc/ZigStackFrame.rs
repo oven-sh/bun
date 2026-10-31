@@ -5,6 +5,7 @@ use bstr::BStr;
 
 use bun_core::Output;
 use bun_core::String as BunString;
+use bun_core::StringOrView;
 use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
@@ -13,9 +14,9 @@ use crate::{ZigStackFrameCode, ZigStackFramePosition};
 
 /// Represents a single frame in a stack trace
 #[repr(C)]
-pub struct ZigStackFrame {
-    pub function_name: BunString,
-    pub source_url: BunString,
+pub struct ZigStackFrame<'a> {
+    pub function_name: StringOrView<'a>,
+    pub source_url: StringOrView<'a>,
     pub position: ZigStackFramePosition,
     pub code_type: ZigStackFrameCode,
     pub is_async: bool,
@@ -27,7 +28,7 @@ pub struct ZigStackFrame {
     pub jsc_stack_frame_index: i32,
 }
 
-impl ZigStackFrame {
+impl ZigStackFrame<'_> {
     pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
@@ -51,10 +52,10 @@ impl ZigStackFrame {
         }
     }
 
-    pub const ZERO: ZigStackFrame = ZigStackFrame {
-        function_name: BunString::EMPTY,
+    pub const ZERO: ZigStackFrame<'static> = ZigStackFrame {
+        function_name: StringOrView::EMPTY,
         code_type: ZigStackFrameCode::NONE,
-        source_url: BunString::EMPTY,
+        source_url: StringOrView::EMPTY,
         position: ZigStackFramePosition::INVALID,
         is_async: false,
         remapped: false,

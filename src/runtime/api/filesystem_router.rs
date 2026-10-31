@@ -140,7 +140,7 @@ impl FileSystemRouter {
         // Every path is joined, absolute or empty: `reload()` names `dir` to the resolver in the resolver's spelling.
         let Some(root_dir_path) =
             path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                Fs::FileSystem::instance().top_level_dir(),
+                Fs::FileSystem::get().top_level_dir(),
                 &mut out_buf,
                 &[options.dir],
             )

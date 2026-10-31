@@ -64,17 +64,22 @@ const FFIType = {
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
 
-var ffi = globalThis.Bun.FFI;
-const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
+var ffi: $Node.FFIObject = globalThis.Bun.FFI;
+const ptr = (arg1: ArrayBufferView | ArrayBufferLike, arg2?: number) =>
+  typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
-const nativeViewSource = ffi.viewSource;
-
-const nativeLinkSymbols = ffi.linkSymbols;
 const nativeDLOpen = ffi.dlopen;
-const nativeCallback = ffi.callback;
-const closeCallback = ffi.closeCallback;
-const nativeCFunction = ffi.cfunction;
+// These throw the errors that the `Bun.FFI` functions of the same name return.
+const openLibrary: (path: unknown, symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "openLibrary");
+const linkLibrary: (symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "linkLibrary");
+const makeFunction: (options: object, name: string) => $Node.FFIFunction = $bindgen("ffi.bind.ts", "makeFunction");
+const makeCallback: (options: object, callback: unknown) => object = $bindgen("ffi.bind.ts", "makeCallback");
+const printSource: (symbols: object, isCallback?: boolean) => string | string[] = $bindgen(
+  "ffi.bind.ts",
+  "printSource",
+);
+const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
 delete ffi.callback;
 delete ffi.closeCallback;
 delete ffi.cfunction;
@@ -82,11 +87,10 @@ delete ffi.cfunction;
 class JSCallback {
   declare readonly ptr: number | null;
 
-  constructor(cb, options) {
-    const cell = nativeCallback(options, cb);
-    if (Error.isError(cell)) throw cell;
+  constructor(cb: (...args: any[]) => unknown, options: object) {
+    const cell = makeCallback(options, cb);
     Object.setPrototypeOf(cell, (new.target ?? JSCallback).prototype);
-    return cell;
+    return cell as JSCallback;
   }
 
   [Symbol.toPrimitive]() {
@@ -108,15 +112,15 @@ class JSCallback {
 
 const CString = ffi.CString;
 
-function toCString(v) {
+function toCString(v: number) {
   return v ? new CString(v) : null;
 }
 
-function FFIBuilder(params, functionToCall, name) {
+function FFIBuilder(params: unknown[], functionToCall: $Node.FFIFunction, name: string) {
   // variadic arguments can be expensive
   // most FFI functions are going to be < 5 arguments
   // so we just inline it
-  var wrap;
+  var wrap: $Node.FFIFunction;
   switch (params.length) {
     case 0:
       wrap = () => toCString(functionToCall());
@@ -171,7 +175,7 @@ const native = {
   },
 };
 
-const ccFn = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
+const ccFn: (options: object) => $Node.FFILibrary | Error = $bindgen("ffi.bind.ts", "cc");
 
 function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
@@ -193,11 +197,10 @@ function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   return path;
 }
 
-function dlopen(path, options) {
+function dlopen(path: string | URL | Bun.BunFile | undefined, options: object) {
   path = normalizePath(path);
 
-  const result = nativeDLOpen(path, options);
-  if (Error.isError(result)) throw result;
+  const result = openLibrary(path, options);
 
   // Bind it because it's a breaking change to not do so
   // Previously, it didn't need to be bound
@@ -254,25 +257,22 @@ function cc(options) {
   return result;
 }
 
-function viewSource(symbols, isCallback?) {
-  const result = nativeViewSource(symbols, isCallback);
-  if (Error.isError(result)) throw result;
+function viewSource(symbols: object, isCallback?: boolean) {
+  var result = printSource(symbols, isCallback);
   return result;
 }
 
-function linkSymbols(options) {
-  const result = nativeLinkSymbols(options);
-  if (Error.isError(result)) throw result;
+function linkSymbols(options: object) {
+  var result = linkLibrary(options);
   return result;
 }
 
 var cFunctionI = 0;
 function closeJSCFFICFunction() {}
-function CFunction(options) {
+function CFunction(options: object) {
   const identifier = `CFunction${cFunctionI++}`;
 
-  const fn = nativeCFunction(options, identifier);
-  if (Error.isError(fn)) throw fn;
+  const fn = makeFunction(options, identifier);
   fn.close = closeJSCFFICFunction;
   return fn;
 }

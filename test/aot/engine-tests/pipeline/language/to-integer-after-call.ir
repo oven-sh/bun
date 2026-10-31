@@ -1,0 +1,676 @@
+# -- source: to-integer-after-call.ts
+# // A quotient, and Math.trunc of a product, made ahead of a test and converted to an integer behind it and behind a call of another function: the function is split there.
+# declare const console: { log(...values: unknown[]): void };
+# const noted: string[] = [];
+# function note(text: string, depth: number): void { if (depth > 0) note(text + ".", depth - 1); else noted.push(text); }
+# function quotientBehindCall(k: number, d: number): number { const q = (k + 9) / d; if (k > 1) { note("quotient", 2); return q | 0; } return -1; }
+# function floorBehindCall(k: number, d: number): number { const q = (k + 9) / d; if (k > 1) { note("floor", 2); return Math.floor(q); } return -1; }
+# function truncBehindCall(k: number): number { const t = Math.trunc(k * 2.75); if (k > 1) { note("trunc", 2); return t & 255; } return -1; }
+# function first(): number { let t = 0; for (let k = 1; k < 6; k++) t += quotientBehindCall(k, k) + floorBehindCall(k, 3) + truncBehindCall(k); return t; }
+# function second(): number { let t = 0; for (let k = 3; k < 9; k++) t += quotientBehindCall(k, 2) * 2 + floorBehindCall(k, k) + truncBehindCall(k + 1); return t; }
+# console.log(first(), second(), quotientBehindCall(7, 2), floorBehindCall(9, 4), truncBehindCall(5), noted.length);
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="to-integer-after-call.ts" displayPath="to-integer-after-call.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=273 kind=Parameter
+typesite w1 module=m0 position=287 kind=Parameter
+typesite w2 module=m0 position=407 kind=Parameter
+typesite w3 module=m0 position=418 kind=Parameter
+typesite w4 module=m0 position=379 kind=Result
+typesite w5 module=m0 position=550 kind=Parameter
+typesite w6 module=m0 position=561 kind=Parameter
+typesite w7 module=m0 position=525 kind=Result
+typesite w8 module=m0 position=698 kind=Parameter
+typesite w9 module=m0 position=673 kind=Result
+typesite w10 module=m0 position=237 kind=Variable
+typesite w11 module=m0 position=813 kind=Result
+typesite w12 module=m0 position=967 kind=Result
+typesite w13 module=m0 position=1142 kind=CallResult
+typesite w14 module=m0 position=1151 kind=CallResult
+typesite w15 module=m0 position=1161 kind=CallResult
+typesite w16 module=m0 position=1187 kind=CallResult
+typesite w17 module=m0 position=1210 kind=CallResult
+typesite w18 module=m0 position=1230 kind=PropertyRead
+typesite w19 module=m0 position=359 kind=CallResult
+typesite w20 module=m0 position=445 kind=Variable
+typesite w21 module=m0 position=588 kind=Variable
+typesite w22 module=m0 position=643 kind=CallResult
+typesite w23 module=m0 position=729 kind=CallResult
+typesite w24 module=m0 position=844 kind=Variable
+typesite w25 module=m0 position=860 kind=Variable
+typesite w26 module=m0 position=884 kind=CallResult
+typesite w27 module=m0 position=911 kind=CallResult
+typesite w28 module=m0 position=935 kind=CallResult
+typesite w29 module=m0 position=999 kind=Variable
+typesite w30 module=m0 position=1015 kind=Variable
+typesite w31 module=m0 position=1039 kind=CallResult
+typesite w32 module=m0 position=1070 kind=CallResult
+typesite w33 module=m0 position=1094 kind=CallResult
+data d0 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="quotientBehindCall" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="floorBehindCall" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="truncBehindCall" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="noted" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w10 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f6 @0
+    v3 = Convert v2 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = Data data=d0 @255
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> site=w10 flags=[OmitsNull, OmitsUndefined]} @255
+    PutModuleVariable v5 variable=g4 @237
+    v7 = Builtin builtin=GlobalThis @1130
+    v8 = PropGet v7 key="console" [isFreeName] @1130
+    v9 = Convert v8 declared={type=builtin(Console) flags=[IsExpected]} @1130
+    v10 = PropGet v9 key="log" @1130
+    v11 = Convert v10 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1130
+    v12 = Call v1 calleeName="first" @1142
+    v13 = Convert v12 declared={type=number site=w13} @1142
+    v14 = Call v3 calleeName="second" @1151
+    v15 = Convert v14 declared={type=number site=w14} @1151
+    v16 = GetModuleVariable variable=g1 @1161
+    v17 = Integer integer=7 @1180
+    v18 = Integer integer=2 @1183
+    v19 = Call v16, -, v17, v18 calleeName="quotientBehindCall" @1161
+    v20 = Convert v19 declared={type=number site=w15} @1161
+    v21 = GetModuleVariable variable=g2 @1187
+    v22 = Integer integer=9 @1203
+    v23 = Integer integer=4 @1206
+    v24 = Call v21, -, v22, v23 calleeName="floorBehindCall" @1187
+    v25 = Convert v24 declared={type=number site=w16} @1187
+    v26 = GetModuleVariable variable=g3 @1210
+    v27 = Integer integer=5 @1226
+    v28 = Call v26, -, v27 calleeName="truncBehindCall" @1210
+    v29 = Convert v28 declared={type=number site=w17} @1210
+    v30 = PropGet v5 key="length" @1230
+    v31 = Convert v30 declared={type=number site=w18} illTypedCause=Assertion @1230
+    v32 = Call v11, v9, v13, v15, v20, v25, v29, v31 calleeKey="log" calleeName="console.log" @1138
+    v33 = Undefined @1130
+    Return v33 @1130
+}
+function f1 name="note" module=m0 position=259 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w1}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    Jump -> next b1() @259
+  b1():
+    v2 = Integer @322
+    v3 = Greater v1, v2 @314
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @314
+  b2(v4):
+    Jump -> next b3() @314
+  b3():
+    v5 = GetModuleVariable variable=g0 @325
+    v6 = String string="." @337
+    v7 = Add v0, v6 @330
+    v8 = Integer integer=1 @350
+    v9 = Sub v4, v8 @342
+    v10 = Call v5, -, v7, v9 calleeName="note" @325
+    Jump -> next b6() @325
+  b4(v11):
+    Jump -> next b5() @314
+  b5():
+    v12 = GetModuleVariable variable=g4 @359
+    v13 = CheckInitialized v12 name="noted" @359
+    v14 = PropGet v13 key="push" @359
+    v15 = Call v14, v13, v0 calleeKey="push" calleeName="noted.push" @365
+    v16 = Convert v15 declared={type=number site=w19} illTypedCause=DeclarationWithoutBody @359
+    Jump -> next b6() @359
+  b6():
+    v17 = Undefined @359
+    Return v17 @359
+}
+function f2 name="quotientBehindCall" module=m0 position=379 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @379
+  b1():
+    v2 = Integer integer=9 @454
+    v3 = Add v0, v2 @450
+    v4 = Div v3, v1 @445
+    v5 = Convert v4 declared={type=number site=w20} @449
+    v6 = Integer integer=1 @470
+    v7 = Greater v0, v6 @466
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0) @466
+  b2(v8):
+    Jump -> next b3() @466
+  b3():
+    v9 = GetModuleVariable variable=g0 @475
+    v10 = String string="quotient" @480
+    v11 = Integer integer=2 @492
+    v12 = Call v9, -, v10, v11 calleeName="note" @475
+    v13 = Integer @507
+    v14 = BitOr v5, v13 @503
+    v15 = Convert v14 declared={type=number site=w4} @503
+    Return v15 @503
+  b4(v16):
+    Jump -> next b5() @466
+  b5():
+    v17 = Integer integer=-1 @519
+    v18 = Convert v17 declared={type=number site=w4} @519
+    Return v18 @519
+}
+function f3 name="floorBehindCall" module=m0 position=525 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w5}, {type=number site=w6}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @525
+  b1():
+    v2 = Integer integer=9 @597
+    v3 = Add v0, v2 @593
+    v4 = Div v3, v1 @588
+    v5 = Convert v4 declared={type=number site=w21} @592
+    v6 = Integer integer=1 @613
+    v7 = Greater v0, v6 @609
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0) @609
+  b2(v8):
+    Jump -> next b3() @609
+  b3():
+    v9 = GetModuleVariable variable=g0 @618
+    v10 = String string="floor" @623
+    v11 = Integer integer=2 @632
+    v12 = Call v9, -, v10, v11 calleeName="note" @618
+    v13 = Builtin builtin=Math @643
+    v14 = Builtin builtin=MathFloor @643
+    v15 = Call v14, v13, v5 calleeName="Math.floor" @648
+    ReturnCall v15 casts=[{declared={type=number site=w22}}, {declared={type=number site=w7}}] @648
+  b4(v16):
+    Jump -> next b5() @609
+  b5():
+    v17 = Integer integer=-1 @667
+    v18 = Convert v17 declared={type=number site=w7} @667
+    Return v18 @667
+}
+function f4 name="truncBehindCall" module=m0 position=673 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w8}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @673
+  b1():
+    v1 = Builtin builtin=Math @729
+    v2 = Builtin builtin=MathTrunc @729
+    v3 = Double number=2.75 @744
+    v4 = Mul v0, v3 @740
+    v5 = Call v2, v1, v4 calleeName="Math.trunc" @734
+    v6 = Convert v5 declared={type=number site=w23} illTypedCause=DeclarationWithoutBody @729
+    v7 = Integer integer=1 @759
+    v8 = Greater v0, v7 @755
+    Branch v8 -> taken b2(| 0), notTaken b4(| 0) @755
+  b2(v9):
+    Jump -> next b3() @755
+  b3():
+    v10 = GetModuleVariable variable=g0 @764
+    v11 = String string="trunc" @769
+    v12 = Integer integer=2 @778
+    v13 = Call v10, -, v11, v12 calleeName="note" @764
+    v14 = Integer integer=255 @793
+    v15 = BitAnd v6, v14 @789
+    v16 = Convert v15 declared={type=number site=w9} @789
+    Return v16 @789
+  b4(v17):
+    Jump -> next b5() @755
+  b5():
+    v18 = Integer integer=-1 @807
+    v19 = Convert v18 declared={type=number site=w9} @807
+    Return v19 @807
+}
+function f5 name="first" module=m0 position=813 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @813
+  b1():
+    v0 = Integer @848
+    v1 = Convert v0 declared={type=number site=w24} @848
+    v2 = Integer integer=1 @864
+    v3 = Convert v2 declared={type=number site=w25} @864
+    Jump -> next b2(v1, v3) @860
+  b2(v4: number, v5: number):
+    LoopHint @860
+    v7 = Integer integer=6 @871
+    v8 = Less v5, v7 @867
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0) @867
+  b3(v9):
+    Jump -> next b4() @867
+  b4():
+    v10 = GetModuleVariable variable=g1 @884
+    v11 = Call v10, -, v9, v9 calleeName="quotientBehindCall" @884
+    v12 = Convert v11 declared={type=number site=w26} @884
+    v13 = GetModuleVariable variable=g2 @911
+    v14 = Integer integer=3 @930
+    v15 = Call v13, -, v9, v14 calleeName="floorBehindCall" @911
+    v16 = Convert v15 declared={type=number site=w27} @911
+    v17 = Add v12, v16 @884
+    v18 = GetModuleVariable variable=g3 @935
+    v19 = Call v18, -, v9 calleeName="truncBehindCall" @935
+    v20 = Convert v19 declared={type=number site=w28} @935
+    v21 = Add v17, v20 @884
+    v22 = Add v4, v21 @884
+    v23 = Convert v22 declared={type=number site=w24} @879
+    Jump -> next b5() @879
+  b5():
+    v24 = Increment v9 @884
+    v25 = Convert v24 declared={type=number site=w25} @874
+    Jump -> next b2(v23, v25) @874
+  b6(v26):
+    Jump -> next b7() @867
+  b7():
+    v27 = Convert v4 declared={type=number site=w11} @962
+    Return v27 @962
+}
+function f6 name="second" module=m0 position=967 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @967
+  b1():
+    v0 = Integer @1003
+    v1 = Convert v0 declared={type=number site=w29} @1003
+    v2 = Integer integer=3 @1019
+    v3 = Convert v2 declared={type=number site=w30} @1019
+    Jump -> next b2(v1, v3) @1015
+  b2(v4: number, v5: number):
+    LoopHint @1015
+    v7 = Integer integer=9 @1026
+    v8 = Less v5, v7 @1022
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0) @1022
+  b3(v9):
+    Jump -> next b4() @1022
+  b4():
+    v10 = GetModuleVariable variable=g1 @1039
+    v11 = Integer integer=2 @1061
+    v12 = Call v10, -, v9, v11 calleeName="quotientBehindCall" @1039
+    v13 = Convert v12 declared={type=number site=w31} @1039
+    v14 = Integer integer=2 @1066
+    v15 = Mul v13, v14 @1039
+    v16 = GetModuleVariable variable=g2 @1070
+    v17 = Call v16, -, v9, v9 calleeName="floorBehindCall" @1070
+    v18 = Convert v17 declared={type=number site=w32} @1070
+    v19 = Add v15, v18 @1039
+    v20 = GetModuleVariable variable=g3 @1094
+    v21 = Integer integer=1 @1114
+    v22 = Add v9, v21 @1110
+    v23 = Call v20, -, v22 calleeName="truncBehindCall" @1094
+    v24 = Convert v23 declared={type=number site=w33} @1094
+    v25 = Add v19, v24 @1039
+    v26 = Add v4, v25 @1039
+    v27 = Convert v26 declared={type=number site=w29} @1034
+    Jump -> next b5() @1034
+  b5():
+    v28 = Increment v9 @1039
+    v29 = Convert v28 declared={type=number site=w30} @1029
+    Jump -> next b2(v27, v29) @1029
+  b6(v30):
+    Jump -> next b7() @1022
+  b7():
+    v31 = Convert v4 declared={type=number site=w12} @1125
+    Return v31 @1125
+}
+# -- generated: f0 note quotientBehindCall floorBehindCall truncBehindCall first second
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: Array<string, Contiguous> = NewArray contents=string allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v1: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v1 variable=g4
+# CHECK-NEXT: v3: number = CallDirect function=f5 accessSite=2
+# CHECK-NEXT: v4: number = CallDirect function=f6 accessSite=3
+# CHECK-NEXT: v5: 7 = Integer integer=7
+# CHECK-NEXT: v6: 2 = Integer integer=2
+# CHECK-NEXT: v7: i32 = CallDirect v5, v6 function=f2 accessSite=4
+# CHECK-NEXT: v8: 9 = Integer integer=9
+# CHECK-NEXT: v9: 4 = Integer integer=4
+# CHECK-NEXT: v10: int[-1, 18] = CallDirect v8, v9 function=f3 accessSite=5
+# CHECK-NEXT: v11: 5 = Integer integer=5
+# CHECK-NEXT: v12: int[-1, 255] = CallDirect v11 function=f4 accessSite=6
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=7
+# CHECK-NEXT: v14: undefined = CallBuiltin -, v3, v4, v7, v10, v12, v13 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="note"
+# CHECK: module=m0 position=259 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=int|whole site=w1}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: int|whole):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean = Greater v1, v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: "." = String string="."
+# CHECK-NEXT: v5: string = Add v0, v4
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: int|whole = Sub v1, v6
+# CHECK-NEXT: v8: undefined = CallDirect v5, v7 function=f1 accessSite=9 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
+# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v9, v0 overload=ArrayPrototypePush/0 accessSite=11
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="quotientBehindCall"
+# CHECK: module=m0 position=379 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[1, 8] site=w2}, {type=int[1, 5] site=w3}] results=[{type=i32 site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=475 module=m0}] {
+# CHECK-NEXT: b0(v0: int[1, 8], v1: int[1, 5]):
+# CHECK-NEXT: v2: 9 = Integer integer=9
+# CHECK-NEXT: v3: int[10, 17] = Add v0, v2
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: boolean = Greater v0, v4
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: "quotient." = String string="quotient."
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: undefined = CallDirect v6, v7 function=f1 accessSite=9 [isNeverInlined]
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: int[0, 17] = DivideIntegers v3, v1 rounding=ToInt32
+# CHECK-NEXT: v11: int[0, 31] = BitOr v10, v9
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v12: -1 = Integer integer=-1
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="floorBehindCall"
+# CHECK: module=m0 position=525 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[1, 9] site=w5}, {type=int[3, 8] site=w6}] results=[{type=int[-1, 18] site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=618 module=m0}] {
+# CHECK-NEXT: b0(v0: int[1, 9], v1: int[3, 8]):
+# CHECK-NEXT: v2: 9 = Integer integer=9
+# CHECK-NEXT: v3: int[10, 18] = Add v0, v2
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: boolean = Greater v0, v4
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: "floor." = String string="floor."
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: undefined = CallDirect v6, v7 function=f1 accessSite=9 [isNeverInlined]
+# CHECK-NEXT: v9: int[0, 18] = DivideIntegers v3, v1 @648 tail
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: -1 = Integer integer=-1
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="truncBehindCall"
+# CHECK: module=m0 position=673 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 9] site=w8}] results=[{type=int[-1, 255] site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=764 module=m0}] {
+# CHECK-NEXT: b0(v0: int[1, 9]):
+# CHECK-NEXT: v1: fractional = Double number=2.75
+# CHECK-NEXT: v2: number = Mul v0, v1
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: boolean = Greater v0, v3
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: "trunc." = String string="trunc."
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: undefined = CallDirect v5, v6 function=f1 accessSite=9 [isNeverInlined]
+# CHECK-NEXT: v8: 255 = Integer integer=255
+# CHECK-NEXT: v9: int[0, 255] = BitAnd v2, v8
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: -1 = Integer integer=-1
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="first"
+# CHECK: module=m0 position=813 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=935 module=m0}, {callee=f3 callPosition=911 module=m0}, {callee=f2 callPosition=884 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: -3 = Integer integer=-3
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: 11 = Integer integer=11
+# CHECK-NEXT: v3: number = Div v2, v1
+# CHECK-NEXT: v4: "quotient" = String string="quotient"
+# CHECK-NEXT: v5: 2 = Integer integer=2
+# CHECK-NEXT: v6: undefined = CallDirect v4, v5 function=f1 accessSite=12
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: i32 = BitOr v3, v7
+# CHECK-NEXT: v9: 3 = Integer integer=3
+# CHECK-NEXT: v10: number = Div v2, v9
+# CHECK-NEXT: v11: "floor" = String string="floor"
+# CHECK-NEXT: v12: 2 = Integer integer=2
+# CHECK-NEXT: v13: undefined = CallDirect v11, v12 function=f1 accessSite=13
+# CHECK-NEXT: v14: int|whole = CallBuiltin -, v10 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v15: int|whole = Add v8, v14
+# CHECK-NEXT: v16: fractional = Double number=2.75
+# CHECK-NEXT: v17: number = Mul v1, v16
+# CHECK-NEXT: v18: "trunc" = String string="trunc"
+# CHECK-NEXT: v19: 2 = Integer integer=2
+# CHECK-NEXT: v20: undefined = CallDirect v18, v19 function=f1 accessSite=16
+# CHECK-NEXT: v21: 255 = Integer integer=255
+# CHECK-NEXT: v22: int[0, 255] = BitAnd v17, v21
+# CHECK-NEXT: v23: int|whole = Add v15, v22
+# CHECK-NEXT: v24: int|whole = Add v0, v23
+# CHECK-NEXT: v25: 3 = Integer integer=3
+# CHECK-NEXT: v26: 12 = Integer integer=12
+# CHECK-NEXT: v27: number = Div v26, v25
+# CHECK-NEXT: v28: "quotient" = String string="quotient"
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: v30: undefined = CallDirect v28, v29 function=f1 accessSite=12
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: i32 = BitOr v27, v31
+# CHECK-NEXT: v33: 3 = Integer integer=3
+# CHECK-NEXT: v34: number = Div v26, v33
+# CHECK-NEXT: v35: "floor" = String string="floor"
+# CHECK-NEXT: v36: 2 = Integer integer=2
+# CHECK-NEXT: v37: undefined = CallDirect v35, v36 function=f1 accessSite=13
+# CHECK-NEXT: v38: int|whole = CallBuiltin -, v34 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v39: int|whole = Add v32, v38
+# CHECK-NEXT: v40: fractional = Double number=2.75
+# CHECK-NEXT: v41: number = Mul v25, v40
+# CHECK-NEXT: v42: "trunc" = String string="trunc"
+# CHECK-NEXT: v43: 2 = Integer integer=2
+# CHECK-NEXT: v44: undefined = CallDirect v42, v43 function=f1 accessSite=16
+# CHECK-NEXT: v45: 255 = Integer integer=255
+# CHECK-NEXT: v46: int[0, 255] = BitAnd v41, v45
+# CHECK-NEXT: v47: int|whole = Add v39, v46
+# CHECK-NEXT: v48: int|whole = Add v24, v47
+# CHECK-NEXT: v49: 4 = Integer integer=4
+# CHECK-NEXT: v50: 13 = Integer integer=13
+# CHECK-NEXT: v51: number = Div v50, v49
+# CHECK-NEXT: v52: "quotient" = String string="quotient"
+# CHECK-NEXT: v53: 2 = Integer integer=2
+# CHECK-NEXT: v54: undefined = CallDirect v52, v53 function=f1 accessSite=12
+# CHECK-NEXT: v55: 0 = Integer
+# CHECK-NEXT: v56: i32 = BitOr v51, v55
+# CHECK-NEXT: v57: 3 = Integer integer=3
+# CHECK-NEXT: v58: number = Div v50, v57
+# CHECK-NEXT: v59: "floor" = String string="floor"
+# CHECK-NEXT: v60: 2 = Integer integer=2
+# CHECK-NEXT: v61: undefined = CallDirect v59, v60 function=f1 accessSite=13
+# CHECK-NEXT: v62: int|whole = CallBuiltin -, v58 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v63: int|whole = Add v56, v62
+# CHECK-NEXT: v64: fractional = Double number=2.75
+# CHECK-NEXT: v65: number = Mul v49, v64
+# CHECK-NEXT: v66: "trunc" = String string="trunc"
+# CHECK-NEXT: v67: 2 = Integer integer=2
+# CHECK-NEXT: v68: undefined = CallDirect v66, v67 function=f1 accessSite=16
+# CHECK-NEXT: v69: 255 = Integer integer=255
+# CHECK-NEXT: v70: int[0, 255] = BitAnd v65, v69
+# CHECK-NEXT: v71: int|whole = Add v63, v70
+# CHECK-NEXT: v72: int|whole = Add v48, v71
+# CHECK-NEXT: v73: 5 = Integer integer=5
+# CHECK-NEXT: v74: 14 = Integer integer=14
+# CHECK-NEXT: v75: number = Div v74, v73
+# CHECK-NEXT: v76: "quotient" = String string="quotient"
+# CHECK-NEXT: v77: 2 = Integer integer=2
+# CHECK-NEXT: v78: undefined = CallDirect v76, v77 function=f1 accessSite=12
+# CHECK-NEXT: v79: 0 = Integer
+# CHECK-NEXT: v80: i32 = BitOr v75, v79
+# CHECK-NEXT: v81: 3 = Integer integer=3
+# CHECK-NEXT: v82: number = Div v74, v81
+# CHECK-NEXT: v83: "floor" = String string="floor"
+# CHECK-NEXT: v84: 2 = Integer integer=2
+# CHECK-NEXT: v85: undefined = CallDirect v83, v84 function=f1 accessSite=13
+# CHECK-NEXT: v86: int|whole = CallBuiltin -, v82 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v87: int|whole = Add v80, v86
+# CHECK-NEXT: v88: fractional = Double number=2.75
+# CHECK-NEXT: v89: number = Mul v73, v88
+# CHECK-NEXT: v90: "trunc" = String string="trunc"
+# CHECK-NEXT: v91: 2 = Integer integer=2
+# CHECK-NEXT: v92: undefined = CallDirect v90, v91 function=f1 accessSite=16
+# CHECK-NEXT: v93: 255 = Integer integer=255
+# CHECK-NEXT: v94: int[0, 255] = BitAnd v89, v93
+# CHECK-NEXT: v95: int|whole = Add v87, v94
+# CHECK-NEXT: v96: int|whole = Add v72, v95
+# CHECK-NEXT: Return v96
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="second"
+# CHECK: module=m0 position=967 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=1094 module=m0}, {callee=f3 callPosition=1070 module=m0}, {callee=f2 callPosition=1039 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: 12 = Integer integer=12
+# CHECK-NEXT: v4: number = Div v3, v2
+# CHECK-NEXT: v5: "quotient" = String string="quotient"
+# CHECK-NEXT: v6: 2 = Integer integer=2
+# CHECK-NEXT: v7: undefined = CallDirect v5, v6 function=f1 accessSite=12
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: i32 = BitOr v4, v8
+# CHECK-NEXT: v10: 2 = Integer integer=2
+# CHECK-NEXT: v11: int[-4294967296, 4294967294] = Mul v9, v10
+# CHECK-NEXT: v12: number = Div v3, v1
+# CHECK-NEXT: v13: "floor" = String string="floor"
+# CHECK-NEXT: v14: 2 = Integer integer=2
+# CHECK-NEXT: v15: undefined = CallDirect v13, v14 function=f1 accessSite=13
+# CHECK-NEXT: v16: int|whole = CallBuiltin -, v12 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v17: int|whole = Add v11, v16
+# CHECK-NEXT: v18: 4 = Integer integer=4
+# CHECK-NEXT: v19: fractional = Double number=2.75
+# CHECK-NEXT: v20: number = Mul v18, v19
+# CHECK-NEXT: v21: "trunc" = String string="trunc"
+# CHECK-NEXT: v22: 2 = Integer integer=2
+# CHECK-NEXT: v23: undefined = CallDirect v21, v22 function=f1 accessSite=16
+# CHECK-NEXT: v24: 255 = Integer integer=255
+# CHECK-NEXT: v25: int[0, 255] = BitAnd v20, v24
+# CHECK-NEXT: v26: int|whole = Add v17, v25
+# CHECK-NEXT: v27: int|whole = Add v0, v26
+# CHECK-NEXT: v28: 4 = Integer integer=4
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: v30: 13 = Integer integer=13
+# CHECK-NEXT: v31: number = Div v30, v29
+# CHECK-NEXT: v32: "quotient" = String string="quotient"
+# CHECK-NEXT: v33: 2 = Integer integer=2
+# CHECK-NEXT: v34: undefined = CallDirect v32, v33 function=f1 accessSite=12
+# CHECK-NEXT: v35: 0 = Integer
+# CHECK-NEXT: v36: i32 = BitOr v31, v35
+# CHECK-NEXT: v37: 2 = Integer integer=2
+# CHECK-NEXT: v38: int[-4294967296, 4294967294] = Mul v36, v37
+# CHECK-NEXT: v39: number = Div v30, v28
+# CHECK-NEXT: v40: "floor" = String string="floor"
+# CHECK-NEXT: v41: 2 = Integer integer=2
+# CHECK-NEXT: v42: undefined = CallDirect v40, v41 function=f1 accessSite=13
+# CHECK-NEXT: v43: int|whole = CallBuiltin -, v39 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v44: int|whole = Add v38, v43
+# CHECK-NEXT: v45: 5 = Integer integer=5
+# CHECK-NEXT: v46: fractional = Double number=2.75
+# CHECK-NEXT: v47: number = Mul v45, v46
+# CHECK-NEXT: v48: "trunc" = String string="trunc"
+# CHECK-NEXT: v49: 2 = Integer integer=2
+# CHECK-NEXT: v50: undefined = CallDirect v48, v49 function=f1 accessSite=16
+# CHECK-NEXT: v51: 255 = Integer integer=255
+# CHECK-NEXT: v52: int[0, 255] = BitAnd v47, v51
+# CHECK-NEXT: v53: int|whole = Add v44, v52
+# CHECK-NEXT: v54: int|whole = Add v27, v53
+# CHECK-NEXT: v55: 5 = Integer integer=5
+# CHECK-NEXT: v56: 2 = Integer integer=2
+# CHECK-NEXT: v57: 14 = Integer integer=14
+# CHECK-NEXT: v58: number = Div v57, v56
+# CHECK-NEXT: v59: "quotient" = String string="quotient"
+# CHECK-NEXT: v60: 2 = Integer integer=2
+# CHECK-NEXT: v61: undefined = CallDirect v59, v60 function=f1 accessSite=12
+# CHECK-NEXT: v62: 0 = Integer
+# CHECK-NEXT: v63: i32 = BitOr v58, v62
+# CHECK-NEXT: v64: 2 = Integer integer=2
+# CHECK-NEXT: v65: int[-4294967296, 4294967294] = Mul v63, v64
+# CHECK-NEXT: v66: number = Div v57, v55
+# CHECK-NEXT: v67: "floor" = String string="floor"
+# CHECK-NEXT: v68: 2 = Integer integer=2
+# CHECK-NEXT: v69: undefined = CallDirect v67, v68 function=f1 accessSite=13
+# CHECK-NEXT: v70: int|whole = CallBuiltin -, v66 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v71: int|whole = Add v65, v70
+# CHECK-NEXT: v72: 6 = Integer integer=6
+# CHECK-NEXT: v73: fractional = Double number=2.75
+# CHECK-NEXT: v74: number = Mul v72, v73
+# CHECK-NEXT: v75: "trunc" = String string="trunc"
+# CHECK-NEXT: v76: 2 = Integer integer=2
+# CHECK-NEXT: v77: undefined = CallDirect v75, v76 function=f1 accessSite=16
+# CHECK-NEXT: v78: 255 = Integer integer=255
+# CHECK-NEXT: v79: int[0, 255] = BitAnd v74, v78
+# CHECK-NEXT: v80: int|whole = Add v71, v79
+# CHECK-NEXT: v81: int|whole = Add v54, v80
+# CHECK-NEXT: v82: 6 = Integer integer=6
+# CHECK-NEXT: v83: 2 = Integer integer=2
+# CHECK-NEXT: v84: 15 = Integer integer=15
+# CHECK-NEXT: v85: number = Div v84, v83
+# CHECK-NEXT: v86: "quotient" = String string="quotient"
+# CHECK-NEXT: v87: 2 = Integer integer=2
+# CHECK-NEXT: v88: undefined = CallDirect v86, v87 function=f1 accessSite=12
+# CHECK-NEXT: v89: 0 = Integer
+# CHECK-NEXT: v90: i32 = BitOr v85, v89
+# CHECK-NEXT: v91: 2 = Integer integer=2
+# CHECK-NEXT: v92: int[-4294967296, 4294967294] = Mul v90, v91
+# CHECK-NEXT: v93: number = Div v84, v82
+# CHECK-NEXT: v94: "floor" = String string="floor"
+# CHECK-NEXT: v95: 2 = Integer integer=2
+# CHECK-NEXT: v96: undefined = CallDirect v94, v95 function=f1 accessSite=13
+# CHECK-NEXT: v97: int|whole = CallBuiltin -, v93 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v98: int|whole = Add v92, v97
+# CHECK-NEXT: v99: 7 = Integer integer=7
+# CHECK-NEXT: v100: fractional = Double number=2.75
+# CHECK-NEXT: v101: number = Mul v99, v100
+# CHECK-NEXT: v102: "trunc" = String string="trunc"
+# CHECK-NEXT: v103: 2 = Integer integer=2
+# CHECK-NEXT: v104: undefined = CallDirect v102, v103 function=f1 accessSite=16
+# CHECK-NEXT: v105: 255 = Integer integer=255
+# CHECK-NEXT: v106: int[0, 255] = BitAnd v101, v105
+# CHECK-NEXT: v107: int|whole = Add v98, v106
+# CHECK-NEXT: v108: int|whole = Add v81, v107
+# CHECK-NEXT: v109: 7 = Integer integer=7
+# CHECK-NEXT: v110: 2 = Integer integer=2
+# CHECK-NEXT: v111: 16 = Integer integer=16
+# CHECK-NEXT: v112: number = Div v111, v110
+# CHECK-NEXT: v113: "quotient" = String string="quotient"
+# CHECK-NEXT: v114: 2 = Integer integer=2
+# CHECK-NEXT: v115: undefined = CallDirect v113, v114 function=f1 accessSite=12
+# CHECK-NEXT: v116: 0 = Integer
+# CHECK-NEXT: v117: i32 = BitOr v112, v116
+# CHECK-NEXT: v118: 2 = Integer integer=2
+# CHECK-NEXT: v119: int[-4294967296, 4294967294] = Mul v117, v118
+# CHECK-NEXT: v120: number = Div v111, v109
+# CHECK-NEXT: v121: "floor" = String string="floor"
+# CHECK-NEXT: v122: 2 = Integer integer=2
+# CHECK-NEXT: v123: undefined = CallDirect v121, v122 function=f1 accessSite=13
+# CHECK-NEXT: v124: int|whole = CallBuiltin -, v120 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v125: int|whole = Add v119, v124
+# CHECK-NEXT: v126: 8 = Integer integer=8
+# CHECK-NEXT: v127: fractional = Double number=2.75
+# CHECK-NEXT: v128: number = Mul v126, v127
+# CHECK-NEXT: v129: "trunc" = String string="trunc"
+# CHECK-NEXT: v130: 2 = Integer integer=2
+# CHECK-NEXT: v131: undefined = CallDirect v129, v130 function=f1 accessSite=16
+# CHECK-NEXT: v132: 255 = Integer integer=255
+# CHECK-NEXT: v133: int[0, 255] = BitAnd v128, v132
+# CHECK-NEXT: v134: int|whole = Add v125, v133
+# CHECK-NEXT: v135: int|whole = Add v108, v134
+# CHECK-NEXT: v136: 8 = Integer integer=8
+# CHECK-NEXT: v137: 2 = Integer integer=2
+# CHECK-NEXT: v138: 17 = Integer integer=17
+# CHECK-NEXT: v139: number = Div v138, v137
+# CHECK-NEXT: v140: "quotient" = String string="quotient"
+# CHECK-NEXT: v141: 2 = Integer integer=2
+# CHECK-NEXT: v142: undefined = CallDirect v140, v141 function=f1 accessSite=12
+# CHECK-NEXT: v143: 0 = Integer
+# CHECK-NEXT: v144: i32 = BitOr v139, v143
+# CHECK-NEXT: v145: 2 = Integer integer=2
+# CHECK-NEXT: v146: int[-4294967296, 4294967294] = Mul v144, v145
+# CHECK-NEXT: v147: number = Div v138, v136
+# CHECK-NEXT: v148: "floor" = String string="floor"
+# CHECK-NEXT: v149: 2 = Integer integer=2
+# CHECK-NEXT: v150: undefined = CallDirect v148, v149 function=f1 accessSite=13
+# CHECK-NEXT: v151: int|whole = CallBuiltin -, v147 overload=MathFloor/0 accessSite=14 @648:2 tail
+# CHECK-NEXT: v152: int|whole = Add v146, v151
+# CHECK-NEXT: v153: 9 = Integer integer=9
+# CHECK-NEXT: v154: fractional = Double number=2.75
+# CHECK-NEXT: v155: number = Mul v153, v154
+# CHECK-NEXT: v156: "trunc" = String string="trunc"
+# CHECK-NEXT: v157: 2 = Integer integer=2
+# CHECK-NEXT: v158: undefined = CallDirect v156, v157 function=f1 accessSite=16
+# CHECK-NEXT: v159: 255 = Integer integer=255
+# CHECK-NEXT: v160: int[0, 255] = BitAnd v155, v159
+# CHECK-NEXT: v161: int|whole = Add v152, v160
+# CHECK-NEXT: v162: int|whole = Add v135, v161
+# CHECK-NEXT: Return v162
+# CHECK-NEXT: }

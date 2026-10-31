@@ -12,14 +12,14 @@ pub struct JsxBooleanValue {
     assume_undefined_is_false: bool,
 }
 
-const OMIT_BOOLEAN: Message = Message::new("omitBoolean", "Value must be omitted for boolean attribute `{{propName}}`");
-const SET_BOOLEAN: Message = Message::new("setBoolean", "Value must be set for boolean attribute `{{propName}}`");
-const OMIT_PROP_AND_BOOLEAN: Message =
-    Message::new("omitPropAndBoolean", "Value must be omitted for `false` attribute: `{{propName}}`");
-const BOOLEAN_VALUE: Message = Message::new("", "Value must be omitted for boolean attribute \"{{attr}}\"");
-const BOOLEAN_VALUE_ALWAYS: Message = Message::new("", "Value must be set for boolean attribute \"{{attr}}\"");
-const BOOLEAN_VALUE_UNDEFINED_FALSE: Message =
-    Message::new("", "Value must be omitted for `false` attribute \"{{attr}}\"");
+const OMIT_BOOLEAN: &Message = &Message::new("omitBoolean", "Value must be omitted for boolean attribute `{{propName}}`");
+const SET_BOOLEAN: &Message = &Message::new("setBoolean", "Value must be set for boolean attribute `{{propName}}`");
+const OMIT_PROP_AND_BOOLEAN: &Message =
+    &Message::new("omitPropAndBoolean", "Value must be omitted for `false` attribute: `{{propName}}`");
+const BOOLEAN_VALUE: &Message = &Message::new("", "Value must be omitted for boolean attribute \"{{attr}}\"");
+const BOOLEAN_VALUE_ALWAYS: &Message = &Message::new("", "Value must be set for boolean attribute \"{{attr}}\"");
+const BOOLEAN_VALUE_UNDEFINED_FALSE: &Message =
+    &Message::new("", "Value must be omitted for `false` attribute \"{{attr}}\"");
 
 impl Rule for JsxBooleanValue {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-boolean-value", Kind::None).fixable(Fixable::Code);

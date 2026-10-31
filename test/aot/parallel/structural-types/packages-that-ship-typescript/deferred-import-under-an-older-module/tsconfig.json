@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "typeRoots": ["./no-types-here"],
+    "module": "es2022",
+    "moduleResolution": "bundler"
+  }
+}

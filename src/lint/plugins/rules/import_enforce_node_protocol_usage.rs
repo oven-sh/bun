@@ -10,8 +10,8 @@ pub struct EnforceNodeProtocolUsage {
     is_never: bool,
 }
 
-const REQUIRE_NODE_PROTOCOL: Message = Message::new("", "Prefer `node:{{moduleName}}` over `{{moduleName}}`.");
-const FORBID_NODE_PROTOCOL: Message = Message::new("", "Prefer `{{moduleName}}` over `node:{{moduleName}}`.");
+const REQUIRE_NODE_PROTOCOL: &Message = &Message::new("", "Prefer `node:{{moduleName}}` over `{{moduleName}}`.");
+const FORBID_NODE_PROTOCOL: &Message = &Message::new("", "Prefer `{{moduleName}}` over `node:{{moduleName}}`.");
 
 const DECLARATIONS: [StmtTag; 2] = [StmtTag::Import, StmtTag::ExportNamed];
 

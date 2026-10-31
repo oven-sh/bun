@@ -410,7 +410,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
 );
 
 // Same re-registration failure, but raised from the poll-driven read instead
-// of the eager spawn-time one. `Readable::start_pipe_reader` holds an Arc
+// of the eager spawn-time one. `Readable::start_pipe_reader` holds an Rc
 // across the eager read, but the epoll dispatch holds nothing, so when the
 // failed register_poll's on_reader_error dropped the last reference to the
 // PipeReader, read_with_fn's EAGAIN arm delivered the drained chunk to the

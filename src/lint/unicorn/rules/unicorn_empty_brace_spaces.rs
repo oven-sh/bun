@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Enforce no spaces between braces.
 pub struct EmptyBraceSpaces;
 
-const EMPTY_BRACE_SPACES: Message = Message::new("", "No spaces inside empty pair of braces allowed");
+const EMPTY_BRACE_SPACES: &Message = &Message::new("", "No spaces inside empty pair of braces allowed");
 
 impl Rule for EmptyBraceSpaces {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "empty-brace-spaces", Kind::Suggestion).fixable(Fixable::Code);

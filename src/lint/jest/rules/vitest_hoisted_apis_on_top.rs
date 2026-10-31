@@ -6,12 +6,13 @@ use bun_lint_oxlint::import::import_entries;
 /// Requires hoisted Vitest APIs (`vi.mock`, `vi.unmock`, and `vi.hoisted`) to appear at the top level of the file.
 pub struct HoistedApisOnTop;
 
-const HOISTED_APIS_ON_TOP: Message = Message::new(
+const HOISTED_APIS_ON_TOP: &Message = &Message::new(
     "",
     "Hoisted API cannot be used in a runtime location in this file.",
 );
-const MOVE_TO_THE_TOP: Message = Message::new("", "Moving hoisted methods to the top of the file");
-const REPLACE_WITH_DO_MOCK: Message = Message::new("", "Replace `mock` with `doMock`.");
+const MOVE_TO_THE_TOP: &Message =
+    &Message::new("", "Moving hoisted methods to the top of the file");
+const REPLACE_WITH_DO_MOCK: &Message = &Message::new("", "Replace `mock` with `doMock`.");
 
 impl Rule for HoistedApisOnTop {
     const META: Meta =

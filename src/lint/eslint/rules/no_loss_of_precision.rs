@@ -6,7 +6,7 @@ pub struct NoLossOfPrecision {
     ignore_decimals: bool,
 }
 
-const NO_LOSS_OF_PRECISION: Message = Message::new(
+const NO_LOSS_OF_PRECISION: &Message = &Message::new(
     "noLossOfPrecision",
     "This number literal will lose precision at runtime.",
 );
@@ -194,7 +194,7 @@ fn report<'a, R: Rule>(literal: Literal<'a>, ignore_decimals: bool, cx: &Cx<'a, 
             return None;
         };
         let value = text::number_to_string(number.as_number()?);
-        Some(format!("At runtime it is {}.", bstr::BStr::new(&value)))
+        Some(format!("At runtime it's {}.", bstr::BStr::new(&value)))
     });
 }
 

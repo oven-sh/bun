@@ -153,6 +153,8 @@ The following `FFIType` values are supported.
 | napi_value    | `napi_value`          | `cc()` only                     |
 | buffer_length | `uint64_t` / `size_t` | engine-native only (not `cc()`) |
 
+A 64-bit integer argument (`i64`, `u64`, `i64_fast`, `u64_fast`) accepts a `number` or a `BigInt`. A `number` outside the range of the type wraps modulo 2^64. For example, the literal `0xFFFFFFFFFFFFFFFF` is the `number` 2^64, so the native function receives 0. To pass all ones, use `-1` or `0xFFFFFFFFFFFFFFFFn`.
+
 `buffer` arguments must be a `TypedArray` or `DataView`.
 
 `buffer_length` is `buffer`'s length twin: pass the **same** `TypedArray`/`DataView` you passed

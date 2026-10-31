@@ -160,7 +160,6 @@ pub(crate) struct ParserSnapshot<'a> {
     log_warnings: u32,
     allow_in: bool,
     allow_private_identifiers: bool,
-    has_classic_runtime_warned: bool,
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -483,12 +482,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
-    // When we're only scanning the imports
-    // If they're using the automatic JSX runtime
-    // We won't know that we need to import JSX robustly because we don't track
-    // symbol counts. Instead, we ask:
-    // "Did we parse anything that looked like JSX"?
-    // If yes, then automatically add the JSX import.
+    // When only scanning imports, symbol counts cannot reveal whether JSX needs
+    // a runtime import. Record whether JSX was parsed; the scan result applies
+    // the effective per-file runtime before adding synthetic imports.
     pub(crate) needs_jsx_import: NeedsJSXType,
 
     // The parser does two passes and we need to pass the scope tree information
@@ -3187,6 +3183,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    pub(crate) fn jsx_runtime_pragma(&self) -> Option<options::JSX::RuntimeDevelopmentPair> {
+        let runtime = self.lexer.jsx_pragma.jsx_runtime()?;
+        options::JSX::RUNTIME_MAP.get(runtime.text.slice()).copied()
+    }
+
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
         {
             // The wrapper stores only the arena and a non-capturing
@@ -3279,13 +3280,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = runtime.text.slice();
-            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
+            if let Some(jsx_runtime) = self.jsx_runtime_pragma() {
                 self.options.jsx.runtime = jsx_runtime.runtime;
                 if let Some(dev) = jsx_runtime.development {
                     self.options.jsx.development = dev;
                 }
             } else {
-                // make this a warning instead of an error because we don't support "preserve" right now
                 self.log().add_range_warning_fmt(
                     Some(self.source),
                     runtime.range,
@@ -8198,7 +8198,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log_warnings: log.warnings,
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
-            has_classic_runtime_warned: self.has_classic_runtime_warned,
             has_non_local_export_declare_inside_namespace: self
                 .has_non_local_export_declare_inside_namespace,
             should_fold_typescript_constant_expressions: self
@@ -8232,7 +8231,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
-        self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
         self.has_non_local_export_declare_inside_namespace =
             snapshot.has_non_local_export_declare_inside_namespace;
         self.should_fold_typescript_constant_expressions =

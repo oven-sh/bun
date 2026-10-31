@@ -56,7 +56,7 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
         .run_error_handler(exception, None);
 }
 
-/// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
+/// `export fn Bun__remapStackFramePositions(vm, frames, frames_count, space)` —
 /// **may run on the heap-collector thread** (see oven-sh/bun#17087); the
 /// underlying method serializes on `remap_stack_frames_mutex`.
 ///
@@ -67,6 +67,7 @@ pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
     frames: *mut ZigStackFrame<'_>,
     frames_count: usize,
+    space: bun_jsc::saved_source_map::PositionSpace,
 ) {
     // The collector thread is not otherwise a Bun thread: give it the per-thread output source a source-map warning writes
     // through and the stack bound the map parser's recursion guard reads (idempotent), and flush what it wrote, since
@@ -75,7 +76,7 @@ pub(crate) fn remap_stack_frame_positions(
     bun_core::output::Source::configure_thread();
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
     // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    unsafe { vm.remap_stack_frame_positions(frames, frames_count, space) };
     if !on_js_thread {
         bun_core::output::flush();
     }

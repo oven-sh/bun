@@ -273,7 +273,7 @@ WTF::String formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM());
+                        remappedFrames.remap(getBunVM(), BunPositionSpace::Original);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -383,7 +383,7 @@ WTF::String formatStackTrace(
     }
 
     if (anyRemap) {
-        remappedFrames.remap(getBunVM());
+        remappedFrames.remap(getBunVM(), BunPositionSpace::Original);
     }
 
     // Pass 2: format. Everything except (display line/col, source_url) is
@@ -574,7 +574,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     if (anyRemap) {
-        remappedFrames.remap(globalObject->bunVM());
+        // A CallSite answers for the file that was loaded, as in V8: a prepareStackTrace that maps them itself goes on from there.
+        remappedFrames.remap(globalObject->bunVM(), BunPositionSpace::Loaded);
     }
 
     for (int i = 0; i < n; i++) {
@@ -705,7 +706,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
 
-    frames.remap(Bun::vm(vm));
+    frames.remap(Bun::vm(vm), BunPositionSpace::Loaded);
 
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();

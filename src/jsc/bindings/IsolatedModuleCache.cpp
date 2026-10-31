@@ -54,6 +54,11 @@ void IsolatedModuleCache::clear(JSC::VM& vm)
     WebCore::clientData(vm)->isolationSourceProviderCache.clear();
 }
 
+extern "C" void Bun__IsolatedModuleCache__clear(JSC::VM* vm)
+{
+    IsolatedModuleCache::clear(*vm);
+}
+
 // Test-only (bun:internal-for-testing). Returns the cached provider's
 // JSC::SourceProviderSourceType name for a resolved specifier, or null when
 // the key isn't cached. Lets tests assert that transpiled ESM enters the

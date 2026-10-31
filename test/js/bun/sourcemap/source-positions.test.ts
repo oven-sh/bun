@@ -8,9 +8,10 @@
 //   - `Bun.build` says where the programs that do not build are wrong
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { broken, cases, snapshots } from "./source-positions-corpus";
 
 type Variant = {
@@ -525,5 +526,673 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
     }
     expect(wrong).toEqual([]);
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// A file that something other than Bun transpiled, with a `sourceMappingURL` comment that names its own source map.
+// Bun's own map goes from what runs to that file. With `--enable-source-maps`, `process.setSourceMapsEnabled(true)`
+// or `module.setSourceMapsSupport(true)`, `Error.stack` and a printed error go on to the file it was made from, as in
+// Node.js. Every reader that is about the loaded file does not.
+describe.concurrent("a loaded file with its own source map", () => {
+  const original = [
+    `type Erased = { x: number };`,
+    ``,
+    `export function boom(): never {`,
+    `  throw new Error("kaboom");`,
+    `}`,
+    ``,
+    `export function call<R>(cb: () => R): R[] {`,
+    `  return [cb()];`,
+    `}`,
+    ``,
+  ].join("\n");
+  // What `tsc --sourceMap` (6.0.2) makes of `original`, with `--module commonjs` and with `--module esnext`.
+  const transpiled = {
+    cjs: {
+      code: [
+        `"use strict";`,
+        `Object.defineProperty(exports, "__esModule", { value: true });`,
+        `exports.boom = boom;`,
+        `exports.call = call;`,
+        `function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+        `function call(cb) {`,
+        `    return [cb()];`,
+        `}`,
+        ``,
+      ].join("\n"),
+      mappings:
+        ";;AAEA,oBAEC;AAED,oBAEC;AAND,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AAED,SAAgB,IAAI,CAAI,EAAW;IACjC,OAAO,CAAC,EAAE,EAAE,CAAC,CAAC;AAChB,CAAC",
+      // Where `Error` of `new Error("kaboom")` and `cb` of `cb()` are.
+      boom: "6:15",
+      call: "9:13",
+    },
+    esm: {
+      code: [
+        `export function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+        `export function call(cb) {`,
+        `    return [cb()];`,
+        `}`,
+        ``,
+      ].join("\n"),
+      mappings:
+        "AAEA,MAAM,UAAU,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AAED,MAAM,UAAU,IAAI,CAAI,EAAW;IACjC,OAAO,CAAC,EAAE,EAAE,CAAC,CAAC;AAChB,CAAC",
+      boom: "2:15",
+      call: "5:13",
+    },
+  };
+  // The same two places in `original`.
+  const inOriginal = { boom: "4:13", call: "8:11" };
+
+  type Format = keyof typeof transpiled;
+  const mapOf = (format: Format, source: string, more: object = {}) =>
+    JSON.stringify({
+      version: 3,
+      sourceRoot: "",
+      sources: [source],
+      names: [],
+      mappings: transpiled[format].mappings,
+      ...more,
+    });
+  const dataUrl = (json: string, type = "application/json;base64") =>
+    `data:${type},${Buffer.from(json).toString("base64")}`;
+  /** `path` and `path.map`, which names `source`. `after` goes between the code and the comment. */
+  const withMap = (path: string, format: Format = "cjs", source = path.replace(/\.\w+$/, ".ts"), after = "") => ({
+    [path]: `${transpiled[format].code}${after}//# sourceMappingURL=${path.split("/").at(-1)}.map\n`,
+    [`${path}.map`]: mapOf(format, source.split("/").at(-1)!),
+  });
+  const withUrl = (path: string, url: string, format: Format = "cjs") => ({
+    [path]: `${transpiled[format].code}//# sourceMappingURL=${url}\n`,
+  });
+
+  // What the programs below print, with the folder of the test taken out.
+  const firstFrame = `
+    globalThis.firstFrame = function (f) {
+      try {
+        f();
+      } catch (e) {
+        return e.stack.split("\\n")[1].trim();
+      }
+    };
+  `;
+  async function run(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A path of Windows has "\", which JSON writes twice.
+    const tidy = (text: string) =>
+      text.replaceAll("\\\\", "/").replaceAll("\\", "/").replaceAll(cwd.replaceAll("\\", "/"), "<dir>");
+    return { stdout: tidy(stdout), stderr: tidy(stderr), exitCode };
+  }
+  const printed = (result: { stdout: string; stderr: string; exitCode: number }) => ({
+    ...result,
+    stdout: result.stdout && JSON.parse(result.stdout),
+  });
+
+  // Each line is what node v26.3.0 does, with the column of JavaScriptCore: it reads a module's map when the module
+  // loads, if source maps are on then, and applies what it read when a stack is first read, if they are on then.
+  test("Error.stack follows the switch as it is when the module loads and when the stack is read", async () => {
+    const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+    using dir = tempDir("own-source-map-switch", {
+      ...Object.assign({}, ...names.map(name => withMap(`${name}.js`))),
+      "main.cjs": `
+        ${firstFrame}
+        const fs = require("node:fs");
+        const on = () => process.setSourceMapsEnabled(true);
+        const off = () => process.setSourceMapsEnabled(false);
+        const caught = f => { try { f(); } catch (e) { return e; } };
+        const top = e => e.stack.split("\\n")[1].trim();
+        const out = {};
+
+        on(); out["enable, load"] = firstFrame(require("./a.js").boom); off();
+
+        const b = require("./b.js"); on(); out["load, enable"] = firstFrame(b.boom); off();
+
+        on(); const c = require("./c.js"); off(); out["enable, load, disable"] = firstFrame(c.boom);
+        on(); out["enable, load, disable, enable"] = firstFrame(c.boom); off();
+
+        on(); const d = require("./d.js"); fs.rmSync("./d.js.map");
+        out["enable, load, delete the map"] = firstFrame(d.boom); off();
+
+        const map = fs.readFileSync("./e.js.map", "utf8"); fs.rmSync("./e.js.map");
+        on(); const e = require("./e.js"); fs.writeFileSync("./e.js.map", map);
+        out["enable, load, create the map"] = firstFrame(e.boom); off();
+
+        on(); const f = require("./f.js"); fs.writeFileSync("./f.js.map", "not a source map");
+        out["enable, load, overwrite the map"] = firstFrame(f.boom); off();
+
+        on(); const g = require("./g.js"); const madeOn = caught(g.boom); off();
+        out["error made while on, stack first read while off"] = top(madeOn);
+        on(); out["the same stack read again while on"] = top(madeOn); off();
+
+        on(); const h = require("./h.js"); off(); const madeOff = caught(h.boom); on();
+        out["error made while off, stack first read while on"] = top(madeOff); off();
+
+        const before = require("./i.js"); on(); delete require.cache[require.resolve("./i.js")];
+        const again = require("./i.js");
+        out["load, enable, load again"] = [firstFrame(before.boom), firstFrame(again.boom)]; off();
+
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const loaded = (name: string) => `at boom (<dir>/${name}.js:${transpiled.cjs.boom})`;
+    const mapped = (name: string) => `at boom (<dir>/${name}.ts:${inOriginal.boom})`;
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+      stdout: {
+        "enable, load": mapped("a"),
+        "load, enable": loaded("b"),
+        "enable, load, disable": loaded("c"),
+        "enable, load, disable, enable": mapped("c"),
+        "enable, load, delete the map": mapped("d"),
+        "enable, load, create the map": loaded("e"),
+        "enable, load, overwrite the map": mapped("f"),
+        "error made while on, stack first read while off": loaded("g"),
+        "the same stack read again while on": loaded("g"),
+        "error made while off, stack first read while on": mapped("h"),
+        "load, enable, load again": [mapped("i"), mapped("i")],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  /** The lines that an error is printed under, when it is at `line:column` of `text`. */
+  function preview(text: string, position: string) {
+    const [line, column] = position.split(":").map(Number);
+    const lines = text.split("\n").slice(Math.max(0, line - 6), line);
+    const gutter = String(line).length;
+    return [
+      ...lines.map((text, i) => `${String(line - lines.length + 1 + i).padStart(gutter)} | ${text}`),
+      " ".repeat(gutter + " | ".length + column - 1) + "^",
+    ].join("\n");
+  }
+
+  // The entry point is the transpiled file, and the error leaves it. `entry.js` is CommonJS, `entry.mjs` a module.
+  describe.each(["cjs", "esm"] as const)("an error that nothing catches, thrown by a %s entry point", format => {
+    const entry = format === "cjs" ? "entry.js" : "entry.mjs";
+    const code = transpiled[format].code + "boom();\n";
+    const external = {
+      [entry]: `${code}//# sourceMappingURL=${entry}.map\n`,
+      [`${entry}.map`]: mapOf(format, "entry.ts"),
+    };
+    const printedError = async (files: Record<string, string>, flags: string[]) => {
+      using dir = tempDir("own-source-map-uncaught", files);
+      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, entry]);
+      // The preview, the message and the frame of `boom`.
+      return { stdout, stderr: stderr.split("\n").slice(0, stderr.split("\n").indexOf("error: kaboom") + 2), exitCode };
+    };
+    const atLoaded = [
+      ...preview(code, transpiled[format].boom).split("\n"),
+      "error: kaboom",
+      `      at boom (<dir>/${entry}:${transpiled[format].boom})`,
+    ];
+    const atOriginal = [
+      ...preview(original, inOriginal.boom).split("\n"),
+      "error: kaboom",
+      `      at boom (<dir>/entry.ts:${inOriginal.boom})`,
+    ];
+
+    test("is in the original file with --enable-source-maps, and in the loaded file without it", async () => {
+      const files = { ...external, "entry.ts": original };
+      expect(await Promise.all([printedError(files, ["--enable-source-maps"]), printedError(files, [])])).toEqual([
+        { stdout: "", stderr: atOriginal, exitCode: 1 },
+        { stdout: "", stderr: atLoaded, exitCode: 1 },
+      ]);
+    });
+
+    test("is previewed from the sourcesContent of a data: URL", async () => {
+      const inline = dataUrl(mapOf(format, "entry.ts", { sourcesContent: [original] }));
+      expect(
+        await printedError({ [entry]: `${code}//# sourceMappingURL=${inline}\n` }, ["--enable-source-maps"]),
+      ).toEqual({ stdout: "", stderr: atOriginal, exitCode: 1 });
+    });
+
+    // Node prints the line of the loaded file too, under the name of the loaded file.
+    test("is previewed from the loaded file when nothing has the original text", async () => {
+      expect(await printedError(external, ["--enable-source-maps"])).toEqual({
+        stdout: "",
+        stderr: [...atLoaded.slice(0, -1), atOriginal.at(-1)],
+        exitCode: 1,
+      });
+    });
+  });
+
+  test("require(), import, import() and a Worker's import read it with --enable-source-maps, and not without", async () => {
+    using dir = tempDir("own-source-map-loaders", {
+      ...withMap("required.cjs", "cjs"),
+      ...withMap("static.mjs", "esm"),
+      ...withMap("dynamic.mjs", "esm"),
+      ...withMap("in-worker.mjs", "esm"),
+      "worker.mjs": `
+        import { parentPort } from "node:worker_threads";
+        import { boom } from "./in-worker.mjs";
+        try {
+          boom();
+        } catch (e) {
+          parentPort.postMessage(e.stack.split("\\n")[1].trim());
+        }
+      `,
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        import { Worker } from "node:worker_threads";
+        import { boom } from "./static.mjs";
+        ${firstFrame}
+        const out = {
+          "require()": firstFrame(createRequire(import.meta.url)("./required.cjs").boom),
+          "import": firstFrame(boom),
+          "import()": firstFrame((await import("./dynamic.mjs")).boom),
+        };
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+        worker.on("message", resolve);
+        worker.on("error", reject);
+        worker.on("exit", code => reject(new Error("the worker exited with " + code)));
+        out["import in a Worker"] = await promise;
+        await worker.terminate();
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const frames = (frame: (file: string, format: Format) => string) => ({
+      stdout: {
+        "require()": frame("required.cjs", "cjs"),
+        "import": frame("static.mjs", "esm"),
+        "import()": frame("dynamic.mjs", "esm"),
+        "import in a Worker": frame("in-worker.mjs", "esm"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.mjs"]),
+      run(String(dir), ["main.mjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      frames(file => `at boom (<dir>/${file.replace(/\.\w+$/, ".ts")}:${inOriginal.boom})`),
+      frames((file, format) => `at boom (<dir>/${file}:${transpiled[format].boom})`),
+    ]);
+  });
+
+  // node v26.3.0: `/[\\/]node_modules[\\/]/` on the path, when the module loads and again when a stack is read.
+  test("a module in node_modules is left out unless nodeModules is set", async () => {
+    using dir = tempDir("own-source-map-node-modules", {
+      ...withMap("node_modules/dep/a.js"),
+      ...withMap("node_modules/dep/b.js"),
+      ...withMap("node_modules/dep/c.js"),
+      ...withMap("node_modules/.store/dep@1/node_modules/dep/d.js"),
+      ...withMap("my_node_modules/dep/e.js"),
+      ...withMap("node_modules_too/dep/f.js"),
+      "main.cjs": `
+        ${firstFrame}
+        const { setSourceMapsSupport } = require("node:module");
+        const out = {};
+        setSourceMapsSupport(true);
+        out["setSourceMapsSupport(true)"] = firstFrame(require("./node_modules/dep/a.js").boom);
+        out["in my_node_modules"] = firstFrame(require("./my_node_modules/dep/e.js").boom);
+        out["in node_modules_too"] = firstFrame(require("./node_modules_too/dep/f.js").boom);
+        setSourceMapsSupport(true, { nodeModules: true });
+        out["loaded before nodeModules was set"] = firstFrame(require("./node_modules/dep/a.js").boom);
+        out["setSourceMapsSupport(true, { nodeModules: true })"] = firstFrame(require("./node_modules/dep/b.js").boom);
+        out["in a store in node_modules"] = firstFrame(
+          require("./node_modules/.store/dep@1/node_modules/dep/d.js").boom,
+        );
+        setSourceMapsSupport(true);
+        out["read after nodeModules was unset"] = firstFrame(require("./node_modules/dep/b.js").boom);
+        setSourceMapsSupport(false);
+        process.setSourceMapsEnabled(true);
+        out["process.setSourceMapsEnabled(true)"] = firstFrame(require("./node_modules/dep/c.js").boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const loaded = (file: string) => `at boom (<dir>/${file}.js:${transpiled.cjs.boom})`;
+    const mapped = (file: string) => `at boom (<dir>/${file}.ts:${inOriginal.boom})`;
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+      stdout: {
+        "setSourceMapsSupport(true)": loaded("node_modules/dep/a"),
+        "in my_node_modules": mapped("my_node_modules/dep/e"),
+        "in node_modules_too": mapped("node_modules_too/dep/f"),
+        "loaded before nodeModules was set": loaded("node_modules/dep/a"),
+        "setSourceMapsSupport(true, { nodeModules: true })": mapped("node_modules/dep/b"),
+        "in a store in node_modules": mapped("node_modules/.store/dep@1/node_modules/dep/d"),
+        "read after nodeModules was unset": loaded("node_modules/dep/b"),
+        "process.setSourceMapsEnabled(true)": mapped("node_modules/dep/c"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What is about the loaded file stays there. In node v26.3.0 a CallSite answers for the loaded file too, and
+  // `error.stack` inside `Error.prepareStackTrace` is the loaded file's.
+  test("a CallSite is in the loaded file while Error.stack is in the original", async () => {
+    using dir = tempDir("own-source-map-call-site", {
+      ...withMap("lib.js"),
+      "main.cjs": `
+        const lib = require("./lib.js");
+        const out = {};
+        const error = new Error("made in the original");
+        lib.call(() => Error.captureStackTrace(error));
+        out["Error.stack"] = error.stack.split("\\n")[2].trim();
+        Error.prepareStackTrace = (e, sites) => {
+          const site = sites[1];
+          out["CallSite"] = {
+            getFileName: site.getFileName(),
+            getScriptNameOrSourceURL: site.getScriptNameOrSourceURL(),
+            getLineNumber: site.getLineNumber(),
+            getColumnNumber: site.getColumnNumber(),
+            toString: String(site),
+          };
+          out["error.stack in prepareStackTrace"] = e.stack.split("\\n")[2].trim();
+          return "prepared";
+        };
+        out["the result of prepareStackTrace"] = lib.call(() => new Error("read by a callback").stack)[0];
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const [line, column] = transpiled.cjs.call.split(":").map(Number);
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: {
+        "Error.stack": `at call (<dir>/lib.ts:${inOriginal.call})`,
+        "CallSite": {
+          getFileName: "<dir>/lib.js",
+          getScriptNameOrSourceURL: "<dir>/lib.js",
+          getLineNumber: line,
+          getColumnNumber: column,
+          toString: `call (<dir>/lib.js:${transpiled.cjs.call})`,
+        },
+        "error.stack in prepareStackTrace": `at call (<dir>/lib.js:${transpiled.cjs.call})`,
+        "the result of prepareStackTrace": "prepared",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  /** The `mappings` of a map where line `i + 1` of the generated text is line `lines[i]` of the original. */
+  function lineMappings(lines: number[]) {
+    const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let previous = 1;
+    return lines
+      .map(line => {
+        let value = line >= previous ? (line - previous) << 1 : ((previous - line) << 1) | 1;
+        previous = line;
+        let delta = "";
+        do {
+          const digit = value & 31;
+          value >>>= 5;
+          delta += digits[value ? digit | 32 : digit];
+        } while (value);
+        return `AA${delta}A`;
+      })
+      .join(";");
+  }
+
+  test("bun test writes coverage, an inline snapshot and the JUnit line for the loaded file", async () => {
+    const testFile = [
+      `const { test, expect } = require("bun:test");`,
+      `const { add } = require("./math.js");`,
+      `test("adds", () => {`,
+      `  expect(add(1, 2)).toMatchInlineSnapshot();`,
+      `  console.log(new Error("in the test").stack.split("\\n")[1].trim());`,
+      `});`,
+      `//# sourceMappingURL=math.test.js.map`,
+      ``,
+    ];
+    const math = [
+      `function add(a, b) {`,
+      `  if (a > 100) {`,
+      `    return -1;`,
+      `  }`,
+      `  return a + b;`,
+      `}`,
+      `exports.add = add;`,
+      `//# sourceMappingURL=math.js.map`,
+      ``,
+    ];
+    // Each original has four more lines above its code.
+    const shifted = (lines: string[], source: string) =>
+      JSON.stringify({
+        version: 3,
+        sources: [source],
+        names: [],
+        mappings: lineMappings(lines.slice(0, -2).map((_, i) => i + 5)),
+      });
+    using dir = tempDir("own-source-map-bun-test", {
+      "math.test.js": testFile.join("\n"),
+      "math.test.js.map": shifted(testFile, "math.test.ts"),
+      "math.js": math.join("\n"),
+      "math.js.map": shifted(math, "math.ts"),
+    });
+    const { stdout, exitCode } = await run(String(dir), [
+      "test",
+      "--enable-source-maps",
+      "--coverage",
+      "--coverage-reporter=lcov",
+      "--reporter=junit",
+      "--reporter-outfile=junit.xml",
+      "--update-snapshots",
+      "./math.test.js",
+    ]);
+    const lcov = readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8");
+    expect({
+      // `Error.stack` is what Node maps. The rest is about the file that ran.
+      stack: stdout.split("\n").filter(line => line.startsWith("at ")),
+      covered: lcov
+        .split("end_of_record\n")[0]
+        .split("\n")
+        .filter(line => /^(SF|DA):/.test(line)),
+      snapshot: readFileSync(join(String(dir), "math.test.js"), "utf8").split("\n")[3],
+      junit: readFileSync(join(String(dir), "junit.xml"), "utf8").match(/<testcase name="adds"[^>]* line="(\d+)"/)?.[1],
+      exitCode,
+    }).toEqual({
+      stack: ["at <anonymous> (<dir>/math.test.ts:9:1)"],
+      covered: ["SF:math.js", "DA:1,1", "DA:2,1", "DA:3,0", "DA:5,1", "DA:7,1"],
+      snapshot: "  expect(add(1, 2)).toMatchInlineSnapshot(`3`);",
+      junit: "3",
+      exitCode: 0,
+    });
+  });
+
+  // As in Node.js, which says nothing either.
+  test("a source map that cannot be read or used leaves the stack in the loaded file, without a warning", async () => {
+    const unusable: Record<string, Record<string, string | object>> = {
+      "not JSON": { "not-json.js.map": "{ not JSON" },
+      "an empty file": { "empty.js.map": "" },
+      "a missing file": {},
+      "a directory": { "directory.js.map": {} },
+      "a JSON array": { "array.js.map": "[]" },
+      "no mappings": { "no-mappings.js.map": JSON.stringify({ version: 3, sources: ["a.ts"] }) },
+      "no sources": { "no-sources.js.map": JSON.stringify({ version: 3, mappings: transpiled.cjs.mappings }) },
+      "mappings that are no VLQ": { "not-vlq.js.map": mapOf("cjs", "a.ts", { mappings: ";;;;;!!!!" }) },
+      "an index map": {
+        "index-map.js.map": JSON.stringify({
+          version: 3,
+          sections: [{ offset: { line: 0, column: 0 }, map: JSON.parse(mapOf("cjs", "a.ts")) }],
+        }),
+      },
+    };
+    const name = (label: string) => Object.keys(unusable[label])[0]?.replace(".map", "") ?? "missing.js";
+    using dir = tempDir("own-source-map-unusable", {
+      ...withMap("usable.js"),
+      ...Object.assign({}, ...Object.keys(unusable).map(label => ({ ...withMap(name(label)), ...unusable[label] }))),
+      ...withUrl("bad-base64.js", "data:application/json;base64,!!!!"),
+      ...withUrl("empty-url.js", ""),
+      "main.cjs": `
+        ${firstFrame}
+        const out = {};
+        for (const [label, file] of ${JSON.stringify([
+          ["a source map", "usable.js"],
+          ...Object.keys(unusable).map(label => [label, name(label)]),
+          ["a data: URL that is not base64", "bad-base64.js"],
+          ["an empty URL", "empty-url.js"],
+        ])}) out[label] = firstFrame(require("./" + file).boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    rmSync(join(String(dir), "missing.js.map"));
+    const loaded = (file: string) => `at boom (<dir>/${file}:${transpiled.cjs.boom})`;
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: {
+        "a source map": `at boom (<dir>/usable.ts:${inOriginal.boom})`,
+        ...Object.fromEntries(Object.keys(unusable).map(label => [label, loaded(name(label))])),
+        "a data: URL that is not base64": loaded("bad-base64.js"),
+        "an empty URL": loaded("empty-url.js"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What node v26.3.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
+  // path, which is a URL relative to the module. It does not read a URL with any other scheme.
+  test("the URL of the comment is read the way Node.js reads it", async () => {
+    const map = mapOf("cjs", "original.ts");
+    const comment = (url: string) => `//# sourceMappingURL=${url}\n`;
+    const { code } = transpiled.cjs;
+    // [what the module ends with, the files beside it, where the frame is]
+    const forms: Record<string, [string | ((root: string) => string), Record<string, string>, string]> = {
+      "a file beside the module": [comment("a.js.map"), { "a.js.map": map }, "original.ts"],
+      "./": [comment("./b.js.map"), { "b.js.map": map }, "original.ts"],
+      // A relative source is beside the map.
+      "a file in a folder": [comment("maps/c.js.map"), { "maps/c.js.map": map }, "maps/original.ts"],
+      "..": [comment("../forms/d.js.map"), { "d.js.map": map }, "original.ts"],
+      "a percent-encoded name": [comment("sp%20ace.js.map"), { "sp ace.js.map": map }, "original.ts"],
+      "a query and a fragment": [comment("e.js.map?v=1#top"), { "e.js.map": map }, "original.ts"],
+      "a name that is not ASCII": [comment("ünï.js.map"), { "ünï.js.map": map }, "original.ts"],
+      "//@": [`//@ sourceMappingURL=f.js.map\n`, { "f.js.map": map }, "original.ts"],
+      "spaces after the URL": [`//# sourceMappingURL=g.js.map  \n`, { "g.js.map": map }, "original.ts"],
+      "no line break after the URL": [`//# sourceMappingURL=h.js.map`, { "h.js.map": map }, "original.ts"],
+      "CR LF after the URL": [`//# sourceMappingURL=i.js.map\r\n`, { "i.js.map": map }, "original.ts"],
+      "the last of two comments": [comment("none.js.map") + comment("j.js.map"), { "j.js.map": map }, "original.ts"],
+      "the last of two comments, which names nothing": [
+        comment("k.js.map") + comment("none.js.map"),
+        { "k.js.map": map },
+        "",
+      ],
+      "a comment that more code follows": [
+        comment("l.js.map") + `exports.after = 1;\n`,
+        { "l.js.map": map },
+        "original.ts",
+      ],
+      "a string": [`exports.text = "//# sourceMappingURL=m.js.map";\n`, { "m.js.map": map }, ""],
+      "data: with base64": [comment(dataUrl(map)), {}, "original.ts"],
+      "data: with a charset before base64": [
+        comment(dataUrl(map, "application/json;charset=utf-8;base64")),
+        {},
+        "original.ts",
+      ],
+      "DATA:": [comment(dataUrl(map).replace("data:", "DATA:")), {}, "original.ts"],
+      "data: with base64url and no padding": [
+        comment(`data:application/json;base64,${Buffer.from(map).toString("base64url")}`),
+        {},
+        "original.ts",
+      ],
+      "data: with base64 before a charset": [comment(dataUrl(map, "application/json;base64;charset=utf-8")), {}, ""],
+      "data: with another media type": [comment(dataUrl(map, "text/plain;base64")), {}, ""],
+      "data: with no media type": [comment(dataUrl(map, ";base64")), {}, ""],
+      "data: with Application/JSON": [comment(dataUrl(map, "Application/JSON;base64")), {}, ""],
+      // Node.js takes the data up to a second comma, so JSON that has one is cut.
+      "data: with JSON that is not base64": [comment(`data:application/json,${map}`), {}, ""],
+      "data: with percent-encoded JSON": [comment(`data:application/json,${encodeURIComponent(map)}`), {}, ""],
+      "data: with no comma": [comment("data:application/json;base64"), {}, ""],
+      "file:": [root => comment(`${pathToFileURL(root)}/forms/n.js.map`), { "n.js.map": map }, ""],
+      "http:": [comment("http://127.0.0.1:1/o.js.map"), { "o.js.map": map }, ""],
+      "https:": [comment("https://127.0.0.1:1/p.js.map"), { "p.js.map": map }, ""],
+      // A path with a drive letter is a URL with a scheme.
+      ...(!isWindows && {
+        "an absolute path": [
+          root => comment(`${root}/elsewhere/q.js.map`),
+          { "../elsewhere/q.js.map": map },
+          "../elsewhere/original.ts",
+        ],
+      }),
+    };
+    const files: Record<string, string | ((at: { root: string }) => string)> = {};
+    const modules: [string, string][] = [];
+    let count = 0;
+    for (const [label, [end, beside]] of Object.entries(forms)) {
+      const module = `forms/m${count++}.js`;
+      modules.push([label, module]);
+      files[module] = ({ root }) => code + (typeof end === "function" ? end(root) : end);
+      for (const [name, text] of Object.entries(beside)) files[`forms/${name}`] = text;
+    }
+    using dir = tempDir("own-source-map-url", {
+      ...files,
+      "main.cjs": `
+        ${firstFrame}
+        const out = {};
+        for (const [label, module] of ${JSON.stringify(modules)}) out[label] = firstFrame(require("./" + module).boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const want: Record<string, string> = {};
+    for (const [label, module] of modules) {
+      const source = forms[label][2];
+      want[label] = source
+        ? `at boom (<dir>/${join("forms", source).replaceAll("\\", "/")}:${inOriginal.boom})`
+        : `at boom (<dir>/${module}:${transpiled.cjs.boom})`;
+    }
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: want,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // node v26.3.0 puts `sourceRoot` before the source with nothing between them, and resolves the result as a URL
+  // beside the map. A `file:` URL is shown as a path.
+  test("a source is named the way Node.js names it", async () => {
+    // [sourceRoot, source, the name in the frame]
+    const named: [string | null | undefined, string, string][] = [
+      [undefined, "original.ts", "<dir>/maps/original.ts"],
+      ["", "../src/./original.ts", "<dir>/src/original.ts"],
+      ["src", "original.ts", "<dir>/maps/srcoriginal.ts"],
+      ["src/", "original.ts", "<dir>/maps/src/original.ts"],
+      ["../", "original.ts", "<dir>/original.ts"],
+      [null, "original.ts", "<dir>/maps/original.ts"],
+      ["http://example.com/root/", "original.ts", "http://example.com/root/original.ts"],
+      ["", "webpack://app/./src/original.ts", "webpack://app/src/original.ts"],
+      ["", "webpack:///./src/original.ts?a=1", "webpack:///src/original.ts?a=1"],
+      ["", "a%20b.ts", "<dir>/maps/a b.ts"],
+      ["", "a b.ts", "<dir>/maps/a b.ts"],
+      ["", "original.ts?query#fragment", "<dir>/maps/original.ts"],
+      ["", "ünï.ts", "<dir>/maps/ünï.ts"],
+      // A path from the root has a drive on Windows. Node.js keeps an absolute path as it is written: no `%20` is
+      // a space, and a `?` does not end it.
+      ...((isWindows
+        ? []
+        : [
+            ["/abs/root/", "original.ts", "/abs/root/original.ts"],
+            ["file:///abs/root/", "original.ts", "/abs/root/original.ts"],
+            ["", "/abs/src/../original.ts", "/abs/original.ts"],
+            ["", "/abs/a%20b.ts?query", "/abs/a%20b.ts?query"],
+            ["", "file:///abs/src/original.ts", "/abs/src/original.ts"],
+          ]) as [string, string, string][]),
+    ];
+    const files: Record<string, string> = {};
+    named.forEach(([sourceRoot, source], i) => {
+      files[`s${i}.js`] = `${transpiled.cjs.code}//# sourceMappingURL=maps/s${i}.js.map\n`;
+      files[`maps/s${i}.js.map`] = mapOf("cjs", source, { sourceRoot });
+    });
+    using dir = tempDir("own-source-map-sources", {
+      ...files,
+      // The source of a `data:` URL is beside the module.
+      ...withUrl("inline.js", dataUrl(mapOf("cjs", "src/original.ts"))),
+      "main.cjs": `
+        ${firstFrame}
+        const out = [];
+        for (let i = 0; i < ${named.length}; i++) out.push(firstFrame(require("./s" + i + ".js").boom));
+        out.push(firstFrame(require("./inline.js").boom));
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: [...named.map(([, , name]) => name), "<dir>/src/original.ts"].map(
+        name => `at boom (${name}:${inOriginal.boom})`,
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

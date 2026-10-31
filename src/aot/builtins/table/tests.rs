@@ -14,7 +14,7 @@ fn all_names() -> impl Iterator<Item = BuiltinName> {
     (0..BuiltinName::COUNT).map(BuiltinName)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn name(text: &str) -> BuiltinName {
     find_name(text.as_bytes()).unwrap_or_else(|| panic!("`{text}` is not in the name table"))
 }

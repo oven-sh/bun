@@ -1,0 +1,3007 @@
+Removes `#[track_caller]` from 342 functions. With `-Zlocation-detail=none` every `Location` is blank, but each caller still passed one.
+
+diff --git a/library/alloc/src/collections/vec_deque/mod.rs b/library/alloc/src/collections/vec_deque/mod.rs
+index 5bd4380..279fd0d 100644
+--- a/library/alloc/src/collections/vec_deque/mod.rs
++++ b/library/alloc/src/collections/vec_deque/mod.rs
+@@ -2441,7 +2441,6 @@ impl<T, A: Allocator> VecDeque<T, A> {
+     /// assert!(deque2.is_empty());
+     /// ```
+     #[unstable(feature = "deque_extend_front", issue = "146975")]
+-    #[track_caller]
+     pub fn prepend<I: IntoIterator<Item = T, IntoIter: DoubleEndedIterator>>(&mut self, other: I) {
+         self.extend_front(other.into_iter().rev())
+     }
+@@ -2473,7 +2472,6 @@ impl<T, A: Allocator> VecDeque<T, A> {
+     /// assert_eq!(deque, [1, 2, 3, 4, 5, 6]);
+     /// ```
+     #[unstable(feature = "deque_extend_front", issue = "146975")]
+-    #[track_caller]
+     pub fn extend_front<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+         <Self as SpecExtendFront<T, I::IntoIter>>::spec_extend_front(self, iter.into_iter());
+     }
+diff --git a/library/alloc/src/collections/vec_deque/spec_extend.rs b/library/alloc/src/collections/vec_deque/spec_extend.rs
+index 358f19d..0497a89 100644
+--- a/library/alloc/src/collections/vec_deque/spec_extend.rs
++++ b/library/alloc/src/collections/vec_deque/spec_extend.rs
+@@ -120,7 +120,6 @@ where
+ 
+ // Specialization trait used for VecDeque::extend_front
+ pub(super) trait SpecExtendFront<T, I> {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, iter: I);
+ }
+ 
+@@ -128,7 +127,6 @@ impl<T, I, A: Allocator> SpecExtendFront<T, I> for VecDeque<T, A>
+ where
+     I: Iterator<Item = T>,
+ {
+-    #[track_caller]
+     default fn spec_extend_front(&mut self, mut iter: I) {
+         // This function should be the moral equivalent of:
+         //
+@@ -157,7 +155,6 @@ where
+ 
+ #[cfg(not(test))]
+ impl<T, A1: Allocator, A2: Allocator> SpecExtendFront<T, vec::IntoIter<T, A2>> for VecDeque<T, A1> {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, iterator: vec::IntoIter<T, A2>) {
+         let slice = iterator.as_slice();
+         self.reserve(slice.len());
+@@ -171,7 +168,6 @@ impl<T, A1: Allocator, A2: Allocator> SpecExtendFront<T, vec::IntoIter<T, A2>> f
+ impl<T, A1: Allocator, A2: Allocator> SpecExtendFront<T, Rev<vec::IntoIter<T, A2>>>
+     for VecDeque<T, A1>
+ {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, iterator: Rev<vec::IntoIter<T, A2>>) {
+         let iterator = iterator.into_inner();
+         let slice = iterator.as_slice();
+@@ -186,7 +182,6 @@ impl<'a, T, A: Allocator> SpecExtendFront<T, Copied<slice::Iter<'a, T>>> for Vec
+ where
+     Copied<slice::Iter<'a, T>>: Iterator<Item = T>,
+ {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, iter: Copied<slice::Iter<'a, T>>) {
+         let slice = iter.into_inner().as_slice();
+         self.reserve(slice.len());
+@@ -199,7 +194,6 @@ impl<'a, T, A: Allocator> SpecExtendFront<T, Rev<Copied<slice::Iter<'a, T>>>> fo
+ where
+     Rev<Copied<slice::Iter<'a, T>>>: Iterator<Item = T>,
+ {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, iter: Rev<Copied<slice::Iter<'a, T>>>) {
+         let slice = iter.into_inner().into_inner().as_slice();
+         self.reserve(slice.len());
+@@ -209,7 +203,6 @@ where
+ }
+ 
+ impl<'a, T, A1: Allocator, A2: Allocator> SpecExtendFront<T, Drain<'a, T, A2>> for VecDeque<T, A1> {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, mut iter: Drain<'a, T, A2>) {
+         if iter.remaining == 0 {
+             return;
+@@ -235,7 +228,6 @@ impl<'a, T, A1: Allocator, A2: Allocator> SpecExtendFront<T, Drain<'a, T, A2>> f
+ impl<'a, T, A1: Allocator, A2: Allocator> SpecExtendFront<T, Rev<Drain<'a, T, A2>>>
+     for VecDeque<T, A1>
+ {
+-    #[track_caller]
+     fn spec_extend_front(&mut self, iter: Rev<Drain<'a, T, A2>>) {
+         let mut iter = iter.into_inner();
+ 
+diff --git a/library/alloc/src/string.rs b/library/alloc/src/string.rs
+index b363b68..d9b5bdd 100644
+--- a/library/alloc/src/string.rs
++++ b/library/alloc/src/string.rs
+@@ -1178,7 +1178,6 @@ impl String {
+     /// ```
+     #[cfg(not(no_global_oom_handling))]
+     #[stable(feature = "string_extend_from_within", since = "1.87.0")]
+-    #[track_caller]
+     pub fn extend_from_within<R>(&mut self, src: R)
+     where
+         R: RangeBounds<usize>,
+@@ -1504,7 +1503,6 @@ impl String {
+     /// ```
+     #[inline]
+     #[stable(feature = "rust1", since = "1.0.0")]
+-    #[track_caller]
+     pub fn truncate(&mut self, new_len: usize) {
+         if new_len <= self.len() {
+             assert!(self.is_char_boundary(new_len));
+@@ -1561,7 +1559,6 @@ impl String {
+     /// ```
+     #[inline]
+     #[stable(feature = "rust1", since = "1.0.0")]
+-    #[track_caller]
+     #[rustc_confusables("delete", "take")]
+     pub fn remove(&mut self, idx: usize) -> char {
+         let ch = match self[idx..].chars().next() {
+@@ -1762,7 +1759,6 @@ impl String {
+     /// ```
+     #[cfg(not(no_global_oom_handling))]
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_confusables("set")]
+     pub fn insert(&mut self, idx: usize, ch: char) {
+@@ -1819,7 +1815,6 @@ impl String {
+     /// ```
+     #[cfg(not(no_global_oom_handling))]
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "insert_str", since = "1.16.0")]
+     #[rustc_diagnostic_item = "string_insert_str"]
+     pub fn insert_str(&mut self, idx: usize, string: &str) {
+@@ -1948,7 +1943,6 @@ impl String {
+     /// ```
+     #[cfg(not(no_global_oom_handling))]
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "string_split_off", since = "1.16.0")]
+     #[must_use = "use `.truncate()` if you don't need the other half"]
+     pub fn split_off(&mut self, at: usize) -> String {
+@@ -2014,7 +2008,6 @@ impl String {
+     /// assert_eq!(s, "");
+     /// ```
+     #[stable(feature = "drain", since = "1.6.0")]
+-    #[track_caller]
+     pub fn drain<R>(&mut self, range: R) -> Drain<'_>
+     where
+         R: RangeBounds<usize>,
+@@ -2114,7 +2107,6 @@ impl String {
+     /// ```
+     #[cfg(not(no_global_oom_handling))]
+     #[stable(feature = "splice", since = "1.27.0")]
+-    #[track_caller]
+     pub fn replace_range<R>(&mut self, range: R, replace_with: &str)
+     where
+         R: RangeBounds<usize>,
+diff --git a/library/alloc/src/sync.rs b/library/alloc/src/sync.rs
+index 9549062..117af9e 100644
+--- a/library/alloc/src/sync.rs
++++ b/library/alloc/src/sync.rs
+@@ -58,7 +58,6 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
+ #[cold]
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ fn panic_arc_overflow() -> ! {
+     panic!("Arc counter overflow");
+ }
+diff --git a/library/alloc/src/vec/mod.rs b/library/alloc/src/vec/mod.rs
+index 0e550e5..9696ece 100644
+--- a/library/alloc/src/vec/mod.rs
++++ b/library/alloc/src/vec/mod.rs
+@@ -2307,7 +2307,6 @@ impl<T, A: Allocator> Vec<T, A> {
+     /// the insertion index is 0.
+     #[cfg(not(no_global_oom_handling))]
+     #[stable(feature = "rust1", since = "1.0.0")]
+-    #[track_caller]
+     pub fn insert(&mut self, index: usize, element: T) {
+         let _ = self.insert_mut(index, element);
+     }
+@@ -2337,12 +2336,10 @@ impl<T, A: Allocator> Vec<T, A> {
+     #[cfg(not(no_global_oom_handling))]
+     #[inline]
+     #[stable(feature = "push_mut", since = "1.95.0")]
+-    #[track_caller]
+     #[must_use = "if you don't need a reference to the value, use `Vec::insert` instead"]
+     pub fn insert_mut(&mut self, index: usize, element: T) -> &mut T {
+         #[cold]
+         #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+-        #[track_caller]
+         #[optimize(size)]
+         fn assert_failed(index: usize, len: usize) -> ! {
+             panic!("insertion index (is {index}) should be <= len (is {len})");
+@@ -2402,12 +2399,10 @@ impl<T, A: Allocator> Vec<T, A> {
+     /// assert_eq!(v, ['a', 'c']);
+     /// ```
+     #[stable(feature = "rust1", since = "1.0.0")]
+-    #[track_caller]
+     #[rustc_confusables("delete", "take")]
+     pub fn remove(&mut self, index: usize) -> T {
+         #[cold]
+         #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+-        #[track_caller]
+         #[optimize(size)]
+         fn assert_failed(index: usize, len: usize) -> ! {
+             panic!("removal index (is {index}) should be < len (is {len})");
+@@ -3189,14 +3184,12 @@ impl<T, A: Allocator> Vec<T, A> {
+     #[inline]
+     #[must_use = "use `.truncate()` if you don't need the other half"]
+     #[stable(feature = "split_off", since = "1.4.0")]
+-    #[track_caller]
+     pub fn split_off(&mut self, at: usize) -> Self
+     where
+         A: Clone,
+     {
+         #[cold]
+         #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+-        #[track_caller]
+         #[optimize(size)]
+         fn assert_failed(at: usize, len: usize) -> ! {
+             panic!("`at` split index (is {at}) should be <= len (is {len})");
+diff --git a/library/core/src/alloc/layout.rs b/library/core/src/alloc/layout.rs
+index edf2661..2ac4881 100644
+--- a/library/core/src/alloc/layout.rs
++++ b/library/core/src/alloc/layout.rs
+@@ -128,7 +128,6 @@ impl Layout {
+     #[rustc_const_stable(feature = "const_alloc_layout_unchecked", since = "1.36.0")]
+     #[must_use]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn from_size_align_unchecked(size: usize, align: usize) -> Self {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -152,7 +151,6 @@ impl Layout {
+     #[unstable(feature = "ptr_alignment_type", issue = "102070")]
+     #[must_use]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn from_size_alignment_unchecked(size: usize, alignment: Alignment) -> Self {
+         assert_unsafe_precondition!(
+             check_library_ub,
+diff --git a/library/core/src/ascii/ascii_char.rs b/library/core/src/ascii/ascii_char.rs
+index 8011448..90e7abc 100644
+--- a/library/core/src/ascii/ascii_char.rs
++++ b/library/core/src/ascii/ascii_char.rs
+@@ -517,7 +517,6 @@ impl AsciiChar {
+     /// something useful. It might be tightened before stabilization.)
+     #[unstable(feature = "ascii_char", issue = "110998")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn digit_unchecked(d: u8) -> Self {
+         assert_unsafe_precondition!(
+             check_library_ub,
+diff --git a/library/core/src/cell.rs b/library/core/src/cell.rs
+index 47312b2..5ff4246 100644
+--- a/library/core/src/cell.rs
++++ b/library/core/src/cell.rs
+@@ -910,7 +910,6 @@ impl Display for BorrowMutError {
+ 
+ // This ensures the panicking code is outlined from `borrow_mut` for `RefCell`.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+-#[track_caller]
+ #[cold]
+ const fn panic_already_borrowed(err: BorrowMutError) -> ! {
+     const_panic!(
+@@ -922,7 +921,6 @@ const fn panic_already_borrowed(err: BorrowMutError) -> ! {
+ 
+ // This ensures the panicking code is outlined from `borrow` for `RefCell`.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+-#[track_caller]
+ #[cold]
+ const fn panic_already_mutably_borrowed(err: BorrowError) -> ! {
+     const_panic!(
+@@ -1021,7 +1019,6 @@ impl<T> RefCell<T> {
+     /// ```
+     #[inline]
+     #[stable(feature = "refcell_replace", since = "1.24.0")]
+-    #[track_caller]
+     #[rustc_confusables("swap")]
+     #[rustc_const_unstable(feature = "const_ref_cell", issue = "137844")]
+     #[rustc_should_not_be_called_on_const_items]
+@@ -1047,7 +1044,6 @@ impl<T> RefCell<T> {
+     /// ```
+     #[inline]
+     #[stable(feature = "refcell_replace_swap", since = "1.35.0")]
+-    #[track_caller]
+     #[rustc_should_not_be_called_on_const_items]
+     pub fn replace_with<F: FnOnce(&mut T) -> T>(&self, f: F) -> T {
+         let mut_borrow = &mut *self.borrow_mut();
+@@ -1118,7 +1114,6 @@ impl<T: ?Sized> RefCell<T> {
+     /// ```
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[inline]
+-    #[track_caller]
+     #[rustc_const_unstable(feature = "const_ref_cell", issue = "137844")]
+     #[rustc_should_not_be_called_on_const_items]
+     pub const fn borrow(&self) -> Ref<'_, T> {
+@@ -1218,7 +1213,6 @@ impl<T: ?Sized> RefCell<T> {
+     /// ```
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[inline]
+-    #[track_caller]
+     #[rustc_const_unstable(feature = "const_ref_cell", issue = "137844")]
+     #[rustc_should_not_be_called_on_const_items]
+     pub const fn borrow_mut(&self) -> RefMut<'_, T> {
+@@ -1447,7 +1441,6 @@ impl<T: Clone> Clone for RefCell<T> {
+     ///
+     /// Panics if the value is currently mutably borrowed.
+     #[inline]
+-    #[track_caller]
+     fn clone(&self) -> RefCell<T> {
+         RefCell::new(self.borrow().clone())
+     }
+@@ -1456,7 +1449,6 @@ impl<T: Clone> Clone for RefCell<T> {
+     ///
+     /// Panics if `source` is currently mutably borrowed.
+     #[inline]
+-    #[track_caller]
+     fn clone_from(&mut self, source: &Self) {
+         self.get_mut().clone_from(&source.borrow())
+     }
+diff --git a/library/core/src/char/convert.rs b/library/core/src/char/convert.rs
+index a60fc68..4d03966 100644
+--- a/library/core/src/char/convert.rs
++++ b/library/core/src/char/convert.rs
+@@ -22,7 +22,6 @@ pub(super) const fn from_u32(i: u32) -> Option<char> {
+ #[inline]
+ #[must_use]
+ #[allow(unnecessary_transmutes)]
+-#[track_caller]
+ pub(super) const unsafe fn from_u32_unchecked(i: u32) -> char {
+     // SAFETY: the caller must guarantee that `i` is a valid char value.
+     unsafe {
+diff --git a/library/core/src/cmp.rs b/library/core/src/cmp.rs
+index a7c22a1..aff0274 100644
+--- a/library/core/src/cmp.rs
++++ b/library/core/src/cmp.rs
+@@ -2349,7 +2349,6 @@ mod impls {
+                 }
+ 
+                 #[inline]
+-                #[track_caller]
+                 fn clamp(self, min: Self, max: Self) -> Self
+                 {
+                     const_assert!(
+diff --git a/library/core/src/convert/mod.rs b/library/core/src/convert/mod.rs
+index a57f3d5..e7ebc37 100644
+--- a/library/core/src/convert/mod.rs
++++ b/library/core/src/convert/mod.rs
+@@ -775,7 +775,6 @@ where
+     /// That is, this conversion is whatever the implementation of
+     /// <code>[From]&lt;T&gt; for U</code> chooses to do.
+     #[inline]
+-    #[track_caller]
+     fn into(self) -> U {
+         U::from(self)
+     }
+diff --git a/library/core/src/convert/num.rs b/library/core/src/convert/num.rs
+index c0d8fd6..bf02dc5 100644
+--- a/library/core/src/convert/num.rs
++++ b/library/core/src/convert/num.rs
+@@ -780,7 +780,6 @@ macro_rules! impl_int_cast {
+             }
+ 
+             #[inline]
+-            #[track_caller]
+             fn strict_cast_from(value: $Src) -> Self {
+                 match value.try_into() {
+                     Ok(x) => x,
+diff --git a/library/core/src/fmt/rt.rs b/library/core/src/fmt/rt.rs
+index 5221783..9498a7b 100644
+--- a/library/core/src/fmt/rt.rs
++++ b/library/core/src/fmt/rt.rs
+@@ -126,7 +126,6 @@ impl Argument<'_> {
+         argument_new!(T, x, <T as UpperExp>::fmt)
+     }
+     #[inline]
+-    #[track_caller]
+     pub const fn from_usize(x: &usize) -> Argument<'_> {
+         if *x > u16::MAX as usize {
+             panic!("Formatting argument out of range");
+diff --git a/library/core/src/hint.rs b/library/core/src/hint.rs
+index 90326e6..c15d56a 100644
+--- a/library/core/src/hint.rs
++++ b/library/core/src/hint.rs
+@@ -99,7 +99,6 @@ use crate::{intrinsics, ub_checks};
+ #[inline]
+ #[stable(feature = "unreachable", since = "1.27.0")]
+ #[rustc_const_stable(feature = "const_unreachable_unchecked", since = "1.57.0")]
+-#[track_caller]
+ pub const unsafe fn unreachable_unchecked() -> ! {
+     ub_checks::assert_unsafe_precondition!(
+         check_language_ub,
+@@ -194,7 +193,6 @@ pub const unsafe fn unreachable_unchecked() -> ! {
+ /// to put an assertion right next to code that checks the same thing, and dereferencing a
+ /// pointer already has the builtin assumption that it is nonnull. However, it illustrates the
+ /// kind of changes the optimizer can make even when the behavior is less obviously related.
+-#[track_caller]
+ #[inline(always)]
+ #[doc(alias = "assume")]
+ #[stable(feature = "hint_assert_unchecked", since = "1.81.0")]
+diff --git a/library/core/src/internal_macros.rs b/library/core/src/internal_macros.rs
+index e107e76..b179096 100644
+--- a/library/core/src/internal_macros.rs
++++ b/library/core/src/internal_macros.rs
+@@ -23,7 +23,6 @@ macro_rules! forward_ref_binop {
+             type Output = <$t as $imp<$u>>::Output;
+ 
+             #[inline]
+-            #[track_caller]
+             fn $method(self, other: $u) -> <$t as $imp<$u>>::Output {
+                 $imp::$method(*self, other)
+             }
+@@ -34,7 +33,6 @@ macro_rules! forward_ref_binop {
+             type Output = <$t as $imp<$u>>::Output;
+ 
+             #[inline]
+-            #[track_caller]
+             fn $method(self, other: &$u) -> <$t as $imp<$u>>::Output {
+                 $imp::$method(self, *other)
+             }
+@@ -45,7 +43,6 @@ macro_rules! forward_ref_binop {
+             type Output = <$t as $imp<$u>>::Output;
+ 
+             #[inline]
+-            #[track_caller]
+             fn $method(self, other: &$u) -> <$t as $imp<$u>>::Output {
+                 $imp::$method(*self, *other)
+             }
+@@ -60,7 +57,6 @@ macro_rules! forward_ref_op_assign {
+         $(#[$attr])+
+         const impl $imp<&$u> for $t {
+             #[inline]
+-            #[track_caller]
+             fn $method(&mut self, other: &$u) {
+                 $imp::$method(self, *other);
+             }
+diff --git a/library/core/src/intrinsics/mod.rs b/library/core/src/intrinsics/mod.rs
+index ab2bbb8..a2b118d 100644
+--- a/library/core/src/intrinsics/mod.rs
++++ b/library/core/src/intrinsics/mod.rs
+@@ -1935,7 +1935,6 @@ pub const fn three_way_compare<T: Copy>(lhs: T, rhss: T) -> crate::cmp::Ordering
+ #[rustc_const_unstable(feature = "disjoint_bitor", issue = "135758")]
+ #[rustc_nounwind]
+ #[rustc_intrinsic]
+-#[track_caller]
+ #[miri::intrinsic_fallback_is_spec] // the fallbacks all `assume` to tell Miri
+ pub const unsafe fn disjoint_bitor<T: [const] fallback::DisjointBitOr>(a: T, b: T) -> T {
+     // SAFETY: same preconditions as this function.
+@@ -2231,7 +2230,6 @@ pub const fn saturating_sub<T: Copy>(a: T, b: T) -> T;
+ #[rustc_nounwind]
+ #[rustc_const_unstable(feature = "funnel_shifts", issue = "145686")]
+ #[unstable(feature = "funnel_shifts", issue = "145686")]
+-#[track_caller]
+ #[miri::intrinsic_fallback_is_spec]
+ pub const unsafe fn unchecked_funnel_shl<T: [const] fallback::FunnelShift>(
+     a: T,
+@@ -2259,7 +2257,6 @@ pub const unsafe fn unchecked_funnel_shl<T: [const] fallback::FunnelShift>(
+ #[rustc_nounwind]
+ #[rustc_const_unstable(feature = "funnel_shifts", issue = "145686")]
+ #[unstable(feature = "funnel_shifts", issue = "145686")]
+-#[track_caller]
+ #[miri::intrinsic_fallback_is_spec]
+ pub const unsafe fn unchecked_funnel_shr<T: [const] fallback::FunnelShift>(
+     a: T,
+diff --git a/library/core/src/iter/adapters/array_chunks.rs b/library/core/src/iter/adapters/array_chunks.rs
+index 6c502ee..c80fff3 100644
+--- a/library/core/src/iter/adapters/array_chunks.rs
++++ b/library/core/src/iter/adapters/array_chunks.rs
+@@ -23,7 +23,6 @@ impl<I, const N: usize> ArrayChunks<I, N>
+ where
+     I: Iterator,
+ {
+-    #[track_caller]
+     pub(in crate::iter) const fn new(iter: I) -> Self {
+         assert!(N != 0, "chunk size must be non-zero");
+         Self { iter, remainder: None }
+diff --git a/library/core/src/iter/sources/repeat.rs b/library/core/src/iter/sources/repeat.rs
+index bdad4ad..70bf6de 100644
+--- a/library/core/src/iter/sources/repeat.rs
++++ b/library/core/src/iter/sources/repeat.rs
+@@ -106,7 +106,6 @@ impl<A: Clone> Iterator for Repeat<A> {
+     /// # Panics
+     ///
+     /// This method always panics because `Repeat` is infinite.
+-    #[track_caller]
+     fn last(self) -> Option<A> {
+         panic!("iterator is infinite");
+     }
+@@ -116,7 +115,6 @@ impl<A: Clone> Iterator for Repeat<A> {
+     /// # Panics
+     ///
+     /// This method always panics because `Repeat` is infinite.
+-    #[track_caller]
+     fn count(self) -> usize {
+         panic!("iterator is infinite");
+     }
+diff --git a/library/core/src/iter/traits/iterator.rs b/library/core/src/iter/traits/iterator.rs
+index 0748274..ada279f 100644
+--- a/library/core/src/iter/traits/iterator.rs
++++ b/library/core/src/iter/traits/iterator.rs
+@@ -3634,7 +3634,6 @@ pub const trait Iterator {
+     ///     assert_eq!(x + y + z, 4);
+     /// }
+     /// ```
+-    #[track_caller]
+     #[unstable(feature = "iter_array_chunks", issue = "100450")]
+     fn array_chunks<#[rustc_panics_when_zero] const N: usize>(self) -> ArrayChunks<Self, N>
+     where
+diff --git a/library/core/src/mem/alignment.rs b/library/core/src/mem/alignment.rs
+index 4b0d7e9..2537e56 100644
+--- a/library/core/src/mem/alignment.rs
++++ b/library/core/src/mem/alignment.rs
+@@ -186,7 +186,6 @@ impl Alignment {
+     /// It must *not* be zero.
+     #[unstable(feature = "ptr_alignment_type", issue = "102070")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn new_unchecked(align: usize) -> Self {
+         assert_unsafe_precondition!(
+             check_language_ub,
+diff --git a/library/core/src/mem/maybe_uninit.rs b/library/core/src/mem/maybe_uninit.rs
+index 9470394..130019a 100644
+--- a/library/core/src/mem/maybe_uninit.rs
++++ b/library/core/src/mem/maybe_uninit.rs
+@@ -718,7 +718,6 @@ impl<T> MaybeUninit<T> {
+     #[rustc_const_stable(feature = "const_maybe_uninit_assume_init_by_value", since = "1.59.0")]
+     #[inline(always)]
+     #[rustc_diagnostic_item = "assume_init"]
+-    #[track_caller]
+     pub const unsafe fn assume_init(self) -> T {
+         // SAFETY: the caller must guarantee that `self` is initialized.
+         // This also means that `self` must be a `value` variant.
+@@ -790,7 +789,6 @@ impl<T> MaybeUninit<T> {
+     #[stable(feature = "maybe_uninit_extra", since = "1.60.0")]
+     #[rustc_const_stable(feature = "const_maybe_uninit_assume_init_read", since = "1.75.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn assume_init_read(&self) -> T {
+         // SAFETY: the caller must guarantee that `self` is initialized.
+         // Reading from `self.as_ptr()` is safe since `self` should be initialized.
+@@ -1044,7 +1042,6 @@ impl<T> MaybeUninit<T> {
+     /// ```
+     #[unstable(feature = "maybe_uninit_array_assume_init", issue = "96097")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn array_assume_init<const N: usize>(array: [Self; N]) -> [T; N] {
+         // SAFETY:
+         // * The caller guarantees that all elements of the array are initialized
+diff --git a/library/core/src/mem/mod.rs b/library/core/src/mem/mod.rs
+index 64a48d7..2399ac6 100644
+--- a/library/core/src/mem/mod.rs
++++ b/library/core/src/mem/mod.rs
+@@ -750,7 +750,6 @@ pub const fn needs_drop<T: ?Sized>() -> bool {
+ #[must_use]
+ #[stable(feature = "rust1", since = "1.0.0")]
+ #[rustc_diagnostic_item = "mem_zeroed"]
+-#[track_caller]
+ #[rustc_const_stable(feature = "const_mem_zeroed", since = "1.75.0")]
+ pub const unsafe fn zeroed<T>() -> T {
+     // SAFETY: the caller must guarantee that an all-zero value is valid for `T`.
+@@ -788,7 +787,6 @@ pub const unsafe fn zeroed<T>() -> T {
+ #[deprecated(since = "1.39.0", note = "use `mem::MaybeUninit` instead")]
+ #[stable(feature = "rust1", since = "1.0.0")]
+ #[rustc_diagnostic_item = "mem_uninitialized"]
+-#[track_caller]
+ pub unsafe fn uninitialized<T>() -> T {
+     // SAFETY: the caller must guarantee that an uninitialized value is valid for `T`.
+     unsafe {
+@@ -1139,7 +1137,6 @@ pub const fn copy<T: Copy>(x: &T) -> T {
+ /// ```
+ #[inline]
+ #[must_use]
+-#[track_caller]
+ #[stable(feature = "rust1", since = "1.0.0")]
+ #[rustc_const_stable(feature = "const_transmute_copy", since = "1.74.0")]
+ pub const unsafe fn transmute_copy<Src: ?Sized, Dst>(src: &Src) -> Dst {
+diff --git a/library/core/src/num/f128.rs b/library/core/src/num/f128.rs
+index db05d7f..54695f0 100644
+--- a/library/core/src/num/f128.rs
++++ b/library/core/src/num/f128.rs
+@@ -1114,7 +1114,6 @@ impl f128 {
+     #[unstable(feature = "float_conversions", issue = "159913")]
+     #[must_use = "this returns the result of the operation, without modifying the original"]
+     #[inline]
+-    #[track_caller]
+     pub fn to_int_strict<Int>(self) -> Int
+     where
+         Self: FloatToInt<Int>,
+diff --git a/library/core/src/num/f16.rs b/library/core/src/num/f16.rs
+index 273ef36..87cfc8c 100644
+--- a/library/core/src/num/f16.rs
++++ b/library/core/src/num/f16.rs
+@@ -1110,7 +1110,6 @@ impl f16 {
+     #[unstable(feature = "float_conversions", issue = "159913")]
+     #[must_use = "this returns the result of the operation, without modifying the original"]
+     #[inline]
+-    #[track_caller]
+     pub fn to_int_strict<Int>(self) -> Int
+     where
+         Self: FloatToInt<Int>,
+diff --git a/library/core/src/num/f32.rs b/library/core/src/num/f32.rs
+index d3dea38..a66c822 100644
+--- a/library/core/src/num/f32.rs
++++ b/library/core/src/num/f32.rs
+@@ -1306,7 +1306,6 @@ impl f32 {
+     #[must_use = "this returns the result of the operation, \
+                   without modifying the original"]
+     #[inline]
+-    #[track_caller]
+     pub fn to_int_strict<Int>(self) -> Int
+     where
+         Self: FloatToInt<Int>,
+diff --git a/library/core/src/num/f64.rs b/library/core/src/num/f64.rs
+index 7c50827..f139128 100644
+--- a/library/core/src/num/f64.rs
++++ b/library/core/src/num/f64.rs
+@@ -1285,7 +1285,6 @@ impl f64 {
+     #[unstable(feature = "float_conversions", issue = "159913")]
+     #[must_use = "this returns the result of the operation, without modifying the original"]
+     #[inline]
+-    #[track_caller]
+     pub fn to_int_strict<Int>(self) -> Int
+     where
+         Self: FloatToInt<Int>,
+diff --git a/library/core/src/num/imp/int_log10.rs b/library/core/src/num/imp/int_log10.rs
+index 1da029c..2c1af4d 100644
+--- a/library/core/src/num/imp/int_log10.rs
++++ b/library/core/src/num/imp/int_log10.rs
+@@ -165,7 +165,6 @@ define_signed_ilog10! {
+ /// Instantiate this panic logic once, rather than for all the ilog methods
+ /// on every single primitive type.
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn panic_for_nonpositive_argument() -> ! {
+     panic!("argument of integer logarithm must be positive")
+ }
+diff --git a/library/core/src/num/imp/int_sqrt.rs b/library/core/src/num/imp/int_sqrt.rs
+index c2bb4bf..327ae6b 100644
+--- a/library/core/src/num/imp/int_sqrt.rs
++++ b/library/core/src/num/imp/int_sqrt.rs
+@@ -280,7 +280,6 @@ unsigned_fn!(u128, u64, u128_stages);
+ /// Instantiate this panic logic once, rather than for all the isqrt methods
+ /// on every single primitive type.
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn panic_for_negative_argument() -> ! {
+     panic!("argument of integer square root cannot be negative")
+ }
+diff --git a/library/core/src/num/imp/overflow_panic.rs b/library/core/src/num/imp/overflow_panic.rs
+index fd5b88a..d4d85fa 100644
+--- a/library/core/src/num/imp/overflow_panic.rs
++++ b/library/core/src/num/imp/overflow_panic.rs
+@@ -3,55 +3,46 @@
+ //! In particular, these are used by the `strict_` methods on integers.
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn add() -> ! {
+     panic!("attempt to add with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn sub() -> ! {
+     panic!("attempt to subtract with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn mul() -> ! {
+     panic!("attempt to multiply with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn rem() -> ! {
+     panic!("attempt to calculate the remainder with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn neg() -> ! {
+     panic!("attempt to negate with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn shr() -> ! {
+     panic!("attempt to shift right with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn shl() -> ! {
+     panic!("attempt to shift left with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(in crate::num) const fn pow() -> ! {
+     panic!("attempt to exponentiate with overflow")
+ }
+ 
+ #[cold]
+-#[track_caller]
+ pub(crate) const fn cast_integer() -> ! {
+     panic!("attempt to cast integer with overflow")
+ }
+diff --git a/library/core/src/num/int_macros.rs b/library/core/src/num/int_macros.rs
+index bb37a73..1b0df53 100644
+--- a/library/core/src/num/int_macros.rs
++++ b/library/core/src/num/int_macros.rs
+@@ -351,7 +351,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_cast_unsigned(self) -> $UnsignedT {
+             match self.checked_cast_unsigned() {
+                 Some(n) => n,
+@@ -621,7 +620,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_add(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_add(rhs);
+             if b { imp::overflow_panic::add() } else { a }
+@@ -650,7 +648,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_add(self, rhs: Self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -711,7 +708,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_add_unsigned(self, rhs: $UnsignedT) -> Self {
+             let (a, b) = self.overflowing_add_unsigned(rhs);
+             if b { imp::overflow_panic::add() } else { a }
+@@ -761,7 +757,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_sub(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_sub(rhs);
+             if b { imp::overflow_panic::sub() } else { a }
+@@ -790,7 +785,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_sub(self, rhs: Self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -851,7 +845,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_sub_unsigned(self, rhs: $UnsignedT) -> Self {
+             let (a, b) = self.overflowing_sub_unsigned(rhs);
+             if b { imp::overflow_panic::sub() } else { a }
+@@ -901,7 +894,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_mul(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_mul(rhs);
+             if b { imp::overflow_panic::mul() } else { a }
+@@ -930,7 +922,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_mul(self, rhs: Self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1011,7 +1002,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_div(self, rhs: Self) -> Self {
+             // Normal division already checks for "div-by-minus-1".
+             self / rhs
+@@ -1081,7 +1071,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_div_euclid(self, rhs: Self) -> Self {
+             // Normal `div_euclid` already checks for "div-by-minus-1".
+             self.div_euclid(rhs)
+@@ -1253,7 +1242,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_rem(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_rem(rhs);
+             if b { imp::overflow_panic::rem() } else { a }
+@@ -1319,7 +1307,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_rem_euclid(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_rem_euclid(rhs);
+             if b { imp::overflow_panic::rem() } else { a }
+@@ -1357,7 +1344,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_neg(self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1397,7 +1383,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_neg(self) -> Self {
+             let (a, b) = self.overflowing_neg();
+             if b { imp::overflow_panic::neg() } else { a }
+@@ -1453,7 +1438,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_shl(self, rhs: u32) -> Self {
+             let (a, b) = self.overflowing_shl(rhs);
+             if b { imp::overflow_panic::shl() } else { a }
+@@ -1474,7 +1458,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_shl(self, rhs: u32) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1632,7 +1615,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_shr(self, rhs: u32) -> Self {
+             let (a, b) = self.overflowing_shr(rhs);
+             if b { imp::overflow_panic::shr() } else { a }
+@@ -1653,7 +1635,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_shr(self, rhs: u32) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1812,7 +1793,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_abs(self) -> Self {
+             if self.is_negative() {
+                 self.strict_neg()
+@@ -1910,7 +1890,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_pow(self, exp: u32) -> Self {
+             match self.checked_pow(exp) {
+                 Some(x) => x,
+@@ -2140,7 +2119,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn saturating_div(self, rhs: Self) -> Self {
+             match self.overflowing_div(rhs) {
+                 (result, false) => result,
+@@ -2284,7 +2262,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn wrapping_div(self, rhs: Self) -> Self {
+             self.overflowing_div(rhs).0
+         }
+@@ -2311,7 +2288,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn wrapping_div_euclid(self, rhs: Self) -> Self {
+             self.overflowing_div_euclid(rhs).0
+         }
+@@ -2338,7 +2314,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn wrapping_rem(self, rhs: Self) -> Self {
+             self.overflowing_rem(rhs).0
+         }
+@@ -2364,7 +2339,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn wrapping_rem_euclid(self, rhs: Self) -> Self {
+             self.overflowing_rem_euclid(rhs).0
+         }
+@@ -2861,7 +2835,6 @@ macro_rules! int_impl {
+         #[rustc_const_stable(feature = "const_overflowing_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_div(self, rhs: Self) -> (Self, bool) {
+             // Using `&` helps LLVM see that it is the same check made in division.
+             if intrinsics::unlikely((self == Self::MIN) & (rhs == -1)) {
+@@ -2891,7 +2864,6 @@ macro_rules! int_impl {
+         #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_div_euclid(self, rhs: Self) -> (Self, bool) {
+             // Using `&` helps LLVM see that it is the same check made in division.
+             if intrinsics::unlikely((self == Self::MIN) & (rhs == -1)) {
+@@ -2921,7 +2893,6 @@ macro_rules! int_impl {
+         #[rustc_const_stable(feature = "const_overflowing_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_rem(self, rhs: Self) -> (Self, bool) {
+             if intrinsics::unlikely(rhs == -1) {
+                 (0, self == Self::MIN)
+@@ -2951,7 +2922,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn overflowing_rem_euclid(self, rhs: Self) -> (Self, bool) {
+             if intrinsics::unlikely(rhs == -1) {
+                 (0, self == Self::MIN)
+@@ -3169,7 +3139,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn isqrt(self) -> Self {
+             match self.checked_isqrt() {
+                 Some(sqrt) => sqrt,
+@@ -3210,7 +3179,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn div_euclid(self, rhs: Self) -> Self {
+             let q = self / rhs;
+             if self % rhs < 0 {
+@@ -3254,7 +3222,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn rem_euclid(self, rhs: Self) -> Self {
+             let r = self % rhs;
+             if r < 0 {
+@@ -3295,7 +3262,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn div_floor(self, rhs: Self) -> Self {
+             let d = self / rhs;
+             let r = self % rhs;
+@@ -3337,7 +3303,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn div_ceil(self, rhs: Self) -> Self {
+             let d = self / rhs;
+             let r = self % rhs;
+@@ -3473,7 +3438,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn ilog(self, base: Self) -> u32 {
+             assert!(base >= 2, "base of integer logarithm must be at least 2");
+             if let Some(log) = self.checked_ilog(base) {
+@@ -3499,7 +3463,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn ilog2(self) -> u32 {
+             if let Some(log) = self.checked_ilog2() {
+                 log
+@@ -3524,7 +3487,6 @@ macro_rules! int_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn ilog10(self) -> u32 {
+             if let Some(log) = self.checked_ilog10() {
+                 log
+@@ -4146,7 +4108,6 @@ macro_rules! int_impl {
+         #[unstable(feature = "integer_casts", issue = "157388")]
+         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn strict_cast<T: [const] CheckedCastFromInt<Self>>(self) -> T {
+             T::strict_cast_from(self)
+         }
+diff --git a/library/core/src/num/mod.rs b/library/core/src/num/mod.rs
+index db41d23..07bfb62 100644
+--- a/library/core/src/num/mod.rs
++++ b/library/core/src/num/mod.rs
+@@ -1579,7 +1579,6 @@ pub const fn can_not_overflow<T>(radix: u32, is_signed_ty: bool, digits: &[u8])
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+ #[cold]
+-#[track_caller]
+ const fn from_ascii_bytes_radix_panic(radix: u32) -> ! {
+     const_panic!(
+         "from_ascii_bytes_radix: radix must lie in the range `[2, 36]`",
+diff --git a/library/core/src/num/nonzero.rs b/library/core/src/num/nonzero.rs
+index 5d8dee0..ac757ca 100644
+--- a/library/core/src/num/nonzero.rs
++++ b/library/core/src/num/nonzero.rs
+@@ -401,7 +401,6 @@ where
+     #[rustc_const_stable(feature = "nonzero", since = "1.28.0")]
+     #[must_use]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn new_unchecked(n: T) -> Self {
+         match Self::new(n) {
+             Some(n) => n,
+@@ -442,7 +441,6 @@ where
+     #[unstable(feature = "nonzero_from_mut", issue = "106290")]
+     #[must_use]
+     #[inline]
+-    #[track_caller]
+     pub unsafe fn from_mut_unchecked(n: &mut T) -> &mut Self {
+         match Self::from_mut(n) {
+             Some(n) => n,
+diff --git a/library/core/src/num/uint_macros.rs b/library/core/src/num/uint_macros.rs
+index a53c11e..7b85789 100644
+--- a/library/core/src/num/uint_macros.rs
++++ b/library/core/src/num/uint_macros.rs
+@@ -439,7 +439,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_cast_signed(self) -> $SignedT {
+             match self.checked_cast_signed() {
+                 Some(n) => n,
+@@ -658,7 +657,6 @@ macro_rules! uint_impl {
+         #[unstable(feature = "funnel_shifts", issue = "145686")]
+         #[must_use = "this returns the result of the operation, without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_funnel_shl(self, right: Self, n: u32) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -684,7 +682,6 @@ macro_rules! uint_impl {
+         #[unstable(feature = "funnel_shifts", issue = "145686")]
+         #[must_use = "this returns the result of the operation, without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_funnel_shr(self, right: Self, n: u32) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -998,7 +995,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_add(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_add(rhs);
+             if b { imp::overflow_panic::add() } else { a }
+@@ -1027,7 +1023,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_add(self, rhs: Self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1093,7 +1088,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_add_signed(self, rhs: $SignedT) -> Self {
+             let (a, b) = self.overflowing_add_signed(rhs);
+             if b { imp::overflow_panic::add() } else { a }
+@@ -1152,7 +1146,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_sub(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_sub(rhs);
+             if b { imp::overflow_panic::sub() } else { a }
+@@ -1206,7 +1199,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_sub(self, rhs: Self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1277,7 +1269,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_sub_signed(self, rhs: $SignedT) -> Self {
+             let (a, b) = self.overflowing_sub_signed(rhs);
+             if b { imp::overflow_panic::sub() } else { a }
+@@ -1386,7 +1377,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_mul(self, rhs: Self) -> Self {
+             let (a, b) = self.overflowing_mul(rhs);
+             if b { imp::overflow_panic::mul() } else { a }
+@@ -1415,7 +1405,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_mul(self, rhs: Self) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -1482,7 +1471,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn strict_div(self, rhs: Self) -> Self {
+             self / rhs
+         }
+@@ -1536,7 +1524,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn strict_div_euclid(self, rhs: Self) -> Self {
+             self / rhs
+         }
+@@ -1682,7 +1669,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn strict_rem(self, rhs: Self) -> Self {
+             self % rhs
+         }
+@@ -1738,7 +1724,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn strict_rem_euclid(self, rhs: Self) -> Self {
+             self % rhs
+         }
+@@ -1808,7 +1793,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn ilog(self, base: Self) -> u32 {
+             assert!(base >= 2, "base of integer logarithm must be at least 2");
+             if let Some(log) = self.checked_ilog(base) {
+@@ -1834,7 +1818,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn ilog2(self) -> u32 {
+             if let Some(log) = self.checked_ilog2() {
+                 log
+@@ -1859,7 +1842,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn ilog10(self) -> u32 {
+             if let Some(log) = self.checked_ilog10() {
+                 log
+@@ -2034,7 +2016,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_neg(self) -> Self {
+             let (a, b) = self.overflowing_neg();
+             if b { imp::overflow_panic::neg() } else { a }
+@@ -2090,7 +2071,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_shl(self, rhs: u32) -> Self {
+             let (a, b) = self.overflowing_shl(rhs);
+             if b { imp::overflow_panic::shl() } else { a }
+@@ -2111,7 +2091,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_shl(self, rhs: u32) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -2275,7 +2254,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_shr(self, rhs: u32) -> Self {
+             let (a, b) = self.overflowing_shr(rhs);
+             if b { imp::overflow_panic::shr() } else { a }
+@@ -2296,7 +2274,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const unsafe fn unchecked_shr(self, rhs: u32) -> Self {
+             assert_unsafe_precondition!(
+                 check_language_ub,
+@@ -2500,7 +2477,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn strict_pow(self, exp: u32) -> Self {
+             match self.checked_pow(exp) {
+                 None => imp::overflow_panic::pow(),
+@@ -2636,7 +2612,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn saturating_div(self, rhs: Self) -> Self {
+             // on unsigned types, there is no overflow in integer division
+             self.wrapping_div(rhs)
+@@ -2778,7 +2753,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn wrapping_div(self, rhs: Self) -> Self {
+             self / rhs
+         }
+@@ -2805,7 +2779,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn wrapping_div_euclid(self, rhs: Self) -> Self {
+             self / rhs
+         }
+@@ -2831,7 +2804,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn wrapping_rem(self, rhs: Self) -> Self {
+             self % rhs
+         }
+@@ -2859,7 +2831,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn wrapping_rem_euclid(self, rhs: Self) -> Self {
+             self % rhs
+         }
+@@ -3414,7 +3385,6 @@ macro_rules! uint_impl {
+         #[rustc_const_stable(feature = "const_overflowing_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_div(self, rhs: Self) -> (Self, bool) {
+             (self / rhs, false)
+         }
+@@ -3443,7 +3413,6 @@ macro_rules! uint_impl {
+         #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_div_euclid(self, rhs: Self) -> (Self, bool) {
+             (self / rhs, false)
+         }
+@@ -3469,7 +3438,6 @@ macro_rules! uint_impl {
+         #[rustc_const_stable(feature = "const_overflowing_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_rem(self, rhs: Self) -> (Self, bool) {
+             (self % rhs, false)
+         }
+@@ -3498,7 +3466,6 @@ macro_rules! uint_impl {
+         #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+-        #[track_caller]
+         pub const fn overflowing_rem_euclid(self, rhs: Self) -> (Self, bool) {
+             (self % rhs, false)
+         }
+@@ -3741,7 +3708,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn div_euclid(self, rhs: Self) -> Self {
+             self / rhs
+         }
+@@ -3769,7 +3735,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn rem_euclid(self, rhs: Self) -> Self {
+             self % rhs
+         }
+@@ -3792,7 +3757,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn div_floor(self, rhs: Self) -> Self {
+             self / rhs
+         }
+@@ -3813,7 +3777,6 @@ macro_rules! uint_impl {
+         #[must_use = "this returns the result of the operation, \
+                       without modifying the original"]
+         #[inline]
+-        #[track_caller]
+         pub const fn div_ceil(self, rhs: Self) -> Self {
+             let d = self / rhs;
+             let r = self % rhs;
+@@ -4365,7 +4328,6 @@ macro_rules! uint_impl {
+         #[unstable(feature = "integer_casts", issue = "157388")]
+         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
+         #[inline(always)]
+-        #[track_caller]
+         pub const fn strict_cast<T: [const] CheckedCastFromInt<Self>>(self) -> T {
+             T::strict_cast_from(self)
+         }
+diff --git a/library/core/src/ops/arith.rs b/library/core/src/ops/arith.rs
+index 34af7d9..8de6e7f 100644
+--- a/library/core/src/ops/arith.rs
++++ b/library/core/src/ops/arith.rs
+@@ -99,7 +99,6 @@ macro_rules! add_impl {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn add(self, other: $t) -> $t { self + other }
+         }
+@@ -211,7 +210,6 @@ macro_rules! sub_impl {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn sub(self, other: $t) -> $t { self - other }
+         }
+@@ -345,7 +343,6 @@ macro_rules! mul_impl {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn mul(self, other: $t) -> $t { self * other }
+         }
+@@ -489,7 +486,6 @@ macro_rules! div_impl_integer {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             fn div(self, other: $t) -> $t { self / other }
+         }
+ 
+@@ -598,7 +594,6 @@ macro_rules! rem_impl_integer {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             fn rem(self, other: $t) -> $t { self % other }
+         }
+ 
+@@ -714,7 +709,6 @@ macro_rules! neg_impl {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn neg(self) -> $t { -self }
+         }
+@@ -785,7 +779,6 @@ macro_rules! add_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl AddAssign for $t {
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn add_assign(&mut self, other: $t) { *self += other }
+         }
+@@ -856,7 +849,6 @@ macro_rules! sub_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl SubAssign for $t {
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn sub_assign(&mut self, other: $t) { *self -= other }
+         }
+@@ -918,7 +910,6 @@ macro_rules! mul_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl MulAssign for $t {
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn mul_assign(&mut self, other: $t) { *self *= other }
+         }
+@@ -980,7 +971,6 @@ macro_rules! div_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl DivAssign for $t {
+             #[inline]
+-            #[track_caller]
+             fn div_assign(&mut self, other: $t) { *self /= other }
+         }
+ 
+@@ -1045,7 +1035,6 @@ macro_rules! rem_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl RemAssign for $t {
+             #[inline]
+-            #[track_caller]
+             fn rem_assign(&mut self, other: $t) { *self %= other }
+         }
+ 
+diff --git a/library/core/src/ops/bit.rs b/library/core/src/ops/bit.rs
+index 7c00853..0025133 100644
+--- a/library/core/src/ops/bit.rs
++++ b/library/core/src/ops/bit.rs
+@@ -484,7 +484,6 @@ macro_rules! shl_impl {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn shl(self, other: $f) -> $t {
+                 self << other
+@@ -607,7 +606,6 @@ macro_rules! shr_impl {
+             type Output = $t;
+ 
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn shr(self, other: $f) -> $t {
+                 self >> other
+@@ -960,7 +958,6 @@ macro_rules! shl_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl ShlAssign<$f> for $t {
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn shl_assign(&mut self, other: $f) {
+                 *self <<= other
+@@ -1047,7 +1044,6 @@ macro_rules! shr_assign_impl {
+         #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+         const impl ShrAssign<$f> for $t {
+             #[inline]
+-            #[track_caller]
+             #[rustc_inherit_overflow_checks]
+             fn shr_assign(&mut self, other: $f) {
+                 *self >>= other
+diff --git a/library/core/src/ops/index.rs b/library/core/src/ops/index.rs
+index 2c62a39..4b3d018 100644
+--- a/library/core/src/ops/index.rs
++++ b/library/core/src/ops/index.rs
+@@ -69,7 +69,6 @@ pub const trait Index<Idx: ?Sized> {
+     /// May panic if the index is out of bounds.
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_no_implicit_autorefs]
+-    #[track_caller]
+     fn index(&self, index: Idx) -> &Self::Output;
+ }
+ 
+@@ -175,6 +174,5 @@ pub const trait IndexMut<Idx: ?Sized>: [const] Index<Idx> {
+     /// May panic if the index is out of bounds.
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_no_implicit_autorefs]
+-    #[track_caller]
+     fn index_mut(&mut self, index: Idx) -> &mut Self::Output;
+ }
+diff --git a/library/core/src/ops/index_range.rs b/library/core/src/ops/index_range.rs
+index 84395dd..b05e791 100644
+--- a/library/core/src/ops/index_range.rs
++++ b/library/core/src/ops/index_range.rs
+@@ -20,7 +20,6 @@ impl IndexRange {
+     /// # Safety
+     /// - `start <= end`
+     #[inline]
+-    #[track_caller]
+     pub(crate) const unsafe fn new_unchecked(start: usize, end: usize) -> Self {
+         ub_checks::assert_unsafe_precondition!(
+             check_library_ub,
+diff --git a/library/core/src/ops/try_trait.rs b/library/core/src/ops/try_trait.rs
+index d0dd6c8..399e6a6 100644
+--- a/library/core/src/ops/try_trait.rs
++++ b/library/core/src/ops/try_trait.rs
+@@ -339,7 +339,6 @@ pub const trait FromResidual<R = <Self as Try>::Residual> {
+     reason = "just here to simplify the desugaring; will never be stabilized"
+ )]
+ #[inline]
+-#[track_caller] // because `Result::from_residual` has it
+ #[lang = "from_yeet"]
+ #[allow(unreachable_pub)] // not-exposed but still used via lang-item
+ pub fn from_yeet<T, Y>(yeeted: Y) -> T
+diff --git a/library/core/src/option.rs b/library/core/src/option.rs
+index 2fe7c8c..16fa07d 100644
+--- a/library/core/src/option.rs
++++ b/library/core/src/option.rs
+@@ -960,7 +960,6 @@ impl<T> Option<T> {
+     /// recommendation please refer to the section on ["Common Message
+     /// Styles"](../../std/error/index.html#common-message-styles) in the [`std::error`](../../std/error/index.html) module docs.
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_diagnostic_item = "option_expect"]
+     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+@@ -1005,7 +1004,6 @@ impl<T> Option<T> {
+     /// assert_eq!(x.unwrap(), "air"); // fails
+     /// ```
+     #[inline(always)]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_diagnostic_item = "option_unwrap"]
+     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+@@ -1055,7 +1053,6 @@ impl<T> Option<T> {
+     /// assert_eq!(None.unwrap_or_else(|| 2 * k), 20);
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+     pub const fn unwrap_or_else<F>(self, f: F) -> T
+@@ -1121,7 +1118,6 @@ impl<T> Option<T> {
+     /// assert_eq!(unsafe { x.unwrap_unchecked() }, "air"); // Undefined behavior!
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
+     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+     #[rustc_const_stable(feature = "const_option", since = "1.83.0")]
+@@ -2248,7 +2244,6 @@ impl<T, E> Option<Result<T, E>> {
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+ #[cold]
+-#[track_caller]
+ const fn unwrap_failed() -> ! {
+     panic("called `Option::unwrap()` on a `None` value")
+ }
+@@ -2257,7 +2252,6 @@ const fn unwrap_failed() -> ! {
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+ #[cold]
+-#[track_caller]
+ const fn expect_failed(msg: &str) -> ! {
+     panic_display(&msg)
+ }
+diff --git a/library/core/src/panic.rs b/library/core/src/panic.rs
+index 4fcd5f6..5694673 100644
+--- a/library/core/src/panic.rs
++++ b/library/core/src/panic.rs
+@@ -136,7 +136,6 @@ pub macro const_panic {
+         // because both variants will panic, just with different messages.
+         #[rustc_allow_const_fn_unstable(const_eval_select)]
+         #[inline(always)] // inline the wrapper
+-        #[track_caller]
+         const fn do_panic($($arg: $ty),*) -> ! {
+             $crate::intrinsics::const_eval_select!(
+                 @capture { $($arg: $ty = $arg),* } -> !:
+diff --git a/library/core/src/panicking.rs b/library/core/src/panicking.rs
+index 04722e4..0a24625 100644
+--- a/library/core/src/panicking.rs
++++ b/library/core/src/panicking.rs
+@@ -53,7 +53,6 @@ compile_error!(
+ // otherwise avoid inlining because of it is cold path.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ #[lang = "panic_fmt"] // needed for const-evaluated panics
+ #[rustc_do_not_const_check] // hooked by const-eval
+ #[rustc_const_stable_indirect] // must follow stable const rules since it is exposed to stable
+@@ -85,7 +84,6 @@ pub const fn panic_fmt(fmt: fmt::Arguments<'_>) -> ! {
+ /// Has to be a separate function so that it can carry the `rustc_nounwind` attribute.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ // This attribute has the key side-effect that if the panic handler ignores `can_unwind`
+ // and unwinds anyway, we will hit the "unwinding out of nounwind function" guard,
+ // which causes a "panic in a function that cannot unwind".
+@@ -132,7 +130,6 @@ pub const fn panic_nounwind_fmt(fmt: fmt::Arguments<'_>, force_no_backtrace: boo
+ // bloat at the call sites as much as possible.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ #[rustc_const_stable_indirect] // must follow stable const rules since it is exposed to stable
+ #[lang = "panic"] // used by lints and miri for panics
+ pub const fn panic(expr: &'static str) -> ! {
+@@ -234,7 +231,6 @@ pub fn panic_nounwind_nobacktrace(expr: &'static str) -> ! {
+ }
+ 
+ #[inline]
+-#[track_caller]
+ #[rustc_diagnostic_item = "unreachable_display"] // needed for `non-fmt-panics` lint
+ pub fn unreachable_display<T: fmt::Display>(x: &T) -> ! {
+     panic_fmt(format_args!("internal error: entered unreachable code: {}", *x));
+@@ -243,7 +239,6 @@ pub fn unreachable_display<T: fmt::Display>(x: &T) -> ! {
+ /// This exists solely for the 2015 edition `panic!` macro to trigger
+ /// a lint on `panic!(my_str_variable);`.
+ #[inline]
+-#[track_caller]
+ #[rustc_diagnostic_item = "panic_str_2015"]
+ #[rustc_const_stable_indirect] // must follow stable const rules since it is exposed to stable
+ pub const fn panic_str_2015(expr: &str) -> ! {
+@@ -251,7 +246,6 @@ pub const fn panic_str_2015(expr: &str) -> ! {
+ }
+ 
+ #[inline]
+-#[track_caller]
+ #[lang = "panic_display"] // needed for const-evaluated panics
+ #[rustc_do_not_const_check] // hooked by const-eval
+ #[rustc_const_stable_indirect] // must follow stable const rules since it is exposed to stable
+@@ -392,7 +386,6 @@ pub enum AssertKind {
+ /// Internal function for `assert_eq!` and `assert_ne!` macros
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ #[doc(hidden)]
+ pub fn assert_failed<T, U>(
+     kind: AssertKind,
+@@ -410,7 +403,6 @@ where
+ /// Internal function for `assert_match!`
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ #[doc(hidden)]
+ pub fn assert_matches_failed<T: fmt::Debug + ?Sized>(
+     left: &T,
+@@ -430,7 +422,6 @@ pub fn assert_matches_failed<T: fmt::Debug + ?Sized>(
+ /// Non-generic version of the above functions, to avoid code bloat.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ fn assert_failed_inner(
+     kind: AssertKind,
+     left: &dyn fmt::Debug,
+diff --git a/library/core/src/pat.rs b/library/core/src/pat.rs
+index 0cf9f10..516c7e2 100644
+--- a/library/core/src/pat.rs
++++ b/library/core/src/pat.rs
+@@ -36,7 +36,6 @@ pub const trait RangePattern {
+ 
+     /// A compile-time helper to subtract 1 for exclusive ranges.
+     #[lang = "RangeSub"]
+-    #[track_caller]
+     fn sub_one(self) -> Self;
+ }
+ 
+diff --git a/library/core/src/ptr/const_ptr.rs b/library/core/src/ptr/const_ptr.rs
+index 124127e..efae430 100644
+--- a/library/core/src/ptr/const_ptr.rs
++++ b/library/core/src/ptr/const_ptr.rs
+@@ -351,7 +351,6 @@ impl<T: PointeeSized> *const T {
+     #[must_use = "returns a new pointer rather than modifying its argument"]
+     #[rustc_const_stable(feature = "const_ptr_offset", since = "1.61.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn offset(self, count: isize) -> *const T
+     where
+         T: Sized,
+@@ -404,7 +403,6 @@ impl<T: PointeeSized> *const T {
+     #[inline(always)]
+     #[stable(feature = "pointer_byte_offsets", since = "1.75.0")]
+     #[rustc_const_stable(feature = "const_pointer_byte_offsets", since = "1.75.0")]
+-    #[track_caller]
+     pub const unsafe fn byte_offset(self, count: isize) -> Self {
+         // SAFETY: the caller must uphold the safety contract for `offset`.
+         unsafe { self.cast::<u8>().offset(count).with_metadata_of(self) }
+@@ -702,7 +700,6 @@ impl<T: PointeeSized> *const T {
+     #[stable(feature = "ptr_sub_ptr", since = "1.87.0")]
+     #[rustc_const_stable(feature = "const_ptr_sub_ptr", since = "1.87.0")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn offset_from_unsigned(self, origin: *const T) -> usize
+     where
+         T: Sized,
+@@ -747,7 +744,6 @@ impl<T: PointeeSized> *const T {
+     #[stable(feature = "ptr_sub_ptr", since = "1.87.0")]
+     #[rustc_const_stable(feature = "const_ptr_sub_ptr", since = "1.87.0")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn byte_offset_from_unsigned<U: ?Sized>(self, origin: *const U) -> usize {
+         // SAFETY: the caller must uphold the safety contract for `offset_from_unsigned`.
+         unsafe { self.cast::<u8>().offset_from_unsigned(origin.cast::<u8>()) }
+@@ -834,7 +830,6 @@ impl<T: PointeeSized> *const T {
+     #[must_use = "returns a new pointer rather than modifying its argument"]
+     #[rustc_const_stable(feature = "const_ptr_offset", since = "1.61.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn add(self, count: usize) -> Self
+     where
+         T: Sized,
+@@ -886,7 +881,6 @@ impl<T: PointeeSized> *const T {
+     #[inline(always)]
+     #[stable(feature = "pointer_byte_offsets", since = "1.75.0")]
+     #[rustc_const_stable(feature = "const_pointer_byte_offsets", since = "1.75.0")]
+-    #[track_caller]
+     pub const unsafe fn byte_add(self, count: usize) -> Self {
+         // SAFETY: the caller must uphold the safety contract for `add`.
+         unsafe { self.cast::<u8>().add(count).with_metadata_of(self) }
+@@ -913,7 +907,6 @@ impl<T: PointeeSized> *const T {
+     #[must_use = "returns a new pointer rather than modifying its argument"]
+     #[rustc_const_stable(feature = "const_ptr_offset", since = "1.61.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn sub(self, count: usize) -> Self
+     where
+         T: Sized,
+@@ -971,7 +964,6 @@ impl<T: PointeeSized> *const T {
+     #[inline(always)]
+     #[stable(feature = "pointer_byte_offsets", since = "1.75.0")]
+     #[rustc_const_stable(feature = "const_pointer_byte_offsets", since = "1.75.0")]
+-    #[track_caller]
+     pub const unsafe fn byte_sub(self, count: usize) -> Self {
+         // SAFETY: the caller must uphold the safety contract for `sub`.
+         unsafe { self.cast::<u8>().sub(count).with_metadata_of(self) }
+@@ -1145,7 +1137,6 @@ impl<T: PointeeSized> *const T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_read", since = "1.71.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn read(self) -> T
+     where
+         T: Sized,
+@@ -1167,7 +1158,6 @@ impl<T: PointeeSized> *const T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_unstable(feature = "const_volatile", issue = "159094")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn read_volatile(self) -> T
+     where
+         T: Sized,
+@@ -1187,7 +1177,6 @@ impl<T: PointeeSized> *const T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_read", since = "1.71.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn read_unaligned(self) -> T
+     where
+         T: Sized,
+@@ -1207,7 +1196,6 @@ impl<T: PointeeSized> *const T {
+     #[rustc_const_stable(feature = "const_intrinsic_copy", since = "1.83.0")]
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn copy_to(self, dest: *mut T, count: usize)
+     where
+         T: Sized,
+@@ -1227,7 +1215,6 @@ impl<T: PointeeSized> *const T {
+     #[rustc_const_stable(feature = "const_intrinsic_copy", since = "1.83.0")]
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn copy_to_nonoverlapping(self, dest: *mut T, count: usize)
+     where
+         T: Sized,
+diff --git a/library/core/src/ptr/mod.rs b/library/core/src/ptr/mod.rs
+index 9019e3a..fc63636 100644
+--- a/library/core/src/ptr/mod.rs
++++ b/library/core/src/ptr/mod.rs
+@@ -1399,7 +1399,6 @@ pub const unsafe fn swap<T>(x: *mut T, y: *mut T) {
+ #[rustc_const_stable(feature = "const_swap_nonoverlapping", since = "1.88.0")]
+ #[rustc_diagnostic_item = "ptr_swap_nonoverlapping"]
+ #[rustc_allow_const_fn_unstable(const_eval_select)] // both implementations behave the same
+-#[track_caller]
+ pub const unsafe fn swap_nonoverlapping<T>(x: *mut T, y: *mut T, count: usize) {
+     ub_checks::assert_unsafe_precondition!(
+         check_library_ub,
+@@ -1578,7 +1577,6 @@ unsafe fn swap_nonoverlapping_bytes(x: *mut u8, y: *mut u8, bytes: NonZero<usize
+ #[stable(feature = "rust1", since = "1.0.0")]
+ #[rustc_const_stable(feature = "const_replace", since = "1.83.0")]
+ #[rustc_diagnostic_item = "ptr_replace"]
+-#[track_caller]
+ pub const unsafe fn replace<T>(dst: *mut T, src: T) -> T {
+     // SAFETY: the caller must guarantee that `dst` is valid to be
+     // cast to a mutable reference (valid for writes, aligned, initialized),
+@@ -1714,7 +1712,6 @@ pub const unsafe fn replace<T>(dst: *mut T, src: T) -> T {
+ #[inline(always)]
+ #[stable(feature = "rust1", since = "1.0.0")]
+ #[rustc_const_stable(feature = "const_ptr_read", since = "1.71.0")]
+-#[track_caller]
+ #[rustc_diagnostic_item = "ptr_read"]
+ pub const unsafe fn read<T>(src: *const T) -> T {
+     // It would be semantically correct to implement this via `copy_nonoverlapping`
+@@ -1832,7 +1829,6 @@ pub const unsafe fn read<T>(src: *const T) -> T {
+ #[inline(always)]
+ #[stable(feature = "ptr_unaligned", since = "1.17.0")]
+ #[rustc_const_stable(feature = "const_ptr_read", since = "1.71.0")]
+-#[track_caller]
+ #[rustc_diagnostic_item = "ptr_read_unaligned"]
+ pub const unsafe fn read_unaligned<T>(src: *const T) -> T {
+     // Always true thanks to the repr, but to demonstrate
+@@ -1939,7 +1935,6 @@ pub const unsafe fn read_unaligned<T>(src: *const T) -> T {
+ #[stable(feature = "rust1", since = "1.0.0")]
+ #[rustc_const_stable(feature = "const_ptr_write", since = "1.83.0")]
+ #[rustc_diagnostic_item = "ptr_write"]
+-#[track_caller]
+ pub const unsafe fn write<T>(dst: *mut T, src: T) {
+     // Semantically, it would be fine for this to be implemented as a
+     // `copy_nonoverlapping` and appropriate drop suppression of `src`.
+@@ -2043,7 +2038,6 @@ pub const unsafe fn write<T>(dst: *mut T, src: T) {
+ #[stable(feature = "ptr_unaligned", since = "1.17.0")]
+ #[rustc_const_stable(feature = "const_ptr_write", since = "1.83.0")]
+ #[rustc_diagnostic_item = "ptr_write_unaligned"]
+-#[track_caller]
+ pub const unsafe fn write_unaligned<T>(dst: *mut T, src: T) {
+     // Always true thanks to the repr, but to demonstrate
+     const {
+@@ -2147,7 +2141,6 @@ pub const unsafe fn write_unaligned<T>(dst: *mut T, src: T) {
+ #[inline(always)]
+ #[stable(feature = "volatile", since = "1.9.0")]
+ #[rustc_const_unstable(feature = "const_volatile", issue = "159094")]
+-#[track_caller]
+ #[rustc_diagnostic_item = "ptr_read_volatile"]
+ pub const unsafe fn read_volatile<T>(src: *const T) -> T {
+     // SAFETY: the caller must uphold the safety contract for `volatile_load`.
+@@ -2254,7 +2247,6 @@ pub const unsafe fn read_volatile<T>(src: *const T) -> T {
+ #[stable(feature = "volatile", since = "1.9.0")]
+ #[rustc_const_unstable(feature = "const_volatile", issue = "159094")]
+ #[rustc_diagnostic_item = "ptr_write_volatile"]
+-#[track_caller]
+ pub const unsafe fn write_volatile<T>(dst: *mut T, src: T) {
+     // SAFETY: the caller must uphold the safety contract for `volatile_store`.
+     unsafe {
+diff --git a/library/core/src/ptr/mut_ptr.rs b/library/core/src/ptr/mut_ptr.rs
+index 31e14fc..d88ca0d 100644
+--- a/library/core/src/ptr/mut_ptr.rs
++++ b/library/core/src/ptr/mut_ptr.rs
+@@ -353,7 +353,6 @@ impl<T: PointeeSized> *mut T {
+     #[must_use = "returns a new pointer rather than modifying its argument"]
+     #[rustc_const_stable(feature = "const_ptr_offset", since = "1.61.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn offset(self, count: isize) -> *mut T
+     where
+         T: Sized,
+@@ -408,7 +407,6 @@ impl<T: PointeeSized> *mut T {
+     #[inline(always)]
+     #[stable(feature = "pointer_byte_offsets", since = "1.75.0")]
+     #[rustc_const_stable(feature = "const_pointer_byte_offsets", since = "1.75.0")]
+-    #[track_caller]
+     pub const unsafe fn byte_offset(self, count: isize) -> Self {
+         // SAFETY: the caller must uphold the safety contract for `offset`.
+         unsafe { self.cast::<u8>().offset(count).with_metadata_of(self) }
+@@ -884,7 +882,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "ptr_sub_ptr", since = "1.87.0")]
+     #[rustc_const_stable(feature = "const_ptr_sub_ptr", since = "1.87.0")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn offset_from_unsigned(self, origin: *const T) -> usize
+     where
+         T: Sized,
+@@ -906,7 +903,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "ptr_sub_ptr", since = "1.87.0")]
+     #[rustc_const_stable(feature = "const_ptr_sub_ptr", since = "1.87.0")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn byte_offset_from_unsigned<U: ?Sized>(self, origin: *mut U) -> usize {
+         // SAFETY: the caller must uphold the safety contract for `byte_offset_from_unsigned`.
+         unsafe { (self as *const T).byte_offset_from_unsigned(origin) }
+@@ -933,7 +929,6 @@ impl<T: PointeeSized> *mut T {
+     #[must_use = "returns a new pointer rather than modifying its argument"]
+     #[rustc_const_stable(feature = "const_ptr_offset", since = "1.61.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn add(self, count: usize) -> Self
+     where
+         T: Sized,
+@@ -985,7 +980,6 @@ impl<T: PointeeSized> *mut T {
+     #[inline(always)]
+     #[stable(feature = "pointer_byte_offsets", since = "1.75.0")]
+     #[rustc_const_stable(feature = "const_pointer_byte_offsets", since = "1.75.0")]
+-    #[track_caller]
+     pub const unsafe fn byte_add(self, count: usize) -> Self {
+         // SAFETY: the caller must uphold the safety contract for `add`.
+         unsafe { self.cast::<u8>().add(count).with_metadata_of(self) }
+@@ -1012,7 +1006,6 @@ impl<T: PointeeSized> *mut T {
+     #[must_use = "returns a new pointer rather than modifying its argument"]
+     #[rustc_const_stable(feature = "const_ptr_offset", since = "1.61.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn sub(self, count: usize) -> Self
+     where
+         T: Sized,
+@@ -1070,7 +1063,6 @@ impl<T: PointeeSized> *mut T {
+     #[inline(always)]
+     #[stable(feature = "pointer_byte_offsets", since = "1.75.0")]
+     #[rustc_const_stable(feature = "const_pointer_byte_offsets", since = "1.75.0")]
+-    #[track_caller]
+     pub const unsafe fn byte_sub(self, count: usize) -> Self {
+         // SAFETY: the caller must uphold the safety contract for `sub`.
+         unsafe { self.cast::<u8>().sub(count).with_metadata_of(self) }
+@@ -1238,7 +1230,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_read", since = "1.71.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn read(self) -> T
+     where
+         T: Sized,
+@@ -1260,7 +1251,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_unstable(feature = "const_volatile", issue = "159094")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn read_volatile(self) -> T
+     where
+         T: Sized,
+@@ -1280,7 +1270,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_read", since = "1.71.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn read_unaligned(self) -> T
+     where
+         T: Sized,
+@@ -1300,7 +1289,6 @@ impl<T: PointeeSized> *mut T {
+     #[rustc_const_stable(feature = "const_intrinsic_copy", since = "1.83.0")]
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn copy_to(self, dest: *mut T, count: usize)
+     where
+         T: Sized,
+@@ -1320,7 +1308,6 @@ impl<T: PointeeSized> *mut T {
+     #[rustc_const_stable(feature = "const_intrinsic_copy", since = "1.83.0")]
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn copy_to_nonoverlapping(self, dest: *mut T, count: usize)
+     where
+         T: Sized,
+@@ -1340,7 +1327,6 @@ impl<T: PointeeSized> *mut T {
+     #[rustc_const_stable(feature = "const_intrinsic_copy", since = "1.83.0")]
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn copy_from(self, src: *const T, count: usize)
+     where
+         T: Sized,
+@@ -1360,7 +1346,6 @@ impl<T: PointeeSized> *mut T {
+     #[rustc_const_stable(feature = "const_intrinsic_copy", since = "1.83.0")]
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn copy_from_nonoverlapping(self, src: *const T, count: usize)
+     where
+         T: Sized,
+@@ -1395,7 +1380,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_write", since = "1.83.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn write(self, val: T)
+     where
+         T: Sized,
+@@ -1414,7 +1398,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_write", since = "1.83.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn write_bytes(self, val: u8, count: usize)
+     where
+         T: Sized,
+@@ -1436,7 +1419,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_unstable(feature = "const_volatile", issue = "159094")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn write_volatile(self, val: T)
+     where
+         T: Sized,
+@@ -1456,7 +1438,6 @@ impl<T: PointeeSized> *mut T {
+     #[stable(feature = "pointer_methods", since = "1.26.0")]
+     #[rustc_const_stable(feature = "const_ptr_write", since = "1.83.0")]
+     #[inline(always)]
+-    #[track_caller]
+     pub const unsafe fn write_unaligned(self, val: T)
+     where
+         T: Sized,
+@@ -1798,7 +1779,6 @@ impl<T> *mut [T] {
+     /// }
+     /// ```
+     #[inline(always)]
+-    #[track_caller]
+     #[unstable(feature = "raw_slice_split", issue = "95595")]
+     pub unsafe fn split_at_mut(self, mid: usize) -> (*mut [T], *mut [T]) {
+         assert!(mid <= self.len());
+diff --git a/library/core/src/ptr/non_null.rs b/library/core/src/ptr/non_null.rs
+index 5ec875c..c360d38 100644
+--- a/library/core/src/ptr/non_null.rs
++++ b/library/core/src/ptr/non_null.rs
+@@ -235,7 +235,6 @@ impl<T: PointeeSized> NonNull<T> {
+     #[stable(feature = "nonnull", since = "1.25.0")]
+     #[rustc_const_stable(feature = "const_nonnull_new_unchecked", since = "1.25.0")]
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn new_unchecked(ptr: *mut T) -> Self {
+         // SAFETY: the caller must guarantee that `ptr` is non-null.
+         unsafe {
+diff --git a/library/core/src/result.rs b/library/core/src/result.rs
+index 472d568..b28eb2e 100644
+--- a/library/core/src/result.rs
++++ b/library/core/src/result.rs
+@@ -1173,7 +1173,6 @@ impl<T, E> Result<T, E> {
+     /// Styles"](../../std/error/index.html#common-message-styles) in the
+     /// [`std::error`](../../std/error/index.html) module docs.
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "result_expect", since = "1.4.0")]
+     pub fn expect(self, msg: &str) -> T
+     where
+@@ -1221,7 +1220,6 @@ impl<T, E> Result<T, E> {
+     /// x.unwrap(); // panics with `emergency failure`
+     /// ```
+     #[inline(always)]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     pub fn unwrap(self) -> T
+     where
+@@ -1287,7 +1285,6 @@ impl<T, E> Result<T, E> {
+     /// x.expect_err("Testing expect_err"); // panics with `Testing expect_err: 10`
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "result_expect_err", since = "1.17.0")]
+     pub fn expect_err(self, msg: &str) -> E
+     where
+@@ -1318,7 +1315,6 @@ impl<T, E> Result<T, E> {
+     /// assert_eq!(x.unwrap_err(), "emergency failure");
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     pub fn unwrap_err(self) -> E
+     where
+@@ -1607,7 +1603,6 @@ impl<T, E> Result<T, E> {
+     /// assert_eq!(Err("foo").unwrap_or_else(count), 3);
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+     pub const fn unwrap_or_else<F>(self, op: F) -> T
+@@ -1641,7 +1636,6 @@ impl<T, E> Result<T, E> {
+     /// unsafe { x.unwrap_unchecked() }; // Undefined behavior!
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
+     #[rustc_const_unstable(feature = "const_result_unwrap_unchecked", issue = "148714")]
+     pub const unsafe fn unwrap_unchecked(self) -> T {
+@@ -1677,7 +1671,6 @@ impl<T, E> Result<T, E> {
+     /// assert_eq!(unsafe { x.unwrap_err_unchecked() }, "emergency failure");
+     /// ```
+     #[inline]
+-    #[track_caller]
+     #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
+     #[rustc_const_unstable(feature = "const_result_unwrap_unchecked", issue = "148714")]
+     pub const unsafe fn unwrap_err_unchecked(self) -> E
+@@ -1865,7 +1858,6 @@ impl<T, E> Result<Result<T, E>, E> {
+ #[cfg(not(panic = "immediate-abort"))]
+ #[inline(never)]
+ #[cold]
+-#[track_caller]
+ fn unwrap_failed(msg: &str, error: &dyn fmt::Debug) -> ! {
+     panic!("{msg}: {error:?}");
+ }
+@@ -1877,7 +1869,6 @@ fn unwrap_failed(msg: &str, error: &dyn fmt::Debug) -> ! {
+ #[cfg(panic = "immediate-abort")]
+ #[inline]
+ #[cold]
+-#[track_caller]
+ const fn unwrap_failed<T>(_msg: &str, _error: &T) -> ! {
+     panic!()
+ }
+@@ -2184,7 +2175,6 @@ const impl<T, E> ops::Try for Result<T, E> {
+ #[rustc_const_unstable(feature = "const_try", issue = "74935")]
+ const impl<T, E, F: [const] From<E>> ops::FromResidual<Result<!, E>> for Result<T, F> {
+     #[inline]
+-    #[track_caller]
+     fn from_residual(residual: Result<!, E>) -> Self {
+         match residual {
+             Err(e) => Err(From::from(e)),
+diff --git a/library/core/src/slice/index.rs b/library/core/src/slice/index.rs
+index 522603c..e03c833 100644
+--- a/library/core/src/slice/index.rs
++++ b/library/core/src/slice/index.rs
+@@ -35,7 +35,6 @@ where
+ 
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ const fn slice_index_fail(start: usize, end: usize, len: usize) -> ! {
+     if start > len {
+         const_panic!(
+@@ -163,13 +162,11 @@ pub impl(crate) const unsafe trait SliceIndex<T: ?Sized> {
+     /// Returns a shared reference to the output at this location, panicking
+     /// if out of bounds.
+     #[unstable(feature = "slice_index_methods", issue = "none")]
+-    #[track_caller]
+     fn index(self, slice: &T) -> &Self::Output;
+ 
+     /// Returns a mutable reference to the output at this location, panicking
+     /// if out of bounds.
+     #[unstable(feature = "slice_index_methods", issue = "none")]
+-    #[track_caller]
+     fn index_mut(self, slice: &mut T) -> &mut Self::Output;
+ }
+ 
+@@ -201,7 +198,6 @@ const unsafe impl<T> SliceIndex<[T]> for usize {
+     }
+ 
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked(self, slice: *const [T]) -> *const T {
+         assert_unsafe_precondition!(
+             check_library_ub, // Hitting the `assume` provides worse const-eval and Miri diagnostics.
+@@ -221,7 +217,6 @@ const unsafe impl<T> SliceIndex<[T]> for usize {
+     }
+ 
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked_mut(self, slice: *mut [T]) -> *mut T {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -274,7 +269,6 @@ const unsafe impl<T> SliceIndex<[T]> for ops::IndexRange {
+     }
+ 
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked(self, slice: *const [T]) -> *const [T] {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -289,7 +283,6 @@ const unsafe impl<T> SliceIndex<[T]> for ops::IndexRange {
+     }
+ 
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked_mut(self, slice: *mut [T]) -> *mut [T] {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -358,7 +351,6 @@ const unsafe impl<T> SliceIndex<[T]> for ops::Range<usize> {
+     }
+ 
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked(self, slice: *const [T]) -> *const [T] {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -383,7 +375,6 @@ const unsafe impl<T> SliceIndex<[T]> for ops::Range<usize> {
+     }
+ 
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked_mut(self, slice: *mut [T]) -> *mut [T] {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -889,7 +880,6 @@ const unsafe impl<T> SliceIndex<[T]> for range::RangeToInclusive<usize> {
+ /// ```
+ ///
+ /// [`Index::index`]: ops::Index::index
+-#[track_caller]
+ #[unstable(feature = "slice_range", issue = "76393")]
+ #[must_use]
+ #[rustc_const_unstable(feature = "const_range", issue = "none")]
+@@ -970,7 +960,6 @@ pub(crate) enum RangeError {
+ impl RangeError {
+     #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+     #[cfg_attr(panic = "immediate-abort", inline)]
+-    #[track_caller]
+     const fn report(self, len: usize) -> ! {
+         match self {
+             Self::EndPastLen { end } => slice_index_fail(0, end, len),
+@@ -1019,7 +1008,6 @@ pub(crate) const fn try_into_slice_range(
+ /// Converts pair of `ops::Bound`s into `ops::Range`.
+ /// Panics on overflowing indices.
+ #[inline]
+-#[track_caller]
+ #[rustc_const_unstable(feature = "const_range", issue = "none")]
+ pub(crate) const fn into_slice_range(
+     len: usize,
+diff --git a/library/core/src/slice/mod.rs b/library/core/src/slice/mod.rs
+index f787b79..394b8dc 100644
+--- a/library/core/src/slice/mod.rs
++++ b/library/core/src/slice/mod.rs
+@@ -637,7 +637,6 @@ impl<T> [T] {
+     #[rustc_no_implicit_autorefs]
+     #[inline]
+     #[must_use]
+-    #[track_caller]
+     #[rustc_const_unstable(feature = "const_index", issue = "143775")]
+     pub const unsafe fn get_unchecked<I>(&self, index: I) -> &I::Output
+     where
+@@ -682,7 +681,6 @@ impl<T> [T] {
+     #[rustc_no_implicit_autorefs]
+     #[inline]
+     #[must_use]
+-    #[track_caller]
+     #[rustc_const_unstable(feature = "const_index", issue = "143775")]
+     #[rustc_no_writable]
+     pub const unsafe fn get_unchecked_mut<I>(&mut self, index: I) -> &mut I::Output
+@@ -906,7 +904,6 @@ impl<T> [T] {
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_stable(feature = "const_swap", since = "1.85.0")]
+     #[inline]
+-    #[track_caller]
+     pub const fn swap(&mut self, a: usize, b: usize) {
+         // Bounds checks that panic exactly like indexing would.
+         let _ = &self[a];
+@@ -945,7 +942,6 @@ impl<T> [T] {
+     /// [`swap`]: slice::swap
+     /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+     #[unstable(feature = "slice_swap_unchecked", issue = "88539")]
+-    #[track_caller]
+     pub const unsafe fn swap_unchecked(&mut self, a: usize, b: usize) {
+         assert_unsafe_precondition!(
+             check_library_ub,
+@@ -1112,7 +1108,6 @@ impl<T> [T] {
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn windows(&self, size: usize) -> Windows<'_, T> {
+         let size = NonZero::new(size).expect("window size must be non-zero");
+         Windows::new(self, size)
+@@ -1152,7 +1147,6 @@ impl<T> [T] {
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn chunks(&self, chunk_size: usize) -> Chunks<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         Chunks::new(self, chunk_size)
+@@ -1196,7 +1190,6 @@ impl<T> [T] {
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn chunks_mut(&mut self, chunk_size: usize) -> ChunksMut<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         ChunksMut::new(self, chunk_size)
+@@ -1239,7 +1232,6 @@ impl<T> [T] {
+     #[stable(feature = "chunks_exact", since = "1.31.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn chunks_exact(&self, chunk_size: usize) -> ChunksExact<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         ChunksExact::new(self, chunk_size)
+@@ -1287,7 +1279,6 @@ impl<T> [T] {
+     #[stable(feature = "chunks_exact", since = "1.31.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn chunks_exact_mut(&mut self, chunk_size: usize) -> ChunksExactMut<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         ChunksExactMut::new(self, chunk_size)
+@@ -1335,7 +1326,6 @@ impl<T> [T] {
+     #[rustc_const_stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[inline]
+     #[must_use]
+-    #[track_caller]
+     pub const unsafe fn as_chunks_unchecked<#[rustc_panics_when_zero] const N: usize>(
+         &self,
+     ) -> &[[T; N]] {
+@@ -1394,7 +1384,6 @@ impl<T> [T] {
+     #[stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[rustc_const_stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[inline]
+-    #[track_caller]
+     #[must_use]
+     pub const fn as_chunks<#[rustc_panics_when_zero] const N: usize>(&self) -> (&[[T; N]], &[T]) {
+         assert!(N != 0, "chunk size must be non-zero");
+@@ -1441,7 +1430,6 @@ impl<T> [T] {
+     #[stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[rustc_const_stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[inline]
+-    #[track_caller]
+     #[must_use]
+     pub const fn as_rchunks<#[rustc_panics_when_zero] const N: usize>(&self) -> (&[T], &[[T; N]]) {
+         assert!(N != 0, "chunk size must be non-zero");
+@@ -1497,7 +1485,6 @@ impl<T> [T] {
+     #[rustc_const_stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[inline]
+     #[must_use]
+-    #[track_caller]
+     pub const unsafe fn as_chunks_unchecked_mut<#[rustc_panics_when_zero] const N: usize>(
+         &mut self,
+     ) -> &mut [[T; N]] {
+@@ -1552,7 +1539,6 @@ impl<T> [T] {
+     #[stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[rustc_const_stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[inline]
+-    #[track_caller]
+     #[must_use]
+     pub const fn as_chunks_mut<#[rustc_panics_when_zero] const N: usize>(
+         &mut self,
+@@ -1607,7 +1593,6 @@ impl<T> [T] {
+     #[stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[rustc_const_stable(feature = "slice_as_chunks", since = "1.88.0")]
+     #[inline]
+-    #[track_caller]
+     #[must_use]
+     pub const fn as_rchunks_mut<#[rustc_panics_when_zero] const N: usize>(
+         &mut self,
+@@ -1651,7 +1636,6 @@ impl<T> [T] {
+     #[stable(feature = "array_windows", since = "1.94.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn array_windows<#[rustc_panics_when_zero] const N: usize>(
+         &self,
+     ) -> ArrayWindows<'_, T, N> {
+@@ -1693,7 +1677,6 @@ impl<T> [T] {
+     #[stable(feature = "rchunks", since = "1.31.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn rchunks(&self, chunk_size: usize) -> RChunks<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         RChunks::new(self, chunk_size)
+@@ -1737,7 +1720,6 @@ impl<T> [T] {
+     #[stable(feature = "rchunks", since = "1.31.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn rchunks_mut(&mut self, chunk_size: usize) -> RChunksMut<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         RChunksMut::new(self, chunk_size)
+@@ -1782,7 +1764,6 @@ impl<T> [T] {
+     #[stable(feature = "rchunks", since = "1.31.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn rchunks_exact(&self, chunk_size: usize) -> RChunksExact<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         RChunksExact::new(self, chunk_size)
+@@ -1831,7 +1812,6 @@ impl<T> [T] {
+     #[stable(feature = "rchunks", since = "1.31.0")]
+     #[rustc_const_unstable(feature = "const_slice_make_iter", issue = "137737")]
+     #[inline]
+-    #[track_caller]
+     pub const fn rchunks_exact_mut(&mut self, chunk_size: usize) -> RChunksExactMut<'_, T> {
+         assert!(chunk_size != 0, "chunk size must be non-zero");
+         RChunksExactMut::new(self, chunk_size)
+@@ -1958,7 +1938,6 @@ impl<T> [T] {
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[rustc_const_stable(feature = "const_slice_split_at_not_mut", since = "1.71.0")]
+     #[inline]
+-    #[track_caller]
+     #[must_use]
+     pub const fn split_at(&self, mid: usize) -> (&[T], &[T]) {
+         match self.split_at_checked(mid) {
+@@ -1991,7 +1970,6 @@ impl<T> [T] {
+     /// ```
+     #[stable(feature = "rust1", since = "1.0.0")]
+     #[inline]
+-    #[track_caller]
+     #[must_use]
+     #[rustc_const_stable(feature = "const_slice_split_at_mut", since = "1.83.0")]
+     pub const fn split_at_mut(&mut self, mid: usize) -> (&mut [T], &mut [T]) {
+@@ -2045,7 +2023,6 @@ impl<T> [T] {
+     #[rustc_const_stable(feature = "const_slice_split_at_unchecked", since = "1.77.0")]
+     #[inline]
+     #[must_use]
+-    #[track_caller]
+     pub const unsafe fn split_at_unchecked(&self, mid: usize) -> (&[T], &[T]) {
+         // FIXME(const-hack): the const function `from_raw_parts` is used to make this
+         // function const; previously the implementation used
+@@ -2099,7 +2076,6 @@ impl<T> [T] {
+     #[rustc_const_stable(feature = "const_slice_split_at_mut", since = "1.83.0")]
+     #[inline]
+     #[must_use]
+-    #[track_caller]
+     pub const unsafe fn split_at_mut_unchecked(&mut self, mid: usize) -> (&mut [T], &mut [T]) {
+         let len = self.len();
+         let ptr = self.as_mut_ptr();
+@@ -4270,7 +4246,6 @@ impl<T> [T] {
+     /// [`copy_from_slice`]: slice::copy_from_slice
+     /// [`split_at_mut`]: slice::split_at_mut
+     #[stable(feature = "clone_from_slice", since = "1.7.0")]
+-    #[track_caller]
+     #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
+     pub const fn clone_from_slice(&mut self, src: &[T])
+     where
+@@ -4337,7 +4312,6 @@ impl<T> [T] {
+     #[inline]
+     #[stable(feature = "copy_from_slice", since = "1.9.0")]
+     #[rustc_const_stable(feature = "const_copy_from_slice", since = "1.87.0")]
+-    #[track_caller]
+     pub const fn copy_from_slice(&mut self, src: &[T])
+     where
+         T: Copy,
+@@ -4372,7 +4346,6 @@ impl<T> [T] {
+     /// ```
+     #[inline]
+     #[stable(feature = "copy_within", since = "1.37.0")]
+-    #[track_caller]
+     pub fn copy_within<R: RangeBounds<usize>>(&mut self, src: R, dest: usize)
+     where
+         T: Copy,
+@@ -4440,7 +4413,6 @@ impl<T> [T] {
+     /// [`split_at_mut`]: slice::split_at_mut
+     #[stable(feature = "swap_with_slice", since = "1.27.0")]
+     #[rustc_const_unstable(feature = "const_swap_with_slice", issue = "142204")]
+-    #[track_caller]
+     pub const fn swap_with_slice(&mut self, other: &mut [T]) {
+         assert!(self.len() == other.len(), "destination and source slices have different lengths");
+         // SAFETY: `self` is valid for `self.len()` elements by definition, and `src` was
+@@ -5162,7 +5134,6 @@ impl<T> [T] {
+     /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+     #[stable(feature = "get_many_mut", since = "1.86.0")]
+     #[inline]
+-    #[track_caller]
+     pub unsafe fn get_disjoint_unchecked_mut<I, const N: usize>(
+         &mut self,
+         indices: [I; N],
+@@ -5580,13 +5551,11 @@ impl [f64] {
+ ///
+ /// # Safety
+ /// `T` must implement one of `Copy` or `TrivialClone`.
+-#[track_caller]
+ const unsafe fn copy_from_slice_impl<T: Clone>(dest: &mut [T], src: &[T]) {
+     // The panic code path was put into a cold function to not bloat the
+     // call site.
+     #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+     #[cfg_attr(panic = "immediate-abort", inline)]
+-    #[track_caller]
+     const fn len_mismatch_fail(dst_len: usize, src_len: usize) -> ! {
+         const_panic!(
+             "copy_from_slice: source slice length does not match destination slice length",
+@@ -5620,7 +5589,6 @@ const impl<T> CloneFromSpec<T> for [T]
+ where
+     T: [const] Clone + [const] Destruct,
+ {
+-    #[track_caller]
+     default fn spec_clone_from(&mut self, src: &[T]) {
+         assert!(self.len() == src.len(), "destination and source slices have different lengths");
+         // NOTE: We need to explicitly slice them to the same length
+@@ -5642,7 +5610,6 @@ const impl<T> CloneFromSpec<T> for [T]
+ where
+     T: [const] TrivialClone + [const] Destruct,
+ {
+-    #[track_caller]
+     fn spec_clone_from(&mut self, src: &[T]) {
+         // SAFETY: `T` implements `TrivialClone`.
+         unsafe {
+diff --git a/library/core/src/slice/raw.rs b/library/core/src/slice/raw.rs
+index 80b2176..0fc82ea 100644
+--- a/library/core/src/slice/raw.rs
++++ b/library/core/src/slice/raw.rs
+@@ -120,7 +120,6 @@ use crate::{array, ptr, ub_checks};
+ #[rustc_const_stable(feature = "const_slice_from_raw_parts", since = "1.64.0")]
+ #[must_use]
+ #[rustc_diagnostic_item = "slice_from_raw_parts"]
+-#[track_caller]
+ pub const unsafe fn from_raw_parts<'a, T>(data: *const T, len: usize) -> &'a [T] {
+     // SAFETY: the caller must uphold the safety contract for `from_raw_parts`.
+     unsafe {
+@@ -175,7 +174,6 @@ pub const unsafe fn from_raw_parts<'a, T>(data: *const T, len: usize) -> &'a [T]
+ #[rustc_const_stable(feature = "const_slice_from_raw_parts_mut", since = "1.83.0")]
+ #[must_use]
+ #[rustc_diagnostic_item = "slice_from_raw_parts_mut"]
+-#[track_caller]
+ pub const unsafe fn from_raw_parts_mut<'a, T>(data: *mut T, len: usize) -> &'a mut [T] {
+     // SAFETY: the caller must uphold the safety contract for `from_raw_parts_mut`.
+     unsafe {
+@@ -273,7 +271,6 @@ pub const fn from_mut<T>(s: &mut T) -> &mut [T] {
+ /// [valid]: ptr#safety
+ #[unstable(feature = "slice_from_ptr_range", issue = "89792")]
+ #[rustc_const_unstable(feature = "const_slice_from_ptr_range", issue = "89792")]
+-#[track_caller]
+ pub const unsafe fn from_ptr_range<'a, T>(range: Range<*const T>) -> &'a [T] {
+     // SAFETY: the caller must uphold the safety contract for `from_ptr_range`.
+     unsafe { from_raw_parts(range.start, range.end.offset_from_unsigned(range.start)) }
+diff --git a/library/core/src/str/mod.rs b/library/core/src/str/mod.rs
+index fe58d84..70720c5 100644
+--- a/library/core/src/str/mod.rs
++++ b/library/core/src/str/mod.rs
+@@ -63,7 +63,6 @@ pub use validations::{next_code_point, utf8_char_width};
+ 
+ #[inline(never)]
+ #[cold]
+-#[track_caller]
+ #[rustc_allow_const_fn_unstable(const_eval_select)]
+ #[cfg(not(panic = "immediate-abort"))]
+ const fn slice_error_fail(s: &str, begin: usize, end: usize) -> ! {
+@@ -75,12 +74,10 @@ const fn slice_error_fail(s: &str, begin: usize, end: usize) -> ! {
+     slice_error_fail_ct(s, begin, end)
+ }
+ 
+-#[track_caller]
+ const fn slice_error_fail_ct(_: &str, _: usize, _: usize) -> ! {
+     panic!("failed to slice string");
+ }
+ 
+-#[track_caller]
+ fn slice_error_fail_rt(s: &str, begin: usize, end: usize) -> ! {
+     let len = s.len();
+ 
+@@ -3024,7 +3021,6 @@ impl str {
+     #[doc(alias = "memcpy")]
+     #[inline]
+     #[unstable(feature = "str_copy_from_str", issue = "159841")]
+-    #[track_caller]
+     pub fn copy_from_str(&mut self, src: &str) {
+         // SAFETY: `copy_from_slice` panics unless the lengths are equal, and copying same-length
+         // UTF-8 into a `str` keeps it valid UTF-8.
+diff --git a/library/core/src/str/traits.rs b/library/core/src/str/traits.rs
+index 77fa6fc..a33241d 100644
+--- a/library/core/src/str/traits.rs
++++ b/library/core/src/str/traits.rs
+@@ -195,7 +195,6 @@ const unsafe impl SliceIndex<str> for ops::Range<usize> {
+         range::Range::from(self).get_mut(slice)
+     }
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked(self, slice: *const str) -> *const Self::Output {
+         let slice = slice as *const [u8];
+ 
+@@ -223,7 +222,6 @@ const unsafe impl SliceIndex<str> for ops::Range<usize> {
+         }
+     }
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked_mut(self, slice: *mut str) -> *mut Self::Output {
+         let slice = slice as *mut [u8];
+ 
+@@ -279,7 +277,6 @@ const unsafe impl SliceIndex<str> for range::Range<usize> {
+         }
+     }
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked(self, slice: *const str) -> *const Self::Output {
+         let slice = slice as *const [u8];
+ 
+@@ -307,7 +304,6 @@ const unsafe impl SliceIndex<str> for range::Range<usize> {
+         }
+     }
+     #[inline]
+-    #[track_caller]
+     unsafe fn get_unchecked_mut(self, slice: *mut str) -> *mut Self::Output {
+         let slice = slice as *mut [u8];
+ 
+diff --git a/library/core/src/time.rs b/library/core/src/time.rs
+index c123c66..776e14f 100644
+--- a/library/core/src/time.rs
++++ b/library/core/src/time.rs
+@@ -329,7 +329,6 @@ impl Duration {
+     #[rustc_const_stable(feature = "duration_from_nanos_u128", since = "1.93.0")]
+     #[must_use]
+     #[inline]
+-    #[track_caller]
+     #[rustc_allow_const_fn_unstable(const_trait_impl, const_convert)] // for `u64::try_from`
+     pub const fn from_nanos_u128(nanos: u128) -> Duration {
+         const NANOS_PER_SEC: u128 = self::NANOS_PER_SEC as u128;
+@@ -1332,7 +1331,6 @@ const impl Div<u32> for Duration {
+     type Output = Duration;
+ 
+     #[inline]
+-    #[track_caller]
+     fn div(self, rhs: u32) -> Duration {
+         self.checked_div(rhs).expect("divide by zero error when dividing duration by scalar")
+     }
+@@ -1342,7 +1340,6 @@ const impl Div<u32> for Duration {
+ #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+ const impl DivAssign<u32> for Duration {
+     #[inline]
+-    #[track_caller]
+     fn div_assign(&mut self, rhs: u32) {
+         *self = *self / rhs;
+     }
+diff --git a/library/core/src/ub_checks.rs b/library/core/src/ub_checks.rs
+index f25781e..3c76747 100644
+--- a/library/core/src/ub_checks.rs
++++ b/library/core/src/ub_checks.rs
+@@ -64,7 +64,6 @@ macro_rules! assert_unsafe_precondition {
+             #[rustc_no_mir_inline]
+             #[inline]
+             #[rustc_nounwind]
+-            #[track_caller]
+             const fn precondition_check($($name:$ty),*) {
+                 if !$e {
+                     let msg = concat!("unsafe precondition(s) violated: ", $message,
+diff --git a/library/core/src/wtf8.rs b/library/core/src/wtf8.rs
+index bcfbd26..f0c2f72 100644
+--- a/library/core/src/wtf8.rs
++++ b/library/core/src/wtf8.rs
+@@ -454,7 +454,6 @@ impl Wtf8 {
+     /// Splitting between surrogates is valid as far as WTF-8 is concerned, but
+     /// we do not permit it in the public API because WTF-8 is considered an
+     /// implementation detail.
+-    #[track_caller]
+     #[inline]
+     pub fn check_utf8_boundary(&self, index: usize) {
+         let Err(err) = self.try_check_utf8_boundary(index) else { return };
+@@ -469,7 +468,6 @@ impl Wtf8 {
+         }
+     }
+ 
+-    #[track_caller]
+     #[inline]
+     pub fn try_check_utf8_boundary(&self, index: usize) -> Result<(), Utf8BoundaryError> {
+         if index == 0 {
+diff --git a/library/std/src/ffi/os_str/tests.rs b/library/std/src/ffi/os_str/tests.rs
+index 1075c43..6cf290e 100644
+--- a/library/std/src/ffi/os_str/tests.rs
++++ b/library/std/src/ffi/os_str/tests.rs
+@@ -291,7 +291,6 @@ fn slice_surrogate_edge() {
+ 
+ #[test]
+ fn os_str_slice_at() {
+-    #[track_caller]
+     fn slice_at_ok(input: &OsStr, index: usize, expected: (&str, &str)) {
+         let expected = (OsStr::new(expected.0), OsStr::new(expected.1));
+         assert_eq!(input.split_at(index), expected);
+diff --git a/library/std/src/os/fd/owned.rs b/library/std/src/os/fd/owned.rs
+index 87a8e20..a05318d 100644
+--- a/library/std/src/os/fd/owned.rs
++++ b/library/std/src/os/fd/owned.rs
+@@ -84,7 +84,6 @@ impl BorrowedFd<'_> {
+     ///
+     /// Panics if the raw file descriptor has the value `-1`.
+     #[inline]
+-    #[track_caller]
+     #[rustc_const_stable(feature = "io_safety", since = "1.63.0")]
+     #[stable(feature = "io_safety", since = "1.63.0")]
+     pub const unsafe fn borrow_raw(fd: RawFd) -> Self {
+@@ -191,7 +190,6 @@ impl FromRawFd for OwnedFd {
+     ///
+     /// Panics if the raw file descriptor has the value `-1`.
+     #[inline]
+-    #[track_caller]
+     unsafe fn from_raw_fd(fd: RawFd) -> Self {
+         Self { fd: ValidRawFd::new(fd).expect("fd != -1") }
+     }
+diff --git a/library/std/src/os/solid/io.rs b/library/std/src/os/solid/io.rs
+index ff79f19..1188b16 100644
+--- a/library/std/src/os/solid/io.rs
++++ b/library/std/src/os/solid/io.rs
+@@ -102,7 +102,6 @@ impl BorrowedFd<'_> {
+     /// the returned `BorrowedFd`, and it must not have the value
+     /// `SOLID_NET_INVALID_FD`.
+     #[inline]
+-    #[track_caller]
+     pub const unsafe fn borrow_raw(fd: RawFd) -> Self {
+         Self { fd: ValidRawFd::new(fd).expect("fd != -1"), _phantom: PhantomData }
+     }
+@@ -154,7 +153,6 @@ impl FromRawFd for OwnedFd {
+     /// The resource pointed to by `fd` must be open and suitable for assuming
+     /// ownership. The resource must not require any cleanup other than `close`.
+     #[inline]
+-    #[track_caller]
+     unsafe fn from_raw_fd(fd: RawFd) -> Self {
+         Self { fd: ValidRawFd::new(fd).expect("fd != -1") }
+     }
+diff --git a/library/std/src/os/windows/io/socket.rs b/library/std/src/os/windows/io/socket.rs
+index d625a9a..47977ec 100644
+--- a/library/std/src/os/windows/io/socket.rs
++++ b/library/std/src/os/windows/io/socket.rs
+@@ -59,7 +59,6 @@ impl BorrowedSocket<'_> {
+     /// the returned `BorrowedSocket`, and it must not have the value
+     /// `INVALID_SOCKET`.
+     #[inline]
+-    #[track_caller]
+     #[rustc_const_stable(feature = "io_safety", since = "1.63.0")]
+     #[stable(feature = "io_safety", since = "1.63.0")]
+     pub const unsafe fn borrow_raw(socket: RawSocket) -> Self {
+@@ -185,7 +184,6 @@ impl IntoRawSocket for OwnedSocket {
+ #[stable(feature = "io_safety", since = "1.63.0")]
+ impl FromRawSocket for OwnedSocket {
+     #[inline]
+-    #[track_caller]
+     unsafe fn from_raw_socket(socket: RawSocket) -> Self {
+         Self { socket: ValidRawSocket::new(socket).expect("socket != -1") }
+     }
+diff --git a/library/std/src/panic.rs b/library/std/src/panic.rs
+index 3ef786c..ab4862e 100644
+--- a/library/std/src/panic.rs
++++ b/library/std/src/panic.rs
+@@ -254,7 +254,6 @@ pub use crate::panicking::{set_hook, take_hook};
+ /// See the [`panic!`] macro for more information about panicking.
+ #[stable(feature = "panic_any", since = "1.51.0")]
+ #[inline]
+-#[track_caller]
+ #[cfg_attr(not(test), rustc_diagnostic_item = "panic_any")]
+ pub fn panic_any<M: 'static + Any + Send>(msg: M) -> ! {
+     crate::panicking::begin_panic(msg);
+diff --git a/library/std/src/panicking.rs b/library/std/src/panicking.rs
+index 5a4684a..28b88e6 100644
+--- a/library/std/src/panicking.rs
++++ b/library/std/src/panicking.rs
+@@ -702,7 +702,6 @@ pub fn panic_handler(info: &core::panic::PanicInfo<'_>) -> ! {
+ // bloat at the call sites as much as possible
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
+ #[cfg_attr(panic = "immediate-abort", inline)]
+-#[track_caller]
+ #[rustc_do_not_const_check] // hooked by const-eval
+ pub const fn begin_panic<M: Any + Send>(msg: M) -> ! {
+     if cfg!(panic = "immediate-abort") {
+diff --git a/library/std/src/sync/once.rs b/library/std/src/sync/once.rs
+index 9b555c3..a92c258 100644
+--- a/library/std/src/sync/once.rs
++++ b/library/std/src/sync/once.rs
+@@ -152,7 +152,6 @@ impl Once {
+     /// [poison]: struct.Mutex.html#poisoning
+     #[inline]
+     #[stable(feature = "rust1", since = "1.0.0")]
+-    #[track_caller]
+     #[rustc_should_not_be_called_on_const_items]
+     pub fn call_once<F>(&self, f: F)
+     where
+diff --git a/library/std/src/sync/poison.rs b/library/std/src/sync/poison.rs
+index 3c32ec3..bad67ea 100644
+--- a/library/std/src/sync/poison.rs
++++ b/library/std/src/sync/poison.rs
+@@ -279,7 +279,6 @@ impl<T> PoisonError<T> {
+     #[doc(auto_cfg = false)]
+     #[cfg(not(panic = "unwind"))]
+     #[stable(feature = "sync_poison", since = "1.2.0")]
+-    #[track_caller]
+     pub fn new(_data: T) -> PoisonError<T> {
+         panic!("PoisonError created in a libstd built with panic=\"abort\"")
+     }
+diff --git a/library/std/src/sys/fs/solid.rs b/library/std/src/sys/fs/solid.rs
+index bd963b1..f3e1316 100644
+--- a/library/std/src/sys/fs/solid.rs
++++ b/library/std/src/sys/fs/solid.rs
+@@ -25,7 +25,6 @@ struct FileDesc {
+ 
+ impl FileDesc {
+     #[inline]
+-    #[track_caller]
+     fn new(fd: c_int) -> FileDesc {
+         FileDesc { fd: CIntNotMinusOne::new(fd).expect("fd != -1") }
+     }
+diff --git a/library/std/src/sys/os_str/bytes.rs b/library/std/src/sys/os_str/bytes.rs
+index 048e5de..1562de6 100644
+--- a/library/std/src/sys/os_str/bytes.rs
++++ b/library/std/src/sys/os_str/bytes.rs
+@@ -235,7 +235,6 @@ impl Slice {
+         unsafe { mem::transmute(s) }
+     }
+ 
+-    #[track_caller]
+     #[inline]
+     pub fn check_public_boundary(&self, index: usize) {
+         if self.try_check_public_boundary(index).is_none() {
+@@ -243,7 +242,6 @@ impl Slice {
+         }
+     }
+ 
+-    #[track_caller]
+     #[inline]
+     pub fn try_check_public_boundary(&self, index: usize) -> Option<()> {
+         if index == 0 || index == self.inner.len() {
+@@ -261,7 +259,6 @@ impl Slice {
+         ///
+         /// Putting the expensive checks in a separate function generates notably
+         /// better assembly.
+-        #[track_caller]
+         #[inline(never)]
+         fn slow_path(bytes: &[u8], index: usize) -> Option<()> {
+             let (before, after) = bytes.split_at_checked(index)?;
+diff --git a/library/std/src/sys/os_str/utf8.rs b/library/std/src/sys/os_str/utf8.rs
+index 3648962..7614dcb 100644
+--- a/library/std/src/sys/os_str/utf8.rs
++++ b/library/std/src/sys/os_str/utf8.rs
+@@ -224,13 +224,11 @@ impl Slice {
+         Slice::from_str(unsafe { str::from_utf8_unchecked(s) })
+     }
+ 
+-    #[track_caller]
+     #[inline]
+     pub fn try_check_public_boundary(&self, index: usize) -> Option<()> {
+         if self.inner.is_char_boundary(index) { Some(()) } else { None }
+     }
+ 
+-    #[track_caller]
+     #[inline]
+     pub fn check_public_boundary(&self, index: usize) {
+         if self.try_check_public_boundary(index).is_none() {
+diff --git a/library/std/src/sys/os_str/wtf8.rs b/library/std/src/sys/os_str/wtf8.rs
+index 5f9d64d..51fb7a0 100644
+--- a/library/std/src/sys/os_str/wtf8.rs
++++ b/library/std/src/sys/os_str/wtf8.rs
+@@ -245,7 +245,6 @@ impl Slice {
+         self.inner.try_check_utf8_boundary(index).ok()
+     }
+ 
+-    #[track_caller]
+     #[inline]
+     pub fn check_public_boundary(&self, index: usize) {
+         self.inner.check_utf8_boundary(index);
+diff --git a/library/std/src/sys/pal/windows/mod.rs b/library/std/src/sys/pal/windows/mod.rs
+index 2a8ffaa..f92f4d2 100644
+--- a/library/std/src/sys/pal/windows/mod.rs
++++ b/library/std/src/sys/pal/windows/mod.rs
+@@ -282,7 +282,6 @@ pub fn abort_internal() -> ! {
+ }
+ 
+ #[cfg(miri)]
+-#[track_caller] // even without panics, this helps for Miri backtraces
+ pub fn abort_internal() -> ! {
+     crate::intrinsics::abort();
+ }
+diff --git a/library/std/src/sys/platform_version/darwin/tests.rs b/library/std/src/sys/platform_version/darwin/tests.rs
+index 17b2cc1..57a834c 100644
+--- a/library/std/src/sys/platform_version/darwin/tests.rs
++++ b/library/std/src/sys/platform_version/darwin/tests.rs
+@@ -65,7 +65,6 @@ fn lookup_idempotent() {
+ /// would continue to work, even on older platforms.
+ #[test]
+ fn parse_plist() {
+-    #[track_caller]
+     fn check(
+         (major, minor, patch): (u16, u8, u8),
+         ios_version: Option<(u16, u8, u8)>,
+@@ -337,7 +336,6 @@ fn empty_plist() {
+ 
+ #[test]
+ fn parse_version() {
+-    #[track_caller]
+     fn check(major: u16, minor: u8, patch: u8, version: &str) {
+         assert_eq!(
+             pack_os_version(major, minor, patch),
+diff --git a/library/std/src/sys/sync/once/futex.rs b/library/std/src/sys/sync/once/futex.rs
+index 8f17f06..e21f404 100644
+--- a/library/std/src/sys/sync/once/futex.rs
++++ b/library/std/src/sys/sync/once/futex.rs
+@@ -107,7 +107,6 @@ impl Once {
+     }
+ 
+     #[cold]
+-    #[track_caller]
+     pub fn wait(&self, ignore_poisoning: bool) {
+         let mut state_and_queued = self.state_and_queued.load(Acquire);
+         loop {
+@@ -142,7 +141,6 @@ impl Once {
+     }
+ 
+     #[cold]
+-    #[track_caller]
+     pub fn call(&self, ignore_poisoning: bool, f: &mut dyn FnMut(&public::OnceState)) {
+         let mut state_and_queued = self.state_and_queued.load(Acquire);
+         loop {
+diff --git a/library/std/src/sys/sync/once/no_threads.rs b/library/std/src/sys/sync/once/no_threads.rs
+index 31c9aed..e8ba701 100644
+--- a/library/std/src/sys/sync/once/no_threads.rs
++++ b/library/std/src/sys/sync/once/no_threads.rs
+@@ -72,13 +72,11 @@ impl Once {
+     }
+ 
+     #[cold]
+-    #[track_caller]
+     pub fn wait(&self, _ignore_poisoning: bool) {
+         panic!("not implementable on this target");
+     }
+ 
+     #[cold]
+-    #[track_caller]
+     pub fn call(&self, ignore_poisoning: bool, f: &mut impl FnMut(&public::OnceState)) {
+         let state = self.state.get();
+         match state {
+diff --git a/library/std/src/sys/sync/once/queue.rs b/library/std/src/sys/sync/once/queue.rs
+index 311c7b0..7a201e9 100644
+--- a/library/std/src/sys/sync/once/queue.rs
++++ b/library/std/src/sys/sync/once/queue.rs
+@@ -155,7 +155,6 @@ impl Once {
+     }
+ 
+     #[cold]
+-    #[track_caller]
+     pub fn wait(&self, ignore_poisoning: bool) {
+         let mut current = self.state_and_queue.load(Acquire);
+         loop {
+@@ -185,7 +184,6 @@ impl Once {
+     // currently no way to take an `FnOnce` and call it via virtual dispatch
+     // without some allocation overhead.
+     #[cold]
+-    #[track_caller]
+     pub fn call(&self, ignore_poisoning: bool, init: &mut dyn FnMut(&public::OnceState)) {
+         let mut current = self.state_and_queue.load(Acquire);
+         loop {
+diff --git a/library/std/src/test_helpers.rs b/library/std/src/test_helpers.rs
+index 7c20f38..9c9dba3 100644
+--- a/library/std/src/test_helpers.rs
++++ b/library/std/src/test_helpers.rs
+@@ -17,7 +17,6 @@ use crate::{env, fs, thread};
+ /// seems far more painful than copy-pasting a 7 line function a couple
+ /// times, given that even under a perma-unstable feature, I don't think we
+ /// want to expose types from `rand` from `std`.
+-#[track_caller]
+ pub(crate) fn test_rng() -> rand_xorshift::XorShiftRng {
+     let mut hasher = RandomState::new().build_hasher();
+     Location::caller().hash(&mut hasher);
+@@ -55,7 +54,6 @@ impl Drop for TempDir {
+     }
+ }
+ 
+-#[track_caller] // for `test_rng`
+ pub fn tmpdir() -> TempDir {
+     let p = env::temp_dir();
+     let mut r = test_rng();
+diff --git a/library/std/src/thread/local.rs b/library/std/src/thread/local.rs
+index 18b0f32..283e73e 100644
+--- a/library/std/src/thread/local.rs
++++ b/library/std/src/thread/local.rs
+@@ -379,7 +379,6 @@ impl Error for AccessError {}
+ 
+ // This ensures the panicking code is outlined from `with` for `LocalKey`.
+ #[cfg_attr(not(panic = "immediate-abort"), inline(never))]
+-#[track_caller]
+ #[cold]
+ fn panic_access_error(err: AccessError) -> ! {
+     panic!("cannot access a Thread Local Storage value during or after destruction: {err:?}")
+diff --git a/library/std/src/thread/scoped.rs b/library/std/src/thread/scoped.rs
+index d8e018b..d9d8406 100644
+--- a/library/std/src/thread/scoped.rs
++++ b/library/std/src/thread/scoped.rs
+@@ -136,7 +136,6 @@ impl ScopeData {
+ /// such as local variables defined right before the scope, can be borrowed by the scoped threads.
+ ///
+ /// The `'env: 'scope` bound is part of the definition of the `Scope` type.
+-#[track_caller]
+ #[stable(feature = "scoped_threads", since = "1.63.0")]
+ pub fn scope<'env, F, T>(f: F) -> T
+ where
+diff --git a/library/std/src/time.rs b/library/std/src/time.rs
+index 5566c49..fff008c 100644
+--- a/library/std/src/time.rs
++++ b/library/std/src/time.rs
+@@ -423,7 +423,6 @@ impl Add<Duration> for Instant {
+     ///
+     /// This function may panic if the resulting point in time cannot be represented by the
+     /// underlying data structure. See [`Instant::checked_add`] for a version without panic.
+-    #[track_caller]
+     fn add(self, other: Duration) -> Instant {
+         self.checked_add(other).expect("overflow when adding duration to instant")
+     }
+@@ -440,7 +439,6 @@ impl AddAssign<Duration> for Instant {
+ impl Sub<Duration> for Instant {
+     type Output = Instant;
+ 
+-    #[track_caller]
+     fn sub(self, other: Duration) -> Instant {
+         self.checked_sub(other).expect("overflow when subtracting duration from instant")
+     }
+@@ -742,7 +740,6 @@ impl Add<Duration> for SystemTime {
+     ///
+     /// This function may panic if the resulting point in time cannot be represented by the
+     /// underlying data structure. See [`SystemTime::checked_add`] for a version without panic.
+-    #[track_caller]
+     fn add(self, dur: Duration) -> SystemTime {
+         self.checked_add(dur).expect("overflow when adding duration to `SystemTime`")
+     }
+@@ -759,7 +756,6 @@ impl AddAssign<Duration> for SystemTime {
+ impl Sub<Duration> for SystemTime {
+     type Output = SystemTime;
+ 
+-    #[track_caller]
+     fn sub(self, dur: Duration) -> SystemTime {
+         self.checked_sub(dur).expect("overflow when subtracting duration from `SystemTime`")
+     }

@@ -513,25 +513,25 @@ mod tests {
     use super::StatisticComparison::{AtLeast, AtMost, Equal};
     use super::*;
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn parse_without_errors(text: &str) -> TestFile {
         let file = parse_test_file(text);
         assert!(file.errors.is_empty(), "{:?}", file.errors);
         file
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_error(text: &str, line: u32, message: &str) {
         let expected = TestFailure::new(line, message);
         assert_eq!(parse_test_file(text).errors, [expected], "{text}");
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_error_after_run(directive: &str, message: &str) {
         expect_error(&format!("// RUN: lower\n{directive}\n"), 2, message);
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn check_kinds_of(text: &str, prefix: &str) -> Vec<(CheckKind, u32)> {
         let file = parse_without_errors(text);
         let checks = file.check_lines_for(prefix).iter();

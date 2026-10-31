@@ -56,7 +56,7 @@ mod tests {
     const NO_PAIRS: [(u32, u32); 0] = [];
     const NO_PARAMETERS: [u32; 0] = [];
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn lower(source: &str) -> Fragment {
         let files = [("main.ts", source)];
         let mut lowered = lower_program_with_limits(&files, LimitValues::for_host());

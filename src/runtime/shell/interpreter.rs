@@ -181,7 +181,7 @@ macro_rules! node_accessors {
         impl Interpreter {
             $(
                 #[inline]
-                #[track_caller]
+                #[cfg_attr(debug_assertions, track_caller)]
                 pub(crate) fn $get(&self, id: NodeId) -> &$ty {
                     match &self.nodes.get()[id.idx()] {
                         Node::$variant(v) => v,
@@ -192,7 +192,7 @@ macro_rules! node_accessors {
                     }
                 }
                 #[inline]
-                #[track_caller]
+                #[cfg_attr(debug_assertions, track_caller)]
                 #[allow(clippy::mut_from_ref)]
                 pub(crate) fn $get_mut(&self, id: NodeId) -> &mut $ty {
                     // SAFETY: R-2 single-JS-thread invariant — see `nodes_mut`.
@@ -2653,7 +2653,7 @@ impl ShellTask {
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
@@ -2729,7 +2729,7 @@ impl ShellTask {
     /// About to leave the owning thread: take the poster (for a JS loop, a
     /// ticket on its VM) unless a pool-thread parent already handed one down
     /// (`new_child`). Owning thread otherwise.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn arm(&mut self) {
         if self.poster.is_none() {
             self.poster = Some(bun_jsc::ConcurrentPoster::from_event_loop_handle(
@@ -2835,7 +2835,7 @@ fn shell_task_unset_callback(_: *mut WorkPoolTask) {
 }
 
 #[cold]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub(crate) fn unreachable_state(context: &str, state: &str) -> ! {
     panic!(
         "Bun shell has reached an unreachable state \"{}\" in the {} context. This indicates a bug, please open a GitHub issue.",

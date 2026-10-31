@@ -727,7 +727,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 ///   while it runs. **Do not** use this for arbitrary pointer reinterpretation
 ///   (struct-layout punning, lifetime laundering) — that is not the contract.
 #[inline(always)]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {
     debug_assert!(!ctx.is_null(), "callback_ctx: null user-data pointer");
     // SAFETY: per fn contract — `ctx` is the `*mut T` the caller registered as
@@ -1042,7 +1042,7 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
 macro_rules! enum_unwrap {
     ($vis:vis $Enum:ident, $Variant:ident => fn $get:ident / $get_mut:ident -> $Out:ty) => {
         #[inline]
-        #[track_caller]
+        #[cfg_attr(debug_assertions, track_caller)]
         $vis fn $get(&self) -> &$Out {
             match self {
                 $Enum::$Variant(__x) => __x,
@@ -1054,7 +1054,7 @@ macro_rules! enum_unwrap {
             }
         }
         #[inline]
-        #[track_caller]
+        #[cfg_attr(debug_assertions, track_caller)]
         $vis fn $get_mut(&mut self) -> &mut $Out {
             match self {
                 $Enum::$Variant(__x) => __x,
@@ -1068,7 +1068,7 @@ macro_rules! enum_unwrap {
     };
     ($vis:vis $Enum:ident, $Variant:ident => into fn $into:ident -> $Out:ty) => {
         #[inline]
-        #[track_caller]
+        #[cfg_attr(debug_assertions, track_caller)]
         $vis fn $into(self) -> $Out {
             match self {
                 $Enum::$Variant(__x) => __x,
@@ -1086,7 +1086,7 @@ macro_rules! enum_unwrap {
 /// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that
 /// crate sits *above* `bun_core` in the dep graph).
 #[inline]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
     match r {
         Ok(v) => v,
@@ -1104,7 +1104,7 @@ pub trait UnwrapOrOom {
 impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
     type Output = T;
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn unwrap_or_oom(self) -> T {
         handle_oom(self)
     }

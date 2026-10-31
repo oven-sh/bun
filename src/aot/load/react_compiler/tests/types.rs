@@ -91,7 +91,7 @@ fn check_project(files: &[(&str, &str)], mode: ReactCompilerMode) -> Vec<Reporte
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_both_modes_report(files: &[(&str, &str)], expected: &[Reported]) {
     for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
         assert_eq!(check_project(files, mode), expected, "{mode:?}");

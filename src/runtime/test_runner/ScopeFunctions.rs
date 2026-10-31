@@ -25,7 +25,7 @@ mod group_log {
     use crate::test_runner::debug::group;
 
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(super) fn begin() -> group::GroupGuard {
         let loc = core::panic::Location::caller();
         // `Location` has no `fn_name`, so we emit `file:line:col` which
@@ -674,7 +674,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult
 /// Local shim for `JSValue::setPrototypeDirect` (not yet on `bun_jsc::JSValue`).
 /// The C++ `Bun__JSValue__setPrototypeDirect` is `[[ZIG_EXPORT(check_slow)]]`,
 /// so we manually surface any pending exception as `JsError::Thrown`.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
     // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so
     // `value` must be an object (always a JSBoundFunction here).

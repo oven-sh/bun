@@ -140,7 +140,7 @@ fn count_answers(finished: &Finished, expected: &HostResolution) -> usize {
     answers.filter(|&answer| answer == expected).count()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn path_of(answer: &HostResolution) -> &[u8] {
     match answer {
         HostResolution::Path(path) => path,

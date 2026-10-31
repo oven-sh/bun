@@ -973,7 +973,7 @@ mod tests {
         tests.map(|test| test.display_path).collect()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_failures_on_program(directives: &str, lines: &[u32]) {
         let path = test_root().join("commands").join(PROGRAM_WITH_IMPORT);
         let outcome = OnceLock::new();

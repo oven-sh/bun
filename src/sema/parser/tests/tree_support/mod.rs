@@ -186,7 +186,7 @@ impl<'s> Workspace<'s> {
         hir
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn ident(&self, hir: &File<'s>, name: &str, nth: usize) -> ExprId {
         let atom = self.atom(name);
         let is_match = |expr: &Expr| matches!(expr.kind, ExprKind::Ident(text) if text == atom);
@@ -194,14 +194,14 @@ impl<'s> Workspace<'s> {
         self.expect_node(found, "identifier", name, nth)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn function(&self, hir: &File<'s>, name: &str) -> FnId {
         let atom = self.atom(name);
         let found = find_ids(&hir.fns, |func| func.name == atom && has_body(func)).next();
         self.expect_node(found, "function with a body", name, 0)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_node<Id>(&self, found: Option<Id>, kind: &str, name: &str, nth: usize) -> Id {
         match found {
             Some(id) => id,

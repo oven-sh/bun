@@ -242,7 +242,7 @@ fn parse_patched_table(offset: usize, value: &[u8]) -> Result<TrimTable, TableEr
     parse_trim_table(&bytes)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_malformed(result: Result<TrimTable, TableError>, rule: MalformedTable) {
     assert_eq!(result.unwrap_err(), TableError::Malformed(rule));
 }

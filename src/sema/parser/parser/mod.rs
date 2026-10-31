@@ -807,7 +807,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// Called at a token the grammar doesn't allow here.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn fail(&mut self) {
         // Recovery isn't implemented here yet. TypeScript continues even in a speculative parse, so give up on the
         // file.
@@ -823,7 +823,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// Gives up on the file, even during a speculative parse.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn reject(&mut self, why: Rejection) {
         // `Syntax` only ends a speculation, so `why` replaces it.
         if self.lx.rejection == Some(Rejection::Syntax) {
@@ -836,7 +836,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// dropped if it's rolled back.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn report(&mut self) {
         match self.speculations {
             0 => self.reject(Rejection::Reported),
@@ -915,7 +915,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// `parseExpected`
     #[inline(always)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn expect(&mut self, token: T) -> bool {
         if self.lx.token == token {
             self.lx.next();
@@ -927,7 +927,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// `parseExpectedMatchingBrackets`. `open_at` is the position of `open`, if it was present.
     #[inline(always)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn expect_matching(&mut self, (open, close): (T, T), open_at: Option<u32>) {
         if self.lx.token == close {
             self.lx.next();
@@ -965,7 +965,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// `parseSemicolon`
     #[inline(always)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn semicolon(&mut self) {
         if !self.eat_semicolon()
             && !(matches!(self.lx.token, T::CloseBrace | T::Eof) || self.lx.newline_before)
@@ -1294,7 +1294,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// `end` is the start of whatever follows the decorators.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn note_stray_decorators(&mut self, base: usize, end: u32) {
         if !self.recovers() {
             return self.fail();

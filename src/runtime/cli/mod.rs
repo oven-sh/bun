@@ -976,7 +976,7 @@ pub(crate) mod command {
     /// and must stay a concrete symbol so `src/startup.order` can place it —
     /// and the argv→Context parsing it pulls in — contiguously. `#[track_caller]`
     /// would otherwise make it an inlining candidate, scattering those callees.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     #[inline(never)]
     pub(crate) fn create_context_data(
         cmd: Tag,

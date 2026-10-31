@@ -72,7 +72,7 @@ fn describe(evaluator: &Evaluator<'_, '_>, value: Value) -> String {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_identical(evaluator: &Evaluator<'_, '_>, value: Value, expected: Value) {
     assert!(
         is_identical(evaluator, value, expected),

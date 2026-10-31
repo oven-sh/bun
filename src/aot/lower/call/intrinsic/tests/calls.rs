@@ -9,7 +9,7 @@ use crate::builtins::table;
 use crate::ir::generated::{FunctionReferenceKind, TerminatorKind};
 use crate::ir::{Id, Opcode, PropertyKeyId, Reference};
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn read_of<'a>(probe: Probe<'a>, key: PropertyKeyId) -> Operation<'a> {
     let mut reads = probe.all(Opcode::PropGet);
     reads.retain(|read| read.keys() == [key]);

@@ -77,7 +77,7 @@ impl JSString {
     }
 
     /// Throws when resolving a rope runs out of memory.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut owner: *const JSString = self;
         let view =

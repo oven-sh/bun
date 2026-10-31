@@ -820,14 +820,14 @@ pub fn buf_print_z<'a>(
 /// [`buf_print`] that panics on overflow. Use when the
 /// caller-supplied stack buffer is sized so overflow is a programmer error.
 #[inline]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
     buf_print(buf, args).expect("buf_print: buffer too small")
 }
 
 /// [`buf_print_z`] that panics on overflow.
 #[inline]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn buf_print_z_infallible<'a>(
     buf: &'a mut [u8],
     args: core::fmt::Arguments<'_>,

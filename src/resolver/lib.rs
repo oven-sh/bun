@@ -243,7 +243,7 @@ pub mod fs {
         ///
         /// # Panics (debug)
         /// If `init()` has not been called yet.
-        #[track_caller]
+        #[cfg_attr(debug_assertions, track_caller)]
         #[inline]
         pub fn get() -> &'static FileSystem {
             debug_assert!(

@@ -109,7 +109,7 @@ When Bun needs to spawn Chrome, it searches in this order:
 4. Standard install locations (`/Applications/Google Chrome.app`, `~/Applications/...`, `/usr/bin/...`, `/snap/bin/...`; on Windows the `Application\*.exe` directories under `%ProgramFiles%`, `%ProgramFiles(x86)%`, and `%LOCALAPPDATA%`)
 5. Playwright's cache (`~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright`, or `%LOCALAPPDATA%\ms-playwright`) for `chrome-headless-shell`
 
-If Bun finds none, the constructor throws.
+If Bun finds none, the constructor throws. If Bun finds (or is given) an executable but cannot start it, the constructor throws that system error instead, with `code` (`ENOENT`, `EACCES`, ...), `syscall`, and `path` set, the same shape `Bun.spawn` throws.
 
 <Note>
   Microsoft Edge refuses to start under the Windows `LocalSystem` account: it exits immediately and the first operation
@@ -140,7 +140,7 @@ new Bun.WebView({
 });
 ```
 
-If auto-detect finds a stale `DevToolsActivePort` file (Chrome crashed or restarted), the WebSocket connect fails and Bun transparently falls back to spawning its own Chrome. An explicit `url: "ws://..."` does **not** fall back — a failed connection throws.
+If auto-detect finds a stale `DevToolsActivePort` file (Chrome crashed or restarted), the WebSocket connect fails and Bun transparently falls back to spawning its own Chrome. An explicit `url: "ws://..."` does **not** fall back. The connection opens in the background, so the constructor still returns normally; if it cannot be established, the first operation you `await` rejects with `Failed to connect to Chrome at ws://...`.
 
 <Note>
   Passing `path` or `argv` implies spawn mode and skips auto-detect. `url: "ws://..."` cannot be combined with `path` or
@@ -369,7 +369,7 @@ await view.press("a", { modifiers: ["Meta"] }); // Cmd+A / Ctrl+A
 
 Named virtual keys: `Enter`, `Tab`, `Space`, `Backspace`, `Delete`, `Escape`, `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown`, `Home`, `End`, `PageUp`, `PageDown`.
 
-Any single character (for example, `"a"`) combined with `modifiers` sends a keyboard chord.
+Any other `key` must be a single character (one code point, so `"é"` and `"😀"` count). It sends a `keydown`/`keyup` pair for that character and, combined with `modifiers`, a keyboard chord.
 
 On the WebKit backend, most named keys (without modifiers) map to editing commands such as `DeleteBackward`, `MoveLeft`, and `InsertNewline`, and resolve after the page has applied them. `Escape`, `Space`, and any key with modifiers fall back to raw `keydown`/`keyup` events. These keys fire a `keydown` the page can observe, but there's no completion barrier. Follow with an `evaluate()` if you need to observe the effect.
 

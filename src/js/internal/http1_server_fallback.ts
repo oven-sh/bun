@@ -227,7 +227,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // True once the bytes end() wrote have left the socket, like the native handle's.
     finished: false,
     aborted: false,
-    shouldKeepAlive,
     onfinished: null as (() => void) | null,
     // Like the native getter: an empty slot reads as undefined.
     get onwritable() {

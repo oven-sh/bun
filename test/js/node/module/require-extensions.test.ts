@@ -1038,13 +1038,14 @@ describe.concurrent("the handler that a require() selects", () => {
     const loaded = [require(file), require(file + "?query"), compiled];
     // A file that the executable holds is not a file for a handler, with a query or without one.
     const embedded = path.join(path.dirname(Bun.main), "embedded.foo");
-    if (fs.existsSync(embedded))
+    const isEmbedded = fs.existsSync(embedded);
+    if (isEmbedded)
       for (const id of [embedded, embedded + "?query"]) {
         try {
           require(id);
         } catch {}
       }
-    console.log(JSON.stringify([...loaded, calls]));
+    console.log(JSON.stringify([...loaded, calls, { isEmbedded }]));
   `;
   const onDisk = { "x.foo": files["x.foo"], "x.compiles": `module.exports = "compiled by the handler";` };
   const handled = ["handler got x.foo for x.foo", "handler got x.foo for x.foo?query"];
@@ -1062,7 +1063,7 @@ describe.concurrent("the handler that a require() selects", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([...handled, "compiled by the handler", calls]);
+    expect(JSON.parse(stdout)).toEqual([...handled, "compiled by the handler", calls, { isEmbedded: false }]);
     expect(exitCode).toBe(0);
   });
 
@@ -1102,12 +1103,12 @@ describe.concurrent("the handler that a require() selects", () => {
       run({ BUN_OPTIONS: "--disallow-code-generation-from-strings=strict" }),
     ]);
     expect(plain).toEqual({
-      stdout: JSON.stringify([...handled, "compiled by the handler", calls]),
+      stdout: JSON.stringify([...handled, "compiled by the handler", calls, { isEmbedded: true }]),
       stderr: "",
       exitCode: 0,
     });
     expect(strict).toEqual({
-      stdout: JSON.stringify([...handled, "EvalError", calls]),
+      stdout: JSON.stringify([...handled, "EvalError", calls, { isEmbedded: true }]),
       stderr: "",
       exitCode: 0,
     });

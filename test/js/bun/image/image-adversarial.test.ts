@@ -11,6 +11,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -1267,6 +1268,169 @@ describe("concurrent terminals on one Image", () => {
     const out = await p;
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
+  });
+
+  // A file-backed Blob (path, slice, fd) is read after the terminal has returned
+  // its promise. The terminal still gets the settings of its own call.
+  describe.concurrent("setters after a terminal on a file-backed Blob source", () => {
+    const photo = makePng(64, 48, (x, y) => [x * 4, y * 5, (x + y) * 2, 255]);
+    // `behind.png` holds `photo` after another picture: a slice that starts at `photo` must not see it.
+    const other = makePng(20, 30, (x, y) => [y * 8, x * 12, 99, 255]);
+    const files = () => ({ "photo.png": Buffer.from(photo), "behind.png": Buffer.concat([other, photo]) });
+    const shape = async (bytes: Uint8Array) => {
+      const { format, width, height } = await new Bun.Image(bytes).metadata();
+      return `${format} ${width}x${height}`;
+    };
+    const fromDataUrl = (url: string) => Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
+
+    const sources: Record<string, (dir: string, fds: number[]) => Bun.Image> = {
+      "Bun.file(path).image()": dir => Bun.file(join(dir, "photo.png")).image(),
+      "new Bun.Image(Bun.file(path))": dir => new Bun.Image(Bun.file(join(dir, "photo.png"))),
+      "a slice of Bun.file(path)": dir => Bun.file(join(dir, "behind.png")).slice(other.length).image(),
+      "Bun.file(fd).image()": (dir, fds) => {
+        fds.push(openSync(join(dir, "photo.png"), "r"));
+        return Bun.file(fds.at(-1)!).image();
+      },
+    };
+    const terminals: Record<string, (img: Bun.Image, out: string) => Promise<Uint8Array>> = {
+      bytes: img => img.bytes(),
+      buffer: img => img.buffer(),
+      toBuffer: img => img.toBuffer(),
+      blob: async img => (await img.blob()).bytes(),
+      toBase64: async img => Buffer.from(await img.toBase64(), "base64"),
+      dataurl: async img => fromDataUrl(await img.dataurl()),
+      write: async (img, out) => (await img.write(out), Bun.file(out).bytes()),
+    };
+
+    describe.each(Object.keys(sources))("%s", sourceName => {
+      // One terminal per image: concurrent terminals on one fd share its offset.
+      test.each(Object.keys(terminals))("%s() keeps the settings of its call", async terminalName => {
+        using dir = tempDir("image-blob-snapshot", files());
+        const fds: number[] = [];
+        try {
+          const img = sources[sourceName](String(dir), fds).resize(32, 32).png();
+          const pending = terminals[terminalName](img, join(String(dir), "out.png"));
+          img.resize(8, 8).rotate(90).flip().flop().modulate({ brightness: 0.2 }).jpeg();
+          const out = await pending;
+          expect(await shape(out)).toBe("png 32x32");
+          // The shape cannot show a late rotate, flip, flop or modulate. The pixels can.
+          expect(Buffer.from(out)).toEqual(Buffer.from(await new Bun.Image(photo).resize(32, 32).png().bytes()));
+          // The later calls are not lost: the next terminal has them.
+          expect(await shape(await img.bytes())).toBe("jpeg 8x8");
+        } finally {
+          for (const fd of fds) closeSync(fd);
+        }
+      });
+    });
+
+    test("outputs started together each get their own settings", async () => {
+      using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+      const img = Bun.file(join(String(dir), "photo.png")).image();
+      const outputs = await Promise.all([32, 16, 8].map(w => img.resize(w, w).png().bytes()));
+      expect(await Promise.all(outputs.map(shape))).toEqual(["png 32x32", "png 16x16", "png 8x8"]);
+    });
+
+    test("a rotate set after the call is for the next terminal", async () => {
+      using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+      const img = Bun.file(join(String(dir), "photo.png")).image();
+      const plain = img.png().bytes();
+      const rotated = img.rotate(90).png().bytes();
+      expect([await shape(await plain), await shape(await rotated)]).toEqual(["png 64x48", "png 48x64"]);
+    });
+
+    test("format and geometry come from the same call", async () => {
+      using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+      const path = join(String(dir), "photo.png");
+      const img = Bun.file(path).image();
+      const pending = img.jpeg().bytes();
+      img.png().resize(8, 8);
+      expect(await shape(await pending)).toBe("jpeg 64x48");
+      // metadata() is of the source: a chained format does not change it.
+      expect(await Bun.file(path).image().jpeg().metadata()).toEqual({ width: 64, height: 48, format: "png" });
+
+      // write() infers the format from the destination. The geometry is the call's too.
+      const out = join(String(dir), "inferred.jpg");
+      const written = Bun.file(path).image().resize(32, 32);
+      const pendingWrite = written.write(out);
+      written.resize(8, 8);
+      await pendingWrite;
+      expect(await shape(await Bun.file(out).bytes())).toBe("jpeg 32x32");
+      // The inferred format is for that write only: the Image has none set.
+      expect(await shape(await written.bytes())).toBe("png 8x8");
+      // Only a path string that names an encode format is inferred from. A decode-only
+      // extension and a Bun.file() destination keep the source format.
+      const gif = join(String(dir), "kept.gif");
+      const viaFile = join(String(dir), "file.webp");
+      await Bun.file(path).image().write(gif);
+      await Bun.file(path).image().write(Bun.file(viaFile));
+      expect([await shape(await Bun.file(gif).bytes()), await shape(await Bun.file(viaFile).bytes())]).toEqual([
+        "png 64x48",
+        "png 64x48",
+      ]);
+    });
+
+    test("flip, flop and modulate set after the call do not change the pixels", async () => {
+      using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+      const img = Bun.file(join(String(dir), "photo.png")).image();
+      const pending = img.png().bytes();
+      img.flip().flop().modulate({ brightness: 0.2 });
+      expect(Buffer.from(await pending)).toEqual(Buffer.from(await new Bun.Image(photo).png().bytes()));
+    });
+
+    test("placeholder() of a JPEG does not see a resize set after the call", async () => {
+      const jpeg = await new Bun.Image(photo).jpeg({ quality: 90 }).bytes();
+      using dir = tempDir("image-blob-snapshot", { "photo.jpg": Buffer.from(jpeg) });
+      const path = join(String(dir), "photo.jpg");
+      const plain = await new Bun.Image(jpeg).placeholder();
+      const img = Bun.file(path).image();
+      const pending = img.placeholder();
+      img.resize(8, 8);
+      expect(await pending).toBe(plain);
+      // A chained format is for encode terminals: a placeholder is always a PNG of the source.
+      expect(await Bun.file(path).image().webp().placeholder()).toBe(plain);
+      // A setter that runs while the argument is read is before the call's copy.
+      const reentrant = new Bun.Image(jpeg);
+      const arg = { toString: () => (reentrant.resize(8, 8), "dataurl") };
+      expect(await reentrant.placeholder(arg as any)).toBe(await new Bun.Image(jpeg).resize(8, 8).placeholder());
+    });
+
+    test("a terminal pending across new Response(image) keeps its settings", async () => {
+      using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+      const img = Bun.file(join(String(dir), "photo.png"))
+        .image()
+        .resize(32, 32)
+        .png();
+      const pending = img.bytes();
+      const body = new Response(img.resize(16, 16));
+      img.resize(8, 8);
+      expect(await shape(await pending)).toBe("png 32x32");
+      expect(await shape(await body.bytes())).toBe("png 16x16");
+    });
+
+    // With no format chained, write(dest) reads `dest` as a string to infer one.
+    // That can run user code, so the one copy of the settings is taken after it.
+    test.each(["buffer", "path", "Bun.file(path)"])(
+      "write(dest) on a %s source infers the format, then takes its settings",
+      async sourceName => {
+        using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+        const path = join(String(dir), "photo.png");
+        const img =
+          sourceName === "buffer"
+            ? new Bun.Image(photo)
+            : sourceName === "path"
+              ? new Bun.Image(path)
+              : Bun.file(path).image();
+        const out = join(String(dir), "out.jpg");
+        const dest = new String(out);
+        let calls = 0;
+        dest.toString = () => {
+          if (calls++ === 0) img.png().resize(8, 8);
+          return out;
+        };
+        await img.write(dest as any);
+        expect(await shape(await Bun.file(out).bytes())).toBe("png 8x8");
+      },
+    );
   });
 
   // An input over ~1 KB is borrowed, so the pool thread reads bytes that the JS thread can still

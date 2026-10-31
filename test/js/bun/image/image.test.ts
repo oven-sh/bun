@@ -198,11 +198,18 @@ describe("Bun.Image", () => {
   // covers the S3 download callback (bytes and error arm) and the synchronous
   // in-memory delivery.
   test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    // `held.png` is answered only when the test opens the gate.
+    const held = { requests: 0, arrived: Promise.withResolvers<void>(), gate: Promise.withResolvers<void>() };
     using server = Bun.serve({
       port: 0,
-      fetch(req) {
+      async fetch(req) {
         const { pathname } = new URL(req.url);
-        if (req.method === "GET" && pathname.endsWith("/src.png")) {
+        if (req.method === "GET" && pathname.endsWith("/held.png")) {
+          held.requests++;
+          held.arrived.resolve();
+          await held.gate.promise;
+        }
+        if (req.method === "GET" && (pathname.endsWith("/src.png") || pathname.endsWith("/held.png"))) {
           return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
         }
         return new Response("", { status: 404 });
@@ -229,6 +236,22 @@ describe("Bun.Image", () => {
       // Second terminal reuses the downloaded bytes.
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
       expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+
+      // Chainable calls made during the download are for the next terminal. The
+      // server holds the response, so they run with the request on the wire.
+      const downloading = client.file("held.png").image();
+      const pending = downloading.resize(2, 1).png().bytes();
+      await held.arrived.promise;
+      downloading.resize(3, 3).rotate(90).jpeg();
+      held.gate.resolve();
+      expect(await new Bun.Image(await pending).metadata()).toEqual({ width: 2, height: 1, format: "png" });
+      expect(await new Bun.Image(await downloading.bytes()).metadata()).toEqual({
+        width: 3,
+        height: 3,
+        format: "jpeg",
+      });
+      // One download for the one terminal that needed it.
+      expect(held.requests).toBe(1);
 
       // Download failure rejects the terminal with the S3 error.
       expect(

@@ -106,7 +106,10 @@
 
 /* close() codes — two orthogonal bits collapsed into three states:
  *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
- *      peer replies; TCP FINs.
+ *      peer replies; TCP FINs. While a TLS close waits, another code 0 does
+ *      nothing: code 1, code 2 and us_socket_close_now() close without the
+ *      wait. The wait has a 10 s deadline in the socket's timeout, so an owner
+ *      that sets the timeout after its close moves that deadline.
  *   1  reset: TLS sends no close_notify (abortive), TCP arms SO_LINGER{1,0} → RST.
  *      Drops any unflushed kernel send buffer; only for terminate()/abort.
  *   2  fast-shutdown: TLS fast-shutdown (no wait), TCP FINs normally. For

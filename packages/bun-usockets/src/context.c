@@ -113,7 +113,14 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* Its owner closed it before this walk, and that close still waits. Asked
+         * again it would keep waiting, and the reset below drops what the kernel
+         * holds: end the wait as its deadline does. */
+        if (s->ssl && us_internal_ssl_close_waits(s)) {
+            us_internal_ssl_on_timeout(s);
+        } else {
+            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        }
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
          * reply. Callers (e.g. Listener.deinit) free the embedding storage

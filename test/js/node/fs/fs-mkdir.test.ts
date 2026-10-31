@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isLinux, isWindows, tmpdirSync } from "harness";
-import { execSync } from "node:child_process";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -397,5 +397,142 @@ describe("fs.promises.mkdir", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+// The same arm on POSIX: mkdir on a symlink loop reports EEXIST, and the probe
+// that follows reports ELOOP. Node reports the probe error.
+describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink loop", () => {
+  it("reports ELOOP instead of EEXIST", async () => {
+    using dir = tempDir("mkdir-loop", {});
+    const loop = path.join(String(dir), "loop");
+    fs.symlinkSync("loop", loop);
+
+    expect(() => fs.mkdirSync(loop, { recursive: true })).toThrow(
+      expect.objectContaining({ code: "ELOOP", syscall: "mkdir", path: loop }),
+    );
+    await expect(fs.promises.mkdir(loop, { recursive: true })).rejects.toMatchObject({
+      code: "ELOOP",
+      syscall: "mkdir",
+      path: loop,
+    });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/43651
+// The path exists, but the process is not allowed to read its attributes.
+// CreateDirectoryW reports ERROR_ALREADY_EXISTS, and the "is it a directory"
+// probe fails with STATUS_ACCESS_DENIED. Node reports the probe error (EPERM).
+// The child drops SeBackupPrivilege first: an elevated token with it enabled
+// bypasses the deny ACE, and the probe succeeds.
+describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Windows)", () => {
+  const fixture = `
+    import { dlopen, FFIType, ptr } from "bun:ffi";
+    import fs from "node:fs";
+
+    const kernel32 = dlopen("kernel32.dll", {
+      GetCurrentProcess: { args: [], returns: FFIType.u64 },
+      GetLastError: { args: [], returns: FFIType.u32 },
+    }).symbols;
+    const advapi32 = dlopen("advapi32.dll", {
+      OpenProcessToken: { args: [FFIType.u64, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+      LookupPrivilegeValueW: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      AdjustTokenPrivileges: {
+        args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    }).symbols;
+
+    // TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY
+    const tokenOut = Buffer.alloc(8);
+    if (advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x20 | 0x8, ptr(tokenOut)) === 0) {
+      throw new Error("OpenProcessToken " + kernel32.GetLastError());
+    }
+    const token = tokenOut.readBigUInt64LE(0);
+    const names = ["SeBackupPrivilege", "SeRestorePrivilege"];
+    // TOKEN_PRIVILEGES { u32 count; { LUID luid; u32 attributes }[count] }
+    const tp = Buffer.alloc(4 + 12 * names.length);
+    tp.writeUInt32LE(names.length, 0);
+    names.forEach((name, i) => {
+      const wname = Buffer.from(name + "\\0", "utf16le");
+      if (advapi32.LookupPrivilegeValueW(null, ptr(wname), ptr(tp, 4 + 12 * i)) === 0) {
+        throw new Error("LookupPrivilegeValueW " + kernel32.GetLastError());
+      }
+      tp.writeUInt32LE(0, 4 + 12 * i + 8); // attributes = 0: disabled
+    });
+    if (advapi32.AdjustTokenPrivileges(token, 0, ptr(tp), 0, null, null) === 0) {
+      throw new Error("AdjustTokenPrivileges " + kernel32.GetLastError());
+    }
+
+    const target = process.argv[2];
+    const pick = e => ({ code: e.code, syscall: e.syscall, path: e.path });
+    const result = {};
+    try {
+      await fs.promises.mkdir(target, { recursive: true });
+      result.async = "ok";
+    } catch (e) {
+      result.async = pick(e);
+    }
+    try {
+      fs.mkdirSync(target, { recursive: true });
+      result.sync = "ok";
+    } catch (e) {
+      result.sync = pick(e);
+    }
+    process.stdout.write(JSON.stringify(result));
+  `;
+
+  // NTFS answers an attribute query if the object grants FILE_READ_ATTRIBUTES
+  // or the parent grants FILE_LIST_DIRECTORY, so deny Everyone on the chain.
+  // The test process owns the entries, so it keeps WRITE_DAC for the cleanup.
+  async function mkdirWithDenied(root: string, deny: string[], target: string) {
+    const denied: string[] = [];
+    try {
+      for (const d of deny) {
+        execFileSync("icacls", [d, "/deny", "*S-1-1-0:(F)"], { stdio: "pipe" });
+        denied.push(d);
+      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", target],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    } finally {
+      for (const d of denied.reverse()) {
+        execFileSync("icacls", [d, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
+      }
+    }
+  }
+
+  it.concurrent("existing directory: reports the access error instead of EEXIST", async () => {
+    using dir = tempDir("mkdir-denied", { "fixture.mjs": fixture });
+    const root = String(dir);
+    const a = path.join(root, "a");
+    const b = path.join(a, "b");
+    const target = path.join(b, "c");
+    fs.mkdirSync(target, { recursive: true });
+
+    const expected = { code: "EPERM", syscall: "mkdir", path: target };
+    expect(await mkdirWithDenied(root, [target, b, a], target)).toEqual({ async: expected, sync: expected });
+  });
+
+  // The first mkdir of a\b\c reports ENOENT because a\b is a file. The walk-up
+  // mkdir of a\b reports EEXIST, and the probe of a\b fails. Node reports the
+  // probe error with the requested path.
+  it.concurrent("file at a parent component: reports the access error instead of ENOENT", async () => {
+    using dir = tempDir("mkdir-denied-parent", { "fixture.mjs": fixture, "a/b": "" });
+    const root = String(dir);
+    const a = path.join(root, "a");
+    const b = path.join(a, "b");
+    const target = path.join(b, "c");
+
+    const expected = { code: "EPERM", syscall: "mkdir", path: target };
+    expect(await mkdirWithDenied(root, [b, a], target)).toEqual({ async: expected, sync: expected });
   });
 });

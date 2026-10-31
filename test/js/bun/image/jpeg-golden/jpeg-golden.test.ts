@@ -49,7 +49,7 @@ const pictures = encodeCases().map((c, index) => ({ ...c, expected: encoded[inde
 
 test("the fixtures are whole", () => {
   expect({ files: files.length, pictures: pictures.length, encoded: encoded.length }).toEqual({
-    files: 855,
+    files: 866,
     pictures: 466,
     encoded: 466,
   });

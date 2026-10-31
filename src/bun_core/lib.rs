@@ -2889,7 +2889,8 @@ pub fn return_address() -> usize {
         let fp = debug::frame_address();
         // SAFETY: `fp` is this function's own valid frame pointer; the
         // return-address slot at `[fp + PC_OFFSET]` is always mapped.
-        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
+        let saved = unsafe { *((fp + debug::PC_OFFSET) as *const usize) };
+        debug::strip_return_address_signature(saved)
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {

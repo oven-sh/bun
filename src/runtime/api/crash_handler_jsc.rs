@@ -171,6 +171,51 @@ pub(crate) fn raise_ignoring_panic_handler() {
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
 }
 
+/// Walks the stack from below a frame whose return address is signed as
+/// `-mbranch-protection=pac-ret` signs it, and says whether the walk gave that
+/// address. Where nothing signs there is nothing to find out.
+pub(crate) fn stack_walk_finds_signed_return_address() -> bool {
+    #[cfg(all(target_arch = "aarch64", unix, not(target_vendor = "apple")))]
+    {
+        #[derive(Default)]
+        struct Trace {
+            addresses: [usize; 32],
+            len: usize,
+        }
+        extern "C" fn capture(trace: &mut Trace) {
+            trace.len = bun_core::capture_stack_trace(0, &mut trace.addresses);
+        }
+        let mut trace = Trace::default();
+        let return_address: usize;
+        // SAFETY: what a function does that saves its return address signed,
+        // calls `capture` and returns to `2:`. The stack pointer and x29 end as
+        // they began, and `capture` follows the C calling convention.
+        unsafe {
+            core::arch::asm!(
+                "adr x30, 2f",
+                "mov x20, x30",
+                "hint #25", // PACIASP
+                "stp x29, x30, [sp, #-16]!",
+                "mov x29, sp",
+                "blr x8",
+                "ldp x29, x30, [sp], #16",
+                "hint #29", // AUTIASP
+                "2:",
+                // x20 outlives the call, and nothing writes x8 before it.
+                out("x20") return_address,
+                in("x8") capture as extern "C" fn(&mut Trace),
+                inout("x0") &raw mut trace => _,
+                clobber_abi("C"),
+            )
+        };
+        trace.addresses[..trace.len].contains(&return_address)
+    }
+    #[cfg(not(all(target_arch = "aarch64", unix, not(target_vendor = "apple"))))]
+    {
+        true
+    }
+}
+
 pub(crate) fn get_feature_data() -> FeatureData {
     FeatureData {
         // Not `static_`: a feature can be named like a common string ("s3").

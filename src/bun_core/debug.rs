@@ -327,6 +327,34 @@ fn caller_of_faulting_stub(
     None
 }
 
+/// Code compiled with `-mbranch-protection=pac-ret` (an addon, a system
+/// library, Bun itself) saves its return addresses signed, in the bits above
+/// the address. An address without a signature stays as it is.
+#[inline(always)]
+pub(crate) fn strip_return_address_signature(address: usize) -> usize {
+    #[cfg(all(target_arch = "aarch64", unix, not(target_vendor = "apple")))]
+    {
+        let mut address = address;
+        // SAFETY: XPACLRI works on x30 alone, and is a no-op on a processor
+        // without pointer authentication.
+        unsafe {
+            core::arch::asm!(
+                "mov x30, {address}",
+                "hint #7", // XPACLRI
+                "mov {address}, x30",
+                address = inout(reg) address,
+                out("x30") _,
+                options(pure, nomem, nostack, preserves_flags),
+            )
+        };
+        address
+    }
+    #[cfg(not(all(target_arch = "aarch64", unix, not(target_vendor = "apple"))))]
+    {
+        address
+    }
+}
+
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
@@ -407,7 +435,8 @@ impl StackIterator {
         if new_fp != 0 && new_fp <= self.fp {
             return None;
         }
-        let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
+        let new_pc =
+            strip_return_address_signature(self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?);
 
         self.returned_to = Some((
             new_pc,

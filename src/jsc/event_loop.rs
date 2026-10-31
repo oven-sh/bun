@@ -120,7 +120,8 @@ pub struct EventLoop {
     /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
     /// `enqueue()` reads go through the single audited `BackRef::deref`
     /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
-    pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
+    /// Only the main VM's regular loop has one.
+    pub(crate) signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
 }
 
 impl Default for EventLoop {
@@ -705,6 +706,16 @@ impl EventLoop {
                 && !core::ptr::addr_of!((*vm).macro_mode).read()
                 && core::ptr::eq(self, core::ptr::addr_of!((*vm).regular_event_loop)))
             .then(|| &*core::ptr::addr_of!((*vm).macro_event_loop))
+        }
+    }
+
+    /// A macro's poll takes the wake-up of a signal that arrives while the macro runs, so wake the loop again for that signal.
+    #[cfg(unix)]
+    pub(crate) fn wake_for_pending_signal(&self) {
+        if let Some(signal_handler) = self.signal_handler {
+            if signal_handler.has_pending() {
+                self.wakeup();
+            }
         }
     }
 

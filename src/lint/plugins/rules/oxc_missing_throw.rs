@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Checks whether the `throw` keyword is missing in front of a `new` expression.
 pub struct MissingThrow;
 
-const MISSING_THROW: Message = Message::new("", "Missing throw");
-const ADD_THROW: Message = Message::new("", "The `throw` keyword seems to be missing in front of this 'new' expression");
+const MISSING_THROW: &Message = &Message::new("", "Missing throw");
+const ADD_THROW: &Message = &Message::new("", "The `throw` keyword seems to be missing in front of this 'new' expression");
 
 impl Rule for MissingThrow {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "missing-throw", Kind::Problem).has_suggestions();

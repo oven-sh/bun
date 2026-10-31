@@ -153,25 +153,21 @@ impl IOReader {
         // NOTE: set the parent backref after Rc allocation so the
         // address is stable.
         let parent: *const IOReader = std::rc::Rc::as_ptr(&this);
-        // SAFETY: `Rc::as_ptr` yields `*const IOReader`, but every field of
+        // `Rc::as_ptr` yields `*const IOReader`, but every field of
         // `IOReader` is `UnsafeCell`, so all mutation flows through interior
         // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
         // `set_parent`'s `*mut` signature for the vtable backref; the
         // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
         // call `&self` methods — no `&mut IOReader` is materialized from it.
-        unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
+        this.reader().set_parent(parent.cast_mut().cast());
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
 
-    /// # Safety
-    /// `interp` must be null or point to the live owning `Interpreter` (it
-    /// owns the IO struct that holds this `Rc`) for the lifetime of this
-    /// reader; single-threaded.
+    /// `interp` must outlive this reader (it owns the IO struct that holds this `Rc`).
     #[inline]
-    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: precondition above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
+    pub(crate) fn set_interp(&self, interp: &Interpreter) {
+        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
     }
 
     #[inline]

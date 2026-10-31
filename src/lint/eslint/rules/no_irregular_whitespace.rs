@@ -10,8 +10,8 @@ pub struct NoIrregularWhitespace {
     skip_templates: Option<bool>,
 }
 
-const NO_IRREGULAR_WHITESPACE: Message =
-    Message::new("noIrregularWhitespace", "Irregular whitespace not allowed.");
+const NO_IRREGULAR_WHITESPACE: &Message =
+    &Message::new("noIrregularWhitespace", "Irregular whitespace not allowed.");
 
 #[derive(Copy, Clone, PartialEq)]
 enum Irregular {

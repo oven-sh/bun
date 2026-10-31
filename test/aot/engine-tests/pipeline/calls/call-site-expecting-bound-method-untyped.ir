@@ -864,7 +864,7 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f47 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f47 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -887,7 +887,7 @@ function f47 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-runtimefunction id=69 function=f47
+runtimefunction id=68 function=f47
 # -- generated: asAValue asAMember takenApart withMoreArguments withNoArgument withAText inALoop add f12 f13 f14 f15 f16 f17 f18 f19 f20 f21
 # CHECK-LABEL: function {{*}}name="asAValue"
 # CHECK: module=m0 position=383 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L0}, {type=int[0, 7]}] results=[{type=number|string}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f62 callPosition=4294967295 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f11 callPosition=311 parent=1 isTailCall=true module=m0}] {

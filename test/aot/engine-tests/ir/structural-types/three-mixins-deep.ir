@@ -184,7 +184,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 8040, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
 # CHECK-NEXT: Int64 b@22 = Load(b@21, offset = 8, ControlDependent|Reads:AOTInstance_stringCells, v2:String)
 # CHECK-NEXT: Void b@24 = Branch(b@22, Terminal, v2:String)
 # CHECK-NEXT: Successors: Then:#3, Else:Rare:#4

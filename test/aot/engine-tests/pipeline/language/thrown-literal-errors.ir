@@ -1455,7 +1455,7 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 function f28 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f29 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f30 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f31 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f31 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2233,7 +2233,7 @@ function f72 module=m7 kind=Module role=Library flags=[IsChecked] thisType={type
     Return v39
 }
 function f73 name="matchesGlob" module=m7 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w185}, {type=undefined|null|string site=w186 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w187 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w188}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f31
+runtimefunction id=68 function=f31
 runtimefunction id=65574 function=f13
 runtimefunction id=65580 function=f12
 # -- generated: f0 slot follow forbid portrait f13 next f32 f35 listOf nextTick newTickObject pushTickObject takeTickObject pushWithList afterATurn start
@@ -2357,7 +2357,7 @@ runtimefunction id=65580 function=f12
 # CHECK-LABEL: function {{*}}name="nextTick"
 # CHECK: module=m1 position=14680 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65580 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|function site=w71 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w72 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f126 layout=L(IteratorResult)} {
+# CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f126 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: undefined = CallDirect v0 function=f126
 # CHECK-NEXT: v2: anything = ResultAt v1
@@ -2599,7 +2599,7 @@ runtimefunction id=65580 function=f12
 # CHECK-NEXT: ReturnCall v7 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m2 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f31}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f31} creator=Entrypoint{target=f31 arguments=Registers} {
+# CHECK: module=m2 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=68 captures=[{type=f31}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f31} creator=Entrypoint{target=f31 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f31, v1: anything):
 # CHECK-NEXT: v2: L(IteratorResult) = CallDirect v1 function=f31
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
@@ -2827,7 +2827,7 @@ runtimefunction id=65580 function=f12
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m2 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f31 parameterMap=[{original=0}]} creator=ResultWorker{origin=f31} {
+# CHECK: module=m2 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f31 parameterMap=[{original=0}]} creator=ResultWorker{origin=f31} {
 # CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
 # CHECK-NEXT: v1: boolean = HasJSType v0 first=5 last=5
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b25()

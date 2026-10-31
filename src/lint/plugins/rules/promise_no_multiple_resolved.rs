@@ -12,10 +12,10 @@ use smallvec::SmallVec;
 /// except that two kinds of segments are merged. See [`Blocks::new`].
 pub struct NoMultipleResolved;
 
-const ALREADY_RESOLVED: Message =
-    Message::new("", "Promise should not be resolved multiple times. Promise is already resolved on line {{line}}.");
-const POTENTIALLY_ALREADY_RESOLVED: Message =
-    Message::new("", "Promise should not be resolved multiple times. Promise is potentially resolved on line {{line}}.");
+const ALREADY_RESOLVED: &Message =
+    &Message::new("", "Promise should not be resolved multiple times. Promise is already resolved on line {{line}}.");
+const POTENTIALLY_ALREADY_RESOLVED: &Message =
+    &Message::new("", "Promise should not be resolved multiple times. Promise is potentially resolved on line {{line}}.");
 
 impl Rule for NoMultipleResolved {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-multiple-resolved", Kind::Problem);
@@ -67,7 +67,7 @@ fn get_promise_constructor_inline_executor(new_expr: Call<'_>) -> Option<Func<'_
 }
 
 /// (message, the call to report, the earlier call)
-type Diagnostics<'a> = Vec<(Message, Expr<'a>, Expr<'a>)>;
+type Diagnostics<'a> = Vec<(&'static Message, Expr<'a>, Expr<'a>)>;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ResolvedKind {

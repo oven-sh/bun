@@ -3212,13 +3212,106 @@ mod posix_impl {
         let n = check!(sys_send(fd.native(), buf, flags), Tag::send);
         Ok(n as usize)
     }
-    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-        recv(fd, buf, MSG_DONTWAIT)
+    /// A seccomp policy denied `recv`/`send` but allows `read`/`write`, which is all libuv uses on a stream. Relaxed: a hint, no data behind it.
+    static SOCKET_RECV_DENIED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+    static SOCKET_SEND_DENIED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+    /// Sockets have `FMODE_NOWAIT` since Linux 6.4. Before that `RWF_NOWAIT` says EOPNOTSUPP on every socket.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static SOCKET_RWF_NOWAIT_UNSUPPORTED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    /// What a seccomp policy answers: `RET_ERRNO` (EPERM, or EACCES under systemd) or `RET_TRAP`, which bun's SIGSYS handler reports as ENOSYS.
+    fn is_socket_syscall_denied(err: &Error) -> bool {
+        matches!(err.get_errno(), E::EPERM | E::EACCES | E::ENOSYS)
     }
-    /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
-    /// returns EPIPE instead of raising SIGPIPE.
+
+    /// `poll(fd, events, 0)`. A denied `poll` is an error, not "not ready".
+    fn poll_now(fd: Fd, events: i16) -> Maybe<bool> {
+        let mut fds = [posix::PollFd {
+            fd: fd.native(),
+            events,
+            revents: 0,
+        }];
+        Ok(posix::poll(&mut fds, 0).map_err(|err| err.with_fd(fd))? > 0)
+    }
+
+    /// `read(2)` for `recv(MSG_DONTWAIT)`, as the pipe path reads: `RWF_NOWAIT` where the kernel has it (6.4+ on sockets), else `poll(0)` then `read`.
+    fn recv_fallback(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
+            match read_nowait(fd, buf)? {
+                Some(n) => return Ok(n),
+                None => {
+                    SOCKET_RWF_NOWAIT_UNSUPPORTED.store(true, core::sync::atomic::Ordering::Relaxed)
+                }
+            }
+        }
+        if !poll_now(fd, libc::POLLIN)? {
+            return Err(Error::retry().with_fd(fd));
+        }
+        read(fd, buf)
+    }
+
+    /// `write(2)` for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`, as in `recv_fallback`. Without `RWF_NOWAIT` a blocking socket waits for the peer on a large write.
+    fn send_fallback(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
+            match write_nowait(fd, buf)? {
+                Some(n) => return Ok(n),
+                None => {
+                    SOCKET_RWF_NOWAIT_UNSUPPORTED.store(true, core::sync::atomic::Ordering::Relaxed)
+                }
+            }
+        }
+        if !poll_now(fd, libc::POLLOUT)? {
+            return Err(Error::retry().with_fd(fd));
+        }
+        write(fd, buf)
+    }
+
+    /// Latch only when the file syscall worked where the socket one did not: both denied is a denied fd (a firewall rule, an LSM), and "not ready" proves nothing.
+    fn settle_denied(
+        denied_flag: &core::sync::atomic::AtomicBool,
+        socket_err: Error,
+        fallback: Maybe<usize>,
+    ) -> Maybe<usize> {
+        match fallback {
+            Err(err) if is_socket_syscall_denied(&err) => Err(socket_err),
+            Err(err) if err.is_retry() => Err(err),
+            rc => {
+                denied_flag.store(true, core::sync::atomic::Ordering::Relaxed);
+                rc
+            }
+        }
+    }
+
+    /// `recv(MSG_DONTWAIT)`, or `recv_fallback` once the kernel has denied `recv`.
+    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        if SOCKET_RECV_DENIED.load(core::sync::atomic::Ordering::Relaxed) {
+            return recv_fallback(fd, buf);
+        }
+        match recv(fd, buf, MSG_DONTWAIT) {
+            Err(err) if is_socket_syscall_denied(&err) => {
+                let fallback = recv_fallback(fd, buf);
+                settle_denied(&SOCKET_RECV_DENIED, err, fallback)
+            }
+            rc => rc,
+        }
+    }
+    /// `send(MSG_DONTWAIT | MSG_NOSIGNAL)` so a broken-pipe write returns EPIPE instead of raising SIGPIPE, or `send_fallback` once the kernel has denied `send`.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-        send(fd, buf, SEND_FLAGS_NONBLOCK)
+        if SOCKET_SEND_DENIED.load(core::sync::atomic::Ordering::Relaxed) {
+            return send_fallback(fd, buf);
+        }
+        match send(fd, buf, SEND_FLAGS_NONBLOCK) {
+            Err(err) if is_socket_syscall_denied(&err) => {
+                let fallback = send_fallback(fd, buf);
+                settle_denied(&SOCKET_SEND_DENIED, err, fallback)
+            }
+            rc => rc,
+        }
     }
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
     /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.

@@ -83,6 +83,7 @@ pub trait PosixPipeWriter {
         }
         match ft {
             // send(MSG_DONTWAIT | MSG_NBIO) is nonblocking per call on every Unix, whatever the fd's flags.
+            // Once the kernel has denied send(2), sys::send_non_block writes like the pipe arm instead.
             FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
             FileType::Pipe if !force_sync => {
                 self.try_write_with_write_fn(buf, write_to_blocking_pipe)
@@ -257,7 +258,7 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 }
 
 /// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
-/// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
+/// to pass `MSG_DONTWAIT` and `MSG_NOSIGNAL`. The error names `write`, as Node does.
 fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     sys::send_non_block(fd, buf).map_err(|err| sys::Error {
         syscall: sys::Tag::write,

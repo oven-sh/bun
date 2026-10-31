@@ -1069,6 +1069,60 @@ booga"
         })
         .runAsTest("literal ** still recurses");
 
+      // A brace group with a separator in it is one pattern for the glob walker. Data in it is still data.
+      const words = (out: string) => out.trim().replaceAll("\\", "/").split(" ");
+      TestBuilder.command`echo {${"a/b,c"},d}/*.ts`
+        .ensureTempDir()
+        .directory("a")
+        .directory("a/b,c")
+        .directory("a/b")
+        .directory("c")
+        .directory("d")
+        .file("a/b,c/f.ts", "")
+        .file("a/b/f.ts", "")
+        .file("c/f.ts", "")
+        .file("d/f.ts", "")
+        .stdout(out => {
+          expect(words(out)).toContain("a/b,c/f.ts");
+          expect(words(out)).toContain("d/f.ts");
+          expect(words(out)).not.toContain("a/b/f.ts");
+          expect(words(out)).not.toContain("c/f.ts");
+        })
+        .runAsTest("injected , in a group with a separator makes no alternative");
+
+      TestBuilder.command`echo {${"a/[bx]"},d}/f.ts`
+        .ensureTempDir()
+        .directory("a")
+        .directory("a/[bx]")
+        .directory("a/b")
+        .directory("d")
+        .file("a/[bx]/f.ts", "")
+        .file("a/b/f.ts", "")
+        .file("d/f.ts", "")
+        .stdout(out => {
+          expect(words(out)).toContain("a/[bx]/f.ts");
+          expect(words(out)).toContain("d/f.ts");
+          expect(words(out)).not.toContain("a/b/f.ts");
+        })
+        .runAsTest("injected [...] in a group with a separator is literal");
+
+      TestBuilder.command`echo ${"!"}{a/b,d}/f.ts`
+        .ensureTempDir()
+        .directory("!a")
+        .directory("!a/b")
+        .directory("a")
+        .directory("a/b")
+        .directory("x")
+        .file("!a/b/f.ts", "")
+        .file("a/b/f.ts", "")
+        .file("x/f.ts", "")
+        .stdout(out => {
+          expect(words(out)).toContain("!a/b/f.ts");
+          expect(words(out)).not.toContain("a/b/f.ts");
+          expect(words(out)).not.toContain("x/f.ts");
+        })
+        .runAsTest("injected leading ! before a group with a separator does not negate");
+
       // A run of interpolated `!` longer than the matcher's brace-nesting
       // limit (10) must still match literally: neutralizing every `!` as its
       // own `{!}` group used to overflow the brace stack and turn the whole

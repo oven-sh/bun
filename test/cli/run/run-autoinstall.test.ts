@@ -3079,6 +3079,10 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     [true, "packages/member", ["!packages/member", "packages/member"]],
     [true, "packages/member", ["packages/*", "!packages/other"]],
     [true, "packages/.member", ["packages/.*"]],
+    // A group with a separator in it: the scan of `bun install` and this check read the pattern the same way.
+    [true, "packages/member", ["{apps/web,packages/*}"]],
+    [true, "packages/deep/member", ["@(apps/web|packages/deep/m*)"]],
+    [false, "packages/member", ["{apps/web,packages/*/x}"]],
     [false, "packages/member", ["apps/*"]],
     [false, "packages/member", ["packages"]],
     [false, "packages/member", ["packages/*/*"]],

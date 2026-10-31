@@ -896,18 +896,14 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return true;
 }
 
-// Node changes the message of the error where an ES module reads a name that only CommonJS text has:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/module_job.js#L62-L113
-// Its sentence about "type": "module" in a package.json is left out: here the text makes an ES module, not the package.
+// Node's explainCommonJSGlobalLikeNotDefinedError (lib/internal/modules/esm/module_job.js), without its sentence about "type": "module" in a package.json.
 static void explainCommonJSNameInESModule(VM& vm, JSValue thrown, bool hasTopLevelAwait)
 {
-    // Node asks for an error with the name ReferenceError. Nothing runs code here, so it is an error that ReferenceError
-    // made and that has no name of its own.
+    // Node tests e.name, which can run code. Here: an error that ReferenceError made and that has no name of its own.
     auto* error = dynamicDowncast<ErrorInstance>(thrown);
     if (!error || error->errorType() != ErrorType::ReferenceError || isValidOffset(error->structure()->get(vm, vm.propertyNames->name)))
         return;
-    // Node assigns to the message and the code. Here an own value that an assignment can replace is replaced, and the
-    // property keeps its attributes.
+    // Node assigns to message and code. Here an own value that an assignment can replace is replaced, and the property keeps its attributes.
     unsigned attributes;
     PropertyOffset offset = error->structure()->get(vm, vm.propertyNames->message, attributes);
     if (!isValidOffset(offset) || (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
@@ -944,11 +940,7 @@ static void explainCommonJSNameInESModule(VM& vm, JSValue thrown, bool hasTopLev
     error->putDirect(vm, vm.propertyNames->message, jsString(vm, WTF::move(explained)), attributes);
 }
 
-// Node's Module.prototype._compile compiles the text as CommonJS first. When that fails and the text is an ES module,
-// it loads the text as the ES module of `filename`, and module.exports gets what require() of an ES module returns:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1825-L1857
-// Called only where the evaluation of `wrappedString`, the text in the default wrapper, threw. `scope` holds that
-// exception. It is thrown again unless the text is loaded as an ES module, or read further as one than as CommonJS.
+// Node's loadESMFromCJS (lib/internal/modules/cjs/loader.js): text that only parses as an ES module is loaded as the ES module of `filename`.
 static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::GlobalObject* globalObject, ThrowScope& scope, JSCommonJSModule* moduleObject, const String& wrappedString, const String& sourceString, const String& filenameString)
 {
     VM& vm = globalObject->vm();
@@ -964,8 +956,7 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
         return {};
     };
 
-    // The body can throw a parse error of its own (new Function(), a nested _compile()). Only a wrapper that does
-    // not parse counts, so the wrapper is parsed once more.
+    // The body can throw a parse error of its own (new Function(), a nested _compile()), so the wrapper is parsed once more: only one that does not parse counts.
     ParserError commonJSError;
     {
         SourceCode wrapped = makeSource(wrappedString, SourceOrigin(), SourceTaintedOrigin::Untainted);
@@ -975,11 +966,7 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
             return rethrow();
     }
 
-    // The module gets the name path.resolve(filename). That is the path of Node's pathToFileURL(filename), but for a
-    // separator at the end of filename: the resolver reads the name of a module without one, so the name has none.
-    // Where there is no name (the working directory is gone, on Windows a root is too long), the CommonJS error
-    // stays. The loader then spells the name as it does where it loads that name: a standalone executable has a
-    // spelling of its own for its files.
+    // Node's name is the path of pathToFileURL(filename). Here it is path.resolve(filename): the resolver reads no separator at the end of the name of a module.
     JSModuleLoader* loader = graph ? graph->loader() : globalObject->moduleLoader();
     JSValue resolved = Bun::pathResolve(globalObject, jsString(vm, filenameString));
     if (scope.exception()) [[unlikely]] {
@@ -989,15 +976,12 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
     }
     if (!resolved.isString())
         return rethrow();
+    // The loader spells the name as a load of it does: a standalone executable has a spelling of its own for its files.
     Identifier key = loader->resolve(globalObject, resolved, jsUndefined(), nullptr, /* useImportMap */ false);
     RETURN_IF_EXCEPTION(scope, {});
     String keyString = key.string();
 
-    // The text becomes the module of the name only where the loader has nothing else under it: a module of an
-    // ahead-of-time executable, a module that mock.module() or a plugin made, and a registered module that is not an
-    // ES module or is still loading keep the name, and the CommonJS error stays. An ES module that is registered
-    // under the name is the one that is loaded, as in Node's load cache:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L265-L347
+    // A name that holds something else keeps the CommonJS error. An ES module that is registered under it is the one that loads, as in Node's load cache.
     if (!graph && Bun::isCompiledModule(keyString))
         return rethrow();
     if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules; virtualModules && virtualModules->contains(keyString))
@@ -1010,8 +994,7 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
     JSPromise* made = loader->makeModule(globalObject, key, JSSourceCode::create(vm, SourceCode(moduleSource)));
     RETURN_IF_EXCEPTION(scope, {});
     if (made->status() != JSPromise::Status::Fulfilled) {
-        // Neither parse accepts the text. The error is that of the parse that read more of it: the ES module one for
-        // `export const a = 1; const a = 2;`, the CommonJS one for `module.exports = {;`. The promise has no position.
+        // Neither parse accepts the text, and the rejection has no position. The error is that of the parse that read more, the CommonJS one on a tie.
         ParserError moduleError;
         JSC::checkModuleSyntax(globalObject, moduleSource, moduleError);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1022,8 +1005,7 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
         throwException(globalObject, scope, made->result());
         return {};
     }
-    // From here the name is the loader's, as it is for a file: a module that does not load, or that throws, stays
-    // registered with its error.
+    // From here the name is the loader's, as it is for a file: a module that does not load, or that throws, stays registered with its error.
     if (!entry) {
         entry = loader->ensureRegistered(globalObject, key, ScriptFetchParameters::Type::JavaScript);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1094,9 +1076,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         jsString(vm, dirnameString),
         jsString(vm, filenameString));
     if (throwScope.exception()) [[unlikely]] {
-        // Text that a replaced Module.wrapper went around is compiled as it is. Node stops looking for ES modules
-        // once Module.wrapper or Module.wrap is assigned (wrapSafe, `patched`). Here that lasts while Module.wrapper
-        // differs. Module.wrap does not count: no text goes through a replaced one.
+        // Node stops looking for ES modules once Module.wrapper is assigned (wrapSafe, `patched`). Here that lasts while it differs from the default.
         if (!isDefaultWrapper)
             return {};
         RELEASE_AND_RETURN(throwScope, compileAsESModuleAfterCommonJSThrew(zigGlobalObject, throwScope, moduleObject, wrappedString, sourceString, filenameString));

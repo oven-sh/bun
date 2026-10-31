@@ -109,13 +109,32 @@ const files = {
   `,
   "repeated-literals.ts": rows(repeated),
   "distinct-literals.ts": rows(distinct),
+  "await/unsettled.ts": `
+    console.log("before");
+    setTimeout(() => console.log("timer"), 50);
+    await new Promise(() => {});
+    console.log("after");
+  `,
+  "await/unsettled-in-an-import.ts": `
+    import "./imported";
+    console.log("after");
+  `,
+  "await/imported.ts": `
+    console.log("before");
+    await new Promise(() => {});
+  `,
+  "await/settled-by-a-timer.ts": `
+    console.log("before");
+    await new Promise(resolve => setTimeout(resolve, 50));
+    console.log("after");
+  `,
 };
 
 describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
   const { folder, build, start } = separatePrograms(
     "compile-aot-run-time",
     files,
-    Object.keys(files).filter(file => !/^spies\/(lazy|user)/.test(file)),
+    Object.keys(files).filter(file => !/^spies\/(lazy|user)|^await\/imported/.test(file)),
   );
 
   test("exports of compiled modules cannot be spied on", async () => {
@@ -190,6 +209,29 @@ describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
     ]);
     expect((stdout + stderr).match(/^\S*(Implicit|WithFields|Forwards)\S*#\w+:\[/gm)).toBeNull();
     expect(exitCode).toBe(0);
+  });
+
+  // A top-level await that nothing can settle ends the executable like the program in plain Bun: once what keeps the
+  // event loop alive is done, with a warning and exit code 13. The executable has no record of where a module is
+  // suspended, so the warning has no line, and it names the entry point for an await in a module that it imports.
+  test.each([
+    [
+      "await/unsettled.ts",
+      "before\ntimer\n",
+      /^Warning: Detected unsettled top-level await at \S+unsettled\.ts\n\n$/,
+      13,
+    ],
+    [
+      "await/unsettled-in-an-import.ts",
+      "before\n",
+      /^Warning: Detected unsettled top-level await in \S+unsettled-in-an-import\.ts or a module that it imports\n\n$/,
+      13,
+    ],
+    ["await/settled-by-a-timer.ts", "before\nafter\n", /^$/, 0],
+  ] as const)("a top-level await ends %s as in plain Bun", async (entry, stdout, stderr, exitCode) => {
+    const result = await start(entry);
+    expect(result.stderr).toMatch(stderr);
+    expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout, exitCode });
   });
 
   test.each([

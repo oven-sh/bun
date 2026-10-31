@@ -44,8 +44,6 @@ pub enum Error {
     ServerEntryPointGenerate,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
-    #[error("UnsettledPreload")]
-    UnsettledPreload,
     #[error("WorkerTerminated")]
     WorkerTerminated,
     #[error("ThreadSpawnFailed")]
@@ -114,7 +112,6 @@ impl Error {
             Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
-            Self::UnsettledPreload => "UnsettledPreload",
             Self::WorkerTerminated => "WorkerTerminated",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",

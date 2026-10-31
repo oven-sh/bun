@@ -549,20 +549,16 @@ describe.concurrent("an unsettled top-level await in other kinds of entry", () =
     });
   });
 
-  // Nothing behind a preload that cannot finish can load. That is an error, like a preload that is not found.
-  test("a --preload fails the load, and the entry does not run", async () => {
-    expect(
-      await run({ "preload.mjs": `console.log("preload");\n${dead}\n`, "entry.mjs": `console.log("entry");\n` }, [
-        "--preload",
-        "./preload.mjs",
-        "entry.mjs",
-      ]),
-    ).toEqual({
-      stdout: "preload\n",
-      stderr: `error: Detected unsettled top-level await at file://<dir>/preload.mjs:2\n${dead}\n^\n`,
-      exitCode: 1,
-      signalCode: null,
-    });
+  // A preload that cannot finish fails like a preload that throws: its error is the error of the run.
+  test("a --preload fails the run, and the entry does not run", async () => {
+    const result = await run(
+      { "preload.mjs": `console.log("preload");\n${dead}\n`, "entry.mjs": `console.log("entry");\n` },
+      ["--preload", "./preload.mjs", "entry.mjs"],
+    );
+    expect(result.stderr).toStartWith(
+      `error: Detected unsettled top-level await at file://<dir>/preload.mjs:2\n${dead}\n^\n`,
+    );
+    expect({ ...result, stderr: "" }).toEqual({ stdout: "preload\n", stderr: "", exitCode: 1, signalCode: null });
   });
 });
 

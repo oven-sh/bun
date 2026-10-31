@@ -126,8 +126,8 @@ test.concurrent("counts for --bail", async () => {
   });
 });
 
-// No file can load behind a preload that cannot finish: the run ends, like a run with a preload that is not found.
-test.concurrent("a --preload that cannot finish ends the run", async () => {
+// A preload that cannot finish fails like a preload that throws: each file reports its error, and no file runs.
+test.concurrent("a --preload that cannot finish fails every file", async () => {
   expect(
     await run({ "preload.ts": `await new Promise(() => {});\n`, "a.test.ts": passing, "b.test.ts": passing }, [
       "--preload",
@@ -137,8 +137,11 @@ test.concurrent("a --preload that cannot finish ends the run", async () => {
     ]),
   ).toEqual({
     stdout: "",
-    located: ["error: Detected unsettled top-level await at file://<dir>/preload.ts:1"],
-    summary: [],
+    located: [
+      "error: Detected unsettled top-level await at file://<dir>/preload.ts:1",
+      "error: Detected unsettled top-level await at file://<dir>/preload.ts:1",
+    ],
+    summary: ["0 pass", "2 fail", "2 errors"],
     exitCode: 1,
     signalCode: null,
   });

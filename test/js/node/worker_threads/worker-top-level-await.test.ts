@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { endChildren, spawn } from "../../../cli/children";
 import { Worker } from "worker_threads";
+import { endChildren, spawn } from "../../../cli/children";
 
 // A worker whose entry module's top-level await never settles drains its event
 // loop with the module evaluation promise still pending. Node exits such a

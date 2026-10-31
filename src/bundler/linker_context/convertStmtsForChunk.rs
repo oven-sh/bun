@@ -12,6 +12,7 @@ use crate::EntryPoint;
 use crate::WrapKind;
 use crate::bundled_ast::Flags as AstFlags;
 use crate::chunk::Chunk;
+use crate::linker_context::scan_imports_and_exports::export_star_target_is_wrapped_lifted;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
 
@@ -295,6 +296,42 @@ pub(crate) fn convert_stmts_for_chunk(
                                         },
                                         stmt.loc,
                                     ))?;
+                            } else if !is_module_exports_of_wrapped_file
+                                && export_star_target_is_wrapped_lifted(
+                                    c.graph.ast.items_exports_kind()[other_source_index],
+                                    flag,
+                                )
+                            {
+                                // Step 4 reads each name of the file as `ns.name`: declare `ns`.
+                                let decl = Stmt::alloc(
+                                    S::Local {
+                                        decls: G::DeclList::from_slice(&[G::Decl {
+                                            binding: Binding::alloc(
+                                                bump,
+                                                B::Identifier {
+                                                    r#ref: s.namespace_ref,
+                                                },
+                                                stmt.loc,
+                                            ),
+                                            value: Some(Expr::init(
+                                                E::RequireString {
+                                                    import_record_index: s.import_record_index,
+                                                    ..Default::default()
+                                                },
+                                                stmt.loc,
+                                            )),
+                                        }]),
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                );
+                                // A lifted file's export star was `module.exports =
+                                // require()`: the require keeps its place in the file.
+                                if ast.flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM) {
+                                    stmt = decl;
+                                    break 'process_stmt;
+                                }
+                                stmts.inside_wrapper_prefix.append_non_dependency(decl)?;
                             }
                         }
 

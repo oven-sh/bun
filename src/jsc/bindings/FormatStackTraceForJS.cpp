@@ -35,8 +35,7 @@ using namespace WebCore;
 
 namespace Bun {
 
-// `stack` is stored with putDirect(), which asks nothing of the object. The functions below ask what an ordinary define asks,
-// and they read the Structure alone: no trap and no getter runs, and an Error does not format the stack it has yet to read.
+// putDirect() checks nothing. These read the Structure to ask what a define asks: no trap or getter runs, and an unread Error formats nothing.
 
 struct OwnStack {
     // Empty: the object has no `stack` of its own.
@@ -51,9 +50,7 @@ static ALWAYS_INLINE OwnStack ownStackOf(JSC::VM& vm, JSC::JSObject* object)
     return ownStack;
 }
 
-// Whether the object takes new properties. A class that answers isExtensible() itself is asked, because its Structure does not
-// say: that of globalThis says "not extensible" from the start, and that of an object of compiled code never says it. A Proxy
-// answers with a trap and is not asked: Error.captureStackTrace takes none, and a store to one lands on its own cell.
+// A class that overrides isExtensible() is asked, because its Structure does not say. A Proxy is not: its answer is a trap.
 static ALWAYS_INLINE bool isExtensibleWithoutTrap(JSC::JSObject* object)
 {
     JSC::Structure* structure = object->structure();
@@ -62,8 +59,7 @@ static ALWAYS_INLINE bool isExtensibleWithoutTrap(JSC::JSObject* object)
     return structure->isStructureExtensible();
 }
 
-// A built-in object of a compiled executable is closed this way, not by Object.freeze(). putDirect() refuses it, and
-// putDirectOrThrow() then throws what an assignment to it throws. So it is left to the store.
+// How a compiled executable closes a built-in object. It is left to the store: putDirectOrThrow() throws what an assignment to it does.
 static ALWAYS_INLINE bool hasImmutableProperties(JSC::Structure* structure)
 {
     return structure->hasImmutableProperties() && !structure->hasFrozenElementsInPlace();
@@ -82,12 +78,7 @@ static NEVER_INLINE JSC::EncodedJSValue throwStackRefusal(JSC::JSGlobalObject* g
     return JSC::throwVMTypeError(globalObject, scope, "Cannot define property stack, object is not extensible"_s);
 }
 
-// With which attributes to store `stack` on `object`, or nothing if Object.preventExtensions(), seal() or freeze() forbids the
-// store. User code runs between the check at the head of Error.captureStackTrace and its store, and after a capture that
-// formats on the first read. V8 stores to an internal slot there and never throws, so a store that is forbidden is left out.
-//
-// Nothing is added to an object that is not extensible. A `stack` that is not configurable keeps its attributes, and takes a
-// value only if it is a writable data property.
+// For a store that user code can precede. V8 has an internal slot there and never throws, so a store that a lock forbids is left out.
 std::optional<unsigned> attributesForStackStore(JSC::VM& vm, JSC::JSObject* object)
 {
     unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
@@ -100,8 +91,7 @@ std::optional<unsigned> attributesForStackStore(JSC::VM& vm, JSC::JSObject* obje
 
     OwnStack ownStack = ownStackOf(vm, object);
     if (!ownStack.value) {
-        // JSC is formatting the stack of this Error for its first read, and adds `stack` when Error.prepareStackTrace returns:
-        // the Error has it from the start.
+        // JSC adds `stack` to this Error when Error.prepareStackTrace returns: the Error has it from the start.
         bool isBeingMaterialized = instance && instance->hasMaterializedErrorInfo() && instance->stackTrace();
         if (!isBeingMaterialized && !isExtensibleWithoutTrap(object))
             return std::nullopt;
@@ -505,8 +495,7 @@ WTF::String formatStackTrace(
                 showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
 #endif
                 if (showsSourcePosition) {
-                    // An Error gets the two with its stack, at its first read. Any other object took new properties at the head
-                    // of Error.captureStackTrace: one that does not was closed since.
+                    // An Error gets the two with its stack. Any other object that takes no new property was closed after the head of Error.captureStackTrace.
                     if (errorInstance && (errorInstance->type() == JSC::ErrorInstanceType || isExtensibleWithoutTrap(errorInstance))) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -936,8 +925,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         }
     }
     RETURN_IF_EXCEPTION(scope, {});
-    // Object.seal() and Object.freeze() turn the accessor that called this into one that is not configurable. It stays then:
-    // the error keeps its frames, and the next read formats them again.
+    // Object.seal() and Object.freeze() make the accessor that called this not configurable: it stays, and so do the frames, for the next read.
     if (auto attributes = attributesForStackStore(vm, errorObject))
         errorObject->putDirect(vm, vm.propertyNames->stack, result, *attributes);
     else if (takenStackTrace)
@@ -964,8 +952,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    // A WebAssembly GC object can't get a property and its Structure has no global object. A Proxy keeps its properties on its
-    // target: a store to it lands on its own cell, where nothing reads it. V8 rejects both.
+    // A WebAssembly GC object can't get a property and its Structure has no global object. A store to a Proxy lands on its own cell. V8 rejects both.
     if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType || objectArg.asCell()->type() == JSC::JSType::ProxyObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
@@ -973,8 +960,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    // V8 refuses a target before it captures a frame: one that is not extensible, even if it has a `stack`, and then one whose
-    // `stack` is not configurable.
+    // V8 refuses a target before it captures a frame: one that is not extensible, even if it has a `stack`, then one whose `stack` is not configurable.
     auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject);
     JSC::Structure* structure = errorObject->structure();
     OwnStack ownStack;
@@ -1016,8 +1002,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             // Not yet materialized — safe to install new frames with a lazy getter.
             instance->setStackFrames(vm, WTF::move(stackTrace));
 
-            // `ownStack` is what the head found: nothing since then ran JavaScript or changed the Structure of the error. An
-            // error that has the accessor from an earlier capture keeps it.
+            // `ownStack` is still what the head found: nothing since ran JavaScript. The accessor of an earlier capture stays.
             ASSERT(ownStackOf(vm, instance).value == ownStack.value);
             auto* lazyStack = globalObject->m_lazyStackCustomGetterSetter.get(globalObject);
             unsigned lazyStackAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor;

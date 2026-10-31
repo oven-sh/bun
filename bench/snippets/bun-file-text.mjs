@@ -27,19 +27,19 @@ function fixture(name, bytes) {
   return path;
 }
 
-for (const bytes of [64, 4 * KiB, 256 * KiB, 8 * KiB * KiB]) {
-  for (const name of Object.keys(units)) {
-    const path = fixture(name, bytes);
-    group(`${bytes} bytes, ${name}`, () => {
-      bench("text()", async () => (await text(path)).length);
-      bench('readFile(path, "utf8")', async () => (await readFile(path, "utf8")).length);
-      bench("8 x text()", async () => (await eight(() => text(path))).length);
-      bench('8 x readFile(path, "utf8")', async () => (await eight(() => readFile(path, "utf8"))).length);
-    });
-  }
-}
-
 try {
+  for (const bytes of [64, 4 * KiB, 256 * KiB, 8 * KiB * KiB]) {
+    for (const name of Object.keys(units)) {
+      const path = fixture(name, bytes);
+      group(`${bytes} bytes, ${name}`, () => {
+        bench("text()", async () => (await text(path)).length);
+        bench('readFile(path, "utf8")', async () => (await readFile(path, "utf8")).length);
+        bench("8 x text()", async () => (await eight(() => text(path))).length);
+        bench('8 x readFile(path, "utf8")', async () => (await eight(() => readFile(path, "utf8"))).length);
+      });
+    }
+  }
+
   await run();
 } finally {
   rmSync(dir, { recursive: true, force: true });

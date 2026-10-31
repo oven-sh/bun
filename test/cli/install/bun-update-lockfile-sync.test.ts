@@ -1,9 +1,9 @@
 import { Archive, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { appendFile, exists } from "fs/promises";
+import { appendFile, exists, rm } from "fs/promises";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { TestRegistry, type RegistryOptions } from "registry";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, @types/no-deps 1.0.0/2.0.0, a-dep 1.0.1..1.0.10, what-bin 1.0.0/1.5.0,
 // one-range-dep@1.0.0 -> no-deps ^1.0.0, dep-with-tags 1.0.0..3.0.1 (latest=3.0.0, pre-2=2.0.1).
@@ -85,12 +85,14 @@ function json(contents: Json | string) {
 }
 
 async function setup(
-  files: Record<string, Json | string>,
-  opts: { exact?: boolean; text?: boolean; install?: boolean; stderr?: string | RegExp } = {},
+  files: Record<string, Json | string | Buffer>,
+  opts: { exact?: boolean; text?: boolean; install?: boolean; stderr?: string | RegExp; registry?: TestRegistry } = {},
 ): Promise<string> {
-  const { packageDir: dir } = await verdaccio.createTestDir({
+  const { packageDir: dir } = await (opts.registry ?? verdaccio).createTestDir({
     bunfigOpts: { linker: "hoisted", saveTextLockfile: opts.text ?? true },
-    files: Object.fromEntries(Object.entries(files).map(([path, contents]) => [path, json(contents)])),
+    files: Object.fromEntries(
+      Object.entries(files).map(([path, contents]) => [path, Buffer.isBuffer(contents) ? contents : json(contents)]),
+    ),
   });
   if (opts.exact) await appendFile(join(dir, "bunfig.toml"), "exact = true\n");
   if (opts.install !== false) await install(dir, { stderr: opts.stderr });
@@ -239,6 +241,26 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
       expect(await tryRun(dir, "", "update", "--latest", ...args)).toMatchObject({ exitCode: 0 });
       expect((await pkg(dir)).optionalDependencies).toStrictEqual(optionalDependencies);
       expect((await lock(dir)).workspaces[""].optionalDependencies).toStrictEqual(optionalDependencies);
+    },
+  );
+
+  // Nothing installs an optional peer, so no resolved version comes back for its entry.
+  test.each(["^1.0.0", "1.x", ">=1.0.0", "^1.0.0 || ^2.0.0"])(
+    "bun update --latest leaves the %s range of an optional peer that is not installed as written",
+    async range => {
+      const dir = await setup({
+        "package.json": root({
+          dependencies: { "a-dep": "^1.0.1" },
+          peerDependencies: { "no-deps": range },
+          peerDependenciesMeta: { "no-deps": { optional: true } },
+        }),
+      });
+      expect((await run(dir, "update", "--latest")).stderr).toBe(SAVED);
+      const manifest = await pkg(dir);
+      expect(manifest.dependencies).toStrictEqual({ "a-dep": "^1.0.10" });
+      expect(manifest.peerDependencies).toStrictEqual({ "no-deps": range });
+      expect(await resolutions(dir, "no-deps")).toStrictEqual([]);
+      await expectInSync(dir);
     },
   );
 
@@ -989,6 +1011,7 @@ describe.concurrent("bun add", () => {
     await expectInSync(dir);
   });
 
+  // The install script of uses-what-bin starts node. From a cold disk that alone can take over 5 seconds.
   test("bun add --trust", async () => {
     const dir = await setup({ "package.json": root({}) }, { install: false });
     expect((await run(dir, "add", "uses-what-bin@1.0.0", "--trust")).stderr).toBe(SAVED);
@@ -999,7 +1022,7 @@ describe.concurrent("bun add", () => {
     });
     expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBe(true);
     await expectInSync(dir);
-  });
+  }, 60_000);
 
   test("bun add --trust of a package already listed in devDependencies", async () => {
     const dir = await setup({ "package.json": root({ devDependencies: { "uses-what-bin": "1.0.0" } }) });
@@ -1011,7 +1034,7 @@ describe.concurrent("bun add", () => {
     });
     expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBe(true);
     await expectInSync(dir);
-  });
+  }, 60_000);
 });
 
 describe.concurrent("catalogs", () => {
@@ -1495,6 +1518,310 @@ describe.concurrent("bun update --latest keeps the version an override selects",
     expect(await pkgText(dir)).toBe(rootBefore);
     expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "a-dep": "1.0.10" });
     await expectInSync(dir, ["", PKG1]);
+  });
+});
+
+// The project has packages of its own named `no-deps` and `basic-1`. The registry has packages of these names by
+// other authors: no-deps up to 2.0.0 and basic-1@1.0.0. It has no `only-mine`. a-dep is a plain registry dependency,
+// 1.0.1 to 1.0.10. Each case has a registry of its own, which records the names that it is asked for.
+describe.concurrent("bun update --latest keeps a dependency on the package of the project that it links", () => {
+  const APP = "apps/web";
+  const PACKAGES = ["apps/*", "packages/*"];
+  const LATEST = ["update", "--latest"];
+  type Step = [cwd: string, ...args: string[]] | ((dir: string) => Promise<unknown>);
+
+  const recording = (options: RegistryOptions = {}) => new TestRegistry({ ...options, recordRequests: true }).start();
+  const own = (name: string, version: string) => ({ name, version, private: true });
+
+  // The first install is not part of what a case asks about.
+  async function project(registry: TestRegistry, files: Record<string, Json | Buffer>) {
+    const dir = await setup(files, { registry });
+    registry.requests.length = 0;
+    return dir;
+  }
+
+  async function follow(dir: string, steps: Step[]) {
+    for (const step of steps) await (typeof step === "function" ? step(dir) : runIn(dir, ...step));
+  }
+
+  // The names the registry was asked for, as a manifest or as a tarball.
+  const askedFor = (registry: TestRegistry, names: string[]) =>
+    names.filter(name => registry.requests.some(request => decodeURIComponent(request.path).split("/")[1] === name));
+
+  // The package.json that `require(name)` in apps/web reads: its own node_modules first, then the root's.
+  async function loaded(dir: string, name: string): Promise<Json> {
+    const nested = join(dir, APP, "node_modules", name, "package.json");
+    return file((await exists(nested)) ? nested : join(dir, "node_modules", name, "package.json")).json();
+  }
+
+  // bun.lock has one package of that name, the workspace's, apps/web loads it as `as`, and nobody asked the registry.
+  async function expectLinked(dir: string, registry: TestRegistry, name: string, version: string, as = name) {
+    expect(askedFor(registry, [name])).toEqual([]);
+    expect(await resolutions(dir, name)).toStrictEqual([`${name}@workspace:packages/${name}`]);
+    expect(await loaded(dir, as)).toMatchObject(own(name, version));
+  }
+
+  // basic-1 has the very version that the registry has.
+  const OWN = { "no-deps": "0.1.0", "basic-1": "1.0.0" };
+  const RECURSIVE: Step = ["", ...LATEST, "-r"];
+
+  test.each<{ title: string; caret?: boolean; steps: Step[]; aDep?: string }>([
+    { title: "in the member", steps: [[APP, ...LATEST]] },
+    { title: "in the member, ^version", caret: true, steps: [[APP, ...LATEST]] },
+    { title: "in the member, by name", steps: [[APP, ...LATEST, ...Object.keys(OWN)]], aDep: "^1.0.1" },
+    { title: "--filter", steps: [["", ...LATEST, "--filter", "web"]] },
+    { title: "-r, twice", steps: [RECURSIVE, RECURSIVE] },
+    { title: "-r, then bun add in the member", steps: [RECURSIVE, [APP, "add", "a-dep@1.0.1"]], aDep: "1.0.1" },
+  ])("a plain range: $title", async ({ caret, steps, aDep = "^1.0.10" }) => {
+    const ranges = Object.fromEntries(
+      Object.entries(OWN).map(([name, version]) => [name, caret ? `^${version}` : "*"]),
+    );
+    using registry = recording();
+    const dir = await project(registry, {
+      "package.json": { name: "root", private: true, workspaces: PACKAGES },
+      [`${APP}/package.json`]: member("web", { dependencies: { ...ranges, "a-dep": "^1.0.1" } }),
+      ...Object.fromEntries(
+        Object.entries(OWN).map(([name, version]) => [`packages/${name}/package.json`, own(name, version)]),
+      ),
+    });
+    await follow(dir, steps);
+    expect((await pkg(dir, APP)).dependencies).toStrictEqual({ ...ranges, "a-dep": aDep });
+    for (const [name, version] of Object.entries(OWN)) await expectLinked(dir, registry, name, version);
+    await expectInSync(dir, ["", APP]);
+  });
+
+  test.each(["tarball", "remote tarball"] as const)(
+    "bun update --latest <name> keeps a %s of that name",
+    async kind => {
+      const manifest = own("no-deps", "0.1.0");
+      const tgz = Buffer.from(
+        await new Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" }).bytes(),
+      );
+      using registry = recording({
+        intercept: request => (new URL(request.url).pathname.startsWith("/house/") ? new Response(tgz) : undefined),
+      });
+      const literal = kind === "tarball" ? "file:./vendor/no-deps-0.1.0.tgz" : `${registry.url}house/no-deps-0.1.0.tgz`;
+      const dir = await project(registry, {
+        "package.json": root({ dependencies: { "no-deps": literal, "a-dep": "^1.0.1" } }),
+        "vendor/no-deps-0.1.0.tgz": tgz,
+      });
+      const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+      expect((await run(dir, ...LATEST, "no-deps")).stderr).toBe("");
+      expect(await pkgText(dir)).toBe(pkgBefore);
+      expect(await lockText(dir)).toBe(lockBefore);
+      expect(askedFor(registry, ["no-deps"])).toEqual([]);
+      expect(await installed(dir, "no-deps")).toEqual(manifest);
+    },
+  );
+
+  describe("a catalog entry", () => {
+    const entries = (name = "no-deps", range = "^0.1.0") => ({ [name]: range, "a-dep": "^1.0.1" });
+    const references = (name = "no-deps", reference = "catalog:") => ({ [name]: reference, "a-dep": reference });
+    type Row = {
+      title: string;
+      /** Fields of the root package.json. The default is a catalog in `workspaces` with both entries. */
+      root?: Json;
+      /** Fields of apps/web. The default is a dependency on both entries. */
+      web?: Json;
+      steps?: Step[];
+      /** The workspace package, the name that apps/web has for it, and more fields of its package.json. */
+      name?: string;
+      as?: string;
+      linked?: Json;
+      /** The range of a-dep after the steps. */
+      aDep?: string;
+    };
+    const cataloged = ({ root, web, name = "no-deps", linked }: Row, version = "0.1.0") => ({
+      "package.json": {
+        name: "root",
+        private: true,
+        ...(root ?? { workspaces: { packages: PACKAGES, catalog: entries(name) } }),
+      },
+      [`${APP}/package.json`]: member("web", web ?? { dependencies: references(name) }),
+      [`packages/${name}/package.json`]: { ...own(name, version), ...linked },
+    });
+
+    test.each<Row>([
+      { title: "at the root" },
+      { title: "in a member", steps: [[APP, ...LATEST]] },
+      { title: "-r", steps: [RECURSIVE] },
+      { title: "--filter '*'", steps: [["", ...LATEST, "--filter", "*"]] },
+      { title: "--lockfile-only", steps: [["", ...LATEST, "--lockfile-only"]] },
+      { title: "--no-save", steps: [["", ...LATEST, "--no-save"]], aDep: "^1.0.1" },
+      { title: "--dry-run", steps: [["", ...LATEST, "--dry-run"]], aDep: "^1.0.1" },
+      { title: "without bun.lock", steps: [dir => rm(join(dir, "bun.lock")), ["", ...LATEST]] },
+      { title: "a * range", root: { workspaces: { packages: PACKAGES, catalog: entries("no-deps", "*") } } },
+      {
+        title: "a named catalog",
+        root: { workspaces: { packages: PACKAGES, catalogs: { internal: entries() } } },
+        web: { dependencies: references("no-deps", "catalog:internal") },
+      },
+      { title: "catalog:default", web: { dependencies: references("no-deps", "catalog:default") } },
+      { title: "the top-level catalog", root: { workspaces: PACKAGES, catalog: entries() } },
+      {
+        title: "an npm: alias",
+        root: { workspaces: { packages: PACKAGES, catalog: entries("aliased", "npm:no-deps@^0.1.0") } },
+        web: { dependencies: references("aliased") },
+        as: "aliased",
+      },
+      {
+        title: "the root's own dependency",
+        root: { workspaces: { packages: PACKAGES, catalog: entries() }, dependencies: { "no-deps": "catalog:" } },
+        web: { dependencies: { "a-dep": "catalog:" } },
+      },
+      {
+        title: "a peer dependency",
+        web: { dependencies: { "a-dep": "catalog:" }, peerDependencies: { "no-deps": "catalog:" } },
+      },
+      { title: "a name that the registry does not have", name: "only-mine" },
+      { title: "a linked package with a dependency of its own", linked: { dependencies: { "a-dep": "catalog:" } } },
+    ])("that links a workspace package stays: $title", async row => {
+      const { steps = [["", ...LATEST]], name = "no-deps", as = name, aDep = "^1.0.10" } = row;
+      using registry = recording();
+      const dir = await project(registry, cataloged(row));
+      const rootBefore = await pkgText(dir);
+      await follow(dir, steps);
+      expect(await pkgText(dir)).toBe(rootBefore.replace('"a-dep": "^1.0.1"', `"a-dep": "${aDep}"`));
+      await expectLinked(dir, registry, name, "0.1.0", as);
+      await expectInSync(dir, ["", APP, `packages/${name}`]);
+    });
+
+    // one-range-dep@1.0.0 depends on no-deps@^1.0.0, and the override sends that row to the catalog entry too.
+    test.each([
+      ["and a dependency uses the entry", { "no-deps": "catalog:", "one-range-dep": "1.0.0" }],
+      ["and only the override reads the entry", { "one-range-dep": "1.0.0" }],
+    ])("that links a workspace package stays under a catalog: override, %s", async (_, dependencies) => {
+      const files = cataloged(
+        {
+          title: "",
+          root: {
+            workspaces: { packages: PACKAGES, catalog: { "no-deps": "^1.0.0" } },
+            overrides: { "no-deps": "catalog:" },
+          },
+          web: { dependencies },
+        },
+        "1.0.0",
+      );
+      using registry = recording();
+      const dir = await project(registry, files);
+      const [rootBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+      expect((await run(dir, ...LATEST)).stderr).toBe("");
+      expect(await pkgText(dir)).toBe(rootBefore);
+      expect(await lockText(dir)).toBe(lockBefore);
+      await expectLinked(dir, registry, "no-deps", "1.0.0");
+    });
+
+    // A dist-tag asks the registry first. The workspace package stands in for a name that the registry does not have.
+    test("on a dist-tag keeps the workspace package for a name that the registry does not have", async () => {
+      const name = "only-mine";
+      using registry = recording();
+      const dir = await project(
+        registry,
+        cataloged({ title: "", name, root: { workspaces: { packages: PACKAGES, catalog: entries(name, "latest") } } }),
+      );
+      const rootBefore = await pkgText(dir);
+      expect((await run(dir, ...LATEST)).stderr).toBe(SAVED);
+      expect(await pkgText(dir)).toBe(rootBefore.replace('"a-dep": "^1.0.1"', '"a-dep": "^1.0.10"'));
+      expect(await resolutions(dir, name)).toStrictEqual([`${name}@workspace:packages/${name}`]);
+      expect(await loaded(dir, name)).toEqual(own(name, "0.1.0"));
+      await expectInSync(dir, ["", APP]);
+    });
+
+    // After a change of the catalog the rows that read it are resolved before the root's row for the workspace
+    // package, which a bare update leaves unbound until its turn.
+    test.each(["no-deps", "only-mine"].flatMap(name => ["update", "install"].map(command => [name, command] as const)))(
+      "that links a workspace package is not sent after a hand edit of another entry: %s, bun %s",
+      async (name, command) => {
+        using registry = recording();
+        const catalog = { [name]: "^0.1.0", "a-dep": "1.0.1" };
+        const dir = await project(
+          registry,
+          cataloged({ title: "", name, root: { workspaces: { packages: PACKAGES, catalog } } }),
+        );
+        const edited = (await pkgText(dir)).replace('"a-dep": "1.0.1"', '"a-dep": "1.0.2"');
+        await write(join(dir, "package.json"), edited);
+        expect((await run(dir, command)).stderr).toBe(SAVED);
+        expect(await pkgText(dir)).toBe(edited);
+        expect(await resolutions(dir, "a-dep")).toStrictEqual(["a-dep@1.0.2"]);
+        await expectLinked(dir, registry, name, "0.1.0");
+        await expectInSync(dir, ["", APP]);
+      },
+    );
+
+    test("binds a workspace package that package.json gains together with the entry", async () => {
+      const name = "only-mine";
+      using registry = recording();
+      const dir = await project(registry, {
+        "package.json": {
+          name: "root",
+          private: true,
+          workspaces: { packages: PACKAGES, catalog: { [name]: "npm:no-deps@1.0.0" } },
+        },
+        [`${APP}/package.json`]: member("web", { dependencies: { [name]: "catalog:" } }),
+      });
+      expect(await loaded(dir, name)).toMatchObject({ name: "no-deps", version: "1.0.0" });
+      await write(join(dir, "packages", name, "package.json"), json(own(name, "0.1.0")));
+      await write(join(dir, "package.json"), (await pkgText(dir)).replace("npm:no-deps@1.0.0", "^0.1.0"));
+      await install(dir);
+      await expectLinked(dir, registry, name, "0.1.0");
+      await expectInSync(dir, ["", APP]);
+    });
+
+    // kit's peer and web's dependency move with the entry. one-range-dep@1.0.0 asks for no-deps@^1.0.0 itself.
+    test("that moves leaves a transitive range its own copy, also in a fresh clone", async () => {
+      const members = ["", APP, "apps/cli", "packages/kit"];
+      using registry = recording();
+      const dir = await project(registry, {
+        "package.json": {
+          name: "root",
+          private: true,
+          workspaces: { packages: PACKAGES, catalog: { "no-deps": "^1.0.0" } },
+        },
+        [`${APP}/package.json`]: member("web", { dependencies: { "no-deps": "catalog:" } }),
+        "apps/cli/package.json": member("cli", { dependencies: { "one-range-dep": "1.0.0" } }),
+        "packages/kit/package.json": member("kit", { peerDependencies: { "no-deps": "catalog:" } }),
+      });
+      expect((await run(dir, ...LATEST)).stderr).toBe(SAVED);
+      expect((await pkg(dir)).workspaces.catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+      const { packages } = await lock(dir);
+      expect({ top: packages["no-deps"][0], below: packages["one-range-dep/no-deps"][0] }).toEqual({
+        top: "no-deps@2.0.0",
+        below: "no-deps@1.1.0",
+      });
+      await expectInSync(dir, members);
+
+      const lockBefore = await lockText(dir);
+      await run(dir, ...LATEST);
+      expect(await lockText(dir)).toBe(lockBefore);
+
+      // The keys of a file tree have "/" on every platform.
+      const files = await Promise.all(
+        members.map(async key => [key ? `${key}/package.json` : "package.json", await pkgText(dir, key)] as const),
+      );
+      const clone = await setup({ ...Object.fromEntries(files), "bun.lock": lockBefore }, { registry, install: false });
+      await install(clone, { frozen: true });
+      expect(await installed(clone, "one-range-dep/node_modules/no-deps")).toMatchObject({ version: "1.1.0" });
+    });
+
+    // Nothing links the workspace package of that name to these entries, so they are registry entries.
+    test.each([
+      ["that the workspace package does not satisfy", "^1.0.0", ""],
+      ["with linkWorkspacePackages = false", "*", "linkWorkspacePackages = false\n"],
+    ])("%s moves", async (_, range, bunfig) => {
+      const files = cataloged({
+        title: "",
+        root: { workspaces: { packages: PACKAGES, catalog: { "no-deps": range } } },
+        web: { dependencies: { "no-deps": "catalog:" } },
+      });
+      using registry = recording();
+      const dir = await setup(files, { registry, install: false });
+      await appendFile(join(dir, "bunfig.toml"), bunfig);
+      await install(dir);
+      expect((await run(dir, ...LATEST)).stderr).toBe(SAVED);
+      expect((await pkg(dir)).workspaces.catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(await loaded(dir, "no-deps")).toMatchObject({ version: "2.0.0" });
+      await expectInSync(dir, ["", APP]);
+    });
   });
 });
 

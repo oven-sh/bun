@@ -362,9 +362,16 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
             s->flags.low_prio_state = 0;
             continue;
         }
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
-
         s->flags.low_prio_state = 2;
+
+        if (us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE) != 0) {
+            /* The dispatcher took this socket out of epoll when it hung up in the queue, and the
+             * kernel refused to take it back: nothing would report it again (see us_socket_resume). */
+            int err = LIBUS_ERR;
+            us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+            /* The caller picked the timeout of this tick before the close handler ran. */
+            us_wakeup_loop(loop);
+        }
     }
 }
 
@@ -952,11 +959,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * here, so let the next poll re-report it together with READABLE and
                  * the read loop drain it, instead of closing over the unread tail. */
                 eof = 0;
-            } else if (eof_deferrable && !hangup && s->flags.low_prio_state == 1) {
+            } else if (eof_deferrable && s->flags.low_prio_state == 1 && (!hangup || (!read_fin && !unsent_is_lost))) {
                 /* Parked in the low-priority queue, where kqueue's sentinel knote still reports the
-                 * peer's FIN. What the peer sent ahead of it is unread: a TLS 1.3 client that ends
-                 * right after its handshake has its Finished there, and an end here would fail the
-                 * server's handshake and reset that client. Leaving the queue re-arms the reads. */
+                 * peer's FIN and epoll still reports a hangup. What the peer sent ahead of it is
+                 * unread: a TLS 1.3 client that ends right after its handshake has its Finished
+                 * there, and an end here would fail the server's handshake and reset that client.
+                 * Leaving the queue re-arms the reads. A hangup whose FIN this dispatch read has
+                 * nothing ahead of it. */
+#ifdef LIBUS_USE_EPOLL
+                /* As for a paused socket: leave epoll, or EPOLLHUP fires again on every poll. The queue
+                 * registers the socket again (us_internal_handle_low_priority_sockets). */
+                if (hangup) {
+                    us_poll_stop(&s->p, loop);
+                    s->p.state.poll_type = us_internal_poll_type(&s->p);
+                }
+#endif
                 eof = 0;
             }
             if (eof && error && !read_fin) {

@@ -1024,6 +1024,7 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
 }
 
 /// After how many positionals the rest of the command line is the program's. 0: never.
+#[inline(always)]
 const fn stop_after_positional_at(cmd: CommandTag) -> usize {
     match cmd {
         CommandTag::RunCommand => 2,
@@ -1033,6 +1034,7 @@ const fn stop_after_positional_at(cmd: CommandTag) -> usize {
 }
 
 /// Only the paths standing in for `node` get node's aliases.
+#[inline(always)]
 const fn short_aliases(cmd: CommandTag) -> &'static [(&'static [u8], &'static [u8])] {
     match cmd {
         CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,

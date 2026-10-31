@@ -34,6 +34,7 @@ const mockCDP = /* js */ `
       },
       // Abrupt connection loss, as if the browser died.
       drop() {
+        mock.dropped = true;
         sock.terminate();
       },
     };
@@ -216,6 +217,53 @@ test.concurrent.each([
     mock.stop();
   `);
   expect(result).toEqual({ loadingBefore: true, navigate: `rejected: ${reason}`, loadingAfter: false });
+});
+
+// A view also closes when its page or its browser goes away, and user code
+// that runs while a method converts its arguments can let that happen:
+// Bun.build() runs the event loop until an async plugin setup() settles. The
+// method must then throw what any call on a closed view throws, not send.
+test.concurrent.each([
+  [
+    "its page",
+    // The mock sends the event before it answers the resize, so the view's
+    // page is gone by the time setup() settles. `view` is target 2.
+    `mock.emit("Target.detachedFromTarget", { sessionId: "S2", targetId: "T2" });
+     return other.resize(100, 100);`,
+  ],
+  [
+    "its browser",
+    // The mock never answers this evaluate(): it rejects once the lost
+    // connection has been processed.
+    `mock.drop();
+     return other.evaluate("1").catch(() => {});`,
+  ],
+])("a view that loses %s during argument conversion makes the call throw", async (_, loseIt) => {
+  const result = await runScenario(`
+    const mock = startMockCDP();
+    const other = mock.newView();
+    const view = mock.newView();
+    await other.navigate("http://mock/other");
+    await view.navigate("http://mock/1");
+    let call;
+    try {
+      view.click(5, 5, {
+        get button() {
+          Bun.build({ entrypoints: ["/nothing"], plugins: [{ name: "wait", setup() { ${loseIt} } }] }).catch(() => {});
+          return "left";
+        },
+      }).catch(() => {});
+      call = "returned";
+    } catch (e) {
+      call = e.code + ": " + e.message;
+    }
+    // Every frame a build without the late check sent has been answered before this round trip ends.
+    if (!mock.dropped) await other.navigate("http://mock/after");
+    other.close();
+    console.log(JSON.stringify({ call }));
+    mock.stop();
+  `);
+  expect(result).toEqual({ call: "ERR_INVALID_STATE: Invalid state: WebView.click: view is closed" });
 });
 
 // Same scenario against a real Chrome over the debugging pipe: closeAll()

@@ -75,9 +75,16 @@ Object.assign(globalThis, {
   __fake_mouse_events() {
     return mouseEvents;
   },
+  // Returns every command that arrived for a page after its Target.closeTarget,
+  // in order, as "Method@sessionId" ("Method:type@sessionId" for Input events).
+  __fake_commands_after_close() {
+    return commandsAfterClose;
+  },
 });
 
 const mouseEvents: { type: string; x: number; y: number }[] = [];
+const closedSessions = new Set<string>();
+const commandsAfterClose: string[] = [];
 
 function sendBytes(bytes: Buffer) {
   let written = 0;
@@ -107,6 +114,12 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
+  }
+
+  // Target.attachToTarget below names the session of target "T<n>" "S<n>".
+  if (method === "Target.closeTarget") closedSessions.add("S" + params.targetId.slice(1));
+  if (sessionId && closedSessions.has(sessionId)) {
+    commandsAfterClose.push(method + (params.type ? ":" + params.type : "") + "@" + sessionId);
   }
 
   switch (method) {

@@ -35,6 +35,7 @@
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
+#include "JSValueInWrappedObject.h"
 #include "MessagePortPipe.h"
 #include "MessageWithMessagePorts.h"
 #include <wtf/WeakPtr.h>
@@ -95,6 +96,7 @@ public:
 
     MessagePortPipe* pipe() const { return m_pipe.ptr(); }
     uint8_t side() const { return m_side; }
+    template<typename Visitor> void visitAsyncContext(Visitor& visitor) const { m_asyncContext.visit(visitor); }
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return MessagePortEventTargetInterfaceType; }
@@ -139,6 +141,7 @@ private:
     // mutator. close()/disentangle() flip pipe-side state bits instead.
     const Ref<MessagePortPipe> m_pipe;
     const uint8_t m_side { 0 };
+    JSValueInWrappedObject m_asyncContext;
 
     bool m_started { false };
     bool m_isDetached { false };

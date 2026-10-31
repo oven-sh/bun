@@ -1023,6 +1023,114 @@ body {
     },
   });
 
+  const stylesheetOf = (api: { readFile(path: string): string }, page: string) =>
+    api.readFile("out/" + api.readFile("out/" + page).match(/href="(.*?\.css)"/)![1]);
+
+  // The import orders of the two pages differ only in the media query of a layer list.
+  itBundled("html/SeparateCSSWhenImportConditionsDiffer", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./r0.css" />
+    <link rel="stylesheet" href="./r1.css" />
+  </head>
+  <body><div class="x"></div></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./f1.css" />
+    <link rel="stylesheet" href="./r0.css" />
+    <link rel="stylesheet" href="./r1.css" />
+  </head>
+  <body><div class="x"></div></body>
+</html>`,
+      "/r0.css": `@import "./f1.css" screen;\n@layer a { .x { color: green } }`,
+      "/r1.css": `@import "./f1.css";\n.r1 { color: blue }`,
+      "/f1.css": `@layer b { .x { color: red } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const rest = `@layer a{.x{color:green}}@layer b{.x{color:red}}.r1{color:#00f}\n`;
+      // Without screen media the layer order is a, b on the first page. It is b, a on the second page.
+      expect({ first: stylesheetOf(api, "first.html"), second: stylesheetOf(api, "second.html") }).toEqual({
+        first: `@media screen{@layer b;}` + rest,
+        second: `@layer b;` + rest,
+      });
+    },
+  });
+
+  // The import orders of the two pages differ only in the names of a layer list: "x.y, z" and "x, yz".
+  itBundled("html/SeparateCSSWhenLayerNamesDiffer", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" />
+    <link rel="stylesheet" href="./d.css" />
+    <link rel="stylesheet" href="./c.css" />
+  </head>
+  <body><div class="box"></div></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./b.css" />
+    <link rel="stylesheet" href="./d.css" />
+    <link rel="stylesheet" href="./c.css" />
+  </head>
+  <body><div class="box"></div></body>
+</html>`,
+      "/a.css": `@layer x.y, z;\n.a { color: blue }`,
+      "/b.css": `@layer x, yz;\n.b { color: blue }`,
+      "/c.css": `@import "./a.css";\n@import "./b.css";\n.c { color: blue }`,
+      "/d.css": `@layer z { .box { color: red } }\n@layer yz { .box { color: green } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const rest =
+        `@layer z{.box{color:red}}@layer yz{.box{color:green}}` +
+        `@layer x.y,z;.a{color:#00f}@layer x,yz;.b{color:#00f}.c{color:#00f}\n`;
+      // The layer "yz" wins on the first page. The layer "z" wins on the second page.
+      expect({ first: stylesheetOf(api, "first.html"), second: stylesheetOf(api, "second.html") }).toEqual({
+        first: `@layer x.y,z;` + rest,
+        second: `@layer x,yz;` + rest,
+      });
+    },
+  });
+
+  // With CSS chunking on, a CSS entry point and the stylesheet of a page get the same hash for different import orders.
+  itBundled("html/SeparateCSSForCSSEntryPointProduction", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/page.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./r.css" />
+    <link rel="stylesheet" href="./s.css" />
+  </head>
+  <body><div class="s"></div></body>
+</html>`,
+      "/r.css": `@layer a { .r { color: red } }`,
+      "/m.css": `@layer b { .m { color: blue } }`,
+      "/s.css": `@import "./r.css" print;\n@import "./m.css";\n@import "./r.css";\n.s { color: green }`,
+    },
+    entryPoints: ["/page.html", "/s.css"],
+    onAfterBundle(api) {
+      const rest = `@layer b{.m{color:#00f}}@layer a{.r{color:red}}.s{color:green}\n`;
+      expect({ page: stylesheetOf(api, "page.html"), entry: api.readFile("out/s.css") }).toEqual({
+        page: `@layer a;` + rest,
+        entry: `@media print{@layer a;}` + rest,
+      });
+    },
+  });
+
   // Test manifest.json is copied as an asset and link href is rewritten
   itBundled("html/manifest-json", {
     outdir: "out/",

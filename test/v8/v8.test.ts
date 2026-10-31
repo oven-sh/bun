@@ -531,6 +531,25 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("Value::Uint32Value", () => {
+    it("converts values like the JS ToUint32 operation", async () => {
+      const out = await checkSameOutput("test_v8_value_uint32_value");
+      const cases = out.split("====== ").map(section => section.trim().split(/\r?\n/).join(" | "));
+      expect(cases).toEqual(
+        expect.arrayContaining([
+          // uWebSockets.js: app.listen(host, "3000", callback)
+          "'3000' | maybe.IsNothing() = 0 | maybe.FromJust() = 3000",
+          "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = 4294967295",
+          "4294967296 | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          "NaN | maybe.IsNothing() = 0 | maybe.FromJust() = 0",
+          "Symbol | maybe.IsNothing() = 1 | threw TypeError",
+          "10n | maybe.IsNothing() = 1 | threw TypeError",
+          "object with throwing valueOf | maybe.IsNothing() = 1 | threw the valueOf error",
+        ]),
+      );
+    });
+  });
+
   describe("Value::NumberValue", () => {
     it("converts values like the JS ToNumber operation", async () => {
       const out = await checkSameOutput("test_v8_value_number_value");

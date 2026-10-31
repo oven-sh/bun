@@ -2282,6 +2282,20 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Prints Uint32Value of the first argument. Leaves the exception pending when
+// the conversion throws, so the JS caller sees it.
+void perform_uint32_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Maybe<uint32_t> maybe = info[0]->Uint32Value(context);
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsNothing()) {
+    return;
+  }
+  LOG_EXPR(maybe.FromJust());
+}
+
 // Prints NumberValue of the first argument with every digit of the double.
 // Leaves the exception pending when the conversion throws, so the JS caller
 // sees it.
@@ -2508,6 +2522,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_cpu_profiler_overlapping_sessions);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
                   test_v8_cpu_profiler_title_api);
+  NODE_SET_METHOD(exports, "perform_uint32_value", perform_uint32_value);
   NODE_SET_METHOD(exports, "perform_number_value", perform_number_value);
   NODE_SET_METHOD(exports, "perform_boolean_value", perform_boolean_value);
   NODE_SET_METHOD(exports, "create_function_with_c_function",

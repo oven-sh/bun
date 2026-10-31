@@ -360,50 +360,11 @@ module.exports = debugMode => {
     },
 
     test_v8_value_number_value() {
-      const valueOfError = new RangeError("valueOf threw");
-      const cases = [
-        ["'3000'", "3000"],
-        ["' 42 '", " 42 "],
-        ["'0x10'", "0x10"],
-        ["'1e3'", "1e3"],
-        ["'12px'", "12px"],
-        ["'abc'", "abc"],
-        ["''", ""],
-        ["-1", -1],
-        ["4294967296", 4294967296],
-        ["4294967297.5", 4294967297.5],
-        ["1e21", 1e21],
-        ["NaN", NaN],
-        ["Infinity", Infinity],
-        ["-Infinity", -Infinity],
-        ["-0", -0],
-        ["true", true],
-        ["null", null],
-        ["undefined", undefined],
-        ["[]", []],
-        ["[7]", [7]],
-        ["object with valueOf returning 77.9", { valueOf: () => 77.9 }],
-        ["Date", new Date(1234567890123)],
-        ["Symbol", Symbol("symbol")],
-        ["10n", 10n],
-        [
-          "object with throwing valueOf",
-          {
-            valueOf() {
-              throw valueOfError;
-            },
-          },
-        ],
-      ];
-      for (const [description, value] of cases) {
-        console.log(`====== ${description}`);
-        try {
-          nativeModule.perform_number_value(value);
-        } catch (e) {
-          // V8 and JSC word the TypeError differently, so print only its class.
-          console.log("threw", e === valueOfError ? "the valueOf error" : e.constructor.name);
-        }
-      }
+      logNumberConversions(nativeModule.perform_number_value);
+    },
+
+    test_v8_value_uint32_value() {
+      logNumberConversions(nativeModule.perform_uint32_value);
     },
 
     test_v8_value_boolean_value() {
@@ -438,3 +399,52 @@ module.exports = debugMode => {
     },
   };
 };
+
+// Calls perform, a native function that prints one conversion to a number, on
+// every value of the list that NumberValue and Uint32Value are compared on.
+function logNumberConversions(perform) {
+  const valueOfError = new RangeError("valueOf threw");
+  const cases = [
+    ["'3000'", "3000"],
+    ["' 42 '", " 42 "],
+    ["'0x10'", "0x10"],
+    ["'1e3'", "1e3"],
+    ["'12px'", "12px"],
+    ["'abc'", "abc"],
+    ["''", ""],
+    ["-1", -1],
+    ["4294967296", 4294967296],
+    ["4294967297.5", 4294967297.5],
+    ["1e21", 1e21],
+    ["NaN", NaN],
+    ["Infinity", Infinity],
+    ["-Infinity", -Infinity],
+    ["-0", -0],
+    ["true", true],
+    ["null", null],
+    ["undefined", undefined],
+    ["[]", []],
+    ["[7]", [7]],
+    ["object with valueOf returning 77.9", { valueOf: () => 77.9 }],
+    ["Date", new Date(1234567890123)],
+    ["Symbol", Symbol("symbol")],
+    ["10n", 10n],
+    [
+      "object with throwing valueOf",
+      {
+        valueOf() {
+          throw valueOfError;
+        },
+      },
+    ],
+  ];
+  for (const [description, value] of cases) {
+    console.log(`====== ${description}`);
+    try {
+      perform(value);
+    } catch (e) {
+      // V8 and JSC word the TypeError differently, so print only its class.
+      console.log("threw", e === valueOfError ? "the valueOf error" : e.constructor.name);
+    }
+  }
+}

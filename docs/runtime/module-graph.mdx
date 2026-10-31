@@ -73,6 +73,8 @@ A thread-safe function keeps the process running only for as long as the graph t
 
 `dispose()` settles no promise. An `import()` that had not finished may reject or may never settle: what its modules were waiting for, such as a timer or a request, went with the graph. A host that may dispose a graph while importing into it should race the import the same way as a call, as shown below.
 
+The garbage collector frees the graph's modules and objects once nothing references them. `dispose()` tells it that there is something to collect, and the collector decides when that is worth a collection. Drop your own references to the graph's exports when you dispose it.
+
 ## Calling into a graph
 
 A function runs in its caller's context, whichever graph defined it. Code the host calls directly runs in the host's context, and a function of one graph that another graph's code calls runs in that other graph's. Use `run()` to enter the graph's own:

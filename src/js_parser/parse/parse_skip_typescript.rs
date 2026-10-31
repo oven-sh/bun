@@ -8,6 +8,7 @@ use crate::parser::{
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_ast::E;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 
@@ -1598,10 +1599,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// that its members stay untouched. The outcome is memoized by the offset
     /// of the ":" in `ts_conditional_arrow_attempts`, so the real parse does not
     /// repeat the attempts nested inside the body.
+    ///
+    /// An attempt that runs inside another attempt is thrown away with it. When
+    /// it finds an arrow function, it restores nothing and returns the arrow
+    /// function, and the caller uses that in place of a second parse. Without
+    /// this, every attempt around a body parses that body one more time. The
+    /// log is off on entry only inside another attempt: nothing else that turns
+    /// it off parses an expression.
+    // Not inlined: `parse_paren_expr` recurses and the snapshot is large.
+    #[cold]
+    #[inline(never)]
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
-    ) -> Result<bool, Error> {
+    ) -> Result<(bool, Option<E::Arrow>), Error> {
         self.mark_type_script_only();
         debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
         let memo_key = self.lexer.start as u32;
@@ -1609,26 +1620,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .ts_conditional_arrow_attempts
             .binary_search_by_key(&memo_key, |&packed| packed >> 1)
         {
-            return Ok(self.ts_conditional_arrow_attempts[i] & 1 == 1);
+            return Ok((self.ts_conditional_arrow_attempts[i] & 1 == 1, None));
         }
 
-        let snapshot = self.parser_snapshot();
+        let mut snapshot = self.parser_snapshot();
+        let nested = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
         // Metadata looks up type names, which adds unbound symbols to the module scope.
         let emit_decorator_metadata =
             core::mem::take(&mut self.options.features.emit_decorator_metadata);
 
         let mut data = arrow_data.clone();
+        let mut parsed = None;
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
-            // The ":" that pairs with the "?"
+            let arrow = self.parse_arrow_body(&mut [], &mut data)?;
+            // The ":" that pairs with the "?". As `expect` does, read the token after it.
+            if nested && self.lexer.token == T::TColon && self.can_read_next_token() {
+                parsed = Some(arrow);
+                return Ok(());
+            }
             self.lexer.expect(T::TColon)?;
             Ok(())
         })();
 
-        self.restore_parser_snapshot(snapshot);
+        if parsed.is_none() {
+            self.restore_parser_snapshot(&mut snapshot);
+        }
         self.options.features.emit_decorator_metadata = emit_decorator_metadata;
         let is_arrow_fn = match result {
             Ok(()) => true,
@@ -1646,7 +1665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.ts_conditional_arrow_attempts
                 .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
         }
-        Ok(is_arrow_fn)
+        Ok((is_arrow_fn, parsed))
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

@@ -10,6 +10,9 @@
 #include "JavaScriptCore/TypeError.h"
 #include "BunClientData.h"
 
+// `vm` is a `VirtualMachine*`.
+extern "C" size_t Bun__gc(void* vm, bool sync);
+
 namespace Bun {
 
 using namespace JSC;
@@ -32,6 +35,18 @@ void GlobalScope::finishCreation(JSC::VM& vm)
             RELEASE_ASSERT(offset == 1);
             init.set(structure);
         });
+}
+
+// `gc()` is `Bun.gc(true)`.
+JSC_DEFINE_HOST_FUNCTION(functionJsGc, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    Bun__gc(defaultGlobalObject(globalObject)->bunVM(), true);
+    return JSValue::encode(jsUndefined());
+}
+
+void GlobalScope::addGCFunction(JSC::VM& vm)
+{
+    putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 
 bool GlobalScope::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)

@@ -219,6 +219,9 @@ Several Bun CLI flags also work with `bun test`:
 ```bash terminal icon="terminal"
 # Reduces memory usage for the test runner VM
 bun test --smol
+
+# Exposes gc() on the global object of each test file
+bun test --expose-gc
 ```
 
 ### Debugging

@@ -4215,9 +4215,11 @@ impl DuplexUpgradeContext {
         }
         // The socket has closed: uncaught, like what a transport method throws in node.
         let vm = this.vm;
-        let _ = vm
-            .as_mut()
-            .uncaught_exception(vm.global(), err_value, false);
+        let _ = vm.as_mut().uncaught_exception(
+            vm.global(),
+            err_value,
+            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+        );
     }
 
     fn on_timeout(this: bun_ptr::ThisPtr<Self>) {

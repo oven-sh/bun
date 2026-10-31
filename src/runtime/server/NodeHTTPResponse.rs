@@ -1745,7 +1745,11 @@ pub(crate) fn on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(
+        global_object,
+        err.to_js(),
+        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Rejection,
+    );
     if had_promise {
         this.deref();
     }
@@ -1797,7 +1801,11 @@ impl NodeHTTPResponse {
             Ok(b) => b,
             Err(err) => {
                 let exc = global_this.take_exception(err);
-                let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                let _ = bun_vm_mut(global_this).uncaught_exception(
+                    global_this,
+                    exc,
+                    bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                );
                 JSValue::UNDEFINED
             }
         }

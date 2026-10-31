@@ -26,9 +26,7 @@ const EventEmitter = function EventEmitter(opts) {
   }
 
   this._maxListeners ??= undefined;
-  if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
-    this.emit = emitWithRejectionCapture;
-  }
+  this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture];
 };
 const EventEmitterPrototype = (EventEmitter.prototype = {});
 
@@ -78,52 +76,17 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
     // If the error handler throws, it is not catchable and it will end up in 'uncaughtException'.
     // We restore the previous value of kCapture in case the uncaughtException is present
     // and the exception is handled.
+    const prev = emitter[kCapture];
     try {
       emitter[kCapture] = false;
       emitter.emit("error", err);
     } finally {
-      emitter[kCapture] = true;
+      emitter[kCapture] = prev;
     }
   }
 }
 
-const emitWithoutRejectionCapture = function emit(type, ...args) {
-  if (type === "error") {
-    return emitError(this, args);
-  }
-  var { _events: events } = this;
-  if (events === undefined) return false;
-  var handlers = events[type];
-  if (handlers === undefined) return false;
-  // Clone handlers array if necessary since handlers can be added/removed during the loop.
-  // Cloning is skipped for performance reasons in the case of exactly one attached handler
-  // since array length changes have no side-effects in a for-loop of length 1.
-  const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
-  for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
-    const handler = maybeClonedHandlers[i];
-    // For performance reasons Function.call(...) is used whenever possible.
-    switch (args.length) {
-      case 0:
-        handler.call(this);
-        break;
-      case 1:
-        handler.call(this, args[0]);
-        break;
-      case 2:
-        handler.call(this, args[0], args[1]);
-        break;
-      case 3:
-        handler.call(this, args[0], args[1], args[2]);
-        break;
-      default:
-        handler.apply(this, args);
-        break;
-    }
-  }
-  return true;
-};
-
-const emitWithRejectionCapture = function emit(type, ...args) {
+EventEmitterPrototype.emit = function emit(type, ...args) {
   if (type === "error") {
     return emitError(this, args);
   }
@@ -156,14 +119,17 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.apply(this, args);
         break;
     }
-    if (result !== undefined && typeof result?.then === "function" && result.then === Promise.prototype.then) {
+    if (
+      result !== undefined &&
+      this[kCapture] &&
+      typeof result?.then === "function" &&
+      result.then === Promise.prototype.then
+    ) {
       addCatch(this, result, type, args);
     }
   }
   return true;
 };
-
-EventEmitterPrototype.emit = emitWithoutRejectionCapture;
 
 EventEmitterPrototype.addListener = function addListener(type, fn) {
   checkListener(fn);

@@ -47,6 +47,7 @@ const {
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
 const shared = require("internal/shared");
+const domainHooks = shared.domainHooks;
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
@@ -3099,7 +3100,6 @@ const nop = () => {};
 const {
   addListener: eventEmitterOn,
   emit: eventEmitterEmit,
-  storeEmitWithRejectionCapture,
   removeListener: eventEmitterRemoveListener,
 } = shared.originals.eventEmitter!;
 
@@ -3116,14 +3116,15 @@ function ServerResponse(
 ): void {
   if (options === kHandle) {
     const events: $Node.HttpResponseEvents = { __proto__: null, finish: emitResponseFinish };
+    if (domainHooks.bindEmitter !== undefined) {
+      ("unlikely");
+      domainHooks.bindEmitter(this);
+    }
     this._events = events as any;
     this._eventsCount = 0;
     this[kShapeMode] = false;
     this._maxListeners = undefined;
-    if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-      ("unlikely");
-      storeEmitWithRejectionCapture(this);
-    }
+    this[kCapture] = EventEmitterPrototype[kCapture];
     this.outputData = [];
     this.outputSize = 0;
     this.destroyed = false;
@@ -3186,13 +3187,15 @@ function ServerResponse(
   }
   const exchange = makeExchange(this, null, noResponseEvents, null);
   exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS;
+  if (domainHooks.bindEmitter !== undefined) {
+    ("unlikely");
+    domainHooks.bindEmitter(this);
+  }
   this._events = Object.create(null);
   this._eventsCount = 0;
   this[kShapeMode] = false;
   this._maxListeners = undefined;
-  if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-    storeEmitWithRejectionCapture(this);
-  }
+  this[kCapture] = EventEmitterPrototype[kCapture];
   this.outputData = [];
   this.outputSize = 0;
   this.destroyed = false;

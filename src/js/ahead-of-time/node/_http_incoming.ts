@@ -41,6 +41,7 @@ const {
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kCapture: typeof shared.kCapture = shared.kCapture;
+const domainHooks = shared.domainHooks;
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
@@ -67,12 +68,7 @@ const emitReadableNow = internals.emitReadableNow!;
 const finishEnd = internals.finishEnd!;
 const { read, push, resume, removeAllListeners } = internals.readableMethods!;
 const { destroy, closeAfterThrow } = internals.destroyMethods!;
-const {
-  emit,
-  storeEmitWithRejectionCapture,
-  listenerCount,
-  removeAllListeners: eventEmitterRemoveAllListeners,
-} = shared.originals.eventEmitter!;
+const { emit, listenerCount, removeAllListeners: eventEmitterRemoveAllListeners } = shared.originals.eventEmitter!;
 const ReadablePrototype: object = Readable.prototype;
 const StreamPrototype = Object.getPrototypeOf(Readable.prototype) as { removeAllListeners: unknown };
 
@@ -244,12 +240,13 @@ function IncomingMessage(
       this.upgrade = false;
       this._events = preallocatedEvents();
       this._readableState = createUnreadByteState(nativeHighWaterMark);
+      if (domainHooks.bindEmitter !== undefined) {
+        ("unlikely");
+        domainHooks.bindEmitter(this);
+      }
       this[kShapeMode] = true;
       this._maxListeners = undefined;
-      if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-        ("unlikely");
-        storeEmitWithRejectionCapture(this);
-      }
+      this[kCapture] = EventEmitterPrototype[kCapture];
       return;
     }
     this.upgrade = null;

@@ -16816,6 +16816,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     "--trace-env-native-stack",
     "--trace-exit",
     "--expose-internals",
+    "--abort_on_uncaught_exception",
   ];
   // Flags that some of these commands have themselves, with a different meaning.
   const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive"];

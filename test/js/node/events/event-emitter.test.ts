@@ -1098,6 +1098,164 @@ test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
 
+test("class-default captureRejections applies to Object.create(EventEmitter.prototype)", async () => {
+  // Run in a subprocess: the class-level toggle is process-global.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const EventEmitter = require("node:events");
+      EventEmitter.captureRejections = true;
+      const ee = Object.create(EventEmitter.prototype);
+      process.on("unhandledRejection", e => { console.log("UNHANDLED:" + e.message); process.exit(1); });
+      ee.on("error", e => console.log("captured:" + e.message));
+      ee.on("boom", async () => { throw new Error("kaboom"); });
+      ee.emit("boom");
+      setTimeout(() => {}, 10);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "captured:kaboom", stderr, exitCode: 0 });
+});
+
+// Loading node:domain swaps in domain-aware EventEmitter internals
+// process-wide, so these run in a subprocess.
+describe("node:domain integration", () => {
+  test("'error' on a captureRejections emitter routes to its domain", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const domain = require("node:domain");
+        const EventEmitter = require("node:events");
+        const d = domain.create();
+        let ee;
+        d.on("error", e => {
+          console.log("caught", e.message, e.domainEmitter === ee, e.domainThrown);
+        });
+        d.run(() => {
+          ee = new EventEmitter({ captureRejections: true });
+        });
+        setImmediate(() => ee.emit("error", new Error("boom")));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "caught boom true false",
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  test("d.add() routes 'error' from a captureRejections emitter constructed before domain loads", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const EventEmitter = require("node:events");
+        const ee = new EventEmitter({ captureRejections: true });
+        const domain = require("node:domain");
+        const d = domain.create();
+        d.on("error", e => {
+          console.log("caught", e.message, e.domainEmitter === ee, e.domainThrown);
+        });
+        d.add(ee);
+        setImmediate(() => ee.emit("error", new Error("boom")));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "caught boom true false",
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  test("a write-first callback does not observe a stale adopted pairing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const domain = require("node:domain");
+        const d1 = domain.create();
+        const d2 = domain.create();
+        const d3 = domain.create();
+        let done = false;
+        d1.run(() => {
+          setTimeout(() => {
+            d2.run(() => {});
+            done = true;
+          }, 1);
+        });
+        // Scheduled outside any domain; its first domain operation is a write.
+        const check = () => {
+          if (!done) return void setTimeout(check, 5);
+          process.domain = d3;
+          console.log("stack:", domain._stack.length, "isD3:", process.domain === d3);
+        };
+        setTimeout(check, 5);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "stack: 0 isD3: true",
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  test("domains entered inside async callbacks do not leak onto the global stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const domain = require("node:domain");
+        const d1 = domain.create();
+        const d2 = domain.create();
+        let ticks = 0;
+        d1.run(() => {
+          const i = setInterval(() => {
+            d2.run(() => {});
+            if (++ticks === 5) clearInterval(i);
+          }, 1);
+        });
+        // Scheduled outside any domain: must not observe leaked state.
+        const check = () => {
+          if (ticks < 5) return void setTimeout(check, 5);
+          console.log("stack:", domain._stack.length, "active:", String(process.domain));
+        };
+        setTimeout(check, 5);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "stack: 0 active: undefined",
+      stderr,
+      exitCode: 0,
+    });
+  });
+});
+
 // A fired once() wrapper must drop its closure refs so holding it (a cached
 // rawListeners() result, the COW array emit() iterates) does not retain the
 // emitter. wrapped.listener stays: node asserts it survives emit.
@@ -1245,6 +1403,72 @@ test.each([
   },
   60_000,
 );
+
+// The same where emit() cannot leave the array out by luck: its capture road has run, it is a call of its own, or the name is no constant.
+const afterAnotherEmitterCaptured = `
+      {
+        const settled = Promise.resolve();
+        // Kept: a collection that found its listeners dead would take the compiled emit() with them.
+        const other = (globalThis.capturing = new (require("node:events"))({ captureRejections: true }));
+        other.on("x", () => settled);
+        other.on("y", () => settled);
+        other.on("y", () => settled);
+        for (let i = 0; i < 200; i++) {
+          other.emit("x", i);
+          other.emit("y", i);
+          other.emit("x");
+          other.emit("x", i, i, i, i);
+        }
+        other.on("error", () => {});
+        for (let i = 0; i < 200; i++) other.emit("error", i);
+      }`;
+describe.each([
+  ["after another emitter captured rejections and emitted 'error'", afterAnotherEmitterCaptured, `"x"`],
+  ["with an emit() that is not inlined", `require("bun:jsc").noInline(emitter.emit);`, `"x"`],
+  ["with the name of the event out of an array", `const names = ["x", "x"];`, `names[i & 1]`],
+])("emit() compiled by the JIT makes no array of its arguments, %s", (_, before, name) => {
+  test.concurrent.each([
+    ["one listener, no argument", `emitter.on("x", listener);`, `emitter.emit(${name})`],
+    ["one listener, one argument", `emitter.on("x", listener);`, `emitter.emit(${name}, i)`],
+    ["one listener, four arguments", `emitter.on("x", listener);`, `emitter.emit(${name}, i, i, i, i)`],
+    [
+      "two listeners, one argument",
+      `emitter.on("x", listener); emitter.on("x", () => {});`,
+      `emitter.emit(${name}, i)`,
+    ],
+    [
+      "a listener that returns a promise",
+      `const settled = Promise.resolve(); emitter.on("x", () => settled);`,
+      `emitter.emit(${name}, i)`,
+    ],
+  ])(
+    "%s",
+    async (_, listen, emit) => {
+      using dir = tempDir("emit-makes-no-array", {
+        "emit.js": `
+      const emitter = new (require("node:events"))();
+      let heard = 0;
+      const listener = () => { heard++; };
+      ${before}
+      ${listen}
+      for (let i = 0; i < 2_000_000; i++) ${emit};
+      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
+    `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "emit.js")],
+        env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
+      expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
+    },
+    60_000,
+  );
+});
 
 // One more call for every event with several listeners is a sixth more in the interpreter.
 test("emit() itself calls each of several listeners", () => {

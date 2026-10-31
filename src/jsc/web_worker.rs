@@ -1220,7 +1220,11 @@ impl WebWorker {
                 Bun__Worker__loadNodeWorkerThreadsModule(global)
             }) {
                 let exception = global.take_exception(err);
-                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                let _ = vm.as_mut().uncaught_exception(
+                    global,
+                    exception,
+                    crate::virtual_machine::UncaughtExceptionOrigin::Exception,
+                );
                 if !self.exit_called.load(Ordering::Relaxed) {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
@@ -1275,11 +1279,15 @@ impl WebWorker {
                 // Same rule as the main thread (run_command): a CJS worker
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.entry_point_is_commonjs();
+                let origin = if vm.entry_point_is_commonjs() {
+                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointException
+                } else {
+                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection
+                };
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    is_rejection,
+                    origin,
                 );
                 if handled && !self.has_requested_terminate() {
                     EntryOutcome::Continue

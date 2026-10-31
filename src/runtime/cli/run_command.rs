@@ -1585,8 +1585,12 @@ impl Run<'_> {
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_is_commonjs();
-                    let handled = vm.uncaught_exception(global, result, is_rejection);
+                    let origin = if vm.entry_point_is_commonjs() {
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::EntryPointException
+                    } else {
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection
+                    };
+                    let handled = vm.uncaught_exception(global, result, origin);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 

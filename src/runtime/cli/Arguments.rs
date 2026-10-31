@@ -283,6 +283,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
+    parse_param!(
+        "--abort-on-uncaught-exception     Abort instead of exiting when an uncaught exception is not handled."
+    ),
+    parse_param!("--abort_on_uncaught_exception"),
     parse_param!("--no-warnings                     Silence all process warnings"),
     parse_param!("--trace-warnings                  Show stack traces on process warnings"),
     parse_param!("--trace-deprecation               Show stack traces on deprecations"),
@@ -499,6 +503,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"expose-gc"), Nothing),
         (Long(b"no-deprecation"), Nothing),
         (Long(b"throw-deprecation"), Nothing),
+        (Long(b"abort-on-uncaught-exception"), Nothing),
+        (Long(b"abort_on_uncaught_exception"), Nothing),
         (Long(b"no-warnings"), Nothing),
         (Long(b"trace-warnings"), Nothing),
         (Long(b"trace-deprecation"), Nothing),
@@ -1035,6 +1041,9 @@ static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__AbortOnUncaughtException: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessNoWarnings: core::sync::atomic::AtomicBool =
@@ -1785,6 +1794,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--abort-on-uncaught-exception")
+            || args.flag(b"--abort_on_uncaught_exception")
+        {
+            Bun__Node__AbortOnUncaughtException.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if args.flag(b"--no-warnings") {
             Bun__Node__ProcessNoWarnings.store(true, core::sync::atomic::Ordering::Relaxed);

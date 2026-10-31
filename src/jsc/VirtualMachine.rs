@@ -446,6 +446,20 @@ pub struct TestIsolationState {
     pub synthetic_allocation_limit: Option<usize>,
 }
 
+/// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum UncaughtExceptionOrigin {
+    Exception = 0,
+    Rejection = 1,
+    /// Entry-point module promise rejected: aborts like `Exception`,
+    /// listeners observe the 'unhandledRejection' origin string.
+    EntryPointRejection = 2,
+    /// Synchronous throw out of a CommonJS entry: `Exception` semantics, but
+    /// like `EntryPointRejection` no async callback boundary preceded it.
+    EntryPointException = 3,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // FFI declarations
 // ──────────────────────────────────────────────────────────────────────────
@@ -457,7 +471,8 @@ unsafe extern "C" {
     safe fn Bun__handleUncaughtException(
         global: &JSGlobalObject,
         err: JSValue,
-        is_rejection: c_int,
+        origin: c_int,
+        substitute_error: *mut JSValue,
     ) -> c_int;
     safe fn Bun__handleUnhandledRejection(
         global: &JSGlobalObject,
@@ -2154,7 +2169,7 @@ impl VirtualMachine {
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
-        is_rejection: bool,
+        origin: UncaughtExceptionOrigin,
     ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
@@ -2165,6 +2180,10 @@ impl VirtualMachine {
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
+        let is_rejection = matches!(
+            origin,
+            UncaughtExceptionOrigin::Rejection | UncaughtExceptionOrigin::EntryPointRejection
+        );
         if !is_rejection && Bun__ModuleGraph__handleUncaughtException(global_object, err) {
             return true;
         }
@@ -2194,11 +2213,18 @@ impl VirtualMachine {
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
+        let mut substitute = JSValue::ZERO;
         let handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
-            if is_rejection { 1 } else { 0 },
+            origin as c_int,
+            &raw mut substitute,
         ) > 0;
+        let err = if substitute.is_empty() {
+            err
+        } else {
+            substitute
+        };
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
             // down and there is no loop turn left to defer to: print the error
@@ -2219,7 +2245,6 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
@@ -4655,7 +4680,8 @@ impl VirtualMachine {
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
                 // `exc` is already the exception's value; report it directly.
-                let _ = this.uncaught_exception(global_object, exc, false);
+                let _ =
+                    this.uncaught_exception(global_object, exc, UncaughtExceptionOrigin::Exception);
             }
         };
 
@@ -4691,7 +4717,11 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception(global_object, wrapped, true);
+                let _ = self.uncaught_exception(
+                    global_object,
+                    wrapped,
+                    UncaughtExceptionOrigin::Rejection,
+                );
                 let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
@@ -4705,7 +4735,11 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception(global_object, wrapped, true) {
+                if self.uncaught_exception(
+                    global_object,
+                    wrapped,
+                    UncaughtExceptionOrigin::Rejection,
+                ) {
                     drain(self);
                     return;
                 }
@@ -6550,7 +6584,11 @@ impl VirtualMachine {
         exception: &Exception,
     ) -> JSValue {
         let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
+        let _ = jsc_vm.uncaught_exception(
+            global_object,
+            exception.value(),
+            UncaughtExceptionOrigin::Exception,
+        );
         JSValue::UNDEFINED
     }
 

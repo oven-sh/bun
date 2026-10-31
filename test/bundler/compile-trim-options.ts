@@ -41,6 +41,7 @@ export const obeyed: Record<string, string[]> = {
   ...themselves(
     "--trace-warnings --trace-deprecation --pending-deprecation --zero-fill-buffers --use-system-ca --use-openssl-ca --use-bundled-ca",
   ),
+  ...themselves("--abort-on-uncaught-exception --abort_on_uncaught_exception"),
   // Native code carries out the first, and nobody does anything for the second.
   "--stack-trace-limit": ["--stack-trace-limit=3", "--stack-trace-limit 3"],
   ...themselves("--trace-env-native-stack"),

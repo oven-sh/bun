@@ -28,6 +28,7 @@
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+const { domainHooks } = require("internal/shared");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
 // before this module was lazily loaded.
@@ -276,7 +277,7 @@ class AsyncLocalStorage<T = any> {
     // Replace rather than shadow an existing binding so repeated enterWith() calls
     // keep the chain bounded by the number of storages.
     set(push(without(get(), this), this, store));
-    $assert(sameValue(this.getStore(), store));
+    $assert(sameValue(this.#peek(), store));
   }
 
   exit<R>(cb: (...args: any[]) => R, ...args: unknown[]): R {
@@ -327,8 +328,14 @@ class AsyncLocalStorage<T = any> {
         // run()s of the same storage restore their own value likewise.
         set(push(without(head, this), this, beforeValue));
       }
-      $assert(sameValue(this.getStore(), beforeValue), "run: previous value was not restored");
+      $assert(sameValue(this.#peek(), beforeValue), "run: previous value was not restored");
     }
+  }
+
+  // getStore() for the asserts: they must not call a `getStore` that a program has replaced.
+  #peek(): T | undefined {
+    var bound = lookup(get(), this);
+    return bound === undefined ? this.#defaultValue : (bound.value as T);
   }
 
   disable() {
@@ -406,6 +413,20 @@ class AsyncResource {
     this.type = type;
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
+
+    const activeDomain = domainHooks.active;
+    if (activeDomain !== undefined) {
+      const domain = activeDomain();
+      if (domain != null) {
+        Object.defineProperty(this, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: domain,
+          writable: true,
+        });
+      }
+    }
   }
 
   emitBefore() {

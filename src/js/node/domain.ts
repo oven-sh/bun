@@ -1,125 +1,468 @@
-// Import Events
-let EventEmitter: typeof import("./events").default | undefined;
+// Hardcoded module "node:domain"
+// Port of node v26.3.0 lib/domain.js. Async propagation rides on
+// AsyncLocalStorage instead of node's createHook init/before/after hooks.
+const EventEmitter = require("node:events");
+const { AsyncLocalStorage } = require("node:async_hooks");
+const { domainHooks } = require("internal/shared");
 
 const ObjectDefineProperty = Object.defineProperty;
+const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeSplice: (this: unknown[], start: number, deleteCount?: number) => unknown[] =
+  Array.prototype.splice;
+const ArrayPrototypePush = Array.prototype.push;
+const AlsGetStore = AsyncLocalStorage.prototype.getStore;
+const AlsEnterWith = AsyncLocalStorage.prototype.enterWith;
+const ProcessNextTick = process.nextTick;
+
+const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 2);
 
 type AnyFunction = (...args: any[]) => unknown;
 
 declare global {
   namespace $Node {
     interface Domain extends EventEmitter {
-      add(emitter: EventEmitter): void;
-      remove(emitter: EventEmitter): void;
-      bind(fn: AnyFunction): () => void;
-      intercept(fn: AnyFunction): (err?: unknown) => void;
+      members: unknown[];
+      domain?: Domain | null;
+      _errorHandler(er: unknown): boolean;
+      enter(): void;
+      exit(): void;
+      add(ee: object): void;
+      remove(ee: object): void;
       run(fn: AnyFunction, ...args: unknown[]): unknown;
-      dispose(): this;
-      enter(): this;
-      exit(): this;
+      intercept(cb: AnyFunction): AnyFunction;
+      bind(cb: AnyFunction): AnyFunction;
     }
   }
 }
 
 interface DomainError extends Error {
-  domainEmitter?: unknown;
+  domainBound?: unknown;
   domainThrown?: boolean;
 }
 
-interface DomainModule {
-  createDomain(): $Node.Domain;
-  create(): $Node.Domain;
-  _stack: $Node.Domain[];
-  active: $Node.Domain | null;
+const exports: any = {};
+
+// Each ALS box snapshots {d: activeDomain, token}; the stack stays global.
+const als = new AsyncLocalStorage();
+
+let stack: any[] = [];
+
+let globalActive: any = null;
+
+// A stale box.token means node's before() hook would have fired for the callback.
+let currentToken = 0;
+
+// Tick-boundary stand-in for the after() hook:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L106
+let tokenRetireQueued = false;
+
+function retireToken() {
+  tokenRetireQueued = false;
+  ++currentToken;
 }
 
-// Export Domain
-var domain = {} as DomainModule;
-domain.createDomain = domain.create = function () {
-  if (!EventEmitter) {
-    EventEmitter = require("node:events");
-  }
-  var d = new EventEmitter!() as $Node.Domain;
+function retireTokenAfterTick() {
+  if (tokenRetireQueued) return;
+  tokenRetireQueued = true;
+  ProcessNextTick.$call(process, retireToken);
+}
 
-  function emitError(this: unknown, e?: unknown) {
-    e ||= $ERR_UNHANDLED_ERROR();
-    if (typeof e === "object") {
-      (e as DomainError).domainEmitter = this;
-      ObjectDefineProperty(e, "domain", {
+function setActive(d: any) {
+  globalActive = d;
+  AlsEnterWith.$call(als, { d, token: ++currentToken });
+  retireTokenAfterTick();
+}
+
+function isCurrentExecution(box: any): boolean {
+  return box !== undefined && box.token === currentToken;
+}
+
+function isRestoredPairing(box: any): boolean {
+  return box !== undefined && box.token !== currentToken && box.d != null && typeof box.d._errorHandler === "function";
+}
+
+// Lazy equivalent of node's after() hook exiting the adopted pairing.
+let adoptedDomain: any = null;
+let adoptedIndex = -1;
+
+function unadopt() {
+  if (adoptedDomain === null) return;
+  if (adoptedIndex < stack.length && stack[adoptedIndex] === adoptedDomain) {
+    stack.length = adoptedIndex;
+    globalActive = stack.length === 0 ? undefined : stack[stack.length - 1];
+    ++currentToken;
+  }
+  adoptedDomain = null;
+  adoptedIndex = -1;
+}
+
+function currentActive(): any {
+  const box = AlsGetStore.$call(als);
+  if (isCurrentExecution(box)) return globalActive;
+  unadopt();
+  if (isRestoredPairing(box)) return box.d;
+  return globalActive;
+}
+
+function currentStack(): any[] {
+  const box = AlsGetStore.$call(als);
+  if (isCurrentExecution(box)) return stack;
+  unadopt();
+  if (isRestoredPairing(box)) {
+    const s = ArrayPrototypeSlice.$call(stack);
+    ArrayPrototypePush.$call(s, box.d);
+    return s;
+  }
+  return stack;
+}
+
+// node before() hook equivalent: enter the paired domain on the global stack.
+function adopt() {
+  const box = AlsGetStore.$call(als);
+  if (isCurrentExecution(box)) return;
+  unadopt();
+  if (isRestoredPairing(box)) {
+    adoptedDomain = box.d;
+    adoptedIndex = stack.length;
+    ArrayPrototypePush.$call(stack, box.d);
+    setActive(box.d);
+  }
+}
+
+ObjectDefineProperty(process, "domain", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  get: function () {
+    return currentActive();
+  },
+  set: function (arg: any) {
+    adopt();
+    setActive(arg);
+  },
+} as PropertyDescriptor);
+
+ObjectDefineProperty(exports, "_stack", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  get: function () {
+    return currentStack();
+  },
+  set: function (arg: any) {
+    stack = arg;
+  },
+} as PropertyDescriptor);
+
+// The active domain is always the one that we're currently in.
+ObjectDefineProperty(exports, "active", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  get: function () {
+    return currentActive();
+  },
+  set: function (arg: any) {
+    adopt();
+    setActive(arg);
+  },
+} as PropertyDescriptor);
+
+// node installs its capture callback only while a domain on the stack has an
+// 'error' listener: https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L158
+function stackClaims(s: any[]): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const d = s[i];
+    if (
+      d != null &&
+      typeof d._errorHandler === "function" &&
+      typeof d.listenerCount === "function" &&
+      d.listenerCount("error") > 0
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// atEntryPoint: the entry module's own throw. Its box is no restored pairing, and what a callback adopted since is not the entry module's.
+function domainWouldClaim(atEntryPoint: boolean): boolean {
+  if (!atEntryPoint) return stackClaims(currentStack());
+  unadopt();
+  return stackClaims(stack);
+}
+
+function domainUncaughtExceptionClear() {
+  adoptedDomain = null;
+  adoptedIndex = -1;
+  stack.length = 0;
+  setActive(null);
+}
+
+function fatalErrorDispatch(er: any, atEntryPoint: boolean) {
+  if (atEntryPoint) unadopt();
+  else adopt();
+  if (stackClaims(stack)) {
+    // node's callback is process.domain._errorHandler(er); fall back to the
+    // stack top where node would throw on a nulled process.domain.
+    let active = globalActive;
+    if (active === null || active === undefined) {
+      active = stack[stack.length - 1];
+      setActive(active);
+    }
+    if (typeof active._errorHandler === "function") {
+      active._errorHandler(er);
+      return true;
+    }
+  }
+  domainUncaughtExceptionClear();
+  return false;
+}
+
+class Domain extends EventEmitter {
+  members: any[];
+  declare domain?: Domain | null;
+
+  constructor() {
+    super();
+    this.members = [];
+  }
+
+  _errorHandler(er: any) {
+    let caught = false;
+
+    if ((typeof er === "object" && er !== null) || typeof er === "function") {
+      ObjectDefineProperty(er, "domain", {
         __proto__: null,
         configurable: true,
         enumerable: false,
-        value: d,
+        value: this,
         writable: true,
-      });
-      (e as DomainError).domainThrown = false;
+      } as PropertyDescriptor);
+      er.domainThrown = true;
     }
-    d.emit("error", e);
-  }
-
-  d.add = function (emitter: $Node.EventEmitter) {
-    emitter.on("error", emitError);
-  };
-  d.remove = function (emitter: $Node.EventEmitter) {
-    emitter.removeListener("error", emitError);
-  };
-  d.bind = function (fn: AnyFunction) {
-    return function () {
-      var args = Array.prototype.slice.$call(arguments);
-      try {
-        fn.$apply(null, args);
-      } catch (err) {
-        emitError(err);
-      }
-    };
-  };
-  d.intercept = function (fn: AnyFunction) {
-    return function (err?: unknown) {
-      if (err) {
-        emitError(err);
-      } else {
-        var args = Array.prototype.slice.$call(arguments, 1);
-        try {
-          fn.$apply(null, args);
-        } catch (err) {
-          emitError(err);
-        }
-      }
-    };
-  };
-  d.run = function (this: $Node.Domain, fn: AnyFunction, ...args: unknown[]) {
-    this.enter();
-    try {
-      return fn.$apply(this, args);
-    } catch (err) {
-      emitError(err);
-    } finally {
+    while (currentActive() === this && ArrayPrototypeLastIndexOf.$call(stack, this) !== -1) {
       this.exit();
     }
-  };
-  d.dispose = function (this: $Node.Domain) {
-    this.removeAllListeners();
-    return this;
-  };
-  d.enter = function (this: $Node.Domain) {
-    stack.push(this);
-    domain.active = process.domain = this;
-    return this;
-  };
-  d.exit = function (this: $Node.Domain) {
-    const index = stack.lastIndexOf(this);
-    if (index === -1) return this;
-    stack.splice(index, stack.length);
-    domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
-    return this;
-  };
-  return d;
+
+    if (stack.length === 0) {
+      if (this.listenerCount("error") > 0) {
+        caught = this.emit("error", er);
+      }
+    } else {
+      try {
+        caught = this.emit("error", er);
+      } catch (er2) {
+        const remaining = stack.length;
+        if (remaining) {
+          setActive(stack[remaining - 1]);
+          caught = currentActive()._errorHandler(er2);
+        } else {
+          throw er2;
+        }
+      }
+    }
+
+    domainUncaughtExceptionClear();
+
+    return caught;
+  }
+
+  enter() {
+    adopt();
+    ArrayPrototypePush.$call(stack, this);
+    setActive(this);
+  }
+
+  exit() {
+    adopt();
+    const index = ArrayPrototypeLastIndexOf.$call(stack, this);
+    if (index === -1) return;
+    ArrayPrototypeSplice.$call(stack, index);
+
+    setActive(stack.length === 0 ? undefined : stack[stack.length - 1]);
+  }
+
+  add(ee: any) {
+    const eeDomain = ee.domain;
+    if (eeDomain === this) return;
+    if (eeDomain) eeDomain.remove(ee);
+
+    const thisDomain = this.domain;
+    if (thisDomain && ee instanceof Domain) {
+      for (let d: Domain | null | undefined = thisDomain; d; d = d.domain) {
+        if (ee === d) return;
+      }
+    }
+
+    ObjectDefineProperty(ee, "domain", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: this,
+      writable: true,
+    } as PropertyDescriptor);
+    ArrayPrototypePush.$call(this.members, ee);
+  }
+
+  remove(ee: any) {
+    ee.domain = null;
+    const index = ArrayPrototypeIndexOf.$call(this.members, ee);
+    if (index !== -1) ArrayPrototypeSplice.$call(this.members, index, 1);
+  }
+
+  run(fn: any) {
+    this.enter();
+    const ret = fn.$apply(this, ArrayPrototypeSlice.$call(arguments, 1));
+    this.exit();
+
+    return ret;
+  }
+
+  intercept(cb: any) {
+    const self = this;
+
+    function runIntercepted(this: any) {
+      return intercepted(this, self, cb, arguments);
+    }
+
+    return runIntercepted;
+  }
+
+  bind(cb: any) {
+    const self = this;
+
+    function runBound(this: any) {
+      return bound(this, self, cb, arguments);
+    }
+
+    ObjectDefineProperty(runBound, "domain", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: this,
+      writable: true,
+    } as PropertyDescriptor);
+
+    return runBound;
+  }
+}
+
+function intercepted(_this: any, self: any, cb: any, fnargs: IArguments) {
+  if (fnargs[0] && fnargs[0] instanceof Error) {
+    const er: DomainError = fnargs[0];
+    er.domainBound = cb;
+    er.domainThrown = false;
+    ObjectDefineProperty(er, "domain", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: self,
+      writable: true,
+    } as PropertyDescriptor);
+    self.emit("error", er);
+    return;
+  }
+
+  self.enter();
+  const ret = cb.$apply(_this, ArrayPrototypeSlice.$call(fnargs, 1));
+  self.exit();
+
+  return ret;
+}
+
+function bound(_this: any, self: any, cb: any, fnargs: IArguments) {
+  self.enter();
+  const ret = cb.$apply(_this, fnargs);
+  self.exit();
+
+  return ret;
+}
+
+exports.Domain = Domain;
+
+exports.create = exports.createDomain = function createDomain() {
+  return new Domain();
 };
 
-// Domains entered via enter()/run() and not yet exited, innermost last.
-// process.domain mirrors the top of the stack like in node so other modules
-// can observe the currently active domain.
-const stack: $Node.Domain[] = [];
-domain._stack = stack;
-domain.active = null;
+// Override EventEmitter methods to make it domain-aware.
+EventEmitter.usingDomains = true;
 
-export default domain;
+const eventEmit = EventEmitter.prototype.emit;
+EventEmitter.prototype.emit = function emit(this: any, ...args: any[]) {
+  const domain = this.domain;
+
+  const type = args[0];
+  const shouldEmitError = type === "error" && this.listenerCount(type) > 0;
+
+  if (shouldEmitError || domain === null || domain === undefined || this === process) {
+    return eventEmit.$apply(this, args);
+  }
+
+  if (type === "error") {
+    const er = args.length > 1 && args[1] ? args[1] : $ERR_UNHANDLED_ERROR();
+
+    adopt();
+
+    if (typeof er === "object") {
+      er.domainEmitter = this;
+      ObjectDefineProperty(er, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: domain,
+        writable: true,
+      } as PropertyDescriptor);
+      er.domainThrown = false;
+    }
+
+    const origDomainsStack = ArrayPrototypeSlice.$call(stack);
+    const origActiveDomain = currentActive();
+    let idx = stack.length - 1;
+    while (idx > -1 && origActiveDomain === stack[idx]) {
+      --idx;
+    }
+
+    if (idx < 0) {
+      stack.length = 0;
+    } else {
+      ArrayPrototypeSplice.$call(stack, idx + 1);
+    }
+
+    setActive(stack.length > 0 ? stack[stack.length - 1] : null);
+
+    domain.emit("error", er);
+
+    stack = origDomainsStack;
+    setActive(origActiveDomain);
+
+    return false;
+  }
+
+  domain.enter();
+  const ret = eventEmit.$apply(this, args);
+  domain.exit();
+
+  return ret;
+};
+
+// What node's replaced EventEmitter.init does first: https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L446
+domainHooks.bindEmitter = function bindEmitter(emitter: any) {
+  ObjectDefineProperty(emitter, "domain", {
+    __proto__: null,
+    configurable: true,
+    enumerable: false,
+    value: null,
+    writable: true,
+  } as PropertyDescriptor);
+  const active = currentActive();
+  if (active && typeof active._errorHandler === "function" && !(emitter instanceof Domain)) {
+    emitter.domain = active;
+  }
+};
+domainHooks.active = currentActive;
+setDomainErrorHandler(fatalErrorDispatch, domainWouldClaim);
+
+export default exports;

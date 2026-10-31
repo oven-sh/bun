@@ -104,6 +104,28 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job, loopKind);
 }
 
+void JSCTaskScheduler::refEventLoopForPendingWork(WebCore::JSVMClientData* clientData, JSC::JSObject* target)
+{
+    auto& scheduler = clientData->deferredWorkTimer;
+    Locker<Lock> holder { scheduler.m_lock };
+    if (scheduler.m_isShuttingDown) [[unlikely]]
+        return;
+
+    Vector<Ref<Ticket>, 1> ticketsToPromote;
+    for (auto& ticket : scheduler.m_pendingTicketsOther.keys()) {
+        if (!ticket->isCancelled() && ticket->target() == target)
+            ticketsToPromote.append(ticket.copyRef());
+    }
+
+    for (auto& ticket : ticketsToPromote) {
+        auto it = scheduler.m_pendingTicketsOther.find(ticket.ptr());
+        PendingWork pending = it->value;
+        scheduler.m_pendingTicketsOther.remove(it);
+        Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), pending);
+    }
+}
+
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)
 {
     auto* vmHandle = clientData->vmHandle;

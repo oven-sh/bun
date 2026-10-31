@@ -37,6 +37,9 @@ public:
         m_isShuttingDown = true;
     }
 
+    // Makes the WorkType::AtSomePoint ticket of `target`, which holds no event loop ref, keep the loop alive until it is scheduled or cancelled: for work that has become certain to be scheduled.
+    static void refEventLoopForPendingWork(WebCore::JSVMClientData* clientData, JSC::JSObject* target);
+
 public:
     // What was current when JSC registered the work.
     struct PendingWork {

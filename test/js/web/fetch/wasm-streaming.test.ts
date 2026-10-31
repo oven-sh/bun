@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 import { ok } from "node:assert/strict";
+import { join } from "node:path";
 
 const wasmDataUriPrefix = "data:application/wasm;base64,";
 
@@ -287,5 +288,44 @@ describe("WebAssembly.instantiateStreaming", () => {
     expect(instantiateAndGetExports(response)).rejects.toThrow(
       "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports",
     );
+  });
+});
+
+// The streaming compiler registers its pending work as work that may never get
+// scheduled (the response body could stall forever), which by itself does not
+// keep the event loop alive. Once the last byte is in, compilation is running
+// on the wasm worklist threads and the process must wait for it to settle the
+// promise instead of exiting with it forever pending.
+// https://github.com/oven-sh/bun/issues/25145
+describe("pending streaming compilation keeps the process alive", () => {
+  const fixture = join(import.meta.dir, "wasm-streaming-keeps-alive-fixture.ts");
+
+  test.concurrent.each([
+    ["compileStreaming", "buffered", "then"],
+    ["compileStreaming", "stream", "then"],
+    ["instantiateStreaming", "buffered", "then"],
+    ["instantiateStreaming", "stream", "then"],
+    ["instantiateStreaming", "file", "then"],
+    ["instantiateStreaming", "fetch", "then"],
+    // A top-level await has nothing else to wait for either.
+    ["compileStreaming", "buffered", "await"],
+    ["instantiateStreaming", "stream", "await"],
+  ] as const)("%s settles with a %s response body (%s)", async (api, body, how) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, api, body, how],
+      // A single compiler thread keeps the whole compilation pending when the
+      // main script finishes, on any machine.
+      env: { ...bunEnv, BUN_JSC_numberOfWasmCompilerThreads: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // stderr is drained concurrently (debug builds write benign warnings there).
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, rejection: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: "settled\n",
+      exitCode: 0,
+      rejection: "",
+    });
   });
 });

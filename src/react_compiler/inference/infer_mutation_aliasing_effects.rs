@@ -3163,7 +3163,7 @@ fn are_arguments_immutable_and_non_mutating(
     true
 }
 
-fn is_known_mutable_effect(effect: Effect) -> bool {
+pub(crate) fn is_known_mutable_effect(effect: Effect) -> bool {
     matches!(
         effect,
         Effect::Store

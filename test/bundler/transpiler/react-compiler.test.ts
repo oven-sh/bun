@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
@@ -1172,6 +1172,1015 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
     },
   });
+
+  const reactWithAMemoCachePerComponent = {
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    "/node_modules/react/compiler-runtime.js": `
+      const caches = (globalThis.caches = new Map());
+      exports.c = n => {
+        if (!caches.has(globalThis.rendering))
+          caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(globalThis.rendering);
+      };
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `
+      exports.useState = initial => [initial, value => value];
+      exports.useMemo = make => make();
+      exports.useEffect = effect => { globalThis.effect = effect; globalThis.effects = (globalThis.effects ?? 0) + 1; };
+      exports.createElement = () => "element";
+      exports.use = usable => usable.value;
+    `,
+  };
+
+  // A component is not compiled where InferTypes takes a local that is one of two functions for the first of them, and
+  // what the type of the first says of a call is not so for the other. Two functions that return one type were one
+  // type: the local was `Math.max`, which only reads what it is given. The call then stood outside the memo block of
+  // the array, and each render wrote to the array of the render before. Each other component has the types of before,
+  // and is compiled as before.
+  const localThatIsOneOfTwoFunctions = /* jsx */ `
+        import React, { useMemo, useState } from "react";
+        function OneOfTwoInAConditional(props) {
+          const arr = [props.x];
+          const f = props.e ? Math.max : a => { a.push("m"); return 2; };
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function AssignedInAnIf(props) {
+          const arr = [props.x];
+          let f = a => { a.push("m"); return 2; };
+          if (props.e) f = Math.max;
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReturnedFromAFunction(props) {
+          const arr = [props.x];
+          const pick = () => {
+            if (props.e) return Math.max;
+            return a => { a.push("m"); return 2; };
+          };
+          const f = pick();
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReturnedFromOneOfTwoFunctions(props) {
+          const arr = [props.x];
+          const make = props.e ? () => Math.max : () => a => { a.push("m"); return 2; };
+          const f = make();
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // What \`g\` returns is a number, because it is multiplied.
+        function CalledBeforeItIsOneOfTwo(props) {
+          const arr = [props.x];
+          const g = props.mutate;
+          const twice = g([]) * 2;
+          const f = props.e ? Math.max : g;
+          const out = f(arr);
+          return <div arr={arr} out={out + twice} />;
+        }
+        function CalledAfterItIsOneOfTwo(props) {
+          const arr = [props.x];
+          const g = props.mutate;
+          const f = props.e ? Math.max : g;
+          const twice = g([]) * 2;
+          const out = f(arr);
+          return <div arr={arr} out={out + twice} />;
+        }
+        // Both results are multiplied, so both are numbers to the compiler. What \`new Made()\` is says nothing of what
+        // \`Made()\` returns.
+        function OneIsCalledAndOneIsMadeWithNew(props) {
+          const arr = [props.x];
+          const Made = props.Made;
+          const made = props.made;
+          const twice = new Made() * 2 + made() * 2;
+          const f = props.e ? made : Made;
+          const pick = () => f(arr);
+          const same = pick();
+          same.push("m");
+          return <div arr={arr} out={twice} />;
+        }
+        // The method of the array gives each row to the local, which can write to \`seen\`.
+        function PassedToAMethodOfAnArray(props) {
+          const rows = [[props.x], [props.x + 1]];
+          const seen = [];
+          const keep = props.e ? Boolean : row => { seen.push(row[0]); return row[0] > 1; };
+          const shown = rows.filter(keep);
+          return <div shown={shown} seen={seen} />;
+        }
+        // The function that writes is the last of three, and the second of the two that a memo returns.
+        function OneOfThreeInASwitch(props) {
+          const arr = [props.x];
+          let f;
+          switch (props.e) {
+            case true: f = Math.max; break;
+            case 0: f = Math.max; break;
+            default: f = a => { a.push("m"); return 2; };
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReturnedFromAMemo(props) {
+          const arr = [props.x];
+          const f = useMemo(() => {
+            if (props.e) return Math.max;
+            return a => { a.push("m"); return 2; };
+          }, [props.e]);
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // A manual memo around the call, and one after it.
+        function CalledInAMemoOnWhatTheMemoMakes(props) {
+          const f = props.e ? Math.max : a => { a.push("m"); return 2; };
+          const out = useMemo(() => {
+            const arr = [props.x];
+            const n = f(arr);
+            return [arr, n];
+          }, [props.x, f]);
+          return <div out={out} />;
+        }
+        function CalledBeforeAMemoOfItsArgumentAfterAHook(props) {
+          const f = props.e ? Math.max : a => { a.push("m"); return 2; };
+          const arr = [props.x];
+          const [t] = useState(1);
+          const n = f(arr);
+          const out = useMemo(() => [arr, n, t], [arr, n, t]);
+          return <div out={out} />;
+        }
+        // Two globals that have a signature, and the signatures are not the same: \`Array.of\` reads what it is given,
+        // and \`Array.from\` takes what an iterator has.
+        function ArrayOfOrArrayFrom(props) {
+          const it = new Set([props.x]).values();
+          const make = props.e ? Array.of : Array.from;
+          const out = make(it);
+          return <div out={out.length} first={typeof out[0]} />;
+        }
+        // \`use\` has the call signature of \`createElement\`. What reads a type asks for \`use\` by its name: each render
+        // calls it.
+        function CreateElementOrUse(props) {
+          const read = props.e ? React.createElement : React.use;
+          const v = read(props.usable);
+          return <div v={v} />;
+        }
+        // A function expression has no signature, so it says nothing of a call. But each render calls a hook, and
+        // this call is in the memo block of what it is given.
+        function NothingOrAnEffect(props) {
+          const { useEffect: effect } = React;
+          const run = props.e ? () => {} : effect;
+          const deps = [props.x];
+          run(() => {}, deps);
+          return <div deps={deps} />;
+        }
+        // And \`flatMap\` takes an argument that has no signature for a function that writes to nothing, where
+        // \`Object.fromEntries\` takes what an iterator has.
+        function FunctionExpressionOrFromEntries(props) {
+          const rows = [new Map([["a", props.x]]).entries()];
+          const toObject = props.e ? row => ({}) : Object.fromEntries;
+          const out = rows.flatMap(toObject);
+          return <div out={out} />;
+        }
+
+        // In each of these the type that InferTypes takes is right, and the component is compiled as before. The two
+        // are one function, or two with one signature, or two function expressions.
+        function OneFunctionOnBothPaths(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          if (props.e) f = Math.max;
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function OneOfTwoThatOnlyRead(props) {
+          const arr = [props.x];
+          const f = props.e ? Math.max : Math.min;
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function OneOfTwoArrowsThatReturnNumbers(props) {
+          const f = props.e ? () => 1 : () => 2;
+          const out = f();
+          return <div x={props.x} out={out} />;
+        }
+        // The first of the two is a function expression, so the type of the local says nothing of a call.
+        function FunctionExpressionFirst(props) {
+          const arr = [props.x];
+          const f = props.e ? a => { a.push("m"); return 2; } : Math.max;
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // The two get the type of a function after they are joined: the calls make what each returns a number. No phi
+        // has lost an operand, so the type that what reads the local gets is right.
+        function TypedAfterTheyAreJoined(props) {
+          const { first, second } = props;
+          const f = props.e ? first : second;
+          const sum = first(props.x) * 2 + second(props.x) * 2;
+          return <div sum={sum} out={f(props.x)} />;
+        }
+        // A hook that is destructured under another name is a hook to InferTypes. A local that is one of two of
+        // them is a hook too: the two have one shape. So the call is in no memo block.
+        function OneOfTwoHooks(props) {
+          const { useA: a, useB: b } = props.hooks;
+          const h = props.e ? a : b;
+          const v = h(props.x);
+          return <div v={v} />;
+        }
+        function OneOfTwoHooksThatNoPropPicks(props) {
+          const { useA: a, useB: b } = hooks;
+          const h = hooks.flag ? a : b;
+          const v = h();
+          return <div v={v} x={props.x} />;
+        }
+        function HookFromOneOfTwoFunctions(props) {
+          const { useA: a, useB: b } = props.hooks;
+          const pick = props.e ? () => a : () => b;
+          const h = pick();
+          const v = h(props.x);
+          return <div v={v} />;
+        }
+        // As \`GlobalStyles\` of material-ui: a function expression, or a prop that it calls.
+        function OneOfTwoThatIsGivenOn(props) {
+          const { styles, theme = "light" } = props;
+          const local = typeof styles === "function" ? given => styles(given ?? theme) : styles;
+          return <div styles={local} />;
+        }
+
+        // Each of these hooks returns how often the two were called, so a call that a memo block skips shows.
+        let called = 0;
+        const hooks = { flag: true, useA: () => ++called, useB: () => ++called };
+        // One usable for each \`x\`. It holds another value in each render.
+        const usables = { 1: { value: 0 }, 2: { value: 0 } };
+        function Made(a) {
+          if (!new.target) return a;
+          this.valueOf = () => 1;
+        }
+        const made = () => [1];
+        const first = v => v + 1;
+        const second = v => v + 2;
+        // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
+        const propsOf = (e, x = 1) => ({
+          x,
+          e,
+          Made,
+          made,
+          first,
+          second,
+          hooks,
+          usable: usables[x],
+          styles: given => ({ t: given }),
+          mutate: a => { a.push("m"); return a.length; },
+        });
+        const components = [
+          OneOfTwoInAConditional,
+          AssignedInAnIf,
+          ReturnedFromAFunction,
+          ReturnedFromOneOfTwoFunctions,
+          CalledBeforeItIsOneOfTwo,
+          CalledAfterItIsOneOfTwo,
+          OneIsCalledAndOneIsMadeWithNew,
+          PassedToAMethodOfAnArray,
+          OneOfThreeInASwitch,
+          ReturnedFromAMemo,
+          CalledInAMemoOnWhatTheMemoMakes,
+          CalledBeforeAMemoOfItsArgumentAfterAHook,
+          ArrayOfOrArrayFrom,
+          CreateElementOrUse,
+          NothingOrAnEffect,
+          FunctionExpressionOrFromEntries,
+          OneFunctionOnBothPaths,
+          OneOfTwoThatOnlyRead,
+          OneOfTwoArrowsThatReturnNumbers,
+          FunctionExpressionFirst,
+          TypedAfterTheyAreJoined,
+          OneOfTwoHooks,
+          OneOfTwoHooksThatNoPropPicks,
+          HookFromOneOfTwoFunctions,
+          OneOfTwoThatIsGivenOn,
+        ];
+        // An attribute that is a function is shown as the tag of what it returns.
+        const shown = (key, value) => (typeof value === "function" ? (value(key)?.t ?? "function") : value);
+        for (const component of components) {
+          globalThis.rendering = component;
+          called = usables[1].value = usables[2].value = 0;
+          // Each render has the memo cache of the one before. The third picks the other function, which is the one
+          // that only reads. The last has another \`x\`.
+          const render = (e, x = 1) => {
+            usables[x].value++;
+            const effects = globalThis.effects;
+            const attributes = Object.values(component(propsOf(e, x)).p);
+            // A render that called an effect hook shows it.
+            return JSON.stringify(globalThis.effects === effects ? attributes : [...attributes, "effect"], shown);
+          };
+          console.log(component.name, render(false), render(false), render(true), render(false), render(false, 2));
+        }
+        const sizeOf = component => globalThis.caches.get(component)?.length;
+        const compiled = components.slice(components.indexOf(OneFunctionOnBothPaths));
+        // Each other component is left as written.
+        const wrong = components.filter(component => globalThis.caches.has(component) !== compiled.includes(component));
+        console.log("compiled", globalThis.caches.size, "wrong", wrong.length, ...wrong.map(component => component.name));
+        console.log("sizes", ...compiled.map(sizeOf));
+      `;
+  itBundled("react-compiler/LocalThatIsOneOfTwoFunctions", {
+    files: {
+      "/entry.jsx": localThatIsOneOfTwoFunctions,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        'OneOfTwoInAConditional [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'AssignedInAnIf [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'ReturnedFromAFunction [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'ReturnedFromOneOfTwoFunctions [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4] [[2,"m"],4]',
+        'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4] [[2,"m"],4]',
+        'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4] [[1],4] [[1,"m"],4] [[2,"m"],4]',
+        "PassedToAMethodOfAnArray [[[2]],[1,2]] [[[2]],[1,2]] [[[1],[2]],[]] [[[2]],[1,2]] [[[2],[3]],[2,3]]",
+        'OneOfThreeInASwitch [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'ReturnedFromAMemo [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'CalledInAMemoOnWhatTheMemoMakes [[[1,"m"],2]] [[[1,"m"],2]] [[[1],1]] [[[1,"m"],2]] [[[2,"m"],2]]',
+        'CalledBeforeAMemoOfItsArgumentAfterAHook [[[1,"m"],2,1]] [[[1,"m"],2,1]] [[[1],1,1]] [[[1,"m"],2,1]] [[[2,"m"],2,1]]',
+        'ArrayOfOrArrayFrom [1,"number"] [1,"number"] [1,"object"] [1,"number"] [1,"number"]',
+        'CreateElementOrUse [1] [2] ["element"] [4] [1]',
+        'NothingOrAnEffect [[1],"effect"] [[1],"effect"] [[1]] [[1],"effect"] [[2],"effect"]',
+        'FunctionExpressionOrFromEntries [[{"a":1}]] [[{"a":1}]] [[{}]] [[{"a":1}]] [[{"a":2}]]',
+        "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1] [[2],2]",
+        "OneOfTwoThatOnlyRead [[1],1] [[1],1] [[1],1] [[1],1] [[2],2]",
+        "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2] [2,2]",
+        'FunctionExpressionFirst [[1],1] [[1],1] [[1,"m"],2] [[1],1] [[2],2]',
+        "TypedAfterTheyAreJoined [10,3] [10,3] [10,2] [10,3] [14,4]",
+        "OneOfTwoHooks [1] [2] [3] [4] [5]",
+        "OneOfTwoHooksThatNoPropPicks [1,1] [2,1] [3,1] [4,1] [5,2]",
+        "HookFromOneOfTwoFunctions [1] [2] [3] [4] [5]",
+        'OneOfTwoThatIsGivenOn ["0"] ["0"] ["0"] ["0"] ["0"]',
+        "compiled 9 wrong 0",
+        "sizes 5 5 3 7 3 2 3 6 3",
+      ].join("\n"),
+    },
+  });
+
+  // Where a loop assigns the local under a condition, InferTypes takes what the loop assigns out of the type of the
+  // local at the head of the loop. What reads the local after the loop then gets the type of what the local was before
+  // it. Upstream 1.0.0 does the same. A component where a local gets the type of a function after a phi has lost an
+  // operand is not compiled.
+  const localThatALoopMakesOneOfTwoFunctions = /* jsx */ `
+        function ReassignedInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) f = props.mutate;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function SwappedInALoop(props) {
+          const arr = [props.x];
+          let a = props.mutate;
+          let b = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) {
+              const t = a;
+              a = b;
+              b = t;
+            }
+          }
+          const out = b(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReassignedInALoopInALoop(props) {
+          const arr = [props.x];
+          let f = String;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReassignedInACallback(props) {
+          const arr = [props.x];
+          const run = () => {
+            let f = Math.max;
+            for (let i = 0; i < props.n; i++) {
+              if (props.e) f = props.mutate;
+            }
+            return f(arr);
+          };
+          const out = run();
+          return <div arr={arr} out={out} />;
+        }
+        function ReassignedInAnObjectMethod(props) {
+          const arr = [props.x];
+          const object = {
+            run() {
+              let f = Math.max;
+              for (let i = 0; i < props.n; i++) {
+                if (props.e) f = props.mutate;
+              }
+              return f(arr);
+            },
+          };
+          const out = object.run();
+          return <div arr={arr} out={out} />;
+        }
+        function ArrowAssignedInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) f = a => { a.push("m"); return 2; };
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ContinueBeforeALoopInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.reset) continue;
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ResetBeforeAContinue(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          let i = 0;
+          while (i < props.n) {
+            i++;
+            if (props.reset) {
+              f = Math.max;
+              continue;
+            }
+            if (props.e) f = props.mutate;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // What the local is after the loop returns what it was before: \`Math.max\`, or a function that writes.
+        function NewFunctionReturnsTheOneBefore(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          let i = 0;
+          do {
+            const before = f;
+            f = a => { if (a && props.e) a.push("m"); return before; };
+            i++;
+          } while (i < 2);
+          const g = f();
+          const out = g(arr);
+          const one = () => 1;
+          return <div arr={arr} out={typeof out} one={one()} />;
+        }
+        function OneOfTwoReturnsTheOneBefore(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            const before = f;
+            const g = props.arrow ? a => { a.push("m"); return before; } : Math.min;
+            if (props.e) f = g;
+          }
+          const out = f(arr);
+          const one = () => 1;
+          return <div arr={arr} out={typeof out} one={one()} />;
+        }
+        // The local is a function expression before the loop, which has no signature. What the loop assigns is a
+        // hook, and a function that returns another object than an array.
+        function ArrowThenAHookInALoop(props) {
+          const { useA: a } = props.hooks;
+          let h = y => [y];
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) h = a;
+          }
+          const v = h(props.x);
+          return <div v={v} />;
+        }
+        function ArrayMakerThatALoopReplaces(props) {
+          const arr = [props.x];
+          let make = () => [];
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) make = () => props.listOf(arr);
+          }
+          const list = make();
+          const out = list.indexOf("m");
+          return <div arr={arr} out={out} />;
+        }
+        // In these two the type that InferTypes gets after the loop is right. They are left as written all the same:
+        // a type that is read after a phi has lost an operand is not told from a wrong one.
+        function OneFunctionInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) f = Math.max;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function DefaultHandlerThatALoopReplaces(props) {
+          const arr = [props.x];
+          let h = () => {};
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) h = props.mutate;
+          }
+          const out = h(arr);
+          return <div arr={arr} out={out} />;
+        }
+
+        // These were right before, and are compiled as before. In the first three InferTypes has no function type for
+        // the local.
+        function ResetAfterALoopInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+            if (props.reset) f = Math.max;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function TwoLoopsInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+            for (let k = 0; k < props.n; k++) {
+              if (props.reset) f = Math.max;
+            }
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function CopiedAfterALoopInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          let g = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+            g = f;
+            f = Math.max;
+          }
+          const out = g(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // The loop assigns with no condition, so no phi loses an operand. The local is a hook under another name.
+        function OneHookThatALoopAssignsAgain(props) {
+          const { useA: a } = props.hooks;
+          let h = a;
+          for (let i = 0; i < props.n; i++) h = a;
+          const v = h(props.x);
+          return <div v={v} />;
+        }
+        // The phi of \`last\` has lost an operand. The join after the loop gets its type at its own equation, where it
+        // has each operand.
+        function JoinedAfterALoop(props) {
+          let last = 0;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) last = i + 1;
+          }
+          const f = props.e ? () => 1 : () => 2;
+          return <div last={last} out={f()} x={props.x} />;
+        }
+
+        let called = 0;
+        const hooks = { useA: () => ++called };
+        const listOf = arr => ({ indexOf(item) { arr.push(item); return arr.length; } });
+        // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
+        const propsOf = (e, n = 1, x = 1) => ({
+          x,
+          n,
+          e,
+          reset: false,
+          arrow: true,
+          hooks,
+          listOf,
+          mutate: a => { a.push("m"); return a.length; },
+        });
+        const components = [
+          ReassignedInALoop,
+          SwappedInALoop,
+          ReassignedInALoopInALoop,
+          ReassignedInACallback,
+          ReassignedInAnObjectMethod,
+          ArrowAssignedInALoop,
+          ContinueBeforeALoopInALoop,
+          ResetBeforeAContinue,
+          NewFunctionReturnsTheOneBefore,
+          OneOfTwoReturnsTheOneBefore,
+          ArrowThenAHookInALoop,
+          ArrayMakerThatALoopReplaces,
+          OneFunctionInALoop,
+          DefaultHandlerThatALoopReplaces,
+          ResetAfterALoopInALoop,
+          TwoLoopsInALoop,
+          CopiedAfterALoopInALoop,
+          OneHookThatALoopAssignsAgain,
+          JoinedAfterALoop,
+        ];
+        for (const component of components) {
+          globalThis.rendering = component;
+          called = 0;
+          // Each render has the memo cache of the one before. In the third the loop assigns nothing. In the fifth it
+          // runs twice. The last has another \`x\`.
+          const render = (e, n, x) => JSON.stringify(Object.values(component(propsOf(e, n, x)).p));
+          const renders = [render(true), render(true), render(false), render(true), render(true, 2), render(true, 1, 2)];
+          console.log(component.name, ...renders);
+        }
+        const compiled = components.slice(components.indexOf(ResetAfterALoopInALoop));
+        // Each other component is left as written.
+        const wrong = components.filter(component => globalThis.caches.has(component) !== compiled.includes(component));
+        console.log("compiled", globalThis.caches.size, "wrong", wrong.length, ...wrong.map(component => component.name));
+      `;
+  itBundled("react-compiler/LocalThatALoopMakesOneOfTwoFunctions", {
+    files: {
+      "/entry.jsx": localThatALoopMakesOneOfTwoFunctions,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        'ReassignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'SwappedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1],1] [[2,"m"],2]',
+        'ReassignedInALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],"1"] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ReassignedInACallback [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ReassignedInAnObjectMethod [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ArrowAssignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ContinueBeforeALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ResetBeforeAContinue [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'NewFunctionReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"function",1] [[1,"m"],"function",1] [[1,"m"],"function",1] [[2,"m"],"function",1]',
+        'OneOfTwoReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"number",1] [[1,"m"],"function",1] [[1,"m"],"function",1] [[2,"m"],"function",1]',
+        "ArrowThenAHookInALoop [1] [2] [[1]] [3] [4] [5]",
+        'ArrayMakerThatALoopReplaces [[1,"m"],2] [[1,"m"],2] [[1],-1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        "OneFunctionInALoop [[1],1] [[1],1] [[1],1] [[1],1] [[1],1] [[2],2]",
+        'DefaultHandlerThatALoopReplaces [[1,"m"],2] [[1,"m"],2] [[1],null] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ResetAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'TwoLoopsInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'CopiedAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        "OneHookThatALoopAssignsAgain [1] [2] [3] [4] [5] [6]",
+        "JoinedAfterALoop [1,1,1] [1,1,1] [0,2,1] [1,1,1] [2,1,1] [1,1,2]",
+        "compiled 5 wrong 0",
+      ].join("\n"),
+    },
+  });
+
+  // What real code has: one of two functions that the component gives on and does not call. Two function expressions
+  // are compiled as before, and so is a join where the function expression is on the path that comes first. Where the
+  // state setter is on that path, InferTypes takes the local for a setter. The component is then left as written,
+  // unless the function expression does nothing. In the hook the two are what the outermost function returns, and
+  // nothing reads the type of that.
+  const oneOfTwoFunctionsThatIsGivenOn = /* jsx */ `
+        import { useEffect, useMemo, useState } from "react";
+        function HandlerOfTwoArrows(props) {
+          return <button onClick={props.e ? () => void props.more() : () => undefined}>{props.x}</button>;
+        }
+        function EffectWithTwoCleanups({ e, x, listen, unlisten }) {
+          useEffect(() => {
+            if (e) {
+              listen("a");
+              return () => { unlisten("a"); };
+            }
+            listen("b");
+            return () => { unlisten("b"); };
+          }, [e, listen, unlisten]);
+          return <div>{x}</div>;
+        }
+        function ValueOfAContext(props) {
+          const [collapsed, setCollapsed] = useState(false);
+          const value = useMemo(
+            () => ({ collapsed, toggle: props.e ? () => setCollapsed("toggle") : () => undefined }),
+            [collapsed, props.e],
+          );
+          return <div value={value}>{props.x}</div>;
+        }
+        function RenderPropOfTwoArrows(props) {
+          return <div row={props.e ? r => <b>{r}</b> : r => <i>{r}</i>}>{props.x}</div>;
+        }
+        function NothingOrASetter(props) {
+          const [open, setOpen] = useState("closed");
+          return <button onClick={props.e ? () => {} : setOpen}>{open + props.x}</button>;
+        }
+        // A function expression that does nothing keeps to each signature, so it is not compared.
+        function SetterOrNothing(props) {
+          const [open, setOpen] = useState("closed");
+          return <button onClick={props.e ? setOpen : () => {}}>{open + props.x}</button>;
+        }
+        // InferTypes takes this local for a setter, and the other function is not known to keep to that.
+        function SetterOrAGivenFunction({ e, x, set }) {
+          const [open, setOpen] = useState("closed");
+          return <button onClick={e ? setOpen : given => { set(given); }}>{open + x}</button>;
+        }
+        // The first operand of a phi is the path that comes first: the body of the \`if\`, and not what is written
+        // first.
+        function GivenFunctionThenASetterInAnIf({ e, x, set }) {
+          const [open, setOpen] = useState("closed");
+          let onClick = given => { set(given); };
+          if (e) onClick = setOpen;
+          return <button onClick={onClick}>{open + x}</button>;
+        }
+        function SetterThenAGivenFunctionInAnIf({ e, x, set }) {
+          const [open, setOpen] = useState("closed");
+          let onClick = setOpen;
+          if (e) onClick = given => { set(given); };
+          return <button onClick={onClick}>{open + x}</button>;
+        }
+        function useSetterOrAGivenOne({ e, x, set }) {
+          const [value, setValue] = useState(x);
+          if (e) return setValue;
+          return given => { set([value, given]); };
+        }
+
+        let log = [];
+        const more = () => { log.push("more"); };
+        const set = style => { log.push(style); };
+        const listen = () => {};
+        const unlisten = name => { log.push(name); };
+        const propsOf = (e, x = 1) => ({ e, x, more, set, listen, unlisten });
+        // What each gives on.
+        const given = new Map([
+          [HandlerOfTwoArrows, made => made.p.onClick],
+          [EffectWithTwoCleanups, () => globalThis.effect],
+          [ValueOfAContext, made => made.p.value.toggle],
+          [RenderPropOfTwoArrows, made => made.p.row],
+          [NothingOrASetter, made => made.p.onClick],
+          [SetterOrNothing, made => made.p.onClick],
+          [SetterOrAGivenFunction, made => made.p.onClick],
+          [GivenFunctionThenASetterInAnIf, made => made.p.onClick],
+          [SetterThenAGivenFunctionInAnIf, made => made.p.onClick],
+          [useSetterOrAGivenOne, made => made],
+        ]);
+        const functions = [];
+        for (const [component, givenOf] of given) {
+          globalThis.rendering = component;
+          const seen = [];
+          // Each render has the memo cache of the one before. The third picks the other function. The last has
+          // another \`x\`.
+          const render = (e, x) => {
+            const fn = givenOf(component(propsOf(e, x)));
+            if (!seen.includes(fn)) seen.push(fn);
+            log = [];
+            let out = fn("s");
+            if (typeof out === "function") out = out();
+            // What a call of the function does, and which it is of those that the renders gave.
+            return [JSON.stringify([out?.t ?? out ?? null, ...log]), seen.indexOf(fn)];
+          };
+          const renders = [render(false), render(false), render(true), render(false), render(false, 2)];
+          console.log(component.name, ...renders.map(([does]) => does));
+          functions.push(renders.map(([, which]) => which).join(""));
+        }
+        // A function that a memo cache holds is the same function in the next render.
+        console.log("functions", ...functions);
+        console.log("sizes", ...[...given.keys()].map(component => globalThis.caches.get(component)?.length));
+      `;
+  itBundled("react-compiler/OneOfTwoFunctionsThatIsGivenOn", {
+    files: {
+      "/entry.jsx": oneOfTwoFunctionsThatIsGivenOn,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        'HandlerOfTwoArrows [null] [null] [null,"more"] [null] [null]',
+        'EffectWithTwoCleanups [null,"b"] [null,"b"] [null,"a"] [null,"b"] [null,"b"]',
+        'ValueOfAContext [null] [null] ["toggle"] [null] [null]',
+        'RenderPropOfTwoArrows ["i"] ["i"] ["b"] ["i"] ["i"]',
+        'NothingOrASetter ["s"] ["s"] [null] ["s"] ["s"]',
+        'SetterOrNothing [null] [null] ["s"] [null] [null]',
+        'SetterOrAGivenFunction [null,"s"] [null,"s"] ["s"] [null,"s"] [null,"s"]',
+        'GivenFunctionThenASetterInAnIf [null,"s"] [null,"s"] ["s"] [null,"s"] [null,"s"]',
+        'SetterThenAGivenFunctionInAnIf ["s"] ["s"] [null,"s"] ["s"] ["s"]',
+        'useSetterOrAGivenOne [null,[1,"s"]] [null,[1,"s"]] ["s"] [null,[1,"s"]] [null,[2,"s"]]',
+        "functions 00100 00122 00100 00100 00122 00100 01234 01234 01234 00102",
+        "sizes 5 7 8 3 5 5 undefined undefined 5 3",
+      ].join("\n"),
+    },
+  });
+
+  // The pass for the server takes a function that calls a state setter for an event handler, and leaves it out. The
+  // local that this callback calls is a setter to InferTypes, and it is not always one: the component is left as
+  // written for the server too.
+  itBundled("react-compiler/LocalThatIsOneOfTwoFunctionsOnTheServer", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        function CallbackOfOneOfTwo(props) {
+          const [open, setOpen] = useState("closed");
+          const f = props.e ? setOpen : v => "x" + v;
+          const row = () => f(props.x);
+          return <div row={row} open={open} />;
+        }
+        // And a function expression that does nothing is compared here: a render can call what calls it.
+        function CallbackOfASetterOrNothing(props) {
+          const [open, setOpen] = useState("closed");
+          const f = props.e ? setOpen : () => {};
+          const row = () => f(props.x);
+          return <div row={row} open={open} />;
+        }
+        for (const component of [CallbackOfOneOfTwo, CallbackOfASetterOrNothing])
+          for (const e of [false, true]) console.log(component.name, String(component({ e, x: 1 }).p.row()));
+      `,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "cli",
+    run: {
+      stdout: [
+        "CallbackOfOneOfTwo x1",
+        "CallbackOfOneOfTwo 1",
+        "CallbackOfASetterOrNothing undefined",
+        "CallbackOfASetterOrNothing 1",
+      ].join("\n"),
+    },
+  });
+
+  // A local that is an array before a loop is still an array to InferTypes where the loop assigns another object to
+  // it, and `list.indexOf` is then the one of arrays, which only reads. Upstream 1.0.0 does the same. The rule above is
+  // for the type of a function.
+  itBundled("react-compiler/LocalThatALoopMakesOneOfTwoObjects", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function MethodOfWhatALoopReassigns(props) {
+          const arr = [props.x];
+          let list = [];
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) list = props.listOf(arr);
+          }
+          const out = list.indexOf("m");
+          return <div arr={arr} out={out} />;
+        }
+
+        const listOf = arr => ({ indexOf(item) { arr.push(item); return arr.length; } });
+        globalThis.rendering = MethodOfWhatALoopReassigns;
+        // Each render has the memo cache of the one before. In the third the loop assigns nothing.
+        const render = e => JSON.stringify(Object.values(MethodOfWhatALoopReassigns({ x: 1, n: 1, e, listOf }).p));
+        console.log(render(true), render(true), render(false), render(true));
+        console.log("compiled", globalThis.caches.size);
+      `,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: ['[[1,"m"],2] [[1,"m"],2] [[1],-1] [[1,"m"],2]', "compiled 1"].join("\n"),
+    },
+  });
+
+  // No type is wrong here, so the rule above does not find these. One of the two functions writes to a local that it
+  // captures, and the call of the local is not taken for a write to it. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/OneOfTwoFunctionsWritesToWhatItCaptures", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function NothingOrAWriter(props) {
+          const log = [];
+          let add = v => {};
+          if (props.g) add = v => { log.push(v); };
+          add(props.x);
+          return <div log={log.join(",")} />;
+        }
+        function APropOrAWriter(props) {
+          const log = [];
+          const add = props.add ?? (v => { log.push(v); });
+          add(props.x);
+          return <div log={log.join(",")} />;
+        }
+        for (const component of [NothingOrAWriter, APropOrAWriter]) {
+          globalThis.rendering = component;
+          // Each render has the memo cache of the one before, and another \`x\`.
+          const render = x => JSON.stringify(Object.values(component({ x, g: true }).p));
+          console.log(component.name, render(1), render(2), render(3));
+        }
+      `,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: ['NothingOrAWriter ["1"] ["2"] ["3"]', 'APropOrAWriter ["1"] ["2"] ["3"]'].join("\n"),
+    },
+  });
+
+  // The rule changes no type. So each component of the groups above is the same text with the rule and without it, or
+  // it has no memo cache with the rule. `rendersOtherwiseWithoutTheRule` is what upstream compiles wrong. A name that
+  // a sync takes out of that list no longer needs `EnvironmentConfig::joined_functions_are_refused`, if the groups
+  // above still pass. The pragma that turns the rule off is read by debug builds only.
+  test.skipIf(!isDebug && !isASAN)(
+    "a component with a joined function is compiled as before or not at all",
+    async () => {
+      const sources = {
+        localThatIsOneOfTwoFunctions,
+        localThatALoopMakesOneOfTwoFunctions,
+        oneOfTwoFunctionsThatIsGivenOn,
+      };
+      const files: Record<string, string> = {};
+      for (const [name, source] of Object.entries(sources)) {
+        files[`${name}.jsx`] = `// @panicThreshold:"none"\n${source}`;
+        files[`${name}.off.jsx`] = `// @panicThreshold:"none" @joinedFunctionsAreRefused:false\n${source}`;
+      }
+      for (const [path, text] of Object.entries(reactWithAMemoCachePerComponent)) files[path.slice(1)] = text;
+      using dir = tempDir("react-compiler-joined-functions", files);
+      const result = await Bun.build({
+        entrypoints: Object.keys(files)
+          .filter(name => name.endsWith(".jsx"))
+          .map(name => join(String(dir), name)),
+        outdir: join(String(dir), "out"),
+        target: "browser",
+        reactCompiler: true,
+        // @ts-expect-error test-only option, not in bun-types
+        reactCompilerParseTestPragmas: true,
+      });
+      // Per entry: the text of each component, and the line that a run of the entry prints for it.
+      const texts: Record<string, Map<string, string>> = {};
+      const lines: Record<string, Map<string, string>> = {};
+      await Promise.all(
+        result.outputs.map(async output => {
+          const entry = basename(output.path, ".js");
+          const functions = (texts[entry] = new Map());
+          for (const part of (await output.text()).split(/\n(?=function |var |let |const |export )/)) {
+            const name = /^function ((?:use)?[A-Z]\w*)\(/.exec(part)?.[1];
+            // A component that is not compiled has no outlined function, so those of the others are numbered anew.
+            const outlined: string[] = [];
+            const numbered = (it: string) =>
+              `_temp#${outlined.includes(it) ? outlined.indexOf(it) : outlined.push(it) - 1}`;
+            if (name) functions.set(name, part.replace(/\b_temp\d*\b/g, numbered));
+          }
+          await using proc = Bun.spawn({ cmd: [bunExe(), output.path], env: bunEnv, stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ entry, stderr, exitCode }).toEqual({ entry, stderr: "", exitCode: 0 });
+          lines[entry] = new Map(stdout.split("\n").map(line => [line.split(" ", 1)[0], line]));
+        }),
+      );
+      const leftAsWritten: string[] = [];
+      const rendersOtherwiseWithoutTheRule: string[] = [];
+      const other: string[] = [];
+      for (const name of Object.keys(sources)) {
+        for (const [component, text] of texts[name]) {
+          if (lines[name].get(component) !== lines[`${name}.off`].get(component))
+            rendersOtherwiseWithoutTheRule.push(component);
+          if (text === texts[`${name}.off`].get(component)) continue;
+          (/(?:\$c|\b_c)\d*\(\d+\)/.test(text) ? other : leftAsWritten).push(component);
+        }
+      }
+      const wrongWithoutTheRule = [
+        "OneOfTwoInAConditional",
+        "AssignedInAnIf",
+        "ReturnedFromAFunction",
+        "ReturnedFromOneOfTwoFunctions",
+        "CalledBeforeItIsOneOfTwo",
+        "CalledAfterItIsOneOfTwo",
+        "OneIsCalledAndOneIsMadeWithNew",
+        "PassedToAMethodOfAnArray",
+        "OneOfThreeInASwitch",
+        "ReturnedFromAMemo",
+        "CalledInAMemoOnWhatTheMemoMakes",
+        "CalledBeforeAMemoOfItsArgumentAfterAHook",
+        "ArrayOfOrArrayFrom",
+        "CreateElementOrUse",
+        "NothingOrAnEffect",
+        "FunctionExpressionOrFromEntries",
+        "ReassignedInALoop",
+        "SwappedInALoop",
+        "ReassignedInALoopInALoop",
+        "ReassignedInACallback",
+        "ReassignedInAnObjectMethod",
+        "ArrowAssignedInALoop",
+        "ContinueBeforeALoopInALoop",
+        "ResetBeforeAContinue",
+        "NewFunctionReturnsTheOneBefore",
+        "OneOfTwoReturnsTheOneBefore",
+        "ArrowThenAHookInALoop",
+        "ArrayMakerThatALoopReplaces",
+      ];
+      // Right without the rule. The rule does not tell them from the others.
+      const rightWithoutTheRule = [
+        "OneFunctionInALoop",
+        "DefaultHandlerThatALoopReplaces",
+        "SetterOrAGivenFunction",
+        "GivenFunctionThenASetterInAnIf",
+      ];
+      expect({ other, rendersOtherwiseWithoutTheRule, leftAsWritten: leftAsWritten.sort() }).toEqual({
+        other: [],
+        rendersOtherwiseWithoutTheRule: wrongWithoutTheRule,
+        leftAsWritten: [...wrongWithoutTheRule, ...rightWithoutTheRule].sort(),
+      });
+    },
+  );
 
   // The pattern was what is left when all slashes are taken off both ends: `/^https?:\/\//` lost the one that closes it.
   itBundled("react-compiler/RegExpThatEndsInASlash", {

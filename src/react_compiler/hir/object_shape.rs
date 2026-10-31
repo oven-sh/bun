@@ -15,6 +15,7 @@ use crate::hir::Type;
 use crate::hir::type_config::{
     AliasingEffectConfig, AliasingSignatureConfig, ValueKind, ValueReason,
 };
+use crate::inference::infer_mutation_aliasing_effects::is_known_mutable_effect;
 
 // =============================================================================
 // Shape ID constants (matching TS ObjectShape.ts)
@@ -174,9 +175,9 @@ impl ShapeRegistry {
         let id = self.next_anon as usize;
         self.next_anon += 1;
         let (pool, prefix) = if self.base.is_some() {
-            (&OVERLAY_POOL, "<anon_")
+            (&OVERLAY_POOL, Self::OVERLAY_ANON_PREFIX)
         } else {
-            (&BUILDER_POOL, "<generated_")
+            (&BUILDER_POOL, Self::BUILDER_ANON_PREFIX)
         };
         if let Some(&s) = pool.read().unwrap().get(id) {
             return s;
@@ -187,6 +188,77 @@ impl ShapeRegistry {
             w.push(s);
         }
         w[id]
+    }
+
+    const OVERLAY_ANON_PREFIX: &'static str = "<anon_";
+    const BUILDER_ANON_PREFIX: &'static str = "<generated_";
+
+    /// Not in upstream, for `EnvironmentConfig::joined_functions_are_refused`: whether what the shape `said` says of a function is so for a function of the shape `of`.
+    pub fn function_shape_holds_for(
+        &self,
+        said: Option<&'static str>,
+        of: Option<&'static str>,
+    ) -> bool {
+        if said == of {
+            return true;
+        }
+        // `Some(None)` is a function that is only known to be called. An id that has no shape here holds for itself only.
+        let shape = |id: Option<&'static str>| id.map_or(Some(None), |id| self.get(id).map(Some));
+        let (Some(said_shape), Some(of_shape)) = (shape(said), shape(of)) else {
+            return false;
+        };
+        let b = of_shape.and_then(|it| it.function_type.as_ref());
+        let Some(a) = said_shape.and_then(|it| it.function_type.as_ref()) else {
+            // A function expression has no signature, so its shape says nothing of a call. But a call of a hook is in no memo block, and `are_arguments_immutable_and_non_mutating` takes an argument that has no signature for one that writes to nothing.
+            return b.is_none_or(|it| {
+                let mut effects = it.positional_params.iter().chain(&it.rest_param);
+                it.hook_kind.is_none() && !effects.any(|it| is_known_mutable_effect(*it))
+            });
+        };
+        let Some(b) = b else {
+            return false;
+        };
+        let has_properties =
+            |shape: Option<&ObjectShape>| shape.is_some_and(|it| !it.properties.is_empty());
+        // Something asks for a shape that has a name by that name: `is_use_operator_type` tells `use` from `createElement`, which has the same signature.
+        let is_anon = |id: Option<&'static str>| {
+            id.is_some_and(|id| {
+                id.starts_with(Self::OVERLAY_ANON_PREFIX)
+                    || id.starts_with(Self::BUILDER_ANON_PREFIX)
+            })
+        };
+        if !is_anon(said) || !is_anon(of) || has_properties(said_shape) || has_properties(of_shape)
+        {
+            return false;
+        }
+        // No `..`: a field that a sync adds does not compile until it is compared here. What the two return is in their types, and the name is for a message.
+        let FunctionSignature {
+            positional_params,
+            rest_param,
+            return_type: _,
+            return_value_kind,
+            return_value_reason,
+            callee_effect,
+            hook_kind,
+            no_alias,
+            mutable_only_if_operands_are_mutable,
+            impure,
+            known_incompatible,
+            canonical_name: _,
+            aliasing,
+        } = a;
+        *positional_params == b.positional_params
+            && *rest_param == b.rest_param
+            && *return_value_kind == b.return_value_kind
+            && *return_value_reason == b.return_value_reason
+            && *callee_effect == b.callee_effect
+            && *hook_kind == b.hook_kind
+            && *no_alias == b.no_alias
+            && *mutable_only_if_operands_are_mutable == b.mutable_only_if_operands_are_mutable
+            && *impure == b.impure
+            && *known_incompatible == b.known_incompatible
+            && aliasing.is_none()
+            && b.aliasing.is_none()
     }
 
     pub fn get(&self, key: &str) -> Option<&ObjectShape> {

@@ -2825,14 +2825,24 @@ impl TestCommand {
         let reporter: &mut CommandLineReporter = &mut restore_only;
 
         let dot_slash = core::cell::OnceCell::new();
-        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
+        let resolved: &[u8] = match vm.transpiler.resolve_entry_point(file_name, &dot_slash) {
+            Ok(resolution) => resolution.path_pair.primary.text,
+            // The loader resolves again and reports a miss as this file's failure (#44473).
+            Err(bun_bundler::Error::Resolver(_)) => {
+                let log = vm.transpiler.log_mut();
+                log.msgs.pop();
+                log.errors -= 1;
+                file_name
+            }
+            Err(err) => return Err(err.into()),
+        };
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
         let file_path: &'static [u8] = FileSystem::get()
             .filename_store
-            .append_slice(resolution.path_pair.primary.text)
+            .append_slice(resolved)
             .expect("oom");
         run_compiled::will_run_test_file(resolve_path::relative(
             FileSystem::get().top_level_dir(),

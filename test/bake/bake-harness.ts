@@ -848,6 +848,8 @@ export class Client extends EventEmitter {
   webSocketMessagesAllowed = true;
   /** Every `received-hmr-event` ack so far, counted before any listener runs. */
   acksReceived = 0;
+  /** The page this client shows. */
+  url: string;
 
   constructor(
     url: string,
@@ -855,6 +857,7 @@ export class Client extends EventEmitter {
   ) {
     super();
     activeClient = this;
+    this.url = url;
     const proc = Bun.spawn({
       cmd: [
         node,
@@ -903,20 +906,32 @@ export class Client extends EventEmitter {
     proc.exited.then(exitCode => (this.output.exitCode = exitCode));
   }
 
-  hardReload(options: { errors?: ErrorSpec[] } = {}) {
+  /**
+   * Reloads the page. With `url`, the client loads that page of the same
+   * server instead, as a browser does on navigation: the old window is
+   * closed, its HMR socket with it, and a new window loads the page.
+   */
+  hardReload(options: { errors?: ErrorSpec[]; url?: string } = {}) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
+      if (options.url) this.url = new URL(options.url, this.url).href;
+      const message = { type: "hard-reload", args: [this.url] };
       if (!this.hmr) {
-        this.#proc.send({ type: "hard-reload" });
+        this.#proc.send(message);
         return;
       }
       await this.drainAcks();
       const loaded = this.waitForPageLoad();
-      this.#proc.send({ type: "hard-reload" });
+      this.#proc.send(message);
       await loaded;
       await this.expectErrorOverlay(options.errors ?? []);
     });
+  }
+
+  /** Loads another page of the same server in this client. See `hardReload`. */
+  navigate(url: string, options: { errors?: ErrorSpec[] } = {}) {
+    return this.hardReload({ ...options, url });
   }
 
   /**

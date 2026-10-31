@@ -1,8 +1,7 @@
 name: Comment Cop
 
-# Flags multi-line code comments added in src/ by claude-labeled PRs and
-# asks for them to be deleted. Groups containing a SAFETY: marker are
-# skipped. Runs entirely against the GitHub API (no checkout of PR code).
+# Flags comments of 3+ text lines added in src/ by claude-labeled PRs (SAFETY: blocks exempt).
+# Runs entirely against the GitHub API, no checkout of PR code.
 
 on:
   pull_request_target:
@@ -24,7 +23,7 @@ jobs:
       group: comment-cop-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - name: Scan diff for added multi-line comments
+      - name: Scan diff for added paragraph-sized comments
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -36,7 +35,9 @@ jobs:
             const headSha = context.payload.pull_request.head.sha;
 
             const SRC_EXT = /\.(rs|c|cc|cpp|h|hpp|m|mm|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
-            const MIN_LINES = 2;
+            const MIN_TEXT_LINES = 3;
+            // "//", "///", "//!", "/*", "/**", "*", "*/": structure, not text.
+            const DELIMITER_ONLY = /^(\/\/+!?|\/\*+|\*+\/?)$/;
 
             function isCommentLine(line) {
               const t = line.trimStart();
@@ -51,7 +52,7 @@ jobs:
               let newLine = 0;
               let cur = null;
               const flush = () => {
-                if (cur && cur.lines.length >= MIN_LINES) {
+                if (cur && cur.lines.filter(l => !DELIMITER_ONLY.test(l.trim())).length >= MIN_TEXT_LINES) {
                   const text = cur.lines.join('\n');
                   if (!/SAFETY:/.test(text)) out.push({ path, start: cur.start, end: cur.end, text });
                 }

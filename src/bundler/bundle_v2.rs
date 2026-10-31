@@ -5928,6 +5928,10 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
+                                    // The dev server files this failure under `path.text` in every namespace.
+                                    record.set_module_path(Fs::Path::init(
+                                        sources[record.source_index.get() as usize].path.text,
+                                    ));
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
@@ -6790,13 +6794,14 @@ pub mod bv2_impl {
                             resolve_queue.get_or_put(path_primary.text).expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
+                            import_record
+                                .set_module_path(unsafe { &**resolve_entry.value_ptr }.path);
                             continue;
                         }
 
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.graph.heap.alloc_slice_copy(path_primary.text);
-                        import_record.path = path_primary;
+                        import_record.set_module_path(path_primary);
                         let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
@@ -7099,9 +7104,7 @@ pub mod bv2_impl {
                             {
                                 // Overload `path.text` to point to the final URL
                                 // This information cannot be queried while printing because a lock wouldn't get held.
-                                import_record.path.text = path.text;
-                                import_record.path.namespace = b"file";
-                                import_record.path.pretty = self
+                                let pretty = self
                                     .arena()
                                     .alloc_str(&format!(
                                         "{}/{}{}",
@@ -7112,13 +7115,20 @@ pub mod bv2_impl {
                                         bstr::BStr::new(bun_paths::extension(path.text)),
                                     ))
                                     .as_bytes();
-                                import_record.path.is_disabled = false;
+                                import_record.set_module_path(Fs::Path {
+                                    text: path.text,
+                                    namespace: b"file",
+                                    pretty,
+                                    is_disabled: false,
+                                    ..import_record.path
+                                });
                             } else {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
-                                import_record.path = self
-                                    .path_with_pretty_initialized(path, target)
-                                    .expect("oom");
+                                import_record.set_module_path(
+                                    self.path_with_pretty_initialized(path, target)
+                                        .expect("oom"),
+                                );
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
@@ -7159,8 +7169,9 @@ pub mod bv2_impl {
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
-                        import_record.path =
-                            self.graph.input_files.items_source()[id as usize].path;
+                        import_record.set_module_path(
+                            self.graph.input_files.items_source()[id as usize].path,
+                        );
                     } else {
                         import_record.source_index = Index::init(id);
                     }
@@ -7174,7 +7185,7 @@ pub mod bv2_impl {
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
+                    import_record.set_module_path(unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 
@@ -7182,7 +7193,7 @@ pub mod bv2_impl {
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
 
-                import_record.path = *path;
+                import_record.set_module_path(*path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned.
@@ -7420,7 +7431,7 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                if let Some(source_index) = path_to_source_index_map.get_record(record) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7763,7 +7774,7 @@ pub mod bv2_impl {
                             let resolved_index = if star_ir.source_index.is_valid() {
                                 star_ir.source_index.get()
                             } else if let Some(idx) =
-                                this.graph.build_graphs[result_ast_target].get_path(&star_ir.path)
+                                this.graph.build_graphs[result_ast_target].get_record(star_ir)
                             {
                                 idx
                             } else {

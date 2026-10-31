@@ -1626,6 +1626,103 @@ describe("bundler", () => {
     };
   });
 
+  // A re-export that the `external` option keeps external has no module. When
+  // a late importer un-defers it, it must not be linked to a plugin module whose
+  // path text is also "react". late.js is loaded only after the "virt" answer is
+  // queued, so that module is in the path map by then.
+  itBundled("barrel/ExternalReExportNotLinkedToModuleWithSameText", () => {
+    const virtAnswered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { A } from 'textlib';
+          import { x } from 'virt';
+          import late from './late.js';
+          console.log(A, x, late);
+        `,
+        "/late.js": ``,
+        "/node_modules/textlib/package.json": JSON.stringify({
+          name: "textlib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/textlib/index.js": /* js */ `
+          export { default as React } from 'react';
+          export { A } from './a.js';
+        `,
+        "/node_modules/textlib/a.js": /* js */ `
+          export const A = "a";
+        `,
+        "/node_modules/react/package.json": JSON.stringify({ name: "react", main: "./index.js" }),
+        "/node_modules/react/index.js": `module.exports = "real";`,
+      },
+      outfile: "/out.js",
+      external: ["react"],
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "react", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await virtAnswered.promise;
+          return { contents: `import { React } from 'textlib'; export default React;`, loader: "js" };
+        });
+      },
+      run: { stdout: "a x real" },
+    };
+  });
+
+  // An `export *` that a plugin answers external has no module. Its specifier is
+  // the path of the barrel, and the barrel must not become an `export *` target
+  // through that text: a target defers nothing, so b.js would load. The barrel is
+  // loaded only after star.js is scanned, which is when a target is marked.
+  itBundled("barrel/ExternalExportStarIsNotATargetOfModuleWithSameText", ({ root }) => {
+    const starScanned = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { A } from 'starlib';
+          import './star.js';
+          console.log(A);
+        `,
+        "/star.js": `export * from ${JSON.stringify(join(root, "node_modules/starlib/index.js"))};`,
+        "/node_modules/starlib/package.json": JSON.stringify({
+          name: "starlib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/starlib/index.js": /* js */ `
+          export { A } from './a.js';
+          export { B } from './b.js';
+        `,
+        "/node_modules/starlib/a.js": /* js */ `
+          export const A = "star-lib-a";
+        `,
+        // Nobody imports B, so b.js must stay deferred.
+        "/node_modules/starlib/b.js": /* js */ `
+          export const B = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      outfile: "/out.js",
+      plugins(builder) {
+        builder.onResolve({ filter: /starlib[\\/]index\.js$/ }, args => {
+          starScanned.resolve();
+          return { path: args.path, external: true };
+        });
+        builder.onLoad({ filter: /starlib[\\/]index\.js$/ }, async () => {
+          await starScanned.promise;
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("star-lib-a");
+      },
+    };
+  });
+
   // When the plugin does not answer, the record falls back to the resolver and
   // the failure is reported. Resolving the barrel again reported it twice.
   itBundled("barrel/UnresolvableReExportReportedOnce", {

@@ -2413,6 +2413,21 @@ impl<T> Once<T> {
         self.init_slow(f)
     }
 
+    /// `get_or_init` for an `f` that can fail: an `Err` is not stored, and racing threads can each run `f`.
+    #[inline(always)]
+    pub fn get_or_try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        match self.get() {
+            Some(v) => Ok(v),
+            None => self.try_init_slow(f),
+        }
+    }
+
+    #[inline(never)]
+    fn try_init_slow<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        let v = f()?;
+        Ok(self.get_or_init(move || v))
+    }
+
     // `#[inline(never)]`, not `#[cold]`: the very first call to every `Once`
     // *always* lands here during single-threaded startup, so this is not a
     // rare branch — `#[cold]` would only relocate every monomorphisation into
@@ -2701,8 +2716,9 @@ fn os_entropy(bytes: &mut [u8]) {
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
-    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
-    let r = CELL.get_or_init(|| {
+    // Only a path is kept. Linux has none while `/proc` is not mounted, and a later call can find it mounted.
+    static CELL: Once<ZBox> = Once::new();
+    let path = CELL.get_or_try_init(|| -> crate::CrateResult<ZBox> {
         let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
@@ -2741,11 +2757,15 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
             }
             Ok(ZBox::from_vec_with_nul(s.into_bytes()))
         }
-    });
-    match r {
-        Ok(z) => Ok(z.as_zstr()),
-        Err(e) => Err(*e),
-    }
+    })?;
+    Ok(path.as_zstr())
+}
+
+/// Linux composes `/proc/self/exe` when it is read, so read it before the file can be replaced (`bun upgrade`).
+pub fn init_self_exe_path() {
+    // macOS and Windows report the start path. FreeBSD reads late too, but no CI lane runs its tests.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let _ = self_exe_path();
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
@@ -4368,7 +4388,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable");
+        let Ok(exec_path) = self_exe_path() else {
+            crate::err_generic!("Failed to reload: the path of the executable is not known");
+            if may_return {
+                return;
+            }
+            crate::Global::exit(1);
+        };
 
         libc::execve(
             exec_path.as_ptr(),
@@ -4399,9 +4425,9 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
-/// Replaces this process with Bun run with `args`.
+/// Replaces this process with the Bun at `exec_path` run with `args`.
 #[cfg(unix)]
-pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+pub fn exec_self(exec_path: &ZStr, args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     unsafe extern "C" {
         safe fn on_before_reload_process_posix(close_inherited_fds: bool);
     }
@@ -4412,10 +4438,9 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     argv.extend(args.iter().map(ZBox::from_bytes));
     let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
     pointers.push(core::ptr::null());
-    let exec_path = self_exe_path().expect("unreachable").as_ptr();
     on_before_reload_process_posix(false);
-    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
-    // process's own, and `fcntl` takes no pointer.
+    // SAFETY: `exec_path` is NUL-terminated, `pointers` is a null-terminated array of NUL-terminated strings that outlive
+    // the call, `environ` is the process's own, and `fcntl` takes no pointer.
     unsafe {
         if let Some(fd) = keep_open {
             let flags = libc::fcntl(fd.native(), libc::F_GETFD);
@@ -4423,7 +4448,11 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
                 libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
             }
         }
-        libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
+        libc::execve(
+            exec_path.as_ptr(),
+            pointers.as_ptr().cast(),
+            c_environ().cast(),
+        );
     }
     std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }

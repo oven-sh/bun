@@ -1652,13 +1652,16 @@ describe("pathological autolink opener inputs", () => {
         `
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const flood = "x " + fill(300000, "<ab:");
-        const html = Bun.markdown.html(flood);
-        if (!html.includes("&lt;ab:&lt;ab:")) throw new Error("expected escaped autolink openers: " + JSON.stringify(html.slice(0, 120)));
-        if (html.length < flood.length) throw new Error("unexpected output length " + html.length);
-        // A real autolink in front of the flood is still recognized.
-        const mixed = Bun.markdown.html("see <https://example.com/x> then " + fill(50000, "<ab:"));
-        if (!mixed.includes('<a href="https://example.com/x">https://example.com/x</a>')) {
-          throw new Error("real autolink did not render: " + JSON.stringify(mixed.slice(0, 200)));
+        // With noHtmlSpans each "<" is still asked whether it starts an autolink.
+        for (const options of [{}, { noHtmlSpans: true }]) {
+          const html = Bun.markdown.html(flood, options);
+          if (!html.includes("&lt;ab:&lt;ab:")) throw new Error("expected escaped autolink openers: " + JSON.stringify(html.slice(0, 120)));
+          if (html.length < flood.length) throw new Error("unexpected output length " + html.length);
+          // A real autolink in front of the flood is still recognized.
+          const mixed = Bun.markdown.html("see <https://example.com/x> then " + fill(50000, "<ab:"), options);
+          if (!mixed.includes('<a href="https://example.com/x">https://example.com/x</a>')) {
+            throw new Error("real autolink did not render: " + JSON.stringify(mixed.slice(0, 200)));
+          }
         }
         console.log("DONE");
         `,
@@ -1916,6 +1919,116 @@ describe("email autolinks", () => {
 
   test.each(["a@-b.c", "a@b-.c"])("<%s> is not one", address => {
     expect(Markdown.html(`<${address}>\n`)).toBe(`<p>&lt;${address}&gt;</p>\n`);
+  });
+});
+
+describe("noHtmlSpans", () => {
+  const html = (text: string) => Markdown.html(text, { noHtmlSpans: true });
+
+  test.each([
+    { noHtmlSpans: true },
+    { no_html_spans: true },
+    { noHtmlSpans: 1 },
+    { noHtmlSpans: true, autolinks: true },
+    { noHtmlSpans: true, noHtmlBlocks: true },
+  ])("%j: a raw tag is text, an autolink in angle brackets is a link", options => {
+    const text = "Docs: <https://example.com/docs>, mail <me@example.com>, and a <b>raw</b> tag.\n";
+    expect(Markdown.html(text, options as any)).toBe(
+      '<p>Docs: <a href="https://example.com/docs">https://example.com/docs</a>, mail <a href="mailto:me@example.com">me@example.com</a>, and a &lt;b&gt;raw&lt;/b&gt; tag.</p>\n',
+    );
+  });
+
+  test("the shortest autolinks", () => {
+    expect(html("<ab:>\n")).toBe('<p><a href="ab:">ab:</a></p>\n');
+    expect(html("<a@b.c>\n")).toBe('<p><a href="mailto:a@b.c">a@b.c</a></p>\n');
+  });
+
+  test("an autolink hides the markers in it", () => {
+    expect(html("*a <https://example.com/*> b*\n")).toBe(
+      '<p><em>a <a href="https://example.com/*">https://example.com/*</a> b</em></p>\n',
+    );
+    expect(html("<https://example.com/`> and `code`\n")).toBe(
+      '<p><a href="https://example.com/%60">https://example.com/`</a> and <code>code</code></p>\n',
+    );
+    expect(html("<https://example.com/?a=1&amp;b=2>\n")).toBe(
+      '<p><a href="https://example.com/?a=1&amp;amp;b=2">https://example.com/?a=1&amp;amp;b=2</a></p>\n',
+    );
+    expect(html("<https://example.com/\\*> *a*\n")).toBe(
+      '<p><a href="https://example.com/%5C*">https://example.com/\\*</a> <em>a</em></p>\n',
+    );
+  });
+
+  test.each([
+    [
+      "a heading",
+      "# <https://example.com/h>\n",
+      '<h1><a href="https://example.com/h">https://example.com/h</a></h1>\n',
+    ],
+    [
+      "a table cell",
+      "| a |\n|---|\n| <https://example.com/c> |\n",
+      '<table>\n<thead>\n<tr><th>a</th></tr>\n</thead>\n<tbody>\n<tr><td><a href="https://example.com/c">https://example.com/c</a></td></tr>\n</tbody>\n</table>\n',
+    ],
+    [
+      "the description of an image",
+      "![a <https://example.com/i> b](/i.png)\n",
+      '<p><img src="/i.png" alt="a https://example.com/i b" /></p>\n',
+    ],
+  ])("an autolink in %s", (_, text, expected) => {
+    expect(html(text)).toBe(expected);
+  });
+
+  // What a link in the text of a link is printed as is not decided here.
+  test.each(["[see <https://example.com/l>](/u)\n", "[a <https://example.com/]>](/u)\n"])(
+    "an autolink in the text of a link: %j",
+    text => {
+      expect(html(text)).toContain('<a href="https://example.com/');
+      expect(html(text)).toBe(Markdown.html(text));
+    },
+  );
+
+  test("a raw tag hides no marker", () => {
+    expect(html('<a href="x">*y*</a>\n')).toBe("<p>&lt;a href=&quot;x&quot;&gt;<em>y</em>&lt;/a&gt;</p>\n");
+    expect(html('*a <b title="*"> c*\n')).toBe("<p><em>a &lt;b title=&quot;</em>&quot;&gt; c*</p>\n");
+  });
+
+  // Each of these starts raw HTML and is an e-mail autolink too.
+  test.each([
+    ["a <!x@y.z> b\n", '<p>a <a href="mailto:!x@y.z">!x@y.z</a> b</p>\n'],
+    ["a <!--x@y.z> b --> c\n", '<p>a <a href="mailto:!--x@y.z">!--x@y.z</a> b --&gt; c</p>\n'],
+    ["a <?x@y.z> b ?> c\n", '<p>a <a href="mailto:?x@y.z">?x@y.z</a> b ?&gt; c</p>\n'],
+  ])("%j is an autolink", (text, autolink) => {
+    expect(html(text)).toBe(autolink);
+  });
+
+  // Without the option raw HTML is looked for first. micromark prints these two
+  // the same way: its e-mail autolink has no `!`.
+  test.each([
+    ["a <!x@y.z> b\n", "<p>a <!x@y.z> b</p>\n"],
+    ["a <!--x@y.z> b --> c\n", "<p>a <!--x@y.z> b --> c</p>\n"],
+  ])("%j is raw HTML without the option", (text, raw) => {
+    expect(Markdown.html(text)).toBe(raw);
+  });
+
+  test("a < that starts nothing does not split the text", () => {
+    const texts: string[] = [];
+    Markdown.render("a < b and c > d\n", { text: text => (texts.push(text), text) }, { noHtmlSpans: true });
+    expect(texts).toEqual(["a < b and c > d"]);
+  });
+});
+
+// render() and react() have these rows in md-render-callback.test.ts and md-react.test.ts.
+describe("the description of an image is text", () => {
+  test.each([
+    ["<https://example.com/x>", {}, "https://example.com/x"],
+    ["https://example.com/x", { autolinks: true }, "https://example.com/x"],
+    ["[[Page]]", { wikiLinks: true }, "Page"],
+  ])("%s in html(), options %j", (link, options, text) => {
+    expect(Markdown.html(`![a ${link} b](/i.png)\n`, options)).toBe(`<p><img src="/i.png" alt="a ${text} b" /></p>\n`);
+  });
+
+  test("a wiki link in ansi()", () => {
+    expect(Markdown.ansi("![a [[Page]] b](/i.png)\n", { colors: false })).toBe("[img] a Page b\n");
   });
 });
 

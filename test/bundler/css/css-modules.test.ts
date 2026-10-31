@@ -716,6 +716,40 @@ describe("bare :global", () => {
       `);
     },
   });
+
+  itBundled("css-module/BareGlobalThatEndsASelectorInPlainCss", {
+    files: {
+      "/index.css": /* css */ `
+      :global { .x { color: red } }
+      .a { :global { .y { color: red } } }
+      .b :global { color: red }
+      .c:global { animation: spin 1s }
+      .d { &:global { animation: spin 1s } }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.css"],
+    onAfterBundle(api) {
+      api.expectFile("/out/index.css").toEqualIgnoringWhitespace(`
+      /* index.css */
+      :global .x {
+        color: red;
+      }
+      .a :global .y {
+        color: red;
+      }
+      .b :global {
+        color: red;
+      }
+      .c:global {
+        animation: 1s spin;
+      }
+      .d:global {
+        animation: 1s spin;
+      }
+      `);
+    },
+  });
 });
 
 describe("css modules", () => {
@@ -820,7 +854,7 @@ describe("css modules", () => {
       styles: { c1: "c1_H", c2: "c2_H", c5: "c5_H", c3: "c3_H" },
     },
     {
-      name: "a bare :global ends with the selector list that holds it, and with the prelude",
+      name: "a bare :global with a selector after it ends with the selector list that holds it, and with the prelude",
       css: `.a:not(:global .g) .b { color: red } :global .g { .n { color: blue } }`,
       out: `.a_H:not(.g) .b_H { color: red; } .g .n_H { color: #00f; }`,
       styles: { a: "a_H", b: "b_H", n: "n_H" },
@@ -847,6 +881,225 @@ describe("css modules", () => {
     },
   ])("$name", async ({ css, out, styles, logs = [] }) => {
     expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
+  });
+
+  // A bare `:global` / `:local` that ends a selector is the scope of the block of its rule.
+  test.concurrent.each([
+    {
+      name: "a rule that is only :global is no rule of its own, and the names in its block are global",
+      css: `:global { .x { color: red } .y { .z { color: blue } } } .x { color: green }`,
+      out: `.x { color: red; } .y .z { color: #00f; } .x_H { color: green; }`,
+      styles: { x: "x_H" },
+    },
+    {
+      name: "a rule that is only :global, nested: its declarations and rules belong to the rule that holds it",
+      css: `.a { color: red; :global { .x { top: 0 } width: 1px } height: 2px }`,
+      out: `.a_H { color: red; } .a_H .x { top: 0; } .a_H { width: 1px; height: 2px; }`,
+      styles: { a: "a_H" },
+    },
+    {
+      name: ":global after white space ends the selector, with or without white space before the block",
+      css: `.a :global { color: red } .b :global{ .x { color: blue } } .c { & :global { .y { top: 0 } } }`,
+      out: `.a_H { color: red; } .b_H .x { color: #00f; } .c_H .y { top: 0; }`,
+      styles: { a: "a_H", b: "b_H", c: "c_H" },
+    },
+    {
+      name: "an empty rule whose selector ends with :global still exports its class",
+      css: `.S :global { /* c */ }`,
+      out: ``,
+      styles: { S: "S_H" },
+    },
+    {
+      name: ":global glued to a compound ends the selector",
+      css: `.a:global { color: red } .b { &:global { .x { color: blue } } } .c[x]:global, .d::after:global, .e::before :global { top: 0 }`,
+      out: `.a_H { color: red; } .b_H .x { color: #00f; } .c_H[x], .d_H:after, .e_H:before { top: 0; }`,
+      styles: { a: "a_H", b: "b_H", c: "c_H", d: "d_H", e: "e_H" },
+    },
+    {
+      name: "keyframes names in the block of a selector that ends with :global are not hashed",
+      css: `${keyframes}
+        .a:global { animation: spin 1s ease }
+        .b { &:global { animation-name: spin } }
+        .c :global { animation: var(--d) spin }
+        .d { animation: spin 1s }`,
+      out: `${keyframesOut} .a_H { animation: 1s spin; } .b_H { animation-name: spin; } .c_H { animation: var(--d) spin; } .d_H { animation: 1s spin_H; }`,
+      styles: { spin: "spin_H", a: "a_H", b: "b_H", c: "c_H", d: "d_H" },
+    },
+    {
+      name: "a local and a global keyframes name are not one name to the minifier",
+      css: `.a { animation: spin 1s } .a:global { animation: spin 1s } .b { animation: spin 2s } .c:global { animation: spin 2s }`,
+      out: `.a_H { animation: 1s spin_H; animation: 1s spin; } .b_H { animation: 2s spin_H; } .c_H { animation: 2s spin; }`,
+      styles: { a: "a_H", b: "b_H", c: "c_H" },
+    },
+    {
+      name: "rules with the same global keyframes names merge, and a quoted name follows the scope too",
+      css: `.a:global { animation: spin 1s, "fade" 2s } .b:global { animation: spin 1s, "fade" 2s } .c { animation: spin 1s, "fade" 2s }`,
+      out: `.a_H, .b_H { animation: 1s spin, 2s fade; } .c_H { animation: 1s spin_H, 2s fade_H; }`,
+      styles: { a: "a_H", b: "b_H", c: "c_H" },
+    },
+    {
+      name: "a list of selectors that end with :global, printed as two rules for :has()",
+      css: `.a:global, .b:has(.c):global { animation: spin 1s, "fade" 2s }`,
+      out: `.a_H { animation: 1s spin, 2s fade; } .b_H:has(.c_H) { animation: 1s spin, 2s fade; }`,
+      styles: { a: "a_H", b: "b_H", c: "c_H" },
+    },
+    {
+      name: "@keyframes in a :global block is global: a rule in global scope names it, a local rule does not",
+      css: `:global { @keyframes spin { to { opacity: 0 } } .g { animation: spin 1s } } .l { animation: spin 1s }`,
+      out: `@keyframes spin { to { opacity: 0; } } .g { animation: 1s spin; } .l_H { animation: 1s spin_H; }`,
+      styles: { l: "l_H" },
+    },
+    {
+      name: ":local ends the scope of a :global block, and the scope ends with the block",
+      css: `:global { .foo { :local { .bar { color: red } } .baz { color: blue } } } .foo { color: green }`,
+      out: `.foo .bar_H { color: red; } .foo .baz { color: #00f; } .foo_H { color: green; }`,
+      styles: { bar: "bar_H", foo: "foo_H" },
+    },
+    {
+      name: "a selector that ends with :local, in a :global block, names the hashed @keyframes",
+      css: `${keyframes} :global { .x { :local { animation: spin 1s } } .y { & :local { animation-name: spin } } .z { animation: spin 1s } }`,
+      out: `${keyframesOut} .x { animation: 1s spin_H; } .y { animation-name: spin_H; } .z { animation: 1s spin; }`,
+      styles: { spin: "spin_H" },
+    },
+    {
+      name: "view-transition-class in a :global block names the class that ::view-transition-group() names",
+      css: `:global { .c { view-transition-class: card } ::view-transition-group(.card) { top: 0 } }`,
+      out: `.c { view-transition-class: card; } ::view-transition-group(.card) { top: 0; }`,
+      styles: {},
+    },
+    {
+      name: "a local and a global view-transition-class are not one value to the minifier",
+      css: `.a { view-transition-class: x } :global { .b { view-transition-class: x } }`,
+      out: `.a_H { view-transition-class: x_H; } .b { view-transition-class: x; }`,
+      styles: { a: "a_H" },
+    },
+    {
+      name: "a view-transition-class of a local rule is not the class of a :global block",
+      css: `.c { view-transition-class: k } :global { ::view-transition-old(.k) { top: 0 } }`,
+      out: `.c_H { view-transition-class: k_H; } ::view-transition-old(.k) { top: 0; }`,
+      styles: { c: "c_H" },
+    },
+    {
+      name: ":global :local, and a list in which every selector ends with :global",
+      css: `:global :local { .x { color: red } } .a :global, .b:global { .y { color: blue } }`,
+      out: `.x_H { color: red; } :is(.a_H, .b_H) .y { color: #00f; }`,
+      styles: { x: "x_H", a: "a_H", b: "b_H" },
+    },
+    {
+      name: "@media inside and around a :global block",
+      css: `:global { @media print { .x { color: red } } } @media screen { :global { .y { color: blue } } .z { top: 0 } }`,
+      out: `@media print { .x { color: red; } } @media screen { .y { color: #00f; } .z_H { top: 0; } }`,
+      styles: { z: "z_H" },
+    },
+    {
+      name: "composes in the block of a selector that ends with :global names local classes, as in every block",
+      css: `.btn { color: red } .primary :global { composes: btn; top: 0 } .b { :global { composes: btn } :local { composes: primary } color: blue }`,
+      out: `.btn_H { color: red; } .primary_H { top: 0; } .b_H { color: #00f; }`,
+      styles: { btn: "btn_H", primary: "btn_H primary_H", b: "btn_H primary_H b_H" },
+    },
+    {
+      name: "@font-face and the at-rules of Tailwind in a :global block",
+      css: `:global { @font-face { font-family: f; src: local(f) } .x { @apply flex } }`,
+      out: `@font-face { font-family: f; src: local(f); } .x { @apply flex; }`,
+      styles: {},
+      logs: [`invalid @ rule encountered: '@apply'`],
+    },
+  ])("$name", async ({ css, out, styles, logs = [] }) => {
+    expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
+  });
+
+  test.concurrent("a list of 65,536 selectors that end with :global", async () => {
+    const count = 65536;
+    const repeat = (text: string) => Buffer.alloc(text.length * count, text).toString();
+    const selectors = repeat("a:global,").slice(0, -1);
+    using dir = tempDir("css-modules-long-list", { "styles.module.css": `${selectors} { color: red }` });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "styles.module.css")],
+      outdir: join(String(dir), "out"),
+      throw: false,
+    });
+    expect(result.logs).toEqual([]);
+    // The comment in front of the rule holds the path of the temporary directory.
+    const css = (await result.outputs[0].text()).replace(/\/\*.*?\*\/\s*/, "");
+    const list = css.slice(0, css.indexOf(" {"));
+    const expected = repeat("a, ").slice(0, -2);
+    expect(list.length).toBe(expected.length);
+    expect(list === expected).toBe(true);
+  });
+
+  // Inside parentheses a bare `:global` that ends a selector is not the scope of a block.
+  // `:is()`, `:where()` and `@scope ()` drop that selector, as they drop every selector that does not parse.
+  test.concurrent.each([
+    [`.a:is(.b :global) { .x { color: red } }`, `.a_H:is() .x_H { color: red; }`, { a: "a_H", b: "b_H", x: "x_H" }, []],
+    [
+      `.a:where(.b :global ) { .x { color: red } }`,
+      `.a_H:where() .x_H { color: red; }`,
+      { a: "a_H", b: "b_H", x: "x_H" },
+      [],
+    ],
+    [`@scope (.a :global) { .x { color: red } }`, `@scope () { .x_H { color: red; } }`, { a: "a_H", x: "x_H" }, []],
+    [
+      `.a { @nest .b :global & { .x { color: red } } }`,
+      `.b_H .a_H .x_H { color: red; }`,
+      { a: "a_H", b: "b_H", x: "x_H" },
+      ["The @nest rule is deprecated, use standard CSS nesting instead"],
+    ],
+  ])("%s keeps the names of its block local", async (css, out, styles, logs) => {
+    expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
+  });
+
+  const notSupported = "Invalid selector. CSS module class: 'global' is currently not supported.";
+  test.concurrent.each([
+    [`.a { > :global { color: red } }`, ["Invalid selector. Empty selector is not allowed"]],
+    [`.a { :global { @keyframes spin { to { opacity: 0 } } } }`, ["Unknown at-rule @keyframes"]],
+    [
+      `.a { @nest & :global { color: red } }`,
+      [
+        "The @nest rule is deprecated, use standard CSS nesting instead",
+        "Invalid selector. Found a dangling combinator with no selector",
+      ],
+    ],
+    [`.a :global { composes: g1; color: red }`, [expect.stringContaining('The name "g1" never appears in')]],
+    [`.a:not(.b :global) { color: red }`, [notSupported]],
+    [`.a:has(.b :global) { color: red }`, [notSupported]],
+    [`:host(.b:global) { color: red }`, [notSupported]],
+    [`.a::slotted(.b:global) { color: red }`, [notSupported]],
+    [`video::cue(.b :global) { color: red }`, [notSupported]],
+    [`.a:nth-child(2n of .b :global) { color: red }`, [notSupported]],
+  ])("%s is an error", async (css, logs) => {
+    expect(await bundle({ "styles.module.css": css })).toEqual({ logs });
+  });
+
+  test.concurrent.each([[["--no-bundle"]], [[]]])("bun build %j: a selector that ends with :global", async flags => {
+    using dir = tempDir("css-modules-global-block", {
+      "ok.module.css": `:global { .x { color: red } }\n.a:global { animation: spin 1s }\n.b { :global { .y { top: 0 } } }\n`,
+      "bad.module.css": `.a > :global { color: red }\n`,
+    });
+    const run = async (file: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...flags, file, "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      return { stderr: Bun.stripANSI(stderr), exitCode };
+    };
+
+    expect(await run("ok.module.css")).toEqual({ stderr: "", exitCode: 0 });
+    const css = await Bun.file(join(String(dir), "out", "ok.module.css")).text();
+    expect(
+      css
+        .replace(/\/\*.*?\*\//g, "")
+        .replace(/_[\w-]{6}(?![\w-])/g, "_H")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ).toBe(`.x { color: red; } .a_H { animation: 1s spin; } .b_H .y { top: 0; }`);
+
+    const bad = await run("bad.module.css");
+    expect(bad.stderr).toContain("error: Invalid selector. Found a dangling combinator with no selector");
+    expect(bad.exitCode).toBe(1);
   });
 
   const nested = '"composes" is not allowed inside nested selectors';
@@ -940,8 +1193,18 @@ describe("bare :global and :local: what stays an error", () => {
   describe.each([
     ["NoSpaceBefore", ".a:global .b", "CSS module class: 'global' is currently not supported."],
     ["NoSpaceAfterLocal", ":local.a", "CSS module class: 'local' is currently not supported."],
-    ["NothingAfter", ".a :global ", "Found a dangling combinator with no selector"],
     ["FunctionAfterPart", ".a::part(x):global(.g)", "Token is not allowed in this state"],
+    ["AloneWithADeclaration", ":global ", "Empty selector is not allowed"],
+    ["AfterCombinator", ".a > :global ", "Found a dangling combinator with no selector"],
+    ["NextToASelector", ".a :global, .b ", "CSS module class: 'global' is currently not supported."],
+    ["AloneNextToASelector", ":global, .b ", "CSS module class: 'global' is currently not supported."],
+    ["AloneTwice", ":global, :global ", "CSS module class: 'global' is currently not supported."],
+    ["NextToLocal", ".a :global, .b :local ", "CSS module class: 'local' is currently not supported."],
+    [
+      "NextToASelectorThatStartsWithIt",
+      ":global .foo, .bar :global ",
+      "CSS module class: 'global' is currently not supported.",
+    ],
   ])("%s", (name, selector, error) => {
     itBundled(`css-module/BareGlobal${name}IsAnError`, {
       files: {

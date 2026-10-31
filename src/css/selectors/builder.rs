@@ -92,6 +92,14 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         self.current_len = 0;
     }
 
+    /// Takes back the last combinator. No simple selector came after it.
+    pub(crate) fn pop_combinator(&mut self) -> Option<Combinator> {
+        debug_assert!(self.current_len == 0);
+        let (combinator, len) = self.combinators.pop()?;
+        self.current_len = len;
+        Some(combinator)
+    }
+
     /// Pushes a simple selector onto the current compound selector.
     pub(crate) fn push_simple_selector(&mut self, ss: GenericComponent<Impl>) {
         debug_assert!(!ss.is_combinator());

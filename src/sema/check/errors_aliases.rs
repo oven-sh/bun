@@ -145,25 +145,15 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── error ranges ─────────────────────────────
 
-    /// The position of the module specifier `spec` of the statement at `pos`.
-    fn aliases_specifier_pos(&self, file: FileId, pos: u32, spec: Atom) -> Option<u32> {
-        self.hir(file)
-            .specifier_uses
-            .iter()
-            .filter(|u| u.spec == spec && u.pos >= pos && !u.kind.is_call())
-            .map(|u| u.pos)
-            .min()
-    }
-
-    /// `GetTextOfNode` of the same specifier, including its quotes.
-    fn aliases_specifier_text(&self, file: FileId, pos: u32, spec: Atom) -> Vec<u8> {
-        let text = &self.hir(file).text[..];
-        self.aliases_specifier_pos(file, pos, spec)
-            .and_then(|at| Some((at, string_literal(text, at as usize)?.1)))
-            .map_or_else(
-                || cat!(b"\"", self.atoms().bytes(spec), b"\""),
-                |(at, end)| self.source_text(file, at, end as u32),
-            )
+    /// `GetTextOfNode` of the module specifier `spec` of the statement `s`, including its quotes.
+    fn aliases_specifier_text(&self, file: FileId, s: StmtId, spec: Atom) -> Vec<u8> {
+        let hir = self.hir(file);
+        match hir.specifier_of_stmt(s, spec).map(|it| it.pos) {
+            Some(at) if matches!(hir.text.get(at as usize), Some(b'"' | b'\'')) => {
+                self.source_text(file, at, self.end_of_string_at(file, at))
+            }
+            _ => cat!(b"\"", self.atoms().bytes(spec), b"\""),
+        }
     }
 
     /// `GetErrorRangeForNode` of `decl`, a declaration of the alias `sym` in `sym`'s file. Returns `None` if it doesn't
@@ -395,7 +385,7 @@ impl Checker<'_, '_> {
             }
             let (of, first) = collision.first;
             if let StmtKind::ExportStar { spec, .. } = self.hir(of)[first].kind {
-                let specifier = self.aliases_specifier_text(of, self.hir(of)[first].start, spec);
+                let specifier = self.aliases_specifier_text(of, first, spec);
                 let arguments = vec![specifier, self.atom_text(collision.name)];
                 reported.push((collision.duplicate.1, arguments));
             }
@@ -1083,7 +1073,8 @@ impl Checker<'_, '_> {
         specifier_use: SpecifierUse,
         site: SpecifierSite,
     ) -> bool {
-        let at = self.span_of_token(file, specifier_use.pos);
+        let end = self.end_of_string_at(file, specifier_use.pos);
+        let at = (file, specifier_use.pos, end);
         self.resolve_external_module_at(file, specifier_use, site, at, None)
     }
 
@@ -1532,22 +1523,6 @@ fn other_import_meta_property_end(text: &[u8], pos: u32) -> Option<u32> {
     eat_word(text, name, b"defer")
         .is_none()
         .then(|| word_end(text, name) as u32)
-}
-
-/// The string literal at `at`: the raw text between the quotes, and its end.
-fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
-    let quote = *text.get(at)?;
-    if quote != b'"' && quote != b'\'' {
-        return None;
-    }
-    let mut end = at + 1;
-    while end < text.len() && text[end] != quote {
-        if text[end] == b'\n' {
-            return None;
-        }
-        end += if text[end] == b'\\' { 2 } else { 1 };
-    }
-    (end < text.len()).then(|| (&text[at + 1..end], end + 1))
 }
 
 /// `getSuggestedImportSource` for a specifier that refers to a declaration file. `is_esm` is true if the emitted file

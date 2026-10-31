@@ -99,3 +99,13 @@ test("the output of a referenced project is named by its package alone, or not a
     `export declare const value: import("@s/a/src/sub").T;\n`,
   );
 });
+
+// A backslash before a line break continues a string. The closing quote is after the line break.
+test("a module specifier that a backslash continues over CR LF is written as the source has it", async () => {
+  using dir = tempDir("bun-build-dts-specifiers", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, noEmit: true } }),
+    "m.ts": `export const a = 1;\n`,
+    "a.ts": `export * from "./m\\\r\n";\r\n`,
+  });
+  expect(await declarationsOf(String(dir), "a.ts", "a.d.ts")).toBe(`export * from "./m\\\r\n";\n`);
+});

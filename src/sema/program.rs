@@ -544,17 +544,65 @@ impl ByPath<'_> {
 /// Used instead of a file of the program for a related location in the configuration file.
 pub const IN_CONFIGURATION: FileId = FileId(u32::MAX - 1);
 
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub struct Files<'s> {
-    session: &'s Session,
-    /// The arena of the thread that runs `load`. The tables below live in it, and only that thread
-    /// adds to them, since every method that does takes `&mut self`.
-    arena: &'s Arena,
-    pub atoms: Interner<'s>,
-    pub options: &'s Options,
     pub modules: ArenaVec<'s, ModuleCell<'s>>,
-    pub by_path: ByPath<'s>,
+    pub options: &'s Options,
 
     pub globals: SymbolMap<'s>,
+    /// `moduleSymbolLinks` of the modules whose exports `getExportsOfModule` resolved during the
+    /// symbol merge, for an alias that `mergeSymbol` resolved. `resolvedExports` is a copy of the
+    /// tables at that point: a name that a later augmentation adds to the module isn't in it, and
+    /// is 2305 for an import. At the end of the merge they move to `Memo::module_links`.
+    module_links_at_merge: Guarded<ArenaVec<'s, (Sym, ModuleSymbolLinks<'s>)>>,
+    memo: Memo<'s>,
+    /// The components of the import graph, which is the `edges` and `imports` of every file in `order`.
+    pub components: Components<'s>,
+    /// `CommonSourceDirectory` without its trailing `/`, if an output path depends on it.
+    pub common_source_directory: Option<&'s [u8]>,
+    /// Indexes into `ambient_patterns`, bucketed by the last byte of the text after the `*`. Bucket 256 is for patterns
+    /// that end with the `*`. A specifier ending in byte `b` can only match patterns in buckets `b` and 256. Empty
+    /// until all patterns are known.
+    ambient_patterns_by_end: &'s [&'s [u32]],
+    /// The modules of `module_links_at_merge`.
+    modules_resolved_at_merge: &'s [Sym],
+    /// The modules with one of `ModuleSymbolLinks::export_collisions` in another file. Filled by
+    /// `link`.
+    pub modules_with_nested_export_collisions: &'s [Sym],
+    /// Sorted by file and identifier. The runs for one identifier are in the order they began. Filled by `link`.
+    failed_lookups: &'s [FailedLookup<'s>],
+    /// The file order in which declarations of one symbol in several files are considered: it
+    /// determines the order of overloads.
+    pub order: &'s [FileId],
+    /// The index of each file in `order`, indexed by `FileId`.
+    ranks: &'s [u32],
+    /// `global_type` of every name below `known::sym_iterator`, indexed by atom number.
+    global_types: &'s [GlobalType],
+    /// Errors in what the options refer to, not attributable to any file.
+    program_errors: &'s [Problem],
+    /// `GetIncludeProcessorDiagnostics`: errors about the inclusion of a file in the program,
+    /// reported at the reference in another file. Each has that file and the span.
+    include_errors: &'s [(FileId, u32, u32, Problem)],
+    /// `DirectoriesByRealpath`: each directory that is known to be a symlink target, with a symlink
+    /// to it, in order. The `package.json` of each is in `package_jsons` under the path of the
+    /// symlink.
+    pub linked_directories: &'s [(&'s [u8], &'s [u8])],
+    /// (identifier expressions, type nodes) of each file, indexed by `FileId`. Used to estimate how much a file costs
+    /// to check.
+    pub sizes: &'s [(u32, u32)],
+    /// The `traceResolution` log, in order.
+    pub resolution_trace: &'s [DiagAndArgs],
+    /// The fields of `Included` that come from `load`, saved for `explain_files`.
+    starts: &'s [FileId],
+    root_of_start: &'s [u32],
+    root_file_names: &'s [Vec<u8>],
+    /// `redirectFilesByPath`, in the order `collectFiles` reaches them: the name of a copy of a
+    /// package file, and the copy that's in the program.
+    package_copies: &'s [(&'s [u8], FileId)],
+    /// `Included::explained_in_diagnostics` for the errors that `load` produced.
+    explained_in_diagnostics: &'s [Vec<u8>],
     /// `globalThisSymbol`: a module symbol that no file declares, which is in `globals` and whose
     /// `Exports` are `globals`. A symbol of the first file.
     pub global_this_symbol: Sym,
@@ -563,21 +611,19 @@ pub struct Files<'s> {
     pub undefined_symbol: Sym,
     /// `unknownSymbol`: the target of an alias that can't be resolved. It isn't in any table.
     pub unknown_symbol: Sym,
-    /// `CommonSourceDirectory` without its trailing `/`, if an output path depends on it.
-    pub common_source_directory: Option<&'s [u8]>,
-    /// `UseCaseSensitiveFileNames`
-    pub is_case_sensitive: bool,
     /// `prototypeSymbol` of `bindClassLikeDeclaration`: the property `symbol.Exports["prototype"]`
     /// of a class, which has no declaration.
     /// Shared by all classes.
     pub prototype_symbol: Sym,
+    libs_end: usize,
+    roots_end: usize,
+
+    /// `aliasSymbolLinks`. Filled by `link`.
+    alias_symbol_links: ByNodeIndirect<Sym, AliasSymbolLinks, Frozen, &'s Session>,
+    /// For `module_links` of a symbol that isn't a module.
+    no_module_links: ModuleSymbolLinks<'s>,
+    pub atoms: Interner<'s>,
     ambient_modules: ArenaHashMap<'s, Atom, Sym>,
-    /// `declare module "*.svg"`
-    ambient_patterns: ArenaVec<'s, (&'s [u8], &'s [u8], Sym)>,
-    /// Indexes into `ambient_patterns`, bucketed by the last byte of the text after the `*`. Bucket 256 is for patterns
-    /// that end with the `*`. A specifier ending in byte `b` can only match patterns in buckets `b` and 256. Empty
-    /// until all patterns are known.
-    ambient_patterns_by_end: &'s [&'s [u32]],
     /// `patternAmbientModuleAugmentations`: keyed by the declared name, the symbol that `declare
     /// module "a.svg"` in a module creates from `declare module "*.svg"`.
     pattern_augmentations: ArenaHashMap<'s, Atom, Sym>,
@@ -586,8 +632,6 @@ pub struct Files<'s> {
     /// `symbol.Declarations` of a transient symbol: the binder symbols that hold them, in merge
     /// order.
     merged_parts: ArenaHashMap<'s, Sym, ArenaVec<'s, Sym>>,
-    /// Only used during the symbol merge: see `redirect_name_to`.
-    placeholders: ArenaVec<'s, (Sym, SymbolId)>,
     /// The exports of a module or a namespace that couldn't merge with the export of the same name
     /// in another declaration.
     rejected_exports: ArenaHashSet<'s, Sym>,
@@ -595,12 +639,26 @@ pub struct Files<'s> {
     merged_exports: ArenaHashMap<'s, Sym, SymbolMap<'s>>,
     /// `symbol.Members` of a transient symbol.
     merged_members: ArenaHashMap<'s, Sym, SymbolMap<'s>>,
+    /// The files that declare one of `rejected_merges`. Filled by `link`.
+    files_with_rejected_merges: ArenaHashSet<'s, FileId>,
+    /// `symbol.Parent` of a transient symbol, where `mergeSymbolTable` has set it to a symbol of
+    /// another file.
+    parents_in_other_files: ArenaHashMap<'s, Sym, Sym>,
+    /// The `package.json` of each `node_modules` package that contains a file of the program, and
+    /// the one in `Module::package_json_directory` of each file, keyed by its directory.
+    /// Declaration files and messages need module specifiers from their `exports` and `imports`.
+    pub package_jsons: ArenaHashMap<'s, &'s [u8], &'s Json>,
+    /// `redirectTargetsMap`: the paths of the duplicates of a package file, for which that file is
+    /// in the program, in order.
+    pub redirect_targets: ArenaHashMap<'s, FileId, &'s [&'s [u8]]>,
+    /// `declare module "*.svg"`
+    ambient_patterns: ArenaVec<'s, (&'s [u8], &'s [u8], Sym)>,
+    /// Only used during the symbol merge: see `redirect_name_to`.
+    placeholders: ArenaVec<'s, (Sym, SymbolId)>,
     pub rejected_merges: ArenaVec<'s, RejectedMerge<'s>>,
     /// `mergeModuleAugmentation`: the symbols of the augmentations whose module resolved to a
     /// non-module entity at the time (2671).
     pub augmentations_of_non_modules: ArenaVec<'s, Sym>,
-    /// The files that declare one of `rejected_merges`. Filled by `link`.
-    files_with_rejected_merges: ArenaHashSet<'s, FileId>,
     /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their
     /// `aliasTarget` stays `unknownSymbol`, even if the merge breaks the cycle.
     pub circular_at_merge: ArenaVec<'s, Sym>,
@@ -608,84 +666,29 @@ pub struct Files<'s> {
     /// links they got then. `aliasTarget` has since become a part of a merged symbol
     /// (`cloneSymbol`), and `resolveAlias` doesn't call `getMergedSymbol`.
     resolved_at_merge: ArenaVec<'s, (Sym, AliasSymbolLinks)>,
-    /// `moduleSymbolLinks` of the modules whose exports `getExportsOfModule` resolved during the
-    /// symbol merge, for an alias that `mergeSymbol` resolved. `resolvedExports` is a copy of the
-    /// tables at that point: a name that a later augmentation adds to the module isn't in it, and
-    /// is 2305 for an import. At the end of the merge they move to `Memo::module_links`.
-    module_links_at_merge: Guarded<ArenaVec<'s, (Sym, ModuleSymbolLinks<'s>)>>,
-    /// The modules of `module_links_at_merge`.
-    modules_resolved_at_merge: &'s [Sym],
+    session: &'s Session,
+    /// The arena of the thread that runs `load`. The tables below live in it, and only that thread
+    /// adds to them, since every method that does takes `&mut self`.
+    arena: &'s Arena,
+    pub by_path: ByPath<'s>,
+    /// `CodeGraph::EMPTY` unless it is a compile build.
+    code_graph: CodeGraph<'s>,
+    /// `UseCaseSensitiveFileNames`
+    pub is_case_sensitive: bool,
     /// `module_links_at_merge` is being filled.
     records_module_links: bool,
-    /// The modules with one of `ModuleSymbolLinks::export_collisions` in another file. Filled by
-    /// `link`.
-    pub modules_with_nested_export_collisions: &'s [Sym],
-    /// Sorted by file and identifier. The runs for one identifier are in the order they began. Filled by `link`.
-    failed_lookups: &'s [FailedLookup<'s>],
-    /// `symbol.Parent` of a transient symbol, where `mergeSymbolTable` has set it to a symbol of
-    /// another file.
-    parents_in_other_files: ArenaHashMap<'s, Sym, Sym>,
 
     /// Some file contains `export type * from`.
     has_type_only_stars: bool,
-
-    /// `aliasSymbolLinks`. Filled by `link`.
-    alias_symbol_links: ByNodeIndirect<Sym, AliasSymbolLinks, Frozen, &'s Session>,
     /// `link` has run: every table is filled, and nothing is mutated from here on.
     is_linked: bool,
-    /// For `module_links` of a symbol that isn't a module.
-    no_module_links: ModuleSymbolLinks<'s>,
     /// The symbol merge is done: symbols no longer change.
     is_merged: bool,
     /// Some alias has a `combined_symbol`.
     has_symbols_to_combine: bool,
-    memo: Memo<'s>,
-    /// The file order in which declarations of one symbol in several files are considered: it
-    /// determines the order of overloads.
-    pub order: &'s [FileId],
-    /// The index of each file in `order`, indexed by `FileId`.
-    ranks: &'s [u32],
-    /// The components of the import graph, which is the `edges` and `imports` of every file in `order`.
-    pub components: Components<'s>,
-    /// `global_type` of every name below `known::sym_iterator`, indexed by atom number.
-    global_types: &'s [GlobalType],
     /// The global `Array` or `ReadonlyArray` declares a member whose name begins with a digit. Only
     /// then can `T[][0]` be anything but `T`.
     pub arrays_have_numeric_members: bool,
-    /// Errors in what the options refer to, not attributable to any file.
-    program_errors: &'s [Problem],
-    /// `GetIncludeProcessorDiagnostics`: errors about the inclusion of a file in the program,
-    /// reported at the reference in another file. Each has that file and the span.
-    include_errors: &'s [(FileId, u32, u32, Problem)],
-    /// The `package.json` of each `node_modules` package that contains a file of the program, and
-    /// the one in `Module::package_json_directory` of each file, keyed by its directory.
-    /// Declaration files and messages need module specifiers from their `exports` and `imports`.
-    pub package_jsons: ArenaHashMap<'s, &'s [u8], &'s Json>,
-    /// `DirectoriesByRealpath`: each directory that is known to be a symlink target, with a symlink
-    /// to it, in order. The `package.json` of each is in `package_jsons` under the path of the
-    /// symlink.
-    pub linked_directories: &'s [(&'s [u8], &'s [u8])],
-    /// `redirectTargetsMap`: the paths of the duplicates of a package file, for which that file is
-    /// in the program, in order.
-    pub redirect_targets: ArenaHashMap<'s, FileId, &'s [&'s [u8]]>,
-    /// (identifier expressions, type nodes) of each file, indexed by `FileId`. Used to estimate how much a file costs
-    /// to check.
-    pub sizes: &'s [(u32, u32)],
-    /// The `traceResolution` log, in order.
-    pub resolution_trace: &'s [DiagAndArgs],
-    /// The fields of `Included` that come from `load`, saved for `explain_files`.
-    starts: &'s [FileId],
-    libs_end: usize,
-    roots_end: usize,
-    root_of_start: &'s [u32],
-    root_file_names: &'s [Vec<u8>],
-    /// `redirectFilesByPath`, in the order `collectFiles` reaches them: the name of a copy of a
-    /// package file, and the copy that's in the program.
-    package_copies: &'s [(&'s [u8], FileId)],
-    /// `Included::explained_in_diagnostics` for the errors that `load` produced.
-    explained_in_diagnostics: &'s [Vec<u8>],
-    /// `CodeGraph::EMPTY` unless it is a compile build.
-    code_graph: CodeGraph<'s>,
 }
 
 /// `Files::global_type`

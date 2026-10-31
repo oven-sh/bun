@@ -89,7 +89,7 @@ static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalO
         return {};
     }
     auto* error = JSC::createError(globalObject, messageOfRemovedFeature(api, feature));
-    error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
+    Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
     JSC::throwException(globalObject, scope, error);
     return {};
 }

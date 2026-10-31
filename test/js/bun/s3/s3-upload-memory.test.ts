@@ -157,6 +157,8 @@ describe.concurrent("a write of in-memory data to S3", () => {
       port: 0,
       hostname: "127.0.0.1",
       maxRequestBodySize: 1024 * MiB,
+      // A held or a waiting request is idle for as long as the child takes.
+      idleTimeout: 0,
       async fetch(req) {
         const url = new URL(req.url);
         if (req.method !== "PUT") {
@@ -367,7 +369,8 @@ describe.concurrent("a write of in-memory data to S3", () => {
     expect(JSON.parse(stdout.trim())).toBe(size);
     expect(exitCode).toBe(0);
     expect(sink.sent("key")).toEqual({ length: size, fill: 97 });
-    expect(Math.round((maxRSS - empty) / MiB)).toBeLessThan(160);
+    // One copy reads about 130 MiB, and 140 MiB with ASAN. With a store between, it is 193 MiB or more.
+    expect(Math.round((maxRSS - empty) / MiB)).toBeLessThan(isASAN || isDebug ? 168 : 152);
   });
 
   test("sends the bytes as they were at the call", async () => {

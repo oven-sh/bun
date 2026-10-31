@@ -6,8 +6,8 @@ import { readFileSync } from "node:fs";
 // identification: an indirect branch into them traps unless it lands on a landing pad.
 const hasBranchTargetIdentification = isLinux && isArm64 && /\bbti\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
 
-// Prints the mappings of this process that are guarded ("bt" in VmFlags), and how far the first one of the executable is from
-// where the executable begins. Given such a distance and "call", it calls what is there.
+// Prints the mappings of this process that are guarded ("bt" in VmFlags), and how far from where the executable begins LLInt has a
+// landing pad and a return (llint_landing_pad_and_return). Given a distance and "call", it calls what is there.
 const script = `
 const fs = require("fs");
 const mappings = fs.readFileSync("/proc/self/smaps", "utf8").split(/\\n(?=[0-9a-f]+-[0-9a-f]+ )/).map(text => {
@@ -17,15 +17,19 @@ const mappings = fs.readFileSync("/proc/self/smaps", "utf8").split(/\\n(?=[0-9a-
 const executable = fs.realpathSync(process.execPath);
 const base = mappings.find(mapping => mapping.path === executable).start;
 const guarded = mappings.filter(mapping => mapping.guarded);
-const first = guarded.find(mapping => mapping.path === executable);
-const distance = process.argv[2] ? BigInt(process.argv[2]) : first ? first.start - base : -1n;
+const { CFunction, toArrayBuffer } = require("bun:ffi");
+let distance = process.argv[2] ? BigInt(process.argv[2]) : -1n;
+for (const mapping of distance < 0n ? guarded.filter(mapping => mapping.path === executable) : []) {
+  const instructions = new Uint32Array(toArrayBuffer(Number(mapping.start), 0, Number(BigInt("0x" + mapping.range.split("-")[1]) - mapping.start)));
+  const index = instructions.findIndex((instruction, i) => instruction === 0xd503245f && instructions[i + 1] === 0xd65f03c0); // bti c, ret
+  if (index >= 0) distance = mapping.start + BigInt(index * 4) - base;
+}
 fs.writeSync(1, JSON.stringify({
   ofExecutable: guarded.filter(mapping => mapping.path === executable).map(mapping => mapping.range + " " + mapping.permissions),
   anonymous: guarded.filter(mapping => !mapping.path).map(mapping => mapping.range + " " + mapping.permissions),
   distance: String(distance),
 }) + "\\n");
 if (process.argv[3] === "call") {
-  const { CFunction } = require("bun:ffi");
   new CFunction({ ptr: Number(base + distance), args: [], returns: "void" })();
   fs.writeSync(1, "returned\\n");
 }
@@ -57,20 +61,30 @@ test.if(hasBranchTargetIdentification)("the pages of LLInt and of JIT code are g
   expect(JSON.parse(without.stdout)).toMatchObject({ ofExecutable: [], anonymous: [] });
 });
 
-// The first guarded page of the executable begins with a nop, a landing pad and a breakpoint. A call of the nop traps because of
-// the guard. Without the guard it gets to the breakpoint.
+// Not anywhere in a guarded page: a breakpoint is a breakpoint wherever the branch to it came from, and what is no return goes on.
 test.if(hasBranchTargetIdentification)("an indirect branch past a landing pad traps", async () => {
   using dir = tempDir("branch-target-identification", { "script.js": script });
-  const { distance } = JSON.parse((await run(String(dir), [])).stdout);
-  expect(BigInt(distance)).toBeGreaterThan(0n);
+  const distance = BigInt(JSON.parse((await run(String(dir), [])).stdout).distance);
+  expect(distance).toBeGreaterThan(0n);
 
-  const guarded = await run(String(dir), [distance, "call"]);
-  const unguarded = await run(String(dir), [distance, "call"], { BUN_JSC_useBranchTargetIdentification: "0" });
-  for (const [name, result] of Object.entries({ guarded, unguarded }))
-    console.log(name, result.exitCode, result.signalCode, result.stderr.split("\n").slice(0, 6).join(" | "));
+  const off = { BUN_JSC_useBranchTargetIdentification: "0" };
+  const results = {
+    toLandingPad: await run(String(dir), [String(distance), "call"]),
+    pastLandingPad: await run(String(dir), [String(distance + 4n), "call"]),
+    pastLandingPadWithoutGuard: await run(String(dir), [String(distance + 4n), "call"], off),
+  };
+  for (const [name, result] of Object.entries(results))
+    console.log(
+      name,
+      result.exitCode,
+      result.signalCode,
+      result.stderr.match(/^.*(?:panic|at address).*$/m)?.[0] ?? "",
+    );
 
-  expect(guarded.stdout).not.toContain("returned");
-  expect(unguarded.stdout).not.toContain("returned");
-  expect(guarded.signalCode ?? guarded.exitCode).toBeOneOf(["SIGILL", 132]);
-  expect(unguarded.signalCode ?? unguarded.exitCode).toBeOneOf(["SIGTRAP", 133]);
+  expect(results.toLandingPad.stdout).toContain("returned");
+  expect(results.toLandingPad.exitCode).toBe(0);
+  expect(results.pastLandingPadWithoutGuard.stdout).toContain("returned");
+  expect(results.pastLandingPadWithoutGuard.exitCode).toBe(0);
+  expect(results.pastLandingPad.stdout).not.toContain("returned");
+  expect(results.pastLandingPad.signalCode ?? results.pastLandingPad.exitCode).toBeOneOf(["SIGILL", 132]);
 });

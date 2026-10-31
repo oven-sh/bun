@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler feature flags", () => {
@@ -425,6 +426,56 @@ console.log(x);
       },
     });
   }
+
+  // Macros run in their own VM whose transpiler options come from the build's
+  // TransformOptions, not from the bundle's parse tasks. Spawn a subprocess so
+  // the macro VM is created fresh with this build's feature flags.
+  test("feature() works inside a macro with the Bun.build API", async () => {
+    using dir = tempDir("bundler-feature-flag-macro", {
+      "index.ts": `
+import { a } from "./macro.ts" with { type: "macro" };
+console.log(a());
+`,
+      "macro.ts": `
+import { feature } from "bun:bundle";
+console.log("module-level:", feature("MACRO_FLAG") ? "on" : "off");
+export function a() {
+  return feature("MACRO_FLAG") ? "feat-on" : "feat-off";
+}
+`,
+      "build.ts": `
+const result = await Bun.build({
+  entrypoints: ["./index.ts"],
+  features: ["MACRO_FLAG"],
+  outdir: "./out",
+});
+if (!result.success) {
+  console.error(...result.logs);
+  process.exit(1);
+}
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "build.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    // The macro module's top-level code sees the flag.
+    expect(stdout).toContain("module-level: on");
+    expect(exitCode).toBe(0);
+
+    // The macro's return value was folded with the flag enabled.
+    const bundled = await Bun.file(path.join(String(dir), "out", "index.js")).text();
+    expect(bundled).toContain("feat-on");
+    expect(bundled).not.toContain("feat-off");
+  });
 
   // Runtime tests - these must remain as manual tests since they test bun run and bun test
   test("works correctly at runtime with bun run", async () => {

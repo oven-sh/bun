@@ -70,7 +70,7 @@ test.concurrent.each([
   ["readFile", "aborts on the next tick", "memory", "AbortError ABORT_ERR", {}],
   ["writeFile", "aborts on the next tick", "memory", "AbortError ABORT_ERR", undefined],
   // The call runs to its end.
-  ["readFile", "never aborts", "wrappers", 'resolved with "blah"', {}],
+  ["readFile", "never aborts", "wrappers", 'resolved with Buffer "blah"', {}],
   ["writeFile", "never aborts", "wrappers", "resolved", written("blah")],
 ] as const)(
   "fs.promises.%s does not leak a signal that %s",

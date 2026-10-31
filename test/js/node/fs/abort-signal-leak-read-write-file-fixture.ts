@@ -44,7 +44,8 @@ const call = methods[method];
 const outcomeOfCall = (slot: number) => {
   const signal = newSignal();
   return call(signal, slot).then(
-    value => (value === undefined ? "resolved" : `resolved with "${value}"`),
+    value =>
+      value === undefined ? "resolved" : `resolved with ${Buffer.isBuffer(value) ? "Buffer" : typeof value} "${value}"`,
     error => `${error.name} ${error.code}${error.cause === signal.reason ? "" : ", cause is not signal.reason"}`,
   );
 };

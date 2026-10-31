@@ -2158,6 +2158,11 @@ const stackTargets = {
 const locks = [Object.preventExtensions, Object.seal, Object.freeze];
 // Two from one place: the stacks of two such Errors are the same text.
 const twins = create => [0, 1].map(() => create());
+// An Error gets originalLine and originalColumn when a read formats its stack, and not when a collection does.
+const keysOf = target =>
+  Reflect.ownKeys(target).filter(
+    key => !(target instanceof Error) || (key !== "originalLine" && key !== "originalColumn"),
+  );
 
 test.each(realms)("Error.captureStackTrace of %s refuses a target that is not extensible", realm => {
   const capture = captureStackTraceOf[realm];
@@ -2175,7 +2180,7 @@ test.each(realms)("Error.captureStackTrace of %s refuses a target that is not ex
         kind,
         `TypeError: ${NOT_EXTENSIBLE}`,
       ]);
-      expect(Reflect.ownKeys(target)).toEqual(Reflect.ownKeys(twin));
+      expect(keysOf(target)).toEqual(keysOf(twin));
       expect(state(target)).toEqual(state(twin));
       // An Error keeps the stack of the place that made it.
       expect(target.stack).toBe(twin.stack);
@@ -2196,12 +2201,12 @@ test.each(realms)("the program of the report: Error.captureStackTrace of %s", re
     () => Object.preventExtensions(new Error("x")),
   ]) {
     const o = make();
-    const keys = Reflect.ownKeys(make());
+    const keys = keysOf(make());
     try {
       capture(o);
       rows.push([Reflect.ownKeys(o).join(), Object.isExtensible(o)]);
     } catch (e) {
-      rows.push(["threw", e.constructor.name, e.message, Reflect.ownKeys(o).join() === keys.join()]);
+      rows.push(["threw", e.constructor.name, e.message, keysOf(o).join() === keys.join()]);
     }
   }
   expect(rows).toEqual(Array(3).fill(["threw", "TypeError", NOT_EXTENSIBLE, true]));

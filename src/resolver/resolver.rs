@@ -2211,20 +2211,12 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
-                    }
-                }
+                return self.check_package_path_in_custom_dirs(
+                    custom_paths,
+                    import_path,
+                    kind,
+                    global_cache,
+                );
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
@@ -2255,6 +2247,74 @@ impl<'a> Resolver<'a> {
             return false;
         };
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
+    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether that is in the cwd.
+    fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<(&'b [u8], bool)> {
+        use ::bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        let cwd = self.fs_ref().top_level_dir();
+        #[cfg(windows)]
+        let path: &'b [u8] = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?;
+        #[cfg(not(windows))]
+        let path: &'b [u8] = {
+            use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
+            join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])?.as_bytes()
+        };
+        // The cache reads a NUL as the end of a path and, on POSIX, a backslash as a separator.
+        let misread: &[u8] = if cfg!(windows) { b"\0" } else { b"\\\0" };
+        if let Some(first) = strings::index_of_any(path, misread) {
+            #[cfg(windows)]
+            let root_len = bun_paths::windows_filesystem_root(path).len();
+            #[cfg(not(windows))]
+            let root_len = 1;
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let cut = strings::last_index_of_any(&path[..first], separators)
+                .map_or(root_len, |separator| separator.max(root_len));
+            return Some((&path[..cut], false));
+        }
+        let in_cwd = is_parent_or_equal(cwd, path) != ParentEqual::Unrelated;
+        Some((path, in_cwd))
+    }
+
+    /// Node's search of `Module._nodeModulePaths(entry)` per `paths` entry, for a bare request.
+    #[cold]
+    #[inline(never)]
+    fn check_package_path_in_custom_dirs<'r>(
+        &mut self,
+        custom_paths: &[bun_core::String],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion<'r> {
+        let mut entry_in_cwd = false;
+        for custom_path in custom_paths {
+            let custom_utf8 = custom_path.to_utf8();
+            let entry = custom_utf8.slice();
+            let result = if bun_paths::is_absolute(entry) {
+                self.check_package_path(entry, import_path, kind, global_cache)
+            } else {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let Some((dir, in_cwd)) = self.custom_dir(entry, &mut buf) else {
+                    continue;
+                };
+                entry_in_cwd |= in_cwd;
+                // A relative entry installs nothing, and a search under `force` always ends in an install.
+                if global_cache == GlobalCache::force {
+                    continue;
+                }
+                self.check_package_path(dir, import_path, kind, GlobalCache::disable)
+            };
+            match result {
+                ResultUnion::NotFound => {}
+                found => return found,
+            }
+        }
+        // Every entry missed. A relative entry installs only through this search, from the project of the cwd.
+        if entry_in_cwd {
+            let cwd = self.fs_ref().top_level_dir();
+            return self.check_package_path(cwd, import_path, kind, global_cache);
+        }
+        ResultUnion::NotFound
     }
 
     pub(crate) fn check_relative_path(
@@ -2412,6 +2472,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion<'r> {
+        debug_assert!(bun_paths::is_absolute(source_dir));
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,

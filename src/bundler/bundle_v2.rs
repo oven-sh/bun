@@ -8042,7 +8042,6 @@ pub mod bv2_impl {
         Css {
             result: crate::Result<Box<[u8]>>,
             source_index: IndexInt,
-            source_map: Option<bun_sourcemap::Chunk>,
         },
         Html {
             source_index: IndexInt,
@@ -8091,8 +8090,7 @@ pub mod bv2_impl {
                     bun_js_printer::PrintResult::Result(r) => r.source_map.as_ref(),
                     bun_js_printer::PrintResult::Err(_) => None,
                 },
-                CompileResult::Css { source_map, .. } => source_map.as_ref(),
-                CompileResult::Html { .. } => None,
+                CompileResult::Css { .. } | CompileResult::Html { .. } => None,
             }
         }
     }
@@ -8148,6 +8146,46 @@ pub mod bv2_impl {
         pub(crate) fn write_ints(&mut self, i: &[u32]) {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
             self.hasher.update(bun_core::slice_as_bytes(i));
+        }
+        /// Hashes the path `template` prints with `/` separators. A template without its hash prints no `[hash]`.
+        pub(crate) fn write_path(
+            &mut self,
+            template: &options::PathTemplate,
+            sanitize_parent_dirs: bool,
+        ) {
+            struct Path<'a> {
+                hasher: &'a mut bun_hash::XxHash64Streaming,
+                len: u64,
+            }
+            impl bun_io::Write for Path<'_> {
+                fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+                    bun_core::scoped_log!(
+                        ContentHasher,
+                        "HASH_UPDATE path: {}\n",
+                        bstr::BStr::new(bytes)
+                    );
+                    self.len += bytes.len() as u64;
+                    let mut remain = bytes;
+                    if bun_paths::SEP != b'/' {
+                        while let Some(i) = strings::index_of_char_usize(remain, bun_paths::SEP) {
+                            self.hasher.update(&remain[..i]);
+                            self.hasher.update(b"/");
+                            remain = &remain[i + 1..];
+                        }
+                    }
+                    self.hasher.update(remain);
+                    Ok(())
+                }
+            }
+            let mut path = Path {
+                hasher: &mut self.hasher,
+                len: 0,
+            };
+            template
+                .print(&mut path, sanitize_parent_dirs)
+                .expect("infallible: a hasher takes any bytes");
+            let len = path.len;
+            self.hasher.update(&len.to_ne_bytes());
         }
         pub(crate) fn digest(&self) -> u64 {
             self.hasher.digest()

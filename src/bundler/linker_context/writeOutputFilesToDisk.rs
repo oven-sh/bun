@@ -292,9 +292,10 @@ pub(crate) fn write_output_files_to_disk(
 
         match chunk.content.sourcemap(c.options.source_maps) {
             tag @ (SourceMapOption::External | SourceMapOption::Linked) => {
+                let debug_id = chunk.debug_id();
                 let output_source_map = chunk
                     .output_source_map
-                    .finalize(&code_result.shifts)
+                    .finalize(&code_result.shifts, debug_id)
                     .unwrap_or_else(|_| {
                         panic!("Failed to allocate memory for external source map")
                     });
@@ -362,9 +363,10 @@ pub(crate) fn write_output_files_to_disk(
                 }));
             }
             SourceMapOption::Inline => {
+                let debug_id = chunk.debug_id();
                 let output_source_map = chunk
                     .output_source_map
-                    .finalize(&code_result.shifts)
+                    .finalize(&code_result.shifts, debug_id)
                     .unwrap_or_else(|_| {
                         panic!("Failed to allocate memory for external source map")
                     });

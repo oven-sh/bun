@@ -612,4 +612,82 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(output).not.toContain("PROBE-CORRUPTED");
     expect(exitCode).toBe(0);
   });
+
+  // A console has no end. A response that nobody receives would take its lines for as long as the process runs.
+  test.skipIf(!isWindows)("the next response can read the console after an aborted Response(Bun.stdin)", async () => {
+    using dir = tempDir("conpty-serve-stdin-abort", {
+      "server-fixture.ts": `
+        const aborted = Promise.withResolvers<void>();
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          async fetch(req) {
+            const { pathname } = new URL(req.url);
+            if (pathname === "/aborted") {
+              await aborted.promise;
+              return new Response("ok");
+            }
+            if (pathname === "/first") req.signal.addEventListener("abort", () => aborted.resolve());
+            return new Response(Bun.stdin);
+          },
+        });
+        console.log("PORT=" + server.port + ";");
+      `,
+    });
+
+    const listening = Promise.withResolvers<number>();
+    const decoder = new TextDecoder();
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        const port = /PORT=(\d+);/.exec(output);
+        if (port) listening.resolve(Number(port[1]));
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "server-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+    proc.exited.then(code => listening.reject(new Error(`child exited before it listened: ${code}\n${output}`)));
+
+    try {
+      const port = await listening.promise;
+      const sawHello = Promise.withResolvers<void>();
+      let received = "";
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port,
+        socket: {
+          open: socket => void socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n"),
+          data(socket, chunk) {
+            received += chunk.toString();
+            if (received.includes("hello")) sawHello.resolve();
+          },
+          close: () => sawHello.reject(new Error("the server closed the connection after " + JSON.stringify(received))),
+          error: (socket, error) => sawHello.reject(error),
+        },
+      });
+      terminal.write("hello\r");
+      await sawHello.promise;
+      client.terminate();
+      await fetch(`http://127.0.0.1:${port}/aborted`).then(res => res.text());
+
+      terminal.write("world\r");
+      // The body of a console has no end, so read only as far as the line.
+      const second = await fetch(`http://127.0.0.1:${port}/second`);
+      let body = "";
+      for await (const chunk of second.body!) {
+        body += Buffer.from(chunk).toString();
+        if (body.includes("world")) break;
+      }
+      expect(body).toContain("world");
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  });
 });

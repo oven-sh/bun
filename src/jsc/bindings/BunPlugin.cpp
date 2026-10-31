@@ -533,6 +533,7 @@ public:
     // The factory no longer counts as running. If it settles, whatever still waits for it gets its exports.
     void detach(Zig::GlobalObject* globalObject);
     bool isHoisted() const { return function == ModuleMockFunction::ViMock || function == ModuleMockFunction::JestMock; }
+    bool isOfJest() const { return function == ModuleMockFunction::JestMock || function == ModuleMockFunction::JestDoMock; }
     bool isOfVitest() const { return function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock; }
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -1974,6 +1975,16 @@ bool JSModuleMock::getOwnPropertySlot(JSObject* object, JSC::JSGlobalObject* glo
         }
         slot.setValue(mock, static_cast<unsigned>(JSC::PropertyAttribute::None), value);
         return true;
+    }
+
+    // In Jest the factory returns `module.exports`, so a default import gets the object itself unless it's marked `__esModule`.
+    if (mock->isOfJest() && propertyName == vm.propertyNames->defaultKeyword) {
+        JSValue isESModule = exports->get(globalObject, vm.propertyNames->__esModule);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isESModule.toBoolean(globalObject)) {
+            slot.setValue(mock, static_cast<unsigned>(JSC::PropertyAttribute::None), exports);
+            return true;
+        }
     }
 
     // Like Vitest, vi.mock() and vi.doMock() throw on an export the factory left out. For mock.module() and jest.mock() it's undefined.

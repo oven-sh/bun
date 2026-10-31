@@ -361,6 +361,47 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["mocked", "mocked", "mocked", "default"]]);
   });
 
+  test.each(["pkg", "./mod", "node:os"])(
+    "as in Jest, a default import of %s gets the object that a jest.mock() factory returns",
+    async specifier => {
+      expect(
+        await events(
+          {
+            "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+            "node_modules/pkg/index.js": `exports.name = () => "real";`,
+            "uses.ts": `
+            import all from "${specifier}";
+            export const name = () => all.name();
+          `,
+            "hoist.test.ts": `
+            import { test, jest } from "bun:test";
+            import { name } from "./uses";
+            import all, * as namespace from "${specifier}";
+            jest.mock("${specifier}", () => ({ name: () => "mocked" }));
+            (globalThis.events ??= []).push(name(), all.name(), namespace.default === all, require("${specifier}") === all);
+            ${print}
+          `,
+            "marked.test.ts": `
+            import { test, jest } from "bun:test";
+            import all, { name } from "${specifier}";
+            jest.mock("${specifier}", () => ({ __esModule: true, name: () => "mocked" }));
+            (globalThis.events ??= []).push(name(), typeof all);
+            ${print}
+          `,
+            "own.test.ts": `
+            import { test, jest } from "bun:test";
+            import all from "${specifier}";
+            jest.mock("${specifier}", () => ({ __esModule: true, default: "own default" }));
+            (globalThis.events ??= []).push(all);
+            ${print}
+          `,
+          },
+          ["--isolate", "hoist.test.ts", "marked.test.ts", "own.test.ts"],
+        ),
+      ).toEqual([["mocked", "mocked", true, true], ["mocked", "undefined"], ["own default"]]);
+    },
+  );
+
   test("in a file that a test imports", async () => {
     expect(
       await events({

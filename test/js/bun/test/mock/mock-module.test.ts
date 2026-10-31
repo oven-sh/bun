@@ -3304,17 +3304,17 @@ describe.concurrent("an export the factory did not return", () => {
             expect(readA).toThrow('Did you forget to return it from the vi.doMock() factory?\\nTo keep the exports of the original module, spread them:\\n\\nvi.doMock("./dep", ');
           });
           test.each([
-            ["mock.module", mock.module],
-            ["jest.mock", jest.mock],
-            ["jest.doMock", jest.doMock],
-          ])("%s: it is undefined", async (name, mockIt) => {
+            ["mock.module", mock.module, undefined],
+            ["jest.mock", jest.mock, { x: 1 }],
+            ["jest.doMock", jest.doMock, { x: 1 }],
+          ])("%s: it is undefined", async (name, mockIt, defaultExport) => {
             mockIt("./dep", () => ({ x: 1 }));
             vi.resetModules();
             const user = await import("./user");
-            expect([user.readA(), user.readB(), user.readDefault(), user.typeofB()]).toEqual([undefined, undefined, undefined, "undefined"]);
+            expect([user.readA(), user.readB(), user.readDefault(), user.typeofB()]).toEqual([undefined, undefined, defaultExport, "undefined"]);
             const ns = await import("./dep");
             const { a } = ns;
-            expect([a, ns.a?.(), typeof ns.a, ns.default ?? "none", JSON.stringify(ns)]).toEqual([undefined, undefined, "undefined", "none", '{"x":1}']);
+            expect([a, ns.a?.(), typeof ns.a, ns.default, JSON.stringify(ns)]).toEqual([undefined, undefined, "undefined", defaultExport, '{"x":1}']);
           });
         `,
         "__mocks__/pkg.ts": `export const a = "manual-a";`,

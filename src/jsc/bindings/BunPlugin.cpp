@@ -4329,14 +4329,18 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
 }
 
-static bool hasUncalledAsyncFactory(Zig::JSModuleMock* mock)
+static bool hasUncalledFactoryThatAwaits(Zig::JSModuleMock* mock)
 {
     if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)
         return false;
     // Empty for an automock.
     JSValue value = mock->factory.get();
     auto* factory = value ? dynamicDowncast<JSC::JSFunction>(value) : nullptr;
-    return factory && !factory->isHostOrBuiltinFunction() && JSC::isAsyncFunctionParseMode(factory->jsExecutable()->parseMode());
+    if (!factory || factory->isHostOrBuiltinFunction())
+        return false;
+    // Without an `await` it settles during the call, so require() gets the mock.
+    auto* executable = factory->jsExecutable();
+    return JSC::isAsyncFunctionParseMode(executable->parseMode()) && executable->source().view().contains("await"_s);
 }
 
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock)
@@ -4344,13 +4348,13 @@ bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock)
     auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
     if (mock && mock->state == Zig::JSModuleMock::State::Running)
         return mock->result && mock->result->inherits<JSC::JSPromise>();
-    return hasUncalledAsyncFactory(mock);
+    return hasUncalledFactoryThatAwaits(mock);
 }
 
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock)
 {
     auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
-    if (!hasUncalledAsyncFactory(mock))
+    if (!hasUncalledFactoryThatAwaits(mock))
         return false;
     // An import of the mock loads what the original imports before it calls a factory that takes the original.
     String key = Zig::originalModuleKey(mock->specifier->tryGetValue().data);

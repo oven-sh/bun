@@ -132,6 +132,22 @@ for (let index = 0; index < ${n}; index++) {
     }),
     sum: sumOfAll,
   },
+  // The promise of that import() is settled when the module has run. While it is pending, no record goes.
+  "an import() of a module that a module it requires imports while it runs": {
+    entry: n => `
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./running${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: i => ({
+      [`running${i}.ts`]: `import { left } from "./left${i}.ts";\nrequire("./back${i}.ts");\nexport function run() { return left; }\n`,
+      [`back${i}.ts`]: `import("./running${i}.ts");\nexport {};\n`,
+      [`left${i}.ts`]: `export const left = ${i};\n`,
+    }),
+    sum: sumOfAll,
+  },
 };
 
 for (const [name, shape] of Object.entries(shapes)) {

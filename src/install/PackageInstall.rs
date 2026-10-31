@@ -1214,19 +1214,22 @@ impl<'a> PackageInstall<'a> {
         matches: &dyn Fn(&[u8]) -> bool,
         root_node_modules_dir: &Dir,
     ) -> bool {
+        let Ok(bun_tag_file) = self.read_bun_tag(root_node_modules_dir) else {
+            return false;
+        };
+        matches(&bun_tag_file.bytes)
+    }
+
+    fn read_bun_tag(
+        &self,
+        root_node_modules_dir: &Dir,
+    ) -> crate::Result<sys::file::ReadToEndResult> {
         let mut spill = Vec::new();
         let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
             &mut spill,
             &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
         );
-
-        let Ok(bun_tag_file) = self
-            .node_modules
-            .read_small_file(root_node_modules_dir, bun_tag_path)
-        else {
-            return false;
-        };
-        matches(&bun_tag_file.bytes)
+        (self.node_modules).read_small_file(root_node_modules_dir, bun_tag_path)
     }
 
     pub(crate) fn verify(
@@ -1272,6 +1275,22 @@ impl<'a> PackageInstall<'a> {
 
         verified
             && (self.patch).is_none_or(|patch| self.verify_patch_hash(patch, root_node_modules_dir))
+    }
+
+    /// Returns true if the folder has a `.bun-tag` that the package's cache entry does not have.
+    #[cold]
+    pub(crate) fn has_other_bun_tag(&self, root_node_modules_dir: &Dir) -> bool {
+        match self.read_bun_tag(root_node_modules_dir) {
+            Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => false,
+            Err(_) => true,
+            Ok(tag) => {
+                let own = path::resolve_path::join_z::<path::platform::Posix>(&[
+                    self.cache_dir_subpath.as_bytes(),
+                    BUN_TAG,
+                ]);
+                !sys::File::read_from(self.cache_dir, own).is_ok_and(|own| own == tag.bytes)
+            }
+        }
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because

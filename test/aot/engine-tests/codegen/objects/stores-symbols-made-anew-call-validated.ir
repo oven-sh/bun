@@ -293,7 +293,7 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f45 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[String]
 function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f48 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f48 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -329,7 +329,7 @@ function f48 name="map" module=m1 position=5210 kind=Method role=Library flags=[
   b3(v33, v34):
     Return v11
 }
-function f49 name="some" module=m1 position=5857 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f49 name="some" module=m1 position=5857 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f50 name="firstSearchedIndex" module=m2 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number site=w5}, {type=number site=w6}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f51 name="holdsBoxedValues" module=m2 position=750 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w8}] results=[{type=boolean site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f52 name="includesNaN" module=m2 position=1987 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w11}, {type=number site=w12}] results=[{type=boolean site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -715,8 +715,8 @@ function f60 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v261 = Call v255, -, v131, v256, v128, v260 calleeName="finishJoin"
     ReturnCall v261 casts=[{declared={type=undefined|null|string site=w100 flags=[OmitsNull, OmitsUndefined]}}]
 }
-runtimefunction id=65 function=f48
-runtimefunction id=89 function=f49
+runtimefunction id=64 function=f48
+runtimefunction id=88 function=f49
 runtimefunction id=131087 function=f53
 runtimefunction id=131091 function=f60 visibility=Private
 # -- generated: f0 f16 f18

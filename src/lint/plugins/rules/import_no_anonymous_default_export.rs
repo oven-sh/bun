@@ -14,14 +14,14 @@ pub struct NoAnonymousDefaultExport {
     allow_object: bool,
 }
 
-const ANONYMOUS_FUNCTION: Message = Message::new("", "Unexpected default export of anonymous function");
-const ANONYMOUS_CLASS: Message = Message::new("", "Unexpected default export of anonymous class");
-const ARROW_FUNCTION: Message = Message::new("", "Assign arrow function to a variable before exporting as module default");
-const OBJECT: Message = Message::new("", "Assign object to a variable before exporting as module default");
-const CALL: Message = Message::new("", "Assign call result to a variable before exporting as module default");
-const NEW: Message = Message::new("", "Assign instance to a variable before exporting as module default");
-const ARRAY: Message = Message::new("", "Assign array to a variable before exporting as module default");
-const LITERAL: Message = Message::new("", "Assign literal to a variable before exporting as module default");
+const ANONYMOUS_FUNCTION: &Message = &Message::new("", "Unexpected default export of anonymous function");
+const ANONYMOUS_CLASS: &Message = &Message::new("", "Unexpected default export of anonymous class");
+const ARROW_FUNCTION: &Message = &Message::new("", "Assign arrow function to a variable before exporting as module default");
+const OBJECT: &Message = &Message::new("", "Assign object to a variable before exporting as module default");
+const CALL: &Message = &Message::new("", "Assign call result to a variable before exporting as module default");
+const NEW: &Message = &Message::new("", "Assign instance to a variable before exporting as module default");
+const ARRAY: &Message = &Message::new("", "Assign array to a variable before exporting as module default");
+const LITERAL: &Message = &Message::new("", "Assign literal to a variable before exporting as module default");
 
 impl Rule for NoAnonymousDefaultExport {
     const META: Meta = Meta::plugin(Plugin::Import, "no-anonymous-default-export", Kind::Suggestion);

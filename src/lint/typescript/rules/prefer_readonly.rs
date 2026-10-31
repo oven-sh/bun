@@ -19,7 +19,7 @@ pub struct PreferReadonly {
     only_inline_lambdas: bool,
 }
 
-const PREFER_READONLY: Message = Message::new(
+const PREFER_READONLY: &Message = &Message::new(
     "preferReadonly",
     "Member '{{name}}' is never reassigned; mark it as `readonly`.",
 );

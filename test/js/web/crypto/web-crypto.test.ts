@@ -1448,6 +1448,128 @@ describe("CryptoKey.usages ordering", () => {
   });
 });
 
+// https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
+describe("SubtleCrypto.supports", () => {
+  const supports = (...args: [operation: string, algorithm: unknown, lengthOrAdditionalAlgorithm?: unknown]): boolean =>
+    (SubtleCrypto as any).supports(...args);
+
+  // These three take or export a key, so only the name of its algorithm counts.
+  const byKeyAlgorithm = (algorithm: unknown) => ({
+    exportKey: supports("exportKey", algorithm),
+    getPublicKey: supports("getPublicKey", algorithm),
+    wrapKey: supports("wrapKey", "AES-KW", algorithm),
+  });
+  const secret = { exportKey: true, getPublicKey: false, wrapKey: true };
+  const keyPair = { exportKey: true, getPublicKey: true, wrapKey: true };
+  const notExportable = { exportKey: false, getPublicKey: false, wrapKey: false };
+
+  // The answers are those of Node v26.3.0.
+  it("answers exportKey, getPublicKey and the wrapped key of wrapKey by the algorithm name", () => {
+    const expected = {
+      "HMAC": secret,
+      "AES-CBC": secret,
+      "AES-CTR": secret,
+      "AES-GCM": secret,
+      "AES-KW": secret,
+      "ChaCha20-Poly1305": secret,
+      "RSA-OAEP": keyPair,
+      "RSA-PSS": keyPair,
+      "RSASSA-PKCS1-v1_5": keyPair,
+      "ECDSA": keyPair,
+      "ECDH": keyPair,
+      "Ed25519": keyPair,
+      "X25519": keyPair,
+      "ML-DSA-65": keyPair,
+      "ML-KEM-768": keyPair,
+      "rsa-oaep": keyPair,
+      "HKDF": notExportable,
+      "PBKDF2": notExportable,
+      "SHA-256": notExportable,
+      "not-an-algorithm": notExportable,
+    };
+    const names = Object.keys(expected);
+    expect(Object.fromEntries(names.map(name => [name, byKeyAlgorithm(name)]))).toEqual(expected);
+    expect(Object.fromEntries(names.map(name => [name, byKeyAlgorithm({ name })]))).toEqual(expected);
+  });
+
+  it("reads only the name of an algorithm object for exportKey, getPublicKey and the wrapped key of wrapKey", () => {
+    const reads: string[] = [];
+    const recorded = (algorithm: object) =>
+      new Proxy(algorithm, {
+        get(target, key, receiver) {
+          if (typeof key === "string") reads.push(key);
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    const answers = [
+      supports("exportKey", recorded({ name: "HMAC", hash: "SHA-256", length: 256 })),
+      supports("getPublicKey", recorded({ name: "ECDH", namedCurve: "P-256" })),
+      supports("wrapKey", "AES-KW", recorded({ name: "RSA-OAEP", hash: "SHA-256" })),
+    ];
+    expect({ answers, reads }).toEqual({ answers: [true, true, true], reads: ["name", "name", "name"] });
+  });
+
+  it("answers by the name when a member that only an import reads is invalid", () => {
+    expect({
+      hmac: byKeyAlgorithm({ name: "HMAC", hash: "SHA-999", length: -1 }),
+      rsa: byKeyAlgorithm({ name: "RSA-OAEP", hash: null }),
+      ec: byKeyAlgorithm({ name: "ECDSA", namedCurve: undefined }),
+    }).toEqual({ hmac: secret, rsa: keyPair, ec: keyPair });
+  });
+
+  it("answers false when the name of the algorithm cannot be read", () => {
+    const unreadable = {
+      get name(): string {
+        throw new Error("unreadable name");
+      },
+    };
+    expect([byKeyAlgorithm({}), byKeyAlgorithm(unreadable)]).toEqual([notExportable, notExportable]);
+  });
+
+  it("needs the hash of an HMAC key for the operations that import a key", () => {
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(8), info: new Uint8Array(8) };
+    const byImportedAlgorithm = (algorithm: unknown) => ({
+      importKey: supports("importKey", algorithm),
+      unwrapKey: supports("unwrapKey", "AES-KW", algorithm),
+      deriveKey: supports("deriveKey", hkdf, algorithm),
+      encapsulateKey: supports("encapsulateKey", "ML-KEM-768", algorithm),
+    });
+    expect({
+      name: byImportedAlgorithm("HMAC"),
+      parameters: byImportedAlgorithm({ name: "HMAC", hash: "SHA-256" }),
+    }).toEqual({
+      name: { importKey: false, unwrapKey: false, deriveKey: false, encapsulateKey: false },
+      parameters: { importKey: true, unwrapKey: true, deriveKey: true, encapsulateKey: true },
+    });
+  });
+
+  it("answers wrapKey for these keys when an encryption algorithm wraps them", () => {
+    expect({
+      aesGcm: supports("wrapKey", { name: "AES-GCM", iv: new Uint8Array(12) }, "HMAC"),
+      rsaOaep: supports("wrapKey", "RSA-OAEP", "ECDSA"),
+    }).toEqual({ aesGcm: true, rsaOaep: true });
+  });
+
+  // Observed: supports answers true, and encrypt and wrapKey reject with
+  // OperationError. supports does not check the values of these parameters.
+  it.todo.each([
+    ["ChaCha20-Poly1305 with an 8-byte iv", { name: "ChaCha20-Poly1305", iv: new Uint8Array(8) }],
+    ["ChaCha20-Poly1305 with a 16-byte iv", { name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }],
+    ["ChaCha20-Poly1305 with tagLength 64", { name: "ChaCha20-Poly1305", iv: new Uint8Array(12), tagLength: 64 }],
+    ["AES-CBC with an 8-byte iv", { name: "AES-CBC", iv: new Uint8Array(8) }],
+    ["AES-CFB-8 with a 15-byte iv", { name: "AES-CFB-8", iv: new Uint8Array(15) }],
+    ["AES-CTR with an 8-byte counter", { name: "AES-CTR", counter: new Uint8Array(8), length: 64 }],
+    ["AES-CTR with length 0", { name: "AES-CTR", counter: new Uint8Array(16), length: 0 }],
+    ["AES-CTR with length 129", { name: "AES-CTR", counter: new Uint8Array(16), length: 129 }],
+    ["AES-GCM with tagLength 33", { name: "AES-GCM", iv: new Uint8Array(12), tagLength: 33 }],
+  ])("answers false for encrypt and wrapKey with %s", (_label, algorithm) => {
+    expect({
+      encrypt: supports("encrypt", algorithm),
+      wrapKey: supports("wrapKey", algorithm, "HMAC"),
+    }).toEqual({ encrypt: false, wrapKey: false });
+  });
+});
+
 // getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
 // argument raises TypeMismatchError rather than being filled.
 describe("crypto.getRandomValues argument types", () => {
@@ -1553,6 +1675,10 @@ describe("exception scope discipline", () => {
         "unwrapKey jwk not json = REJECTED DataError: WrappedKey cannot be converted to a JSON object",
         "unwrapKey bogus unwrap algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
         "unwrapKey bogus unwrapped type = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "supports exportKey ok = RESOLVED",
+        "supports exportKey thrower = RESOLVED",
+        "supports getPublicKey thrower = RESOLVED",
+        "supports wrapKey thrower = RESOLVED",
       ],
       uncheckedScopes: [],
       exitCode: 0,

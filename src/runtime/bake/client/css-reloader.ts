@@ -137,16 +137,16 @@ function maybeAddCssLink(link: HTMLLinkElement) {
     if (!/^[a-f0-9]{16}$/.test(id)) {
       return;
     }
-    let css = cssStore.get(id);
-    if (css) {
-      css.link = link;
-      css.active = !link.disabled;
-    } else {
-      css = { sheet: null, link, active: !link.disabled, loading: false };
-      cssStore.set(id, css);
-    }
     registeredLinkTags.set(link, id);
-    apply(css);
+    const existing = cssStore.get(id);
+    if (existing) {
+      existing.link = link;
+      existing.active = !link.disabled;
+      apply(existing);
+    } else {
+      // Not applied: the sheet of a link tag that is new to the page stays as the browser made it.
+      cssStore.set(id, { sheet: null, link, active: !link.disabled, loading: false });
+    }
   }
 }
 

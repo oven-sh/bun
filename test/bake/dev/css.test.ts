@@ -976,6 +976,7 @@ devTest("a stylesheet that a page dropped stays off when the stylesheet is edite
     await using a = await dev.client("/a");
     await a.expectMessage("a 1");
     await a.style("h1").color.expect.toBe("red");
+    await watchStylesheets(a);
     await dev.write("a.ts", `console.log("a 2"); import.meta.hot.accept();`);
     await a.expectMessage("a 2");
     await a.style("h1").notFound();
@@ -986,6 +987,8 @@ devTest("a stylesheet that a page dropped stays off when the stylesheet is edite
     await dev.write("a.ts", `import "./m.css"; console.log("a 3"); import.meta.hot.accept();`);
     await a.expectMessage("a 3");
     await a.style("h1").color.expect.toBe("#00f");
+    // Tab a had the text all the time: first from its link tag, then from the update.
+    expect(await a.js`css.requests`).toBe(0);
   },
 });
 devTest("a stylesheet that a page drops while it requests the text stays off", {

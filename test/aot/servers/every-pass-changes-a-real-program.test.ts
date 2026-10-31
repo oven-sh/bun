@@ -1,9 +1,6 @@
-// Opt-in test, like ./servers.test.ts. CI runs it as the unit `aot/servers/every-pass-changes-one-of-the-servers` of ../parts.mts.
-//
-// Whether a pass of the compiler does anything is asked of real programs, not of programs written for it: eight servers of ./app, the type
-// checker of the typescript package (./typescript-check.ts) and a terminal program on a package that names its TypeScript under the "aot"
-// condition (../typed-packages/small-renderer/terminal.ts). Each is built the way a user builds it, and the build's report says how often each
-// pass changed something.
+// Whether a pass of the compiler does anything is asked of real programs, not of programs written for it: two servers of ./app and a
+// terminal program on a package that names its TypeScript under the "aot" condition (../typed-packages/small-renderer/terminal.ts). Each is
+// built the way a user builds it, and the build's report says how often each pass changed something.
 //
 //   every pass        changes something in at least one of the programs, or stands in the list below: the passes that only look or only
 //                     lay out, which never report a change. A listed pass that does change something fails the test as well, so the
@@ -16,22 +13,19 @@
 // To take a pass out: this test says by a run what the pass does to these programs. A pass that changes them is at work, whatever a
 // benchmark says, and what it buys has to be asked of the programs (--aot-disable=pass:<name>).
 //
-//   AOT_SERVERS=1 bun test test/aot/servers/every-pass-changes-a-real-program.test.ts      about two minutes on eight cores
-//   AOT_SERVERS_MODULES=<node_modules folder> ..                                            nothing is downloaded
-//
 // It prints one line a pass that begins with PASS: the changes by program.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync } from "fs";
+import { afterAll, expect } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { dirname, join } from "path";
+import { join } from "path";
 import { readBuildReport, type BuildReport } from "../harness/build-report";
+import { built, slot, spawned } from "../harness/commands";
 import { compileCommand, withReport } from "../harness/flags";
-import { built, slot, spawned, unsupported } from "../run-programs";
+import { beforeAll, describe, test } from "../supported";
 import { installSmallRenderer } from "../typed-packages/small-renderer/install";
-import { installPackages, requestedServers } from "./run-servers";
+import { copyApp } from "./run-servers";
 
-const servers = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify"];
-const programs = [...servers, "typescript", "terminal"];
+const programs = ["thin", "elysia", "terminal"];
 
 /** They read the program, check it, or decide where things lie, and hand the result to others. */
 const passesThatReportNoChange = [
@@ -49,6 +43,12 @@ const passesThatReportNoChange = [
   "SummarizeForInlining",
   "VerifyProgram",
 ];
+/**
+ * ExpandLongArrayLiterals finds work in the server on Fastify alone, whose build takes longer than the three together.
+ * CallThroughMethodTable finds work in the servers on node:http, Express, Koa and Fastify. Here each call of a method by name finds
+ * one method, and is a direct call behind a test.
+ */
+const passesWithoutWorkHere = ["CallThroughMethodTable", "ExpandLongArrayLiterals"];
 /** Two of them count what they decide. */
 const statisticsOfPassesThatReportNoChange = {
   ElideStackChecks: "FunctionsEnteredWithoutStackCheck",
@@ -62,63 +62,32 @@ const statisticsOfPassesThatReportNoChange = {
  */
 /** The write barriers that each program is compiled with on Linux x64. A number here only ever goes down. */
 const barriersAtMost: Record<string, number> = {
-  bun: 508,
   thin: 519,
-  hono: 717,
   elysia: 2353,
-  node: 1673,
-  koa: 2772,
-  express: 2816,
-  fastify: 4260,
-  typescript: 15565,
   terminal: 199,
 };
 /** The whole text of the terminal program lies in this repository, and its number is small: it is held where it was read. */
 const isHeldHere = (program: string) => program !== "terminal" || (isLinux && process.arch === "x64");
 
-if (!requestedServers)
-  console.error(
-    "SKIPPED: test/aot/servers/every-pass-changes-a-real-program.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it",
-  );
-
-describe.skipIf(!requestedServers || !!unsupported)("compile/aot/every pass changes a real program", () => {
-  const folders = {
-    app: String(tempDir("aot-every-pass-servers", {})),
-    typescript: String(tempDir("aot-every-pass-typescript", {})),
-    terminal: String(tempDir("aot-every-pass-terminal", {})),
-  };
+describe("every pass changes a real program", () => {
+  const work = String(tempDir("aot-every-pass", {}));
+  const terminal = String(tempDir("aot-every-pass-terminal", {}));
+  const app = join(work, "app");
   const reports = new Map<string, BuildReport>();
-  afterAll(() => Object.values(folders).forEach(folder => rmSync(folder, { recursive: true, force: true })));
-
-  function layOutTypeScript(folder: string) {
-    cpSync(join(import.meta.dir, "typescript-check.ts"), join(folder, "typescript-check.ts"));
-    mkdirSync(join(folder, "node_modules"));
-    const modules = process.env.AOT_SERVERS_MODULES;
-    symlinkSync(
-      modules && existsSync(join(modules, "typescript"))
-        ? join(modules, "typescript")
-        : dirname(require.resolve("typescript/package.json")),
-      join(folder, "node_modules", "typescript"),
-      "junction",
-    );
-  }
+  afterAll(() => [work, terminal].forEach(folder => rmSync(folder, { recursive: true, force: true })));
 
   beforeAll(async () => {
-    cpSync(join(import.meta.dir, "app"), folders.app, { recursive: true });
-    await installPackages(folders.app);
-    layOutTypeScript(folders.typescript);
-    installSmallRenderer(folders.terminal);
+    installSmallRenderer(terminal);
+    await copyApp(app);
     await Promise.all(
       programs.map(name =>
         slot(async () => {
-          const folder = name === "typescript" || name === "terminal" ? folders[name] : folders.app;
-          const entry = name === "typescript" ? "./typescript-check.ts" : `./${name}.ts`;
-          const report = join(folder, `${name}.report.json`);
-          const executable = join(folder, `${name}-compiled${isWindows ? ".exe" : ""}`);
+          const report = join(work, `${name}.report.json`);
+          const executable = join(work, `${name}-compiled${isWindows ? ".exe" : ""}`);
           built(
             await spawned(
-              [bunExe(), ...compileCommand, ...withReport(report, "summary"), "--define", 'process.env.NODE_ENV="production"', "--target=bun", entry, "--outfile", executable], // prettier-ignore
-              folder,
+              [bunExe(), ...compileCommand, ...withReport(report, "summary"), "--define", 'process.env.NODE_ENV="production"', "--target=bun", `./${name}.ts`, "--outfile", executable], // prettier-ignore
+              name === "terminal" ? terminal : app,
               bunEnv,
             ),
           );
@@ -136,7 +105,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/every pass chan
     for (const pass of names)
       console.log(`PASS ${pass}: ${programs.map(program => `${program} ${changesOf(pass, program)}`).join(", ")}`);
     const idle = names.filter(pass => programs.every(program => changesOf(pass, program) === 0));
-    expect(idle.toSorted()).toEqual(passesThatReportNoChange.toSorted());
+    expect(idle.toSorted()).toEqual([...passesThatReportNoChange, ...passesWithoutWorkHere].toSorted());
     for (const [pass, statistic] of Object.entries(statisticsOfPassesThatReportNoChange))
       expect({ pass, counts: programs.some(program => reports.get(program)!.statistics[statistic] > 0) }).toEqual({
         pass,

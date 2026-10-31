@@ -14,8 +14,8 @@ pub struct SelfClosingComp {
     html: bool,
 }
 
-const NOT_SELF_CLOSING: Message = Message::new("notSelfClosing", "Empty components are self-closing");
-const SELF_CLOSING_COMP: Message = Message::new("", "Unnecessary closing tag");
+const NOT_SELF_CLOSING: &Message = &Message::new("notSelfClosing", "Empty components are self-closing");
+const SELF_CLOSING_COMP: &Message = &Message::new("", "Unnecessary closing tag");
 
 impl Rule for SelfClosingComp {
     const META: Meta = Meta::plugin(Plugin::React, "self-closing-comp", Kind::None).fixable(Fixable::Code);

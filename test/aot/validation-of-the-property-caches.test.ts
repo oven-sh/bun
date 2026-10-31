@@ -68,7 +68,17 @@ describe("validation of the property caches", () => {
   beforeAll(async () => {
     for (const name of ["another-chain", "members"]) {
       const built = await runProcess(
-        [bunExe(), "build", "--compile", "--aot", "--aot-validate", name + ".js", "--outfile", join(String(dir), name)],
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          "--no-builtin-modules",
+          "--aot-validate",
+          name + ".js",
+          "--outfile",
+          join(String(dir), name),
+        ],
         String(dir),
         bunEnv,
       );

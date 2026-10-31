@@ -20,7 +20,7 @@ pub struct ForbidPropTypes {
     check_child_context_types: bool,
 }
 
-const FORBIDDEN_PROP_TYPE: Message = Message::new("forbiddenPropType", "Prop type \"{{target}}\" is forbidden");
+const FORBIDDEN_PROP_TYPE: &Message = &Message::new("forbiddenPropType", "Prop type \"{{target}}\" is forbidden");
 
 /// The variables that the `ImportDeclaration` listener sets.
 #[derive(Copy, Clone, Default)]

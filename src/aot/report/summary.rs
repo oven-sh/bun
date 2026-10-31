@@ -21,17 +21,15 @@ use crate::ir::ids::ModuleId;
 use crate::link::ModuleOrigin;
 use crate::statistics::{LimitId, StatisticId, Statistics};
 
-const HINT_BELOW_TENTHS: u32 = 950;
 const MAX_LISTED_FILES: usize = 5;
-const HINT: &[u8] =
-    b"Untyped code works, but runs slower. Run with --explain to see what to fix.\n";
 
 pub fn write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>) {
     let options = input.options;
-    let has_text_report = options.explain.contains(ExplainSet::TEXT);
     write_trim_causes(input, out);
-    let totals = compute_totals(input);
-    write_lines(&totals, has_text_report, &options.option_words, out);
+    write_developer_options(&options.option_words, out);
+    if options.explain.contains(ExplainSet::TEXT) {
+        write_access_lines(&compute_totals(input), out);
+    }
 }
 
 pub fn write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>) {
@@ -92,24 +90,20 @@ fn write_columns_line(out: &mut Vec<u8>, label: &str, costs: &CostCounts) {
     out.extend_from_slice(b")\n");
 }
 
-fn write_lines(
-    totals: &ProgramTotals,
-    has_text_report: bool,
-    option_words: &[Box<[u8]>],
-    out: &mut Vec<u8>,
-) {
+fn write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
+    if option_words.is_empty() {
+        return;
+    }
+    out.extend_from_slice(b"Built with developer options:");
+    for word in option_words {
+        format::write_parts(out, &[b" --aot-", word]);
+    }
+    out.push(b'\n');
+}
+
+fn write_access_lines(totals: &ProgramTotals, out: &mut Vec<u8>) {
     let program = &totals.program.access_costs;
     let dependencies = &totals.dependencies.access_costs;
-    if !option_words.is_empty() {
-        out.extend_from_slice(b"Built with developer options:");
-        for word in option_words {
-            format::write_parts(out, &[b" --aot-", word]);
-        }
-        out.push(b'\n');
-    }
-    if program.total() > 0 && free_tenths(program) < HINT_BELOW_TENTHS && !has_text_report {
-        out.extend_from_slice(HINT);
-    }
     if dependencies.total() > 0 {
         write_columns_line(out, "Dependencies: ", dependencies);
     }

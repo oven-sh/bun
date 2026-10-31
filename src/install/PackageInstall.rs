@@ -2155,7 +2155,7 @@ impl<'a> PackageInstall<'a> {
         // Deleting a large tree takes a while. Now that it has a random name, another thread can
         // delete it.
         let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-            bun_fs::FileSystem::instance().top_level_dir(),
+            bun_fs::FileSystem::get().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
         );
         let task = bun_core::heap::into_raw(Box::new(UninstallTask {

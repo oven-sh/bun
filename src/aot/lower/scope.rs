@@ -20,6 +20,7 @@ use bun_sema::hir::{self};
 use bun_sema::program::{CompiledModule, FileId};
 
 use super::FunctionLowering;
+use super::transpiled::TranspiledFile;
 use crate::builtins::ResolvedBuiltins;
 use crate::ir::{ClassSlot, DeclaredType, ValueId};
 use crate::modules::ModuleGraph;
@@ -41,6 +42,7 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) hir: &'x hir::File<'s>,
     pub(crate) bound: &'x Bound<'s>,
     pub(crate) compiled: &'x CompiledModule<'s>,
+    pub(in crate::lower) transpiled: Option<&'x TranspiledFile>,
     pub(crate) modules: &'x ModuleGraph,
     pub(crate) builtins: &'x ResolvedBuiltins,
     /// What a closure has room for in this build.

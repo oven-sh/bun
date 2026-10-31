@@ -27,6 +27,54 @@ const maxDepth = 4;
 
 type Reach = Pick<ObjectState, "root" | "depth" | "isOnPrototypeChain">;
 
+// A built-in object is the same one in every call, and hardly any call changes one. How each looked when it was last looked at is kept, a
+// call is taken to leave them as they are, and findChangedBuiltinObjects() says afterwards whether that was so.
+const builtinStates = new Map<object, ObjectState>();
+const builtinObjectsInCalls = new Set<object>();
+let looksAtBuiltinObjectsInEveryCall = false;
+
+/** Runs `action` with every built-in object looked at before and after each call, which says which call changed one. */
+export async function lookingAtBuiltinObjectsInEveryCall<T>(action: () => Promise<T>): Promise<T> {
+  looksAtBuiltinObjectsInEveryCall = true;
+  try {
+    return await action();
+  } finally {
+    looksAtBuiltinObjectsInEveryCall = false;
+  }
+}
+
+function findChangesIn(log: Log, objects: Iterable<object>): Change[] {
+  const before: Snapshot = new Map();
+  for (const object of objects) before.set(object, builtinStates.get(object)!);
+  return compareSnapshots(before, retakeSnapshot(log, before, true));
+}
+
+/** What has changed in the built-in objects that the operands of the calls since the last question reach. */
+export function findChangedBuiltinObjects(log: Log): Change[] {
+  const changes = findChangesIn(log, builtinObjectsInCalls);
+  builtinObjectsInCalls.clear();
+  return changes;
+}
+
+/** Makes the objects of the changes what they were, as far as a program can, so that the calls can be made once more. */
+export function takeBack(changes: readonly Change[]): void {
+  for (const object of new Set(changes.map(change => change.object))) {
+    const { descriptors, prototype } = builtinStates.get(object)!;
+    for (const key of Reflect.ownKeys(object)) if (!descriptors.has(key)) Reflect.deleteProperty(object, key);
+    for (const [key, descriptor] of descriptors) Reflect.defineProperty(object, key, descriptor);
+    Reflect.setPrototypeOf(object, prototype);
+  }
+}
+
+/** Whether the objects of the changes are changed again. However they are now is how they count as made from here on. */
+export function haveChangedAgain(log: Log, changes: readonly Change[]): boolean {
+  const objects = new Set(changes.map(change => change.object));
+  const hasChanges = findChangesIn(log, objects).length > 0;
+  for (const object of objects) builtinStates.delete(object);
+  builtinObjectsInCalls.clear();
+  return hasChanges;
+}
+
 function stateOf(log: Log, target: object, { root, depth, isOnPrototypeChain }: Reach): ObjectState {
   const keys = Reflect.ownKeys(target);
   const descriptors = new Map<PropertyKey, PropertyDescriptor>();
@@ -46,6 +94,13 @@ function stateOf(log: Log, target: object, { root, depth, isOnPrototypeChain }: 
   };
 }
 
+function builtinStateOf(log: Log, target: object, reach: Reach): ObjectState {
+  let state = builtinStates.get(target);
+  if (!state) builtinStates.set(target, (state = stateOf(log, target, reach)));
+  builtinObjectsInCalls.add(target);
+  return { ...state, ...reach };
+}
+
 function valuesIn(descriptor: PropertyDescriptor): unknown[] {
   return Object.hasOwn(descriptor, "value") ? [descriptor.value] : [descriptor.get, descriptor.set];
 }
@@ -57,9 +112,10 @@ function visit(walk: Walk, value: unknown, reach: Reach): void {
   if (!isObject(value) || snapshot.size >= maxObjects) return;
   const target = log.targetOf(value);
   if (snapshot.has(target) || types.isProxy(target)) return;
-  const state = stateOf(log, target, reach);
+  const isBuiltinObject = walk.isBuiltinObject(target);
+  const state = isBuiltinObject && !looksAtBuiltinObjectsInEveryCall ? builtinStateOf(log, target, reach) : stateOf(log, target, reach);
   snapshot.set(target, state);
-  if (reach.depth < maxDepth && !walk.isBuiltinObject(target)) {
+  if (reach.depth < maxDepth && !isBuiltinObject) {
     const held: Reach = { ...reach, depth: reach.depth + 1 };
     for (const descriptor of state.descriptors.values()) {
       for (const heldValue of valuesIn(descriptor)) visit(walk, heldValue, held);
@@ -105,7 +161,32 @@ function compareProperty(object: object, key: PropertyKey, before: PropertyDescr
   return changes;
 }
 
+function isSameDescriptor(before: PropertyDescriptor, after: PropertyDescriptor | undefined): boolean {
+  return (
+    after !== undefined &&
+    Object.is(before.value, after.value) &&
+    before.get === after.get &&
+    before.set === after.set &&
+    before.writable === after.writable &&
+    before.enumerable === after.enumerable &&
+    before.configurable === after.configurable
+  );
+}
+
+function hasSameProperties(before: ObjectState, after: ObjectState): boolean {
+  const { keys } = before;
+  if (keys.length !== after.keys.length) return false;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (key !== after.keys[index] || !isSameDescriptor(before.descriptors.get(key)!, after.descriptors.get(key))) return false;
+  }
+  return true;
+}
+
+const noChanges: Change[] = [];
+
 function compareProperties(object: object, before: ObjectState, after: ObjectState): Change[] {
+  if (hasSameProperties(before, after)) return noChanges;
   const changes: Change[] = [];
   for (const [key, descriptor] of after.descriptors) {
     const earlier = before.descriptors.get(key);
@@ -121,6 +202,7 @@ function compareProperties(object: object, before: ObjectState, after: ObjectSta
 }
 
 function compareInternals(object: object, before: Internal[], after: Internal[]): Change[] {
+  if (before.length === 0 && after.length === 0) return noChanges;
   const changes: Change[] = [];
   const groups = new Set(after.concat(before).map(({ slot, name }) => `${slot} ${name ?? ""}`));
   for (const group of groups) {
@@ -140,16 +222,19 @@ export function compareSnapshots(before: Snapshot, after: Snapshot): Change[] {
   const changes: Change[] = [];
   for (const [object, earlier] of before) {
     const later = after.get(object);
-    if (!later) continue;
-    changes.push(...compareProperties(object, earlier, later), ...compareInternals(object, earlier.internals, later.internals));
+    if (!later || later === earlier) continue;
+    for (const change of compareProperties(object, earlier, later)) changes.push(change);
+    for (const change of compareInternals(object, earlier.internals, later.internals)) changes.push(change);
     if (earlier.prototype !== later.prototype) changes.push({ kind: "Prototype", object, values: [later.prototype] });
     if (earlier.isExtensible && !later.isExtensible) changes.push({ kind: "PreventExtensions", object });
   }
   return changes;
 }
 
-export function retakeSnapshot(log: Log, before: Snapshot): Snapshot {
+export function retakeSnapshot(log: Log, before: Snapshot, looksAtBuiltinObjects = looksAtBuiltinObjectsInEveryCall): Snapshot {
   const after: Snapshot = new Map();
-  for (const [object, reach] of before) after.set(object, stateOf(log, object, reach));
+  for (const [object, state] of before) {
+    after.set(object, !looksAtBuiltinObjects && builtinStates.has(object) ? state : stateOf(log, object, state));
+  }
   return after;
 }

@@ -270,9 +270,7 @@ fn binder_stack_overflow_replaces_tree_with_empty_tree() {
                 context.session.arena(),
                 target,
                 source,
-                false,
-                &[],
-                &[],
+                LoadInputs::default(),
             );
             let hir = &parsed.parse.hir;
             assert!(hir.ran_out_of_stack && hir.has_errors && hir.has_parse_diagnostics);

@@ -164,6 +164,7 @@ const smallest: Record<string, number> = {
   DirectCallReach: 2097152,
   RegExpSectionSize: 4294967295,
   MaxCachedKeyLength: 2,
+  MaxStepsToPrintedInitializer: 1,
 };
 
 // The front end's. In place of a new one: a row of limits.def, which LimitValues hands to every stage.

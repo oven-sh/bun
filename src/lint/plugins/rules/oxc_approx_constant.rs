@@ -5,8 +5,8 @@ use std::f64::consts;
 /// Disallows the use of approximate constants, instead preferring the use of the constants in the `Math` object.
 pub struct ApproxConstant;
 
-const APPROX_CONSTANT: Message = Message::new("", "Approximate value of `{{method_name}}` found.");
-const USE_MATH: Message = Message::new("", "Use `Math.{{method_name}}` instead.");
+const APPROX_CONSTANT: &Message = &Message::new("", "Approximate value of `{{method_name}}` found.");
+const USE_MATH: &Message = &Message::new("", "Use `Math.{{method_name}}` instead.");
 
 impl Rule for ApproxConstant {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "approx-constant", Kind::Problem).has_suggestions();

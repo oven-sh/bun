@@ -5,8 +5,8 @@ use crate::fold::{FoldInputs, FoldOptions};
 use crate::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, module_from_data};
 use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest, FinishedFile,
-    HostPayload, HostResolution, LoaderRequest, MacroRequest, ParsedCode, TransformRequest,
-    TreeChange, is_declaration_file_name,
+    HostPayload, HostResolution, LoaderRequest, MacroRequest, ParsedCode, ParsedFile,
+    TransformRequest, TreeChange, is_declaration_file_name,
 };
 use bun_threading::io_thread_pool;
 use std::sync::Once;
@@ -61,6 +61,8 @@ pub(super) struct StatementsHost {
     pub(super) loader_requests: Guarded<Vec<RecordedLoaderRequest>>,
     pub(super) plugin_sources: &'static [&'static str],
     pub(super) implied: Vec<(&'static str, Vec<HostResolution>)>,
+    /// `Some`: `CodeHost::follows_imports_on_request`. Each file with a file that it imports and that is followed once both the importer is parsed and the file in front is.
+    pub(super) followed_on_request: Option<&'static [(&'static str, &'static str, &'static str)]>,
     pub(super) max_macro_values: usize,
     pub(super) macro_round_count: AtomicUsize,
     pub(super) transformed: &'static [&'static str],
@@ -88,6 +90,7 @@ impl Default for StatementsHost {
             loader_requests: Guarded::new(Vec::new()),
             plugin_sources: &[],
             implied: Vec::new(),
+            followed_on_request: None,
             max_macro_values: 0,
             macro_round_count: AtomicUsize::new(0),
             transformed: &[],
@@ -469,6 +472,21 @@ impl CodeHost for StatementsHost {
         self.record(HostEvent::FinishedFile(request.path.to_vec()));
         let implied = self.find_by_path(&self.implied, request.path);
         implied.cloned().unwrap_or_default()
+    }
+
+    fn follows_imports_on_request(&self) -> bool {
+        self.followed_on_request.is_some()
+    }
+
+    fn choose_imports_to_follow(&self, files: &[ParsedFile<'_, '_>]) -> Vec<(u32, Vec<u8>)> {
+        let position_of = |path: &str| files.iter().position(|it| it.file.path == path.as_bytes());
+        let followed = self.followed_on_request.unwrap_or_default().iter();
+        followed
+            .filter(|(needed, ..)| position_of(needed).is_some())
+            .filter_map(|(_, importer, imported)| {
+                Some((position_of(importer)? as u32, imported.as_bytes().to_vec()))
+            })
+            .collect()
     }
 }
 
@@ -912,6 +930,7 @@ fn with_compile_inputs<'s, R>(
     then(&CompileInputs {
         entry_points: &entry_points,
         main_module: MainModule::EntryPoint,
+        loaded_before: None,
         code: &build.code,
         fold: &fold,
         atoms: Interner::new_in(session),

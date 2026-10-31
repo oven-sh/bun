@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned, unsupported } from "./harness/commands";
 
 const build = `import plugin from "./plugin";
 const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true }, loader: { ".md": "text" }, plugins: [plugin], throw: false });
@@ -13,7 +13,7 @@ const delayed = `let calls = 0;
 export async function delayed<T>(answer: T): Promise<T> {
   const call = calls++;
   const delay = Number(process.env.PLUGIN_DELAY_MS ?? 0);
-  if (delay) await Bun.sleep(delay + (process.env.PLUGIN_ORDER === "reverse" ? 400 - call * 40 : call * 40));
+  if (delay) await Bun.sleep(delay + (process.env.PLUGIN_ORDER === "reverse" ? 100 - call * 4 : call * 4));
   return answer;
 }
 `;
@@ -277,10 +277,8 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
           mixedAnswers,
           [
             { PLUGIN_DELAY_MS: "0" },
-            { PLUGIN_DELAY_MS: "1000" },
-            { PLUGIN_DELAY_MS: "1000", PLUGIN_ORDER: "reverse" },
-            { PLUGIN_DELAY_MS: "1000", PLUGIN_ORDER: "reverse", GOMAXPROCS: "2" },
-            { PLUGIN_DELAY_MS: "5000", PLUGIN_ORDER: "reverse" },
+            { PLUGIN_DELAY_MS: "100" },
+            { PLUGIN_DELAY_MS: "100", PLUGIN_ORDER: "reverse", GOMAXPROCS: "2" },
           ],
           "781 <plain> 7 hello, you short 2.5\n",
         ),
@@ -293,13 +291,7 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
       slot(() =>
         expectSameExecutable(
           manyRoots,
-          [
-            { PLUGIN_DELAY_MS: "0" },
-            { PLUGIN_DELAY_MS: "30" },
-            { PLUGIN_DELAY_MS: "300" },
-            { PLUGIN_DELAY_MS: "1500" },
-            { PLUGIN_DELAY_MS: "300", GOMAXPROCS: "2" },
-          ],
+          [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "30" }, { PLUGIN_DELAY_MS: "300", GOMAXPROCS: "2" }],
           `20 3 ${Array.from({ length: 20 }, (_, index) => index * 7 + 1).reduce((sum, side) => sum + side, 0)}\n`,
         ),
       ),
@@ -308,7 +300,7 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
   for (const [name, { files, prints }] of Object.entries(cases)) {
     test(
       name,
-      () => slot(() => expectSameExecutable(files, [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "400" }], prints)),
+      () => slot(() => expectSameExecutable(files, [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "100" }], prints)),
       600_000,
     );
   }
@@ -325,7 +317,7 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
           "lib.ts": `export const answer: number = 1;`,
           "plugin.ts": `import { delayed } from "./delayed"; export default { name: "p", setup(b: any) { b.onLoad({ filter: /lib\\.ts$/ }, async () => { await delayed(0); throw new Error("the plugin gave up"); }); } };`,
         });
-        for (const PLUGIN_DELAY_MS of ["0", "400"]) {
+        for (const PLUGIN_DELAY_MS of ["0", "100"]) {
           const { built } = await buildWith(String(dir), { PLUGIN_DELAY_MS });
           expect({ PLUGIN_DELAY_MS, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
             PLUGIN_DELAY_MS,

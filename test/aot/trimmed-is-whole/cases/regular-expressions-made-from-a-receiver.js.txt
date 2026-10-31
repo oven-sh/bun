@@ -1,4 +1,5 @@
 //@ build --disallow-code-generation-from-strings
+//@ build --no-builtin-modules
 const given = process.argv[2] ?? "";
 //// Symbol-matchAll
 const letters = { flags: "u", lastIndex: 0, toString: () => "\\p" + given + "{L}+" };

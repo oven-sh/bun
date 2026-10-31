@@ -83,13 +83,13 @@ static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A compiled program that refuses text refuses it with the interpreter too, so keeping the interpreter is no advice.
-    if (feature == static_cast<uint16_t>(JSC::RemovableFeature::Interpreter) && isCodeGenerationDisallowedByCompiledProgram()) {
+    // Where the flag or the compiled program refuses text it is refused with the interpreter too, so keeping the interpreter is no advice.
+    if (feature == static_cast<uint16_t>(JSC::RemovableFeature::Interpreter) && (isCodeGenerationDisallowedByFlags() || isCodeGenerationDisallowedByCompiledProgram())) {
         JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
         return {};
     }
     auto* error = JSC::createError(globalObject, messageOfRemovedFeature(api, feature));
-    error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
+    Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
     JSC::throwException(globalObject, scope, error);
     return {};
 }

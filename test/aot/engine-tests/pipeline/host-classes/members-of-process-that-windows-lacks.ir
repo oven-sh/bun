@@ -1,0 +1,233 @@
+# process.getuid and its ten siblings exist on every platform but Windows. Packages ask before they call.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="members-of-process-that-windows-lacks.js" displayPath="members-of-process-that-windows-lacks.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+typesite w0 module=m2 position=427 kind=Parameter
+typesite w1 module=m2 position=458 kind=Parameter
+typesite w2 module=m2 position=399 kind=Result
+typesite w3 module=m2 position=776 kind=Parameter
+typesite w4 module=m2 position=750 kind=Result
+typesite w5 module=m2 position=2008 kind=Parameter
+typesite w6 module=m2 position=2026 kind=Parameter
+typesite w7 module=m2 position=2041 kind=Parameter
+typesite w8 module=m2 position=1987 kind=Result
+typesite w9 module=m2 position=2264 kind=Parameter
+typesite w10 module=m2 position=2228 kind=This
+typesite w11 module=m2 position=2203 kind=Result
+typesite w12 module=m2 position=611 kind=Variable
+typesite w13 module=m2 position=2314 kind=Variable
+typesite w14 module=m2 position=2348 kind=Variable
+typesite w15 module=m2 position=2403 kind=Variable
+typesite w16 module=m2 position=2323 kind=PropertyRead
+typesite w17 module=m2 position=2356 kind=CallResult
+typesite w18 module=m2 position=2561 kind=Variable
+typesite w19 module=m2 position=2940 kind=CallResult
+typesite w20 module=m2 position=2980 kind=CallResult
+variable g0 name="firstSearchedIndex" module=m2 declared={type=f27 flags=[IsFromCompiler]} initialization=Function function=f27 flags=[IsImmutable]
+variable g1 name="holdsBoxedValues" module=m2 declared={type=f28 flags=[IsFromCompiler]} initialization=Function function=f28 flags=[IsImmutable]
+variable g2 name="includesNaN" module=m2 declared={type=f29 flags=[IsFromCompiler]} initialization=Function function=f29 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="initgroups"
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="initgroups"
+    v3 = Convert v2 declared={type=builtin(ProcessInitgroups) flags=[IsExpected]}
+    v4 = NewArray v0, v3 contents=anything
+    v5 = Convert v4 declared={type=undefined|null|Array flags=[IsExpected]}
+    v6 = String string="setegid"
+    v7 = Builtin builtin=Process
+    v8 = PropGet v7 key="setegid"
+    v9 = Convert v8 declared={type=builtin(ProcessSetegid) flags=[IsExpected]}
+    v10 = NewArray v6, v9 contents=undefined|null|string|function|builtin(ProcessSetegid)
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string|function|builtin(ProcessSetegid)> flags=[IsExpected]}
+    v12 = String string="seteuid"
+    v13 = Builtin builtin=Process
+    v14 = PropGet v13 key="seteuid"
+    v15 = Convert v14 declared={type=builtin(ProcessSeteuid) flags=[IsExpected]}
+    v16 = NewArray v12, v15 contents=undefined|null|string|function|builtin(ProcessSeteuid)
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string|function|builtin(ProcessSeteuid)> flags=[IsExpected]}
+    v18 = String string="setgid"
+    v19 = Builtin builtin=Process
+    v20 = PropGet v19 key="setgid"
+    v21 = Convert v20 declared={type=builtin(ProcessSetgid) flags=[IsExpected]}
+    v22 = NewArray v18, v21 contents=undefined|null|string|function|builtin(ProcessSetgid)
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string|function|builtin(ProcessSetgid)> flags=[IsExpected]}
+    v24 = String string="setgroups"
+    v25 = Builtin builtin=Process
+    v26 = PropGet v25 key="setgroups"
+    v27 = Convert v26 declared={type=builtin(ProcessSetgroups) flags=[IsExpected]}
+    v28 = NewArray v24, v27 contents=undefined|null|string|function|builtin(ProcessSetgroups)
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|string|function|builtin(ProcessSetgroups)> flags=[IsExpected]}
+    v30 = String string="setuid"
+    v31 = Builtin builtin=Process
+    v32 = PropGet v31 key="setuid"
+    v33 = Convert v32 declared={type=builtin(ProcessSetuid) flags=[IsExpected]}
+    v34 = NewArray v30, v33 contents=undefined|null|string|function|builtin(ProcessSetuid)
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string|function|builtin(ProcessSetuid)> flags=[IsExpected]}
+    v36 = NewArray v5, v11, v17, v23, v29, v35 contents=undefined|null|Array
+    v37 = Convert v36 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}
+    v38 = IteratorOpen v37
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v40 = IteratorResume v38
+    v41 = ResultAt v40
+    v42 = ResultAt v40 index=1
+    Branch v41 -> taken b2(), notTaken b3()
+  b2():
+    v43 = Builtin builtin=Process
+    v44 = PropGet v43 key="getuid"
+    v45 = Convert v44 declared={type=builtin(ProcessGetuid) flags=[IsExpected]}
+    v46 = Undefined
+    v47 = Builtin builtin=Process
+    v48 = PropGet v47 key="getgid"
+    v49 = Convert v48 declared={type=builtin(ProcessGetgid) flags=[IsExpected]}
+    v50 = Undefined
+    v51 = Builtin builtin=Object
+    v52 = Builtin builtin=ObjectHasOwn
+    v53 = Builtin builtin=Process
+    v54 = String string="getuid"
+    v55 = Call v52, v51, v53, v54 calleeName="Object.hasOwn"
+    v56 = Undefined
+    Return v56
+  b3():
+    Jump -> next b4()
+  b4() handler=b8():
+    v57 = IteratorOpen v42 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b7():
+    v58 = IteratorResume v57 stepIndex=0
+    v59 = ResultAt v58 index=1
+    v60 = IteratorResume v57 stepIndex=1
+    v61 = ResultAt v60 index=1
+    Jump -> next b6()
+  b6() handler=b8():
+    v62 = Builtin builtin=GlobalThis
+    v63 = PropGet v62 key="console" [isFreeName]
+    v64 = Convert v63 declared={type=builtin(Console) flags=[IsExpected]}
+    v65 = PropGet v64 key="log"
+    v66 = Convert v65 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v67 = TypeOf v61
+    v68 = Call v66, v64, v59, v67 calleeKey="log" calleeName="console.log"
+    Jump -> next b1()
+  b7() role=IterationCleanup subject=v57 handler=b8():
+    v69 = CatchException
+    Rethrow v69
+  b8() role=IterationCleanup subject=v38:
+    v70 = CatchException
+    Rethrow v70
+}
+function f1 name="isRoot" module=m0 position=771 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="getuid"
+    v2 = Convert v1 declared={type=builtin(ProcessGetuid) flags=[IsExpected]}
+    v3 = Builtin builtin=Process
+    v4 = PropGet v3 key="getuid"
+    v5 = Convert v4 declared={type=builtin(ProcessGetuid) flags=[IsExpected]}
+    v6 = Call v5, v3 calleeKey="getuid" calleeName="process.getuid"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Integer
+    v9 = StrictEq v7, v8
+    v10 = Convert v9 declared={type=undefined|boolean flags=[IsExpected]}
+    Return v10
+}
+function f2 name="ownerOrMinusOne" module=m0 position=844 flags=[HasExplicitName] thisType={type=anything} results=[{type=boolean|-1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="getuid"
+    v2 = Convert v1 declared={type=builtin(ProcessGetuid) flags=[IsExpected]}
+    v3 = Builtin builtin=Process
+    v4 = PropGet v3 key="getuid"
+    v5 = Convert v4 declared={type=builtin(ProcessGetuid) flags=[IsExpected]}
+    v6 = Call v5, v3 calleeKey="getuid" calleeName="process.getuid"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Integer
+    v9 = GreaterEq v7, v8
+    v10 = Convert v9 declared={type=boolean|-1 flags=[IsExpected]}
+    Return v10
+}
+function f3 name="ask" module=m0 position=119 kind=Arrow length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function|builtin(ProcessGetegid)|builtin(ProcessGeteuid)|builtin(ProcessGetgid)|builtin(ProcessGetgroups)|builtin(ProcessGetuid) flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 position=245 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=303 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=359 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 position=420 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=478 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessGetegid, ProcessGeteuid, ProcessGetgid, ProcessGetgroups, ProcessGetuid]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessSetgid]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessGetegid, ProcessGeteuid, ProcessGetgid, ProcessGetgroups, ProcessGetuid]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessSetuid]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessGetegid, ProcessGeteuid, ProcessGetgid, ProcessGetgroups, ProcessGetuid]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessSeteuid]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessGetegid, ProcessGeteuid, ProcessGetgid, ProcessGetgroups, ProcessGetuid]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessSetegid]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessGetegid, ProcessGeteuid, ProcessGetgid, ProcessGetgroups, ProcessGetuid]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ProcessSetgroups]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f27 name="firstSearchedIndex" module=m2 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f28 name="holdsBoxedValues" module=m2 position=750 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=boolean site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f29 name="includesNaN" module=m2 position=1987 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}, {type=number site=w7}] results=[{type=boolean site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f30 name="includes" module=m2 position=2203 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=131087 thisType={type=undefined|null|Array site=w10 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=undefined|number site=w9}] results=[{type=boolean site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=68 function=f26
+runtimefunction id=131087 function=f30
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v0:String)
+# CHECK-NEXT: Int64 b@20 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000008, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v1:Builtin)
+# CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v2:String)
+# CHECK-NEXT: Int64 b@22 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000009, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v3:Builtin)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v4:String)
+# CHECK-NEXT: Int64 b@24 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x30000000a, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v5:Builtin)
+# CHECK-NEXT: Int64 b@25 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v6:String)
+# CHECK-NEXT: Int64 b@26 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x30000000b, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v7:Builtin)
+# CHECK-NEXT: Int64 b@27 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v8:String)
+# CHECK-NEXT: Int64 b@28 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x30000000c, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v9:Builtin)
+# CHECK-NEXT: Int64 b@29 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:{argumentBuffer, AllocatorState}, v10:String)
+# CHECK-NEXT: Int64 b@30 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x30000000d, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v11:Builtin)
+# CHECK-NEXT: Int64 b@31 = Patchpoint(b@20:ColdAny, resultConstraints = Register(%rax), ControlDependent, v12:TypeOf)
+# CHECK-NEXT: Int64 b@32 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000005, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v13:CallBuiltin)
+# CHECK-NEXT: Int64 b@34 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000000, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v13:CallBuiltin)
+# CHECK-NEXT: Int64 b@35 = Patchpoint(b@32:Register(%r8), b@34:Register(%rax), b@19:Register(%rdi), b@31:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v13:CallBuiltin)
+# CHECK-NEXT: Int64 b@36 = Patchpoint(b@22:ColdAny, resultConstraints = Register(%rax), ControlDependent, v14:TypeOf)
+# CHECK-NEXT: Int64 b@39 = Patchpoint(b@32:Register(%r8), b@34:Register(%rax), b@21:Register(%rdi), b@36:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v15:CallBuiltin)
+# CHECK-NEXT: Int64 b@40 = Patchpoint(b@24:ColdAny, resultConstraints = Register(%rax), ControlDependent, v16:TypeOf)
+# CHECK-NEXT: Int64 b@43 = Patchpoint(b@32:Register(%r8), b@34:Register(%rax), b@23:Register(%rdi), b@40:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v17:CallBuiltin)
+# CHECK-NEXT: Int64 b@44 = Patchpoint(b@26:ColdAny, resultConstraints = Register(%rax), ControlDependent, v18:TypeOf)
+# CHECK-NEXT: Int64 b@47 = Patchpoint(b@32:Register(%r8), b@34:Register(%rax), b@25:Register(%rdi), b@44:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v19:CallBuiltin)
+# CHECK-NEXT: Int64 b@48 = Patchpoint(b@28:ColdAny, resultConstraints = Register(%rax), ControlDependent, v20:TypeOf)
+# CHECK-NEXT: Int64 b@51 = Patchpoint(b@32:Register(%r8), b@34:Register(%rax), b@27:Register(%rdi), b@48:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v21:CallBuiltin)
+# CHECK-NEXT: Int64 b@52 = Patchpoint(b@30:ColdAny, resultConstraints = Register(%rax), ControlDependent, v22:TypeOf)
+# CHECK-NEXT: Int64 b@55 = Patchpoint(b@32:Register(%r8), b@34:Register(%rax), b@29:Register(%rdi), b@52:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, ExternalState, AllocatorState, RuntimeState}|Reads:Top, v23:CallBuiltin)
+# CHECK-NEXT: Int64 b@56 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v24:Builtin)
+# CHECK-NEXT: Int64 b@57 = Patchpoint(b@56:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v25:PropHasOwn)
+# CHECK-NEXT: Int64 b@33 = Const64(10, v13:CallBuiltin)
+# CHECK-NEXT: Void b@59 = Return($10(b@33), Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@20: dereferenceableBytes = 8
+# CHECK-NEXT: b@22: dereferenceableBytes = 8
+# CHECK-NEXT: b@24: dereferenceableBytes = 8
+# CHECK-NEXT: b@26: dereferenceableBytes = 8
+# CHECK-NEXT: b@28: dereferenceableBytes = 8
+# CHECK-NEXT: b@30: dereferenceableBytes = 8
+# CHECK-NEXT: b@31: dereferenceableBytes = 16
+# CHECK-NEXT: b@36: dereferenceableBytes = 16
+# CHECK-NEXT: b@40: dereferenceableBytes = 16
+# CHECK-NEXT: b@44: dereferenceableBytes = 16
+# CHECK-NEXT: b@48: dereferenceableBytes = 16
+# CHECK-NEXT: b@52: dereferenceableBytes = 16
+# CHECK-NEXT: b@56: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f0

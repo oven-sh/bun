@@ -7,7 +7,7 @@ use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 /// Enforce using type parameter when calling `Array#reduce` instead of using a type assertion.
 pub struct PreferReduceTypeParameter;
 
-const PREFER_TYPE_PARAMETER: Message = Message::new(
+const PREFER_TYPE_PARAMETER: &Message = &Message::new(
     "preferTypeParameter",
     "Unnecessary assertion: Array#reduce accepts a type parameter for the default value.",
 );

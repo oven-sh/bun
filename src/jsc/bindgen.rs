@@ -5,11 +5,9 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_core::EncodedSlice;
-
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
+    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -124,18 +122,40 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
-    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
+    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be. Out of memory ends the process.
     #[inline]
     pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
-        if (2..=JSString::MAX_LENGTH).contains(&latin1.len()) {
-            // SAFETY: all of the characters are written.
-            return unsafe {
-                self.create_latin1_string_with(latin1.len(), |to| {
+        if latin1.len() > JSString::MAX_LENGTH {
+            return JsLocal::from_raw(JSValue::js_empty_string(self.global_object()));
+        }
+        self.try_copy_latin1(latin1)
+            .unwrap_or_else(|| bun_core::out_of_memory())
+    }
+
+    /// As [`create_latin1_string`](Self::create_latin1_string) for as many characters as JavaScript likes. Its error is not thrown: a `&mut self` method can call it.
+    #[inline]
+    pub fn try_create_latin1_string(&self, latin1: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
+        if latin1.len() > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
+        self.try_copy_latin1(latin1)
+            .ok_or_else(|| self.memory_allocation_failed())
+    }
+
+    /// At most [`JSString::MAX_LENGTH`] characters. `None` when they cannot be allocated.
+    #[inline]
+    fn try_copy_latin1(&self, latin1: &[u8]) -> Option<JsLocal<'a, JSString>> {
+        let global = self.global_object();
+        Some(JsLocal::from_raw(match *latin1 {
+            [] => JSValue::js_empty_string(global),
+            [character] => JSString::single_latin1_character(global, character),
+            // SAFETY: all of the characters are written, and to copy them allocates nothing.
+            _ => unsafe {
+                JSString::try_create_latin1_with(global, latin1.len(), |to| {
                     to.copy_from_nonoverlapping(latin1.as_ptr(), latin1.len());
                 })
-            };
-        }
-        JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
+            }?,
+        }))
     }
 
     /// A string of `length` 8-bit characters, 2 to [`JSString::MAX_LENGTH`]. SAFETY: `fill` writes all of them.

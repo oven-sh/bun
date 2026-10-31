@@ -1,1 +1,0 @@
-{ "skipInShell": "it uses Bun.deepEquals and Bun.inspect" }

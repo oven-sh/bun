@@ -2,6 +2,9 @@
 # The result has the type that the table gives the property. Without the proof, and for a property that the program stores to, the read stays a read by name
 # RUN: pass ResolveBuiltins
 # RUN(FLOW): pipeline ResolveBuiltins
+# On Windows process.env is a Proxy that the library makes, not an object of the host.
+# RUN(POSIX): pipeline ResolveBuiltins
+# REQUIRES(POSIX): not-windows
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -70,11 +73,13 @@ function f4 name="objectWhoseMembersAreReadByName" results=[{type=anything}] {
 # CHECK: v1: anything = PropGet v0 key="env"
 # FLOW-LABEL: function f4 name="objectWhoseMembersAreReadByName"
 # FLOW-NOT: key="env"
-# FLOW: [[environment]]: object = GetBuiltinValue builtin=ProcessEnv
-# FLOW: [[known]]: object = AssumeType [[environment]]
-# FLOW: [[read]]: anything = PropGet [[known]] key="HOME"
+# FLOW: : object = GetBuiltinValue builtin=ProcessEnv
+# POSIX-LABEL: function f4 name="objectWhoseMembersAreReadByName"
+# POSIX: [[environment]]: object = GetBuiltinValue builtin=ProcessEnv
+# POSIX: [[known]]: object = AssumeType [[environment]]
+# POSIX: [[read]]: anything = PropGet [[known]] key="HOME"
 # The table says what the object holds: a string under every name that native code has defined.
-# FLOW: : undefined|string = AssumeType [[read]]
+# POSIX: : undefined|string = AssumeType [[read]]
 
 function f5 name="objectMadeByCodeThatMayThrow" results=[{type=anything}] {
   b0():

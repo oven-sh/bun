@@ -11,7 +11,7 @@
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { unsupported } from "../run-programs";
+import { unsupported } from "../harness/commands";
 
 const repository = join(import.meta.dir, "..", "..", "..");
 const bunDirectory = dirname(bunExe());

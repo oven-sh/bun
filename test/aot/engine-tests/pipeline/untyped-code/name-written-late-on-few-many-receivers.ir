@@ -1,0 +1,47 @@
+# One read site sees objects of twelve classes. Some of the names it reads are on none of them at first and are stored later, by functions that are found step by step.
+# FORM: AsRead
+# OPTIONS: check=FlowFixpoint
+# RUN: valueflow-apply
+
+module m0 path="name-written-late-on-few-many-receivers.js" displayPath="name-written-late-on-few-many-receivers.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1585 fields=[{key="fifth" declared={type=undefined|null|function|f5 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="first" declared={type=undefined|null|function|f1|f2|f3|f4 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="fourth" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="second" declared={type=undefined|null|function|f2|f3|f4 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="third" declared={type=undefined|null|function|f3|f4 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] declaredOrder=[1, 3, 4, 2, 0] ownFieldCount=5
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Convert v1 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v3 = PropGet v2 key="first"
+    v4 = Convert v3 declared={type=undefined|null|function|f1|f2|f3|f4 flags=[IsExpected]}
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Call v5 calleeName="step"
+    v8 = Convert v7 declared={type=undefined|null|function|f2|f3|f4 flags=[IsExpected]}
+    v9 = Convert v8 declared={type=undefined|null|function|f1|f2|f3|f4 flags=[IsExpected]}
+    Jump -> next b1(v9)
+}
+function f1 name="first" module=m0 position=1589 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f2|f3|f4 flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="second" module=m0 position=1657 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f3|f4 flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="third" module=m0 position=1773 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f4 flags=[IsExpected]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="fourth" module=m0 position=1879 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f5 flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="fifth" module=m0 position=2056 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=null flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=0 allocationClass=0
+# CHECK-NEXT: v1: L0 = FinishObject v0
+# CHECK-NEXT: v2: anything ~ undefined|null|function = PropGet v1 key="first" accessSite=0 receivers=[L0]
+# CHECK-NEXT: Jump -> next b1(v2)
+# CHECK-NEXT: b1(v3: anything ~ undefined|null|function):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: anything = Call v3 calleeName="step" accessSite=1 callees=[]
+# CHECK-NEXT: v6: anything ~ undefined|null|function = Upcast v5 castType=anything
+# CHECK-NEXT: Jump -> next b1(v6)
+# CHECK-NEXT: }

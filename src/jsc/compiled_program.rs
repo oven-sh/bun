@@ -66,7 +66,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     /// ZigGlobalObject.cpp
     fn Bun__isOptionThatCompiledCodeDoesNotTake(entry: *const core::ffi::c_char) -> bool;
-    /// patches/mimalloc/environment-sets-sizes-and-pace-only.patch
+    /// mimalloc, compiled with MI_GETENV_ALLOWED (scripts/build/deps/mimalloc.ts)
     fn mi_is_read_from_environment(name_in_lower_case: *const core::ffi::c_char) -> bool;
 }
 
@@ -241,6 +241,12 @@ pub fn error_if_code_outside_image_is_refused(
     compiled_program()?;
     let error = Bun__AOT__errorIfCodeOutsideImageIsRefused(global, code, path);
     (!error.is_empty()).then_some(error)
+}
+
+pub(crate) fn refuses_code_at(global: &JSGlobalObject, path: &[u8]) -> bool {
+    let path = bun_core::StringView::from_bytes(path);
+    error_if_code_outside_image_is_refused(global, crate::ErrCode::ERR_MODULE_NOT_FOUND, &path)
+        .is_some()
 }
 
 /// `path` names a file that loads as a database or a page.

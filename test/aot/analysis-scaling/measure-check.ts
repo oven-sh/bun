@@ -1,7 +1,7 @@
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { memoryLimit } from "../harness/memory-limit";
-import { measureHere, type Measured } from "./measure-here";
+import { measureHere, notCounted, sayOnce, type Measured } from "./measure-here";
 
 export { openInstructionCounter } from "./measure-here";
 
@@ -75,6 +75,7 @@ export async function measureCommandWithMemory(
     throw new Error(
       `${command.join(" ")}: what measures it ended with exit code ${exitCode}, signal ${parent.signalCode}\n${stdout}${stderr}`,
     );
+  for (const line of stderr.split("\n")) if (line.startsWith(notCounted)) sayOnce(line);
   return accepted(command, expectedExitCode, JSON.parse(stdout));
 }
 

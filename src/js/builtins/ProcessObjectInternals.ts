@@ -193,6 +193,13 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
+  // The descriptor belongs to the process: reading resumes after 'end' (see the
+  // 'resume' handler) and children inherit it. Destroying stdin, which the
+  // 'end' handler below does, must not close it.
+  stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
+    cb(err);
+  };
+
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
@@ -446,6 +453,9 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
     }
     $putInternalField(marker, 0, 1);
   }
+  // Object lists a member from when it is first read. internal/validators, which is loaded for a callback that is no function, reads these
+  // three when it loads: whoever has read process.nextTick finds them read, in this order.
+  const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
   if (IS_COMPILED_AHEAD_OF_TIME) {
     return install(process, marker, startRing, require("internal/process/next_tick_queue").nextTick);
   }
@@ -617,6 +627,11 @@ export function windowsEnv(
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
+    },
+    preventExtensions() {
+      // As in Node: Object.preventExtensions(), Object.seal() and Object.freeze() throw a TypeError. Of a target that
+      // cannot be extended ownKeys() would have to answer the target's own keys, which are in upper case.
+      return false;
     },
   });
   return envProxy;

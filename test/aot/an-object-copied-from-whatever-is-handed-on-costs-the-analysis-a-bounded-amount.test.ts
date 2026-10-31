@@ -47,18 +47,20 @@ test("one more function that copies what it is handed adds a bounded number of n
     Object.fromEntries(sizes.map(size => [`functions${size}.js`, sourceWith(size)])),
   );
   const directory = String(dir);
-  const counts = [];
-  for (const size of sizes) {
-    const executable = join(directory, `functions${size}${isWindows ? ".exe" : ""}`);
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", withThreads(1), `functions${size}.js`, "--outfile", executable],
-      directory,
-      { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
-    );
-    expect(built.exitCode).toBe(0);
-    expect((await run([executable], directory, bunEnv)).stdout).toBe(`${size} true\n`);
-    counts.push(countsOf(built.stderr + built.stdout));
-  }
+  // Side by side: each build has one thread.
+  const counts = await Promise.all(
+    sizes.map(async size => {
+      const executable = join(directory, `functions${size}${isWindows ? ".exe" : ""}`);
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", withThreads(1), `functions${size}.js`, "--outfile", executable],
+        directory,
+        { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
+      );
+      expect(built.exitCode).toBe(0);
+      expect((await run([executable], directory, bunEnv)).stdout).toBe(`${size} true\n`);
+      return countsOf(built.stderr + built.stdout);
+    }),
+  );
   expect(counts[0].edges).toBeGreaterThan(0);
   for (const name of Object.keys(most) as (keyof typeof most)[]) {
     const added = (counts[1][name] - counts[0][name]) / (sizes[1] - sizes[0]);

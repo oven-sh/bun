@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}const-after-eval-has-location"
+// CHECK: module [[entry]] path="{{*}}const-after-eval-has-location.js"
 // CHECK: evalscope [[scope]] {{*}}bindings=[{name="c" kind=Constant layout=[[layout]] field=0 operand=0}
 // CHECK: function [[f]] name="f" module=[[entry]]
 // CHECK: [[environment]] = NewObject layout=[[layout]]

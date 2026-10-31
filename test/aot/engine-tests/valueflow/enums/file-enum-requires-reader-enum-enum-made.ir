@@ -1,0 +1,216 @@
+# -- source: main.ts
+# // The file of an enum requires a reader of the enum before the enum is made.
+# import "./color";
+# import { read } from "./reader";
+# console.log(read());
+# -- source: reader.ts
+# import { Color } from "./color";
+# export function read() {
+#   return [Color.Red, Color.Green, Color.Blue, Color["Green"]].join();
+# }
+# -- source: color.ts
+# const { read } = require("./reader");
+# try {
+#   console.log("early", read());
+# } catch (error: any) {
+#   console.log(error.constructor.name);
+# }
+# export enum Color {
+#   Red,
+#   Green = 5,
+#   Blue = "blue",
+# }
+# console.log("late", read());
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 requests=[{target=m2 completes=true}, {target=m1 completes=true}] namespaceLayout=L(m0)
+module m1 path="reader.ts" displayPath="reader.ts" body=f1 requests=[{target=m2 completes=true}] exports=[{name="read" variable=g0}] namespaceLayout=L(m1)
+module m2 path="color.ts" displayPath="color.ts" body=f3 namespaceLayout=L(m2)
+entry module=m0
+typesite w0 module=m0 position=141 kind=CallResult
+typesite w1 module=m1 position=33 kind=Result
+typesite w2 module=m1 position=68 kind=PropertyRead
+typesite w3 module=m1 position=79 kind=PropertyRead
+typesite w4 module=m1 position=104 kind=PropertyRead
+typesite w5 module=m1 position=67 kind=CallResult
+layout L0 kind=Container name="Color" module=m2 position=152 fields=[{key="Red" declared={type=anything}}, {key="Green" declared={type=anything}}, {key="Blue" declared={type=anything}}] ownFieldCount=3
+variable g0 name="read" module=m1 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="Color" module=m2 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="read"
+    v7 = Call v6 calleeName="read"
+    v8 = Convert v7 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v9 = Call v4, v2, v8 calleeKey="log" calleeName="console.log"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="read" module=m1 position=33 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="Color"
+    v2 = Convert v1 declared={type=undefined|null|object} illTypedCause=Assertion
+    v3 = PropGet v2 key="Red"
+    v4 = Convert v3 declared={type=0 site=w2} illTypedCause=Assertion
+    v5 = GetModuleVariable variable=g1
+    v6 = CheckInitialized v5 name="Color"
+    v7 = Convert v6 declared={type=undefined|null|object} illTypedCause=Assertion
+    v8 = PropGet v7 key="Green"
+    v9 = Convert v8 declared={type=5 site=w3} illTypedCause=Assertion
+    v10 = GetModuleVariable variable=g1
+    v11 = CheckInitialized v10 name="Color"
+    v12 = Convert v11 declared={type=undefined|null|object} illTypedCause=Assertion
+    v13 = PropGet v12 key="Blue"
+    v14 = GetModuleVariable variable=g1
+    v15 = CheckInitialized v14 name="Color"
+    v16 = Convert v15 declared={type=undefined|null|object} illTypedCause=Assertion
+    v17 = PropGet v16 key="Green"
+    v18 = Convert v17 declared={type=5 site=w4} illTypedCause=Assertion
+    v19 = NewArray v4, v9, v13, v18 contents=undefined|null|i32|"blue"
+    v20 = PropGet v19 key="join"
+    v21 = Call v20, v19 calleeKey="join" calleeName="join"
+    ReturnCall v21 casts=[{declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f3 module=m2 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    v1 = RequireModule module=m1 referrer=m2 specifier="./reader"
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = TypeTest v2 testedType=undefined|null
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    v5 = NewRuntimeError runtimeError=NotDestructurable name="read"
+    Throw v5
+  b4(v6):
+    v7 = PropGet v6 key="read"
+    Jump -> next b5()
+  b5() handler=b8(v7):
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="console" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]}
+    v11 = PropGet v10 key="log"
+    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v13 = String string="early"
+    v14 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    Jump -> next b6()
+  b6() handler=b8(v14):
+    v15 = Call v14 calleeName="read"
+    v16 = Call v12, v10, v13, v15 calleeKey="log" calleeName="console.log"
+    Jump -> next b7()
+  b7():
+    Jump -> next b9(v14)
+  b8(v17) role=CatchHandler:
+    v18 = CatchValue
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="console" [isFreeName]
+    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]}
+    v22 = PropGet v21 key="log"
+    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v24 = PropGet v18 key="constructor"
+    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v26 = PropGet v25 key="name"
+    v27 = Call v23, v21, v26 calleeKey="log" calleeName="console.log"
+    Jump -> next b9(v17)
+  b9(v28):
+    v29 = Integer
+    v30 = String string="Red"
+    v31 = Integer integer=5
+    v32 = String string="Green"
+    v33 = String string="blue"
+    v34 = NewObject -, v29, v31, v33 layout=L0 fields=[0, 1, 2]
+    ElemDefine v34, v29, v30
+    ElemDefine v34, v31, v32
+    v37 = FinishObject v34
+    PutModuleVariable v37 variable=g1
+    v39 = Builtin builtin=GlobalThis
+    v40 = PropGet v39 key="console" [isFreeName]
+    v41 = Convert v40 declared={type=builtin(Console) flags=[IsExpected]}
+    v42 = PropGet v41 key="log"
+    v43 = Convert v42 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v44 = String string="late"
+    v45 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
+    v46 = Call v45 calleeName="read"
+    v47 = Call v43, v41, v44, v46 calleeKey="log" calleeName="console.log"
+    v48 = Undefined
+    Return v48
+}
+# -- generated: f0 read f2 f3
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m0
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: undefined = CallDirect function=f3
+# CHECK-NEXT: v2: undefined = CallDirect function=f1
+# CHECK-NEXT: v3: undefined = CallDirect function=f6
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="read"
+# CHECK: module=m1 position=33 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined|absent|L0 = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v2: undefined|L0 = CallDirect function=f5
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: fact = Specified
+# CHECK-NEXT: v4: undefined|L0 = AssumeType v0, v3 provenType=undefined|L0
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: b3(v5: undefined|L0):
+# CHECK-NEXT: v6: L0 = RequireObjectCoercible v5 name="Red"
+# CHECK-NEXT: v7: "0,5,blue,5" = String string="0,5,blue,5" @0 tail
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function f3 module=
+# CHECK: m2 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m2
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: undefined = CallDirect function=f8
+# CHECK-NEXT: FinishModuleEvaluation module=m2
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="read"
+# CHECK: module=m1 position=33 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f2, v1: anything):
+# CHECK-NEXT: v2: string = CallDirect function=f2
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }

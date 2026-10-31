@@ -300,3 +300,135 @@ describe("Floyd–Steinberg dither", () => {
     }
   });
 });
+
+// ─── palette mapping ────────────────────────────────────────────────────────
+
+/** The RGBA palette (alpha from tRNS) and the index of every pixel of an indexed PNG. */
+function readIndexed(png: Uint8Array): { palette: Uint8Array; indices: Uint8Array } {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let w = 0;
+  let h = 0;
+  let depth = 0;
+  let entries = 0;
+  const palette = new Uint8Array(256 * 4).fill(255);
+  const idats: Uint8Array[] = [];
+  for (let off = 8; off < png.length; off += 12 + dv.getUint32(off)) {
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    const data = png.subarray(off + 8, off + 8 + dv.getUint32(off));
+    if (type === "IHDR") {
+      w = dv.getUint32(off + 8);
+      h = dv.getUint32(off + 12);
+      depth = data[8];
+      // Colour type 3: a pixel is an index into the palette.
+      expect(data[9]).toBe(3);
+    } else if (type === "PLTE") {
+      entries = data.length / 3;
+      for (let i = 0; i < entries; i++) palette.set(data.subarray(i * 3, i * 3 + 3), i * 4);
+    } else if (type === "tRNS") {
+      for (let i = 0; i < data.length; i++) palette[i * 4 + 3] = data[i];
+    } else if (type === "IDAT") idats.push(data);
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idats));
+  // A row is its filter type, then its indices at 1, 2, 4 or 8 bits each, from the high bits of every byte.
+  const stride = 1 + Math.ceil((w * depth) / 8);
+  const indices = new Uint8Array(w * h);
+  const filters = new Set<number>();
+  for (let y = 0; y < h; y++) {
+    filters.add(raw[y * stride]);
+    for (let x = 0; x < w; x++) {
+      const bit = x * depth;
+      indices[y * w + x] = (raw[y * stride + 1 + (bit >> 3)] >> (8 - depth - (bit & 7))) & ((1 << depth) - 1);
+    }
+  }
+  // Filter type 0: a row holds the indices as they are.
+  expect([...filters]).toEqual([0]);
+  return { palette: palette.subarray(0, entries * 4), indices };
+}
+
+describe("palette mapping", () => {
+  const W = 48;
+  const H = 48;
+  // A step of the search takes 4, 8 or 16 entries, by CPU. Each count ends the palette at another place in a step.
+  const colorCounts = [
+    2, // below 4 entries the search takes one at a time
+    3,
+    4, // one step of 4
+    6, // a step of 4, then two entries
+    7, // one short of a step of 8
+    8, // one step of 8
+    15, // one short of a step of 16
+    16, // one step of 16
+    18, // a step of 16, then two entries
+    33, // two steps of 16, then one entry
+    129, // an index above 127
+    256, // the most entries
+  ];
+  const noise = (seed: number) => () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
+
+  // Without dither, a pixel gets the entry nearest to it by squared distance over the four channels: the first one
+  // on a tie. This encodes the image at every colour count and looks each pixel up in the palette that was written.
+  // No pixel here is fully transparent: what such a pixel maps to is a choice of the quantizer, not of the search.
+  async function mapped(pixel: (x: number, y: number) => [number, number, number, number]) {
+    const rgba = new Uint8Array(W * H * 4);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) rgba.set(pixel(x, y), (y * W + x) * 4);
+    const src = makePng(W, H, (x, y) => {
+      const p = (y * W + x) * 4;
+      return [rgba[p], rgba[p + 1], rgba[p + 2], rgba[p + 3]];
+    });
+    /** The colour counts at which a pixel did not get its nearest entry. */
+    const wrong: number[] = [];
+    /** Pixels with two entries at the least distance. */
+    let ties = 0;
+    /** The largest distance from a pixel to its nearest entry, in palettes of 4 entries or more. */
+    let farthest = 0;
+    const encoded = await Promise.all(
+      colorCounts.map(colors => new Bun.Image(src).png({ palette: true, colors }).bytes()),
+    );
+    for (const [n, colors] of colorCounts.entries()) {
+      const { palette, indices } = readIndexed(encoded[n]);
+      const nearest = new Uint8Array(W * H);
+      for (let p = 0; p < W * H; p++) {
+        let least = Infinity;
+        let tie = false;
+        for (let i = 0; i * 4 < palette.length; i++) {
+          let distance = 0;
+          for (let c = 0; c < 4; c++) distance += (rgba[p * 4 + c] - palette[i * 4 + c]) ** 2;
+          if (distance === least) tie = true;
+          if (distance < least) {
+            least = distance;
+            nearest[p] = i;
+            tie = false;
+          }
+        }
+        if (tie) ties++;
+        if (palette.length >= 4 * 4 && least > farthest) farthest = least;
+      }
+      if (!indices.every((index, p) => index === nearest[p])) wrong.push(colors);
+    }
+    return { wrong, ties, farthest };
+  }
+
+  test("noise: every pixel gets the nearest entry", async () => {
+    const byte = noise(1);
+    const { wrong } = await mapped(() => [byte(), byte(), byte(), byte() | 1]);
+    expect(wrong).toEqual([]);
+  });
+
+  test("greys: the grey between two entries gets the first of them", async () => {
+    const { wrong, ties } = await mapped((x, y) => {
+      const grey = (x * 5 + y * 7) & 255;
+      return [grey, grey, grey, 255];
+    });
+    expect(ties).toBeGreaterThan(0);
+    expect(wrong).toEqual([]);
+  });
+
+  test("one dark pixel in a bright image: a distance of more than 16 bits", async () => {
+    const byte = noise(2);
+    const { wrong, farthest } = await mapped((x, y) =>
+      x === 17 && y === 29 ? [0, 0, 0, 1] : [160 + (byte() % 96), 160 + (byte() % 96), 160 + (byte() % 96), 255],
+    );
+    expect(farthest).toBeGreaterThan(0xffff);
+    expect(wrong).toEqual([]);
+  });
+});

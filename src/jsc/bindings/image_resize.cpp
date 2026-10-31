@@ -243,19 +243,70 @@ static void FlipVImpl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8
         std::memcpy(dp, sp, row);
 }
 
-// Nearest-palette index for one RGBA point. Squared Euclidean over all four
-// channels; SIMD across palette entries (4 entries' R/G/B/A laid out as
-// contiguous u8, so we load 16 at a time and compute 4 distances per step on
-// targets where Lanes(u32) ≥ 4). Used by quantize.rs's Floyd–Steinberg
-// mapper — the diffusion itself is serial, but this inner search is hot and
-// parallelisable.
+// `distance << 8 | index` for each of the `Lanes(di32)` entries at `entries`.
+template<class D32, class V16 = hn::Vec<hn::Repartition<int16_t, D32>>>
+static HWY_INLINE hn::Vec<D32> PaletteKeys(D32 di32, const uint8_t* HWY_RESTRICT entries, V16 q_rb, V16 q_ga, hn::Vec<D32> index)
+{
+    const hn::Repartition<uint8_t, D32> d8;
+    const hn::Repartition<uint16_t, D32> du16;
+    const hn::Repartition<int16_t, D32> di16;
+    // An entry is two u16 lanes: red and blue are their low bytes, green and alpha their high bytes.
+    const auto lanes = hn::BitCast(du16, hn::LoadU(d8, entries));
+    const auto d_rb = hn::Sub(q_rb, hn::BitCast(di16, hn::And(lanes, hn::Set(du16, 0x00FF))));
+    const auto d_ga = hn::Sub(q_ga, hn::BitCast(di16, hn::ShiftRight<8>(lanes)));
+    auto odd = hn::Zero(di32);
+    auto even = hn::ReorderWidenMulAccumulate(di32, d_rb, d_rb, hn::Zero(di32), odd);
+    even = hn::ReorderWidenMulAccumulate(di32, d_ga, d_ga, even, odd);
+    return hn::Or(hn::ShiftLeft<8>(hn::RearrangeToOddPlusEven(even, odd)), index);
+}
+
+// The lesser key of each lane. No key is negative, and before google/highway#3337 the signed Min on SVE is a compare and a select.
+template<class D32>
+static HWY_INLINE hn::Vec<D32> MinKey(D32 di32, hn::Vec<D32> a, hn::Vec<D32> b)
+{
+#if HWY_TARGET_IS_SVE
+    const hn::RebindToUnsigned<D32> du32;
+    return hn::BitCast(di32, hn::Min(hn::BitCast(du32, a), hn::BitCast(du32, b)));
+#else
+    (void)di32;
+    return hn::Min(a, b);
+#endif
+}
+
+// The index in the least key of the `k` entries, `Lanes(di32)` of them per step.
+template<class D32>
+static HWY_INLINE uint32_t NearestPaletteInSteps(D32 di32, const uint8_t* HWY_RESTRICT palette, uint32_t k,
+    int32_t r, int32_t g, int32_t b, int32_t a)
+{
+    const hn::Repartition<int16_t, D32> di16;
+    const uint32_t step = static_cast<uint32_t>(hn::Lanes(di32));
+    HWY_DASSERT(k >= step);
+    const auto q_rb = hn::BitCast(di16, hn::Set(di32, r | (b << 16)));
+    const auto q_ga = hn::BitCast(di16, hn::Set(di32, g | (a << 16)));
+    auto best = hn::Set(di32, hwy::LimitsMax<int32_t>());
+    auto index = hn::Iota(di32, 0);
+    uint32_t i = 0;
+    for (; i + step <= k; i += step) {
+        best = MinKey(di32, best, PaletteKeys(di32, palette + i * 4, q_rb, q_ga, index));
+        index = hn::Add(index, hn::Set(di32, static_cast<int32_t>(step)));
+    }
+    // The last step starts early, so that it ends at the last entry.
+    if (i < k) best = MinKey(di32, best, PaletteKeys(di32, palette + (k - step) * 4, q_rb, q_ga, hn::Iota(di32, static_cast<int32_t>(k - step))));
+    return static_cast<uint32_t>(hn::ReduceMin(di32, best)) & 0xFF;
+}
+
+// Index of the entry nearest to (r, g, b, a) by squared distance, the first one on a tie.
 static uint32_t NearestPaletteImpl(const uint8_t* HWY_RESTRICT palette, uint32_t k,
     int32_t r, int32_t g, int32_t b, int32_t a)
 {
-    // Scalar fallback that the compiler vectorises well; explicit highway
-    // here would need a 4-way deinterleave that doesn't beat the scalar on
-    // small k. The HWY_DYNAMIC_DISPATCH still picks the best -march to
-    // compile this body under.
+    // A key holds 8 bits of index and the distance of channels that are bytes.
+    HWY_DASSERT(k <= 256);
+    HWY_DASSERT(((r | g | b | a) & ~0xFF) == 0);
+    const hn::ScalableTag<int32_t> d;
+    const hn::CappedTag<int32_t, 4> d128;
+    if (k >= hn::Lanes(d)) return NearestPaletteInSteps(d, palette, k, r, g, b, a);
+    if (k >= hn::Lanes(d128)) return NearestPaletteInSteps(d128, palette, k, r, g, b, a);
+    // Fewer than 4 entries: one at a time.
     uint32_t best = 0;
     int32_t best_d = 0x7fffffff;
     for (uint32_t i = 0; i < k; i++) {

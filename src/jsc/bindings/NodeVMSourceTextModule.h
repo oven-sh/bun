@@ -33,7 +33,7 @@ public:
     void ensureModuleRecord(JSGlobalObject* globalObject);
     JSModuleRecord* moduleRecordIfExists() const { return m_moduleRecord.get(); }
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
-    JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
+    JSValue link(JSGlobalObject* globalObject, JSArray* moduleNatives);
     JSValue instantiate(JSGlobalObject* globalObject);
     RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
@@ -56,7 +56,8 @@ private:
     bool m_linkCalled { false };
 
     JSModuleRecord* analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<JSC::ModuleProgramNode>& node);
-    void replaceUnlinkedRecords(JSGlobalObject* globalObject);
+    bool bindLinkedModules(JSGlobalObject* globalObject, String& missingSpecifier);
+    void renewRecordAfterFailedLink(JSGlobalObject* globalObject);
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
         : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)

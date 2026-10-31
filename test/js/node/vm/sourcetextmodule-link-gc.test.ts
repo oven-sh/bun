@@ -1,15 +1,14 @@
-// NodeVMModule::visitChildrenImpl iterates m_resolveCache.values() on the
-// concurrent GC thread while NodeVMSourceTextModule::link() calls
-// m_resolveCache.set() on the mutator. A set()-triggered rehash frees the
+// NodeVMSourceTextModule::link() gives a module the list of its linked modules
+// while NodeVMModule::visitChildrenImpl reads that list on the concurrent GC
+// thread. The list was a WTF::HashMap once: a set()-triggered rehash freed the
 // old bucket array mid-iteration → WTF::HashTable's debug iterator-validity
 // assert (`ASSERTION FAILED: m_table`) or heap-use-after-free under ASAN.
-// Both sides now take cellLock() (same pattern as JSC's AbstractModuleRecord).
+// The list is a GC cell now, which link() fills before the module gets it.
 //
 // collectContinuously runs a dedicated collector thread so marking overlaps
 // the link() loop; useGenerationalGC=0 makes every cycle a full mark so the
 // freshly-allocated SourceTextModule is actually visited while link()
-// populates its cache. 500 specifiers per module → the WTF::HashMap rehashes
-// ~9× per link() call.
+// makes its list. 500 specifiers per module.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -17,7 +16,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // collectContinuously is very slow under Windows + ASAN in CI; the code path
 // is identical on Linux/macOS, so skip Windows to keep duration reasonable.
 test.skipIf(isWindows)(
-  "vm.SourceTextModule link() m_resolveCache survives concurrent GC",
+  "vm.SourceTextModule link() survives concurrent GC",
   async () => {
     const fixture = `
       const vm = require("node:vm");
@@ -35,7 +34,7 @@ test.skipIf(isWindows)(
 
       (async () => {
         // Create all modules up front so each one exists across several GC
-        // cycles before link() mutates its m_resolveCache.
+        // cycles before link() gives it a list.
         const mods = [];
         for (let iter = 0; iter < 60; iter++) {
           mods.push(new vm.SourceTextModule(src, { identifier: "root" + iter }));
@@ -70,6 +69,46 @@ test.skipIf(isWindows)(
   },
   120_000,
 );
+
+// The list of an importer is the only thing that keeps its linked modules
+// alive between linkRequests() and instantiate(). The importer is an old
+// object when it gets the list, so the collector sees the list only through
+// the write barrier of that store: without it, an eden collection frees the
+// two modules and instantiate() reads freed cells.
+test("vm.SourceTextModule keeps the modules of linkRequests() alive", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const { edenGC, fullGC } = require("bun:jsc");
+
+    const importer = new vm.SourceTextModule('import a from "a"; import b from "b"; export const r = [a, b];');
+    fullGC();
+    fullGC();
+    (function link() {
+      const a = new vm.SourceTextModule('export default "a";');
+      const b = new vm.SyntheticModule(["default"], function () { this.setExport("default", "b"); });
+      a.linkRequests([]);
+      importer.linkRequests([a, b]);
+    })();
+    for (let i = 0; i < 200; i++) {
+      edenGC();
+      new Array(2000).fill(0).map(() => ({ i }));
+    }
+    importer.instantiate();
+    importer.evaluate().then(() => console.log(JSON.stringify(importer.namespace.r)));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: `["a","b"]`, exitCode: 0 });
+});
 
 // computeErrorInfoWrapperToString (src/jsc/bindings/FormatStackTraceForJS.cpp,
 // installed via vm.setOnComputeErrorInfo) runs from ErrorInstance::

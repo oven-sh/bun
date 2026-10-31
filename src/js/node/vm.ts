@@ -29,7 +29,8 @@ const vm: {
       identifier: string,
       context: Context | undefined,
       exportNames: string[] | undefined,
-      evaluationSteps: (this: SyntheticModule) => unknown,
+      // The native constructor throws ERR_INVALID_ARG_TYPE for a value that is not callable.
+      evaluationSteps: ((this: SyntheticModule) => unknown) | undefined,
       module: Module,
     ): $Node.NodeVMModule;
   };
@@ -349,7 +350,6 @@ class Module {
         options.importModuleDynamically ? importModuleDynamicallyWrap(options.importModuleDynamically) : undefined,
       );
     } else {
-      $assert(syntheticEvaluationSteps);
       this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);
     }
 
@@ -550,8 +550,6 @@ class SourceTextModule extends Module {
     const moduleRequests = this.#moduleRequests;
 
     // Iterates the module requests and links with the linker.
-    // Specifiers should be aligned with the moduleRequests array in order.
-    const specifiers = Array(moduleRequests.length);
     const modulePromises = Array(moduleRequests.length);
     // Iterates with index to avoid calling into userspace with `Symbol.iterator`.
     for (let idx = 0; idx < moduleRequests.length; idx++) {
@@ -581,12 +579,11 @@ class SourceTextModule extends Module {
         return mod[kNative];
       });
       modulePromises[idx] = modulePromise;
-      specifiers[idx] = specifier;
     }
 
     try {
       const moduleNatives = await require("internal/primordials").SafePromiseAllReturnArrayLike(modulePromises);
-      this[kNative].link(specifiers, moduleNatives, 0);
+      this[kNative].link(moduleNatives);
     } catch (e) {
       this.#error = e;
       throw e;
@@ -607,7 +604,6 @@ class SourceTextModule extends Module {
     if (moduleCount !== requestCount) {
       throw $ERR_MODULE_LINK_MISMATCH(`Expected ${requestCount} modules, got ${moduleCount}`);
     }
-    const specifiers = Array(moduleCount);
     const moduleNatives = Array(moduleCount);
     for (let idx = 0; idx < moduleCount; idx++) {
       const mod = modules[idx];
@@ -617,10 +613,9 @@ class SourceTextModule extends Module {
       if (mod.context !== this.context) {
         throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
       }
-      specifiers[idx] = moduleRequests[idx].specifier;
       moduleNatives[idx] = mod[kNative];
     }
-    this[kNative].link(specifiers, moduleNatives, 0);
+    this[kNative].link(moduleNatives);
   }
 
   instantiate() {

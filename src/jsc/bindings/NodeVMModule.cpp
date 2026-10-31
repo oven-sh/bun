@@ -150,7 +150,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     auto run = [&] {
         if (sourceTextThis) {
             status(Status::Evaluating);
-            evaluateDependencies(globalObject, record, timeout, breakOnSigint);
+            evaluateDependencies(globalObject, timeout, breakOnSigint);
             RETURN_IF_EXCEPTION(scope, );
             sourceTextThis->initializeImportMeta(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -267,35 +267,31 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 {
 }
 
-void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
+void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    for (const auto& request : record->requestedModules()) {
-        if (auto iter = m_resolveCache.find(request.m_specifier.string()); iter != m_resolveCache.end()) {
-            auto* dependency = uncheckedDowncast<NodeVMModule>(iter->value.get());
-            RELEASE_ASSERT(dependency != nullptr);
+    // evaluate() of a dependency comes back here, so a chain of imports is as deep as it is long.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return;
+    }
 
-            if (dependency->status() == Status::Unlinked) {
-                if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
-                    syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
-                    RETURN_IF_EXCEPTION(scope, );
-                }
-            }
+    for (unsigned i = 0; i < linkedModuleCount(); ++i) {
+        NodeVMModule* dependency = linkedModule(i);
 
-            if (dependency->status() == Status::Linked) {
-                JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+        if (dependency->status() == Status::Unlinked) {
+            if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
+                syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
                 RETURN_IF_EXCEPTION(scope, );
-                // Source text dependencies evaluate via the spec-style
-                // Evaluate() and return a capability promise. A still-pending
-                // promise means the dependency uses top-level await; the
-                // root record's evaluate() drives the async machinery to
-                // completion and the wrapper status reconciles lazily
-                // (reconcileEvaluationState), so a pending result is fine
-                // here.
-                UNUSED_PARAM(dependencyResult);
             }
+        }
+
+        if (dependency->status() == Status::Linked) {
+            // A promise that is still pending is a top-level await: the Evaluate() of the root finishes it, and reconcileEvaluationState() reads the result.
+            dependency->evaluate(globalObject, timeout, breakOnSigint);
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 }
@@ -305,7 +301,7 @@ JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
     if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(this)) {
         return thisObject->createModuleRecord(globalObject);
     } else if (auto* thisObject = dynamicDowncast<NodeVMSyntheticModule>(this)) {
-        thisObject->createModuleRecord(globalObject);
+        thisObject->ensureModuleRecord(globalObject);
         return jsUndefined();
     }
 
@@ -396,7 +392,7 @@ static const HashTableValue NodeVMModulePrototypeTableValues[] = {
     { "instantiate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleInstantiate, 0 } },
     { "evaluate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleEvaluate, 2 } },
     { "getModuleRequests"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetModuleRequests, 0 } },
-    { "link"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleLink, 2 } },
+    { "link"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleLink, 1 } },
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateCachedData, 0 } },
     { "setExport"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleSetExport, 2 } },
     { "createModuleRecord"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateModuleRecord, 0 } },
@@ -583,19 +579,14 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSArray* specifiers = dynamicDowncast<JSArray>(callFrame->argument(0));
-    JSArray* moduleNatives = dynamicDowncast<JSArray>(callFrame->argument(1));
-
-    if (!specifiers) {
-        return throwArgumentTypeError(*globalObject, scope, 0, "specifiers"_s, "Module"_s, "Module"_s, "Array"_s);
-    }
+    JSArray* moduleNatives = dynamicDowncast<JSArray>(callFrame->argument(0));
 
     if (!moduleNatives) {
-        return throwArgumentTypeError(*globalObject, scope, 1, "moduleNatives"_s, "Module"_s, "Module"_s, "Array"_s);
+        return throwArgumentTypeError(*globalObject, scope, 0, "moduleNatives"_s, "Module"_s, "Module"_s, "Array"_s);
     }
 
     if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, moduleNatives)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
@@ -656,7 +647,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
     return {};
 }
 
-// Walks this module and its linked dependencies (m_resolveCache is populated
+// Walks this module and its linked dependencies (m_linkedModules is populated
 // during link) checking whether any reachable SourceTextModule uses top-level
 // await. Iterative so a deep linear import chain can't overflow the native
 // stack.
@@ -676,10 +667,8 @@ bool NodeVMModule::hasAsyncGraph() const
                 return true;
         }
 
-        for (const auto& dependency : module->m_resolveCache.values()) {
-            if (auto* dependencyModule = dynamicDowncast<NodeVMModule>(dependency.get()))
-                worklist.append(dependencyModule);
-        }
+        for (unsigned i = 0, count = module->linkedModuleCount(); i < count; ++i)
+            worklist.append(module->linkedModule(i));
     }
 
     return false;
@@ -700,20 +689,11 @@ void NodeVMModule::propagateLinked()
         if (!visited.add(module).isNewEntry)
             continue;
 
-        // An importer that got its modules before replaceUnlinkedRecords() links the replaced records, not this one.
-        if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
-            JSC::JSModuleRecord* record = sourceTextModule->moduleRecordIfExists();
-            if (!record || record->status() < JSC::CyclicModuleRecord::Status::Linked)
-                continue;
-        }
-
         if (module->status() == Status::Unlinked)
             module->status(Status::Linked);
 
-        for (const auto& dependency : module->m_resolveCache.values()) {
-            if (auto* dependencyModule = dynamicDowncast<NodeVMModule>(dependency.get()))
-                worklist.append(dependencyModule);
-        }
+        for (unsigned i = 0, count = module->linkedModuleCount(); i < count; ++i)
+            worklist.append(module->linkedModule(i));
     }
 }
 
@@ -769,14 +749,7 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleWrapper);
     visitor.append(vmModule->m_evaluationException);
 
-    // m_resolveCache is mutated on the mutator thread by
-    // NodeVMSourceTextModule::link() via m_resolveCache.set(), which can
-    // rehash and free the old bucket array while a concurrent marker is
-    // iterating values() here. Both sides take cellLock() (same pattern as
-    // AbstractModuleRecord::visitChildrenImpl / setImportedModule).
-    WTF::Locker locker { vmModule->cellLock() };
-    auto moduleNatives = vmModule->m_resolveCache.values();
-    visitor.append(moduleNatives.begin(), moduleNatives.end());
+    visitor.append(vmModule->m_linkedModules);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMModule);

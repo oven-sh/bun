@@ -63,7 +63,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     }
 
     if (!cipher->m_ctx) {
-        throwCryptoError(lexicalGlobalObject, scope, clearError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
@@ -80,7 +80,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
 
     const int32_t blockSize = cipher->m_ctx.getBlockSize();
     if (dataView->byteLength() + blockSize > INT_MAX) {
-        throwCryptoError(lexicalGlobalObject, scope, clearError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
     int32_t bufLen = dataView->byteLength() + blockSize;
@@ -91,7 +91,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     };
 
     if (cipher->m_kind == CipherKind::Cipher && cipher->m_ctx.isWrapMode() && !cipher->m_ctx.update(buf, nullptr, &bufLen)) {
-        throwCryptoError(lexicalGlobalObject, scope, clearError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
@@ -116,7 +116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     }
 
     if (res != 1) {
-        throwCryptoError(lexicalGlobalObject, scope, clearError.peekError(), "Trying to add data in unsupported state");
+        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
@@ -145,8 +145,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
 
     const bool isAuthMode = cipher->isAuthenticatedMode();
 
-    auto throwCryptoErrorWithAuth = [isAuthMode, &clearError](JSGlobalObject* globalObject, ThrowScope& scope) {
-        throwCryptoError(globalObject, scope, clearError.peekError(), isAuthMode ? "Unsupported state or unable to authenticate data" : "Unsupported state");
+    auto throwCryptoErrorWithAuth = [isAuthMode](JSGlobalObject* globalObject, ThrowScope& scope) {
+        throwCryptoError(globalObject, scope, ERR_peek_error(), isAuthMode ? "Unsupported state or unable to authenticate data" : "Unsupported state");
     };
 
     int32_t outLen = cipher->m_ctx.getBlockSize();

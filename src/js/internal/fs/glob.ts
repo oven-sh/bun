@@ -1,5 +1,7 @@
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
+// plus "fs: fix glob early return skipping sibling entries" (v26.8.0):
+//   https://github.com/nodejs/node/commit/0ea2c86b5b70fdab268597e8c51040c703ee1328
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
@@ -647,9 +649,6 @@ class Glob {
       const nSymlinks = new Set<number>();
       for (const index of pattern.indexes) {
         // For each child, check potential patterns
-        if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {
-          return;
-        }
         const current = pattern.at(index);
         const nextIndex = index + 1;
         const next = pattern.at(nextIndex);
@@ -866,9 +865,6 @@ class Glob {
       const nSymlinks = new Set<number>();
       for (const index of pattern.indexes) {
         // For each child, check potential patterns
-        if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {
-          return;
-        }
         const current = pattern.at(index);
         const nextIndex = index + 1;
         const next = pattern.at(nextIndex);

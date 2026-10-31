@@ -225,6 +225,22 @@ rows.commonJSNamesAndTopLevelAwait.notExtensible = attempt(() =>
 );
 rows.filenameOfTheCommonJSEntry = attempt(() => ({ ...exportsOf("export const a = 1;", __filename) }));
 rows.filenameOfAnImportedCommonJSFile = attempt(() => ({ ...exportsOf("export const a = 1;", here("commonjs.cjs")) }));
+// require() alone gives a CommonJS file to no loader of ES modules, so the text gets the name. import() of the name
+// then gets the text, and require() keeps the exports of the file.
+const requiredCommonJS = here("required.cjs");
+rows.filenameOfARequiredCommonJSFile = attempt(() => {
+  require(requiredCommonJS);
+  return { ...exportsOf("export const text = true;", requiredCommonJS) };
+});
+// A "?" in the filename starts a query in Bun, as in every name of a module, so import() of the name gets the text.
+// In Node.js the filename is the path of a file, "?" and all, and the same import() loads dep.mjs.
+const withQuery = attempt(() =>
+  exportsOf('export const dep = "text"; export const filename = import.meta.filename;', here("dep.mjs") + "?query"),
+);
+rows.queryInTheFilename = attempt(() => ({ dep: withQuery.dep, filename: relative(withQuery.filename) }));
+const importWithTheQuery = attempt(
+  () => exportsOf('export const dep = import("../dep.mjs?query");', here("sub", "imports-query.js")).dep,
+);
 if (isBun) {
   // Node.js prints a line of its own loader to stderr for a value that is no error.
   rows.esModuleThrowsANumber = attempt(() => exportsOf("export {}; throw 1;", here("virtual", "n10.js")));
@@ -289,7 +305,11 @@ rows.wrapperPutBackByTheBody = attempt(() => {
 });
 rows.afterTheWrapperIsPutBack = attempt(() => ({ ...exportsOf("export const a = 1;", here("virtual", "z.js")) }));
 
-Promise.resolve(dynamicImport).then(namespace => {
-  rows.dynamicImportFollowsTheFilename = namespace.dep ?? namespace;
-  console.log(JSON.stringify(rows));
-});
+Promise.all([dynamicImport, importWithTheQuery, import("./required.cjs")]).then(
+  ([namespace, withTheQuery, afterTheText]) => {
+    rows.dynamicImportFollowsTheFilename = namespace.dep ?? namespace;
+    rows.importWithTheQueryOfTheFilename = withTheQuery.dep ?? withTheQuery;
+    rows.afterTheTextOfARequiredCommonJSFile = { import: { ...afterTheText }, require: require(requiredCommonJS) };
+    console.log(JSON.stringify(rows));
+  },
+);

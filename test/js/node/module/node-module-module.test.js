@@ -1286,6 +1286,7 @@ console.log("survived", require("./late.js"));`,
         "dep.mjs": `export const dep = "dep";`,
         "sub/dep.mjs": `export const dep = "sub dep";`,
         "commonjs.cjs": `module.exports = { commonjs: true };`,
+        "required.cjs": `module.exports = { required: true };`,
       });
       await using proc = Bun.spawn({ cmd: [exe, "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1384,6 +1385,12 @@ console.log("survived", require("./late.js"));`,
       // Bun's loader holds these two files under their names, so the text does not get the name.
       filenameOfTheCommonJSEntry: syntaxError("Unexpected keyword 'export'"),
       filenameOfAnImportedCommonJSFile: syntaxError("Unexpected keyword 'export'"),
+      // require() alone does not give a CommonJS file to that loader, so the text gets the name.
+      filenameOfARequiredCommonJSFile: { text: true },
+      afterTheTextOfARequiredCommonJSFile: { import: { text: true }, require: { required: true } },
+      // A "?" starts a query, as in every name of a module in Bun. import.meta.filename has no query.
+      queryInTheFilename: { dep: "text", filename: "dep.mjs" },
+      importWithTheQueryOfTheFilename: "text",
       mainModuleAsReceiver: { a: 1 },
       emptyFilenameAfterChdir: { sameModule: true, inAnotherDirectory: "sub" },
       dynamicImportFollowsTheFilename: "sub dep",
@@ -1420,6 +1427,9 @@ console.log("survived", require("./late.js"));`,
       // CommonJS file that an ES module imported.
       filenameOfTheCommonJSEntry: { a: 1 },
       filenameOfAnImportedCommonJSFile: { commonjs: true },
+      // In Node.js the filename is the path of a file, "?" and all. import() with the query loads dep.mjs.
+      queryInTheFilename: { dep: "text", filename: "dep.mjs?query" },
+      importWithTheQueryOfTheFilename: "dep",
       // Node.js stops looking for ES modules for good once Module.wrap or Module.wrapper is assigned. Bun does not
       // count Module.wrap, and looks again when Module.wrapper is the default one again.
       wrapAssigned: { threw: "SyntaxError" },
@@ -1445,31 +1455,46 @@ console.log("survived", require("./late.js"));`,
     expect((await import(filename)).from).toBe("the mock");
   });
 
-  // The text gets a name only after the CommonJS parse failed. Where there is no name, the error of that parse stays.
+  // The text gets a name only after the CommonJS parse failed, and the name is what path.resolve() answers. For ""
+  // it asks for the working directory and throws here, so the error of the CommonJS parse stays. For another relative
+  // name it answers with the directory that was the working directory, and the text loads. (Node.js throws ENOENT
+  // for the two.)
   test.skipIf(isWindows)("Module.prototype._compile where the working directory is gone", async () => {
     using dir = tempDir("module-compile-no-working-directory", {
       "main.cjs": `
         const Module = require("node:module");
         const fs = require("node:fs");
-        const gone = require("node:path").join(__dirname, "gone");
+        const path = require("node:path");
+        const gone = path.join(__dirname, "gone");
         fs.mkdirSync(gone);
         process.chdir(gone);
         fs.rmdirSync(gone);
-        const attempt = text => {
+        const attempt = (text, filename) => {
           try {
-            new Module("")._compile(text, "");
-            return "loaded";
+            const module = new Module(filename);
+            module._compile(text, filename);
+            return "loaded in " + path.basename(module.exports.directory);
           } catch (e) {
             return e.name;
           }
         };
-        console.log(JSON.stringify({ typo: attempt("module.exports = {;"), esModule: attempt("export const a = 1;") }));
+        const rows = {};
+        for (const filename of ["", "t.js"]) {
+          rows[filename] = {
+            typo: attempt("module.exports = {;", filename),
+            esModule: attempt("export const directory = import.meta.dirname;", filename),
+          };
+        }
+        console.log(JSON.stringify(rows));
       `,
     });
     await using proc = Bun.spawn({ cmd: [bunExe(), "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: { typo: "SyntaxError", esModule: "SyntaxError" },
+      stdout: {
+        "": { typo: "SyntaxError", esModule: "SyntaxError" },
+        "t.js": { typo: "SyntaxError", esModule: "loaded in gone" },
+      },
       stderr: "",
       exitCode: 0,
     });

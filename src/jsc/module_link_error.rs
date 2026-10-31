@@ -31,7 +31,7 @@ impl Site {
     }
 }
 
-/// The 1-based line and UTF-16 column of the specifier that `name` names. Not inlined: a removable-feature guard calls it.
+/// The 1-based line and UTF-16 column of the specifier `name` names. Not inlined: a removable-feature guard calls it.
 #[cold]
 #[inline(never)]
 pub fn position(

@@ -522,7 +522,12 @@ describe.concurrent("handler that gives module._compile the text of an ES module
           // missing.coffee imports such a file itself. Only the handler reads a .coffee file as a program.
           handler.transform = text => (name === "on-disk.js" ? 'import "./not-on-disk.mjs";\\n' : "") + instrumented(text);
           const { value, ...result } = await requireOrImport(path.join(__dirname, name));
-          results[name] = { ...result, ...(value && { value: { ...value } }), instrumented: globalThis.instrumented };
+          results[name] = {
+            ...result,
+            ...(value && { value: { ...value } }),
+            instrumented: globalThis.instrumented,
+            handlerCalls: handler.seen.filter(seen => seen === name).length,
+          };
         }
         console.log(JSON.stringify(results));
       })();
@@ -623,31 +628,51 @@ describe.concurrent("handler that gives module._compile the text of an ES module
 
   // import() gets the module that _compile made of the handler's text, and the error of a module that throws or that
   // does not load. The file is not loaded in its place: Bun's own loader reads a .coffee file as an asset, so an
-  // import() of missing.coffee that loaded the file would count as a load, and the error would go unseen.
+  // import() of missing.coffee that loaded the file would count as a load, and the error would go unseen. import()
+  // does not go to the handler: each file gets one call.
   test("require() first and import() when it throws, as mocha loads a file", async () => {
     expect(await run("require-or-import-fixture.cjs")).toEqual({
       stdout: {
-        "lib.js": { via: "require", value: { value: "esm value", fromHandler: true }, instrumented: 1 },
+        "lib.js": {
+          via: "require",
+          value: { value: "esm value", fromHandler: true },
+          instrumented: 1,
+          handlerCalls: 1,
+        },
         "awaits.js": {
           via: "import",
           thrownByRequire:
             'TypeError: require() async module "<dir>/awaits.js" is unsupported. use "await import()" instead.',
           value: { value: "awaited", fromHandler: true },
           instrumented: 1,
+          handlerCalls: 1,
         },
-        "throws.js": { via: "neither", thrownByRequire: "Error: boom", sameError: true, instrumented: 1 },
+        "throws.js": {
+          via: "neither",
+          thrownByRequire: "Error: boom",
+          sameError: true,
+          instrumented: 1,
+          handlerCalls: 1,
+        },
         "on-disk.js": {
           via: "neither",
           thrownByRequire: "ResolveMessage: Cannot find module './not-on-disk.mjs' imported from <dir>/on-disk.js",
           sameError: true,
           instrumented: 0,
+          handlerCalls: 1,
         },
-        "mod.coffee": { via: "require", value: { value: "from a new extension", fromHandler: true }, instrumented: 1 },
+        "mod.coffee": {
+          via: "require",
+          value: { value: "from a new extension", fromHandler: true },
+          instrumented: 1,
+          handlerCalls: 1,
+        },
         "missing.coffee": {
           via: "neither",
           thrownByRequire: "ResolveMessage: Cannot find module './not-here.mjs' imported from <dir>/missing.coffee",
           sameError: true,
           instrumented: 0,
+          handlerCalls: 1,
         },
       },
       stderr: "",

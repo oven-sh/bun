@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import dns from "node:dns";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -1535,4 +1536,211 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+// The text of the values that a native printer (Request, Response, Blob, S3, Archive, BuildArtifact)
+// or an inspect.custom hook prints.
+describe("Bun.inspect of a value with its own printer", () => {
+  const s3 = new Bun.S3Client({
+    accessKeyId: "a",
+    secretAccessKey: "b",
+    sessionToken: "c",
+    bucket: "bucket",
+    region: "us-east-1",
+    endpoint: "https://s3.example.com",
+    acl: "public-read",
+  });
+  const s3Members = `endpoint: "s3.example.com", region: "us-east-1", accessKeyId: "[REDACTED]", secretAccessKey: "[REDACTED]", sessionToken: "[REDACTED]", acl: "public-read", partSize: 5242880, queueSize: 5, retry: 3`;
+  const s3Lines = indent => s3Members.replaceAll(", ", ",\n" + indent);
+  // Three members of 30 characters: together they do not fit the 80 columns of util.inspect.
+  const long = {
+    a: Buffer.alloc(30, "a").toString(),
+    b: Buffer.alloc(30, "b").toString(),
+    c: Buffer.alloc(30, "c").toString(),
+  };
+
+  const rows = [
+    {
+      name: "Request",
+      value: () => new Request("http://example.com/"),
+      pretty: `Request (0 KB) {\n  method: "GET",\n  url: "http://example.com/",\n  headers: Headers {}\n}`,
+    },
+    {
+      // Known-odd in `pretty`, here and in the next two rows: no comma between `headers` and the body.
+      name: "Request with a string body",
+      value: () => new Request("http://example.com/", { method: "POST", body: "hello", headers: { "x-a": "1" } }),
+      pretty: `Request (5 bytes) {\n  method: "POST",\n  url: "http://example.com/",\n  headers: Headers {\n    "x-a": "1",\n  }\n  Blob (5 bytes)\n}`,
+    },
+    {
+      name: "Request with a Blob body",
+      value: () =>
+        new Request("http://example.com/", { method: "PUT", body: new Blob(["hello"], { type: "text/plain" }) }),
+      pretty: `Request (5 bytes) {\n  method: "PUT",\n  url: "http://example.com/",\n  headers: Headers {\n    "content-type": "text/plain;charset=utf-8",\n  }\n  Blob (5 bytes) {\n    type: "text/plain;charset=utf-8"\n  }\n}`,
+    },
+    {
+      name: "Request with an S3 body",
+      value: () => new Request("http://example.com/", { method: "PUT", body: s3.file("k.txt") }),
+      pretty: `Request (0 KB) {\n  method: "PUT",\n  url: "http://example.com/",\n  headers: Headers {}\n  S3Ref ("bucket/k.txt") {\n    ${s3Lines("    ")}\n  }\n}`,
+    },
+    {
+      name: "Response",
+      value: () => new Response("x"),
+      pretty: `Response (1 bytes) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {},\n  redirected: false,\n  bodyUsed: false,\n  Blob (1 bytes)\n}`,
+    },
+    {
+      name: "Response with no body",
+      value: () => new Response(null, { status: 204, statusText: "No Content", headers: { "x-a": "1" } }),
+      pretty: `Response (0 KB) {\n  ok: true,\n  url: "",\n  status: 204,\n  statusText: "No Content",\n  headers: Headers {\n    "x-a": "1",\n  },\n  redirected: false,\n  bodyUsed: false\n}`,
+    },
+    {
+      name: "Response with a Blob body",
+      value: () => new Response(new Blob(["x"], { type: "text/plain" })),
+      pretty: `Response (1 bytes) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {\n    "content-type": "text/plain;charset=utf-8",\n  },\n  redirected: false,\n  bodyUsed: false,\n  Blob (1 bytes) {\n    type: "text/plain;charset=utf-8"\n  }\n}`,
+    },
+    {
+      name: "Blob with a type",
+      value: () => new Blob(["x"], { type: "text/plain" }),
+      pretty: `Blob (1 bytes) {\n  type: "text/plain;charset=utf-8"\n}`,
+    },
+    {
+      name: "File",
+      value: () => new File(["x"], "f.txt", { type: "text/plain", lastModified: 1 }),
+      pretty: `File (1 bytes) {\n  name: "f.txt",\n  type: "text/plain;charset=utf-8",\n  lastModified: 1\n}`,
+    },
+    {
+      // Known-odd in `pretty`: a second line feed follows `offset`.
+      name: "sliced Blob",
+      value: () => new Blob(["hello"]).slice(1),
+      pretty: `Blob (4 bytes) {\n  offset: 1\n\n}`,
+    },
+    {
+      // Known-odd in `pretty`: the comma after `offset` is on a line of its own.
+      name: "sliced File",
+      value: () => new File(["hello"], "f.txt", { type: "text/plain", lastModified: 1 }).slice(1),
+      pretty: `File (4 bytes) {\n  name: "f.txt",\n  type: "text/plain;charset=utf-8",\n  offset: 1\n,\n  lastModified: 1\n}`,
+    },
+    {
+      name: "Bun.file(path)",
+      value: () => Bun.file("does-not-exist.txt"),
+      pretty: `FileRef ("does-not-exist.txt") {\n  type: "text/plain;charset=utf-8"\n}`,
+    },
+    {
+      name: "Bun.file(fd)",
+      value: () => Bun.file(123),
+      pretty: `FileRef (fd: 123) {\n  type: "application/octet-stream"\n}`,
+    },
+    {
+      name: "S3Client",
+      value: () => s3,
+      pretty: `S3Client ("bucket") {\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      name: "S3 file",
+      value: () => s3.file("k.txt"),
+      pretty: `S3Ref ("bucket/k.txt") {\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      name: "sliced S3 file with a type",
+      value: () => s3.file("k.bin").slice(3, 10, "application/x-bin"),
+      pretty: `S3Ref ("bucket/k.bin") {\n  type: "application/x-bin",\n  offset: 3,\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      // Known-odd in `pretty`: `offset` is on the first line, after two spaces.
+      name: "sliced S3 file",
+      value: () => s3.file("k.txt").slice(3),
+      pretty: `S3Ref ("bucket/k.txt") {  offset: 3,\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      name: "Archive",
+      value: () => new Bun.Archive({ "a.txt": "hi" }),
+      pretty: `Archive (10.24 KB) {\n  files: 1\n}`,
+    },
+    {
+      name: "FormData with a File",
+      value: () => {
+        const form = new FormData();
+        form.append("f", new File(["x"], "f.txt", { lastModified: 1 }));
+        return form;
+      },
+      pretty: `FormData {\n  "f": File (1 bytes) {\n    name: "f.txt",\n    lastModified: 1\n  },\n}`,
+    },
+    {
+      name: "a class whose hook forwards its options to inspect",
+      value: () =>
+        new (class Box {
+          [util.inspect.custom](depth, options, inspect) {
+            return "Box " + inspect({ a: long.a, b: long.b, c: long.c }, options);
+          }
+        })(),
+      pretty: `Box {\n  a: '${long.a}',\n  b: '${long.b}',\n  c: '${long.c}'\n}`,
+    },
+  ];
+
+  for (const { name, value, pretty } of rows) {
+    it(name, () => {
+      expect(Bun.inspect(value())).toBe(pretty);
+    });
+  }
+
+  it("Request and Response with a stream body", () => {
+    const request = new Request("http://example.com/", { method: "POST", body: new ReadableStream() });
+    expect(Bun.inspect(request)).toStartWith(
+      `Request (0 KB) {\n  method: "POST",\n  url: "http://example.com/",\n  headers: Headers {}\n  ReadableStream {\n    locked: false,\n`,
+    );
+    const response = new Response(new ReadableStream());
+    expect(Bun.inspect(response)).toStartWith(
+      `Response (0 KB) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {},\n  redirected: false,\n  bodyUsed: false,\n  ReadableStream {\n    locked: false,\n`,
+    );
+  });
+
+  it("BunRequest with params", async () => {
+    let pretty;
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/u/:id": request => {
+          pretty = Bun.inspect(request);
+          return new Response("ok");
+        },
+      },
+    });
+    const url = `http://127.0.0.1:${server.port}/u/7`;
+    expect(await (await fetch(url)).text()).toBe("ok");
+    expect(pretty).toStartWith(
+      `BunRequest (0 KB) {\n  method: "GET",\n  url: "${url}",\n  params: RequestParams {\n    id: "7",\n  },\n  headers: Headers {\n    "`,
+    );
+    expect(pretty).toEndWith(`",\n  }\n}`);
+  });
+
+  it("BuildArtifact", async () => {
+    using dir = tempDir("inspect-build-artifact", { "a.js": "export const a = 1;" });
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "a.js")],
+      outdir: join(String(dir), "out"),
+      sourcemap: "external",
+    });
+    const artifact = outputs.find(output => output.kind === "entry-point");
+    const map = artifact.sourcemap;
+    const text = options =>
+      Bun.inspect(artifact, options)
+        .replaceAll(map.path, "<map>")
+        .replaceAll(artifact.path, "<js>")
+        .replaceAll(artifact.hash, "<hash>");
+    expect(text()).toBe(
+      `BuildArtifact (entry-point) {\n  path: "<js>",\n  loader: "jsx",\n  kind: "entry-point",\n  hash: "<hash>",\n  FileRef ("<js>") {\n    type: "text/javascript;charset=utf-8"\n  },\n  sourcemap: BuildArtifact (sourcemap) {\n    path: "<map>",\n    loader: "file",\n    kind: "sourcemap",\n    FileRef ("<map>") {\n      type: "application/json;charset=utf-8"\n    }\n  }\n}`,
+    );
+  });
+
+  describe("in an error message", () => {
+    // This is Node's text: the value as its hook prints it by default.
+    it("a value with an inspect.custom hook prints as it does alone", () => {
+      const url = new URL("http://example.com/");
+      expect(() => new MessageEvent("message", { source: url })).toThrow(
+        `MessageEvent constructor: Expected eventInitDict.source ("${util.inspect(url)}") to be an instance of MessagePort.`,
+      );
+      expect(() => dns.setDefaultResultOrder(url)).toThrow(
+        `The argument 'order' is invalid. Received ${util.inspect(url)}`,
+      );
+    });
+  });
 });

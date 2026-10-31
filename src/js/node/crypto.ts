@@ -228,8 +228,8 @@ crypto_exports.createPrivateKey = createPrivateKey;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 
-crypto_exports.hash = function hash(algorithm, input, outputEncoding: import("bun").DigestEncoding = "hex") {
-  return CryptoHasher.hash(algorithm, input, outputEncoding);
+crypto_exports.hash = function hash(algorithm, input, options) {
+  return CryptoHasher.hash(algorithm, input, options === undefined ? "hex" : options);
 };
 
 crypto_exports.pbkdf2 = pbkdf2;

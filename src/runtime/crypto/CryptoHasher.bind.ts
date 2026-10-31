@@ -13,16 +13,42 @@ export const DigestOutput = b.union({
   into: b.bufferSource.allowShared,
 });
 
+/** The third argument of node's `crypto.hash`: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L341-L378 */
+export const HashOptions = b.dictionary(
+  {
+    /** `"hex"` without one. node reads `outputLength` before it. It stands first here so that its wrong type is reported first, as in node. */
+    outputEncoding: { type: b.string.nullable, expected: ["string"] },
+    /** How long a digest of shake128 or shake256 is. For any other algorithm, the length its digests have. */
+    outputLength: b.u32.validateInteger().optional,
+    /** cSHAKE, which Bun does not have: the body refuses anything but `undefined`. */
+    functionName: b.any,
+    customization: b.any,
+  },
+  { reportedAs: "" },
+);
+
+/** `DigestOutput`, and for the static `CryptoHasher.hash` alone what `crypto.hash` takes in its place. */
+export const HashOutput = b.union({
+  encoding: b.string.utf8,
+  into: b.bufferSource.allowShared,
+  /** node refuses a function, which has members as any object does: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/validators.js#L252-L261 */
+  function: b.callable,
+  /** And an array, in words that name the argument. */
+  array: b.jsArray,
+  options: HashOptions,
+});
+
 /** A string for an encoding, the buffer that was given, or else a new one of the class. */
-const digestIn = (newBuffer: "Buffer" | "Uint8Array") =>
+const digestIn = (newBuffer: "Buffer" | "Uint8Array", operand = "output") =>
   b.any.returning(
     { type: "Primitive", primitive: "String" },
-    { type: "Operand", operand: "output" },
+    { type: "Operand", operand },
     { type: "Instance", class: newBuffer, isOfClassItself: true },
   );
 
 const method = { capability: "heap", throws: true } as const;
-const uses = { output: [...table.handedOver, table.writesContents()] };
+const usesOf = (operand: string) => ({ [operand]: [...table.handedOver, table.writesContents()] });
+const uses = usesOf("output");
 const update = { ...method, returns: b.self, passThis: true, mutates: true } as const;
 const digestOf = (newBuffer: "Buffer" | "Uint8Array") =>
   ({ ...method, args: { output: DigestOutput.nullable }, returns: digestIn(newBuffer), mutates: true, uses }) as const;
@@ -53,9 +79,10 @@ export const CryptoHasher = b.class({
     algorithms: { getter: b.array(b.string.utf8) },
     hash: {
       ...method,
-      args: { algorithm: b.string, input, output: DigestOutput.optional },
-      returns: digestIn("Buffer"),
-      uses,
+      args: { algorithm: b.string, input, options: HashOutput.optional },
+      expected: { options: ["object"] },
+      returns: digestIn("Buffer", "options"),
+      uses: usesOf("options"),
     },
   },
 });

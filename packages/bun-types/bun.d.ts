@@ -6331,6 +6331,49 @@ declare module "bun" {
     ): NodeJS.TypedArray;
 
     /**
+     * Run the hash over the given data, with the `outputEncoding` and `outputLength` options of `hash()` in
+     * `node:crypto`
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param options `outputEncoding: "buffer"` returns the hash in a new `Buffer`
+     */
+    static hash(
+      algorithm: SupportedCryptoAlgorithms,
+      input: Bun.BlobOrStringOrBuffer,
+      options: CryptoHasherHashOptions & { outputEncoding: "buffer" },
+    ): Buffer;
+
+    /**
+     * Run the hash over the given data, with the `outputEncoding` and `outputLength` options of `hash()` in
+     * `node:crypto`
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param options Without `outputEncoding` the hash is a hex string, as in `node:crypto`. A call without a third
+     * argument returns a `Buffer` instead
+     */
+    static hash(
+      algorithm: SupportedCryptoAlgorithms,
+      input: Bun.BlobOrStringOrBuffer,
+      options: CryptoHasherHashOptions & { outputEncoding?: DigestEncoding | null | undefined },
+    ): string;
+
+    /**
+     * Run the hash over the given data, with the `outputEncoding` and `outputLength` options of `hash()` in
+     * `node:crypto`
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param options The hash is a `Buffer` when `outputEncoding` is `"buffer"`, and a string otherwise
+     */
+    static hash(
+      algorithm: SupportedCryptoAlgorithms,
+      input: Bun.BlobOrStringOrBuffer,
+      options: CryptoHasherHashOptions,
+    ): string | Buffer;
+
+    /**
      * Run the hash over the given data
      *
      * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
@@ -6349,6 +6392,30 @@ declare module "bun" {
      * These are hardware accelerated with BoringSSL
      */
     static readonly algorithms: SupportedCryptoAlgorithms[];
+  }
+
+  /**
+   * What {@link CryptoHasher.hash} takes in place of an encoding: the `outputEncoding` and `outputLength` options of
+   * `hash()` in `node:crypto`.
+   *
+   * Node.js also has `functionName` and `customization`, for cSHAKE. Bun does not support them, and throws when
+   * either is set.
+   */
+  interface CryptoHasherHashOptions {
+    /**
+     * The encoding of the string that holds the hash. `"buffer"` returns the hash in a new `Buffer` instead.
+     *
+     * @default "hex"
+     */
+    outputEncoding?: DigestEncoding | "buffer" | null | undefined;
+
+    /**
+     * The length of the hash in bytes, for `"shake128"` and `"shake256"`. Pass it for those two. Without it their
+     * hashes are 16 and 32 bytes long, a default that Node.js deprecates (DEP0198).
+     *
+     * The hashes of every other algorithm have one length. For those, any other number throws.
+     */
+    outputLength?: number | undefined;
   }
 
   /**

@@ -110,8 +110,13 @@ function argumentsObject(...values: unknown[]) {
 }
 
 const ecKeys = [generateKeyPairSync("ec", { namedCurve: "P-256" }), generateKeyPairSync("ec", { namedCurve: "P-256" })];
-const aesKey = (fill: number, algorithm: any = "AES-GCM", extractable = true, usages: KeyUsage[] = ["encrypt"]) =>
-  createSecretKey(Buffer.alloc(16, fill)).toCryptoKey(algorithm, extractable, usages);
+const rsaPublicKey = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
+const secretCryptoKey = (
+  fill: number,
+  algorithm: any = "AES-GCM",
+  extractable = true,
+  usages: KeyUsage[] = ["encrypt"],
+) => createSecretKey(Buffer.alloc(16, fill)).toCryptoKey(algorithm, extractable, usages);
 
 const cases: Case[] = [
   // Loose mode compares primitives with ==, strict mode with Object.is.
@@ -986,6 +991,13 @@ const cases: Case[] = [
     loose: false,
   },
   {
+    name: "the public and private KeyObjects of one key pair",
+    a: () => ecKeys[0].publicKey,
+    b: () => ecKeys[0].privateKey,
+    strict: false,
+    loose: false,
+  },
+  {
     name: "two public KeyObjects made from one private key",
     a: () => createPublicKey(ecKeys[0].privateKey),
     b: () => createPublicKey(ecKeys[0].privateKey),
@@ -1008,43 +1020,71 @@ const cases: Case[] = [
   },
   {
     name: "CryptoKeys with the same bytes",
-    a: () => aesKey(1),
-    b: () => aesKey(1),
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1),
     strict: true,
     loose: true,
   },
   {
     name: "CryptoKeys with different bytes",
-    a: () => aesKey(1),
-    b: () => aesKey(2),
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(2),
     strict: false,
     loose: false,
   },
   {
     name: "CryptoKeys that differ in extractable",
-    a: () => aesKey(1),
-    b: () => aesKey(1, "AES-GCM", false),
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1, "AES-GCM", false),
     strict: false,
     loose: false,
   },
   {
     name: "CryptoKeys that differ in usages",
-    a: () => aesKey(1),
-    b: () => aesKey(1, "AES-GCM", true, ["encrypt", "decrypt"]),
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1, "AES-GCM", true, ["encrypt", "decrypt"]),
     strict: false,
     loose: false,
   },
   {
     name: "CryptoKeys that differ in algorithm",
-    a: () => aesKey(1),
-    b: () => aesKey(1, "AES-CBC"),
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1, "AES-CBC"),
     strict: false,
     loose: false,
   },
   {
     name: "HMAC CryptoKeys that differ in hash",
-    a: () => aesKey(1, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
-    b: () => aesKey(1, { name: "HMAC", hash: "SHA-512" }, true, ["sign"]),
+    a: () => secretCryptoKey(1, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+    b: () => secretCryptoKey(1, { name: "HMAC", hash: "SHA-512" }, true, ["sign"]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "RSA CryptoKeys that differ in hash",
+    a: () => rsaPublicKey.toCryptoKey({ name: "RSA-PSS", hash: "SHA-256" }, true, ["verify"]),
+    b: () => rsaPublicKey.toCryptoKey({ name: "RSA-PSS", hash: "SHA-512" }, true, ["verify"]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys with the same bytes and different own properties",
+    a: () => Object.assign(secretCryptoKey(1), { own: 1 }),
+    b: () => Object.assign(secretCryptoKey(1), { own: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a CryptoKey and an empty object",
+    a: () => secretCryptoKey(1),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a KeyObject and a CryptoKey with the same bytes",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => secretCryptoKey(1),
     strict: false,
     loose: false,
   },
@@ -1224,6 +1264,29 @@ describe("detached ArrayBuffer", () => {
     expect(() =>
       assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
     ).not.toThrow();
+  });
+
+  test("assert.partialDeepStrictEqual compares CryptoKeys by what they hold, then by own properties", () => {
+    const partial = (actual: unknown, expected: unknown) =>
+      caught(() => assert.partialDeepStrictEqual(actual, expected))?.code ?? "equal";
+    expect({
+      same: partial(secretCryptoKey(1), secretCryptoKey(1)),
+      otherBytes: partial(secretCryptoKey(1), secretCryptoKey(2)),
+      nestedOtherBytes: partial({ key: secretCryptoKey(1) }, { key: secretCryptoKey(2) }),
+      otherExtractable: partial(secretCryptoKey(1), secretCryptoKey(1, "AES-GCM", false)),
+      // Unlike arrays, usages are not compared as a subset.
+      fewerUsages: partial(secretCryptoKey(1, "AES-GCM", true, ["encrypt", "decrypt"]), secretCryptoKey(1)),
+      extraOwnPropertyOnActual: partial(Object.assign(secretCryptoKey(1), { own: 1 }), secretCryptoKey(1)),
+      extraOwnPropertyOnExpected: partial(secretCryptoKey(1), Object.assign(secretCryptoKey(1), { own: 1 })),
+    }).toEqual({
+      same: "equal",
+      otherBytes: "ERR_ASSERTION",
+      nestedOtherBytes: "ERR_ASSERTION",
+      otherExtractable: "ERR_ASSERTION",
+      fewerUsages: "ERR_ASSERTION",
+      extraOwnPropertyOnActual: "equal",
+      extraOwnPropertyOnExpected: "ERR_ASSERTION",
+    });
   });
 
   test("error matches Node's message", () => {

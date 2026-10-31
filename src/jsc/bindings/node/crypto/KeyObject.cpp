@@ -13,6 +13,7 @@
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyHMAC.h"
+#include "CryptoKeyRSA.h"
 #include "CryptoKeyRaw.h"
 #include "CryptoKey.h"
 #include "CryptoKeyType.h"
@@ -932,15 +933,12 @@ bool KeyObject::cryptoKeysEqual(WebCore::CryptoKey& a, WebCore::CryptoKey& b)
     }
 
     // The other members of `algorithm` (lengths, curve, modulus, exponent) follow from the key material.
-    static constexpr auto hashName = [](const WebCore::CryptoKey::KeyAlgorithm& algorithm) {
-        return std::visit(
-            WTF::makeVisitor(
-                [](const WebCore::CryptoHmacKeyAlgorithm& hmac) { return hmac.hash.name; },
-                [](const WebCore::CryptoRsaHashedKeyAlgorithm& rsa) { return rsa.hash.name; },
-                [](const auto&) { return String(); }),
-            algorithm);
+    static constexpr auto hash = [](WebCore::CryptoKey& key) {
+        if (auto* hmac = dynamicDowncast<WebCore::CryptoKeyHMAC>(key)) return hmac->hashAlgorithmIdentifier();
+        if (auto* rsa = dynamicDowncast<WebCore::CryptoKeyRSA>(key)) return rsa->hashAlgorithmIdentifier();
+        return key.algorithmIdentifier();
     };
-    if (hashName(a.algorithm()) != hashName(b.algorithm())) {
+    if (hash(a) != hash(b)) {
         return false;
     }
 

@@ -2013,9 +2013,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             if (temporalEqual.has_value())
                 return temporalEqual;
 
-            if (!keyObjectsDequal(obj1, obj2))
-                return false;
-
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {

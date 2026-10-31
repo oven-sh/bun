@@ -1519,7 +1519,7 @@ const dir = String(
         },
       };
 
-      // A c-ares query to a server of the host's that answers when the host says so.
+      // A Resolver's query to a server of the host's that answers when the host says so.
       export function resolveThrough(state, dnsPort) {
         const resolver = new dns.Resolver();
         resolver.setServers(["127.0.0.1:" + dnsPort]);
@@ -4054,7 +4054,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     "fs/promises": job("fs.promises."),
     undici: owned("fetchInFlight"),
     ws: owned("webSocket"),
-    // dns.lookup is a job; a Resolver's queries have a test of their own (c-ares).
+    // dns.lookup is a job; a Resolver's queries have a test of their own.
     dns: job("dns.lookup"),
     "dns/promises": job("dns.lookup"),
     crypto: job("crypto."),
@@ -4173,7 +4173,7 @@ test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the runni
 
 // What a disposed graph started in the background never reports back: the promise its code is
 // waiting on stays pending, so none of its code runs again.
-test("ModuleGraph isolation: a DNS query (c-ares) of a disposed graph is never answered to it", async () => {
+test("ModuleGraph isolation: a Resolver's DNS query of a disposed graph is never answered to it", async () => {
   // A DNS server of the host's that holds every query until told to answer (with NXDOMAIN).
   const held: { query: Buffer; port: number; address: string }[] = [];
   const server = await Bun.udpSocket({

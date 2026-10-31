@@ -1,5 +1,5 @@
 // Local UDP DNS server that answers every query with TC=1 (truncated) so
-// c-ares retries over TCP on the same port, plus a TCP DNS server that
+// the resolver retries over TCP on the same port, plus a TCP DNS server that
 // returns a single TXT "hello" record. The Resolver query then exercises
 // FilePoll with both .poll_readable and .poll_writable set on one fd.
 import dgram from "node:dgram";
@@ -59,7 +59,7 @@ function onTcpConnection(socket: net.Socket) {
   socket.on("error", () => {});
 }
 
-// c-ares talks to one server address on both UDP and TCP, so both listeners
+// The resolver talks to one server address on both UDP and TCP, so both listeners
 // must share a port. Bind UDP on an ephemeral port and then try TCP on the
 // same number; the kernel only guarantees that port was free for UDP, so if
 // TCP is already taken (EADDRINUSE) drop both and pick another.

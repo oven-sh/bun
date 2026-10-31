@@ -13,7 +13,7 @@ export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
+export const canonicalizeIP = $bindgen("dns_resolver_jsc.bind.ts", "canonicalizeIP");
 
 // Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
 // a DER SubjectPublicKeyInfo.
@@ -1005,6 +1005,9 @@ export const dnsGetaddrinfoError = $bindgen("dns_internals.bind.ts", "getaddrinf
   code: string,
   hostname: string,
 ) => Error & { code: string; errno: number; syscall: string; hostname: string };
+
+/** Runs the resolver behind `node:dns` in the world that `script` describes and returns the log of all it did there. The language of both is in `src/dns_resolver/simulation.rs`. */
+export const dnsSimulate = $bindgen("dns_internals.bind.ts", "simulateForTesting");
 
 export const fetchH2Internals = {
   liveCounts: $bindgen("headers_jsc.bind.ts", "h2LiveCounts"),

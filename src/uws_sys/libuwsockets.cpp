@@ -7,7 +7,7 @@
 #include <string_view>
 #include <type_traits>
 
-extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
+extern "C" size_t Bun__formatIpAddress(const char *octets, bool is_ipv6, char *out);
 
 #define uws_res_r uws_res_t* nonnull_arg
 static inline std::string_view stringViewFromC(const char* message, size_t length) {
@@ -1655,17 +1655,9 @@ __attribute__((callback (corker, ctx)))
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
     if (length == 0) return 0;
-    if (length == 4) {
-      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-      *dest = &b[4];
-      *is_ipv6 = false;
-      return strlen(*dest);
-    } else {
-      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-      *dest = &b[16];
-      *is_ipv6 = true;
-      return strlen(*dest);
-    }
+    *is_ipv6 = length != 4;
+    *dest = &b[length];
+    return Bun__formatIpAddress(b, *is_ipv6, &b[length]);
   }
 
   uint64_t uws_res_get_local_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)
@@ -1674,17 +1666,9 @@ __attribute__((callback (corker, ctx)))
     auto length = us_get_local_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
     if (length == 0) return 0;
-    if (length == 4) {
-      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-      *dest = &b[4];
-      *is_ipv6 = false;
-      return strlen(*dest);
-    } else {
-      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-      *dest = &b[16];
-      *is_ipv6 = true;
-      return strlen(*dest);
-    }
+    *is_ipv6 = length != 4;
+    *dest = &b[length];
+    return Bun__formatIpAddress(b, *is_ipv6, &b[length]);
   }
 
   // A thread that ran a uws loop (a Worker) is exiting; free its loop. On Windows the loop sits on

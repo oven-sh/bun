@@ -293,7 +293,7 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"];
+const librariesThatCallBackIntoJavaScript = ["boringssl", "lsquic", "lsqpack", "sqlite", "tinycc"];
 
 test("the libraries that never call back into JavaScript keep their arrays on a second stack", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});

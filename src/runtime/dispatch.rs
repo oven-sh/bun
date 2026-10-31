@@ -420,7 +420,7 @@ pub(crate) fn run_task(
         )?,
         task_tag::DnsErrorDeferred => feature_arm!(
             [Dns],
-            |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> {
+            |error: crate::dns_jsc::dns_resolver_jsc::ErrorDeferredTask| -> JsResult<()> {
                 // SAFETY: boxed in `reject_later`; the arm consumes it.
                 unsafe { bun_core::heap::take(error) }.run()?;
                 Ok(())
@@ -1071,7 +1071,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
                 poll: *mut FilePoll = poll,
             ) {
                 // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-                // `Channel::process` re-enters the resolver via c-ares callbacks.
+                // settling what finished can run script that re-enters the resolver.
                 // SAFETY: tag set with this pointee type at `FilePoll::init`.
                 let resolver = unsafe { &*resolver };
                 // SAFETY: `poll` outlives this call (caller contract).
@@ -1408,10 +1408,10 @@ pub(crate) unsafe fn __bun_fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // R-2: shared deref, as for `on_dns_poll`.
         EventLoopTimerTag::DNSResolver => {
-            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(&*now, &*vm)
+            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, _now, _vm| {
+                (&*c.cast_const()).check_timeouts()
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {
@@ -1737,7 +1737,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([Valkey], crate::valkey_jsc::valkey::DeferredFailure)
         }
         task_tag::DnsErrorDeferred => {
-            release_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
+            release_in!([Dns], crate::dns_jsc::dns_resolver_jsc::ErrorDeferredTask)
         }
         task_tag::HandledPromise => release!(bun_jsc::virtual_machine_exports::HandledPromiseTask),
         task_tag::GraphContextStopAgain => {

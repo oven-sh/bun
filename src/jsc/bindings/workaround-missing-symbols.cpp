@@ -162,7 +162,7 @@ double __wrap_log2(double x) { return log2(x); }
 // glibc's when present so we keep the vDSO fast path on modern systems; on
 // glibc < 2.25 issue the raw syscall ourselves. The kernel syscall has existed
 // since Linux 3.17; on older kernels syscall() returns -1/ENOSYS, which all
-// callers (BoringSSL, c-ares, highway) handle by falling back to /dev/urandom.
+// callers (BoringSSL, highway) handle by falling back to /dev/urandom.
 ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
 {
     using gr_fn = ssize_t (*)(void*, size_t, unsigned int);

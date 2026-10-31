@@ -6,15 +6,12 @@ test.concurrent("expect dns.lookup to keep the process alive", async () => {
   expect(await bunRun(join(import.meta.dir, "dns-fixture.js"))).toSpawn();
 });
 
-// When the last outstanding query on a Resolver completes via the retransmit
-// timer (c-ares timeout, not socket I/O), `check_timeouts` must not leave the
-// timer re-armed: `request_completed` runs inside the c-ares callback, before
-// c-ares has detached the query, so `any_requests_pending()` can still read
-// true there. Without the post-`ares_process_fd` re-check the timer stays
-// ACTIVE with its `+1` ref on the native Resolver. Observable as a ~1 s tail
-// between the last callback and process exit; under `bun test` on the asan
-// lane the exit GC runs before that timer fires and LSan flags the Resolver
-// allocation as a direct leak.
+// When the last outstanding query on a Resolver ends by its timeout and not by
+// socket I/O, `check_timeouts` must not leave the timer armed: an ACTIVE timer
+// holds a ref on the native Resolver. Observable as a tail between the last
+// callback and process exit; under `bun test` on the asan lane the exit GC runs
+// before that timer fires and LSan flags the Resolver allocation as a direct
+// leak.
 describe("dns.Resolver does not keep the event loop alive after the last query times out", () => {
   async function run(stmt: string) {
     const src = `
@@ -46,9 +43,9 @@ describe("dns.Resolver does not keep the event loop alive after the last query t
   for (const [name, stmt, expected] of [
     ["resolveCaa", `r.resolveCaa("x.invalid", done);`, "ETIMEOUT"],
     ["resolve4", `r.resolve4("x.invalid", done);`, "ETIMEOUT"],
-    // ares_gethostbyaddr swallows the PTR query status and reports ENOTFOUND
-    // after the file-lookup fallback; the PTR query itself still completes
-    // via the retransmit timer.
+    // A reverse lookup goes on to its next source whatever the PTR query ended
+    // with, and reports ENOTFOUND after the last. The PTR query itself still
+    // ends by its timeout.
     ["reverse", `r.reverse("192.0.2.1", done);`, "ENOTFOUND"],
   ] as const) {
     test.concurrent(name, async () => {

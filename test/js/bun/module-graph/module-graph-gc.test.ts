@@ -96,6 +96,15 @@ const dir = String(
         controller.enqueue(new TextEncoder().encode("<div>x"));
         return registered.promise;
       }
+      // A rewrite of a body somebody else made, with a handler of the graph's.
+      export const rewrite = (input, seen) =>
+        new HTMLRewriter().on("script", { element(el) { el.remove(); seen(); } }).transform(input);
+      // The same, and the graph's script waits for the whole output.
+      export const rewriteAndWait = (input, seen) => void rewrite(input, seen).text().then(() => {}, () => {});
+      // The same, and the graph's script makes a stream of the output.
+      export const rewriteAndTakeBody = (input, seen) => { const output = rewrite(input, seen); void output.body; return output; };
+      // A rewrite with a rewriter of somebody else's: only the call is the graph's.
+      export const rewriteWith = (rewriter, input) => rewriter.transform(input);
     `,
   }),
 );
@@ -128,6 +137,69 @@ async function baselineOf(...types: string[]): Promise<Record<string, number>> {
   const all = heapStats().objectTypeCounts;
   return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
 }
+
+/** A body of the host's that stays open after its first piece (one `<script>`) has gone into it. */
+const firstPiece = "<p>1</p><script>1</script>";
+const openBodies = {
+  // (No idle timeout: it would end the body, and with it whatever the body keeps alive.)
+  async "a fetch() response"() {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start: controller => controller.enqueue(new TextEncoder().encode(firstPiece)),
+          }),
+        ),
+    });
+    const input = await fetch(server.url);
+    // Made here: the stream is the host's, whoever reads it.
+    void input.body;
+    return { input, [Symbol.asyncDispose]: () => server.stop(true) };
+  },
+  async "a child's stdout"() {
+    const child = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write(${JSON.stringify(firstPiece)}); setInterval(() => {}, 1000);`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    return {
+      input: new Response(child.stdout),
+      async [Symbol.asyncDispose]() {
+        child.kill();
+        await child.exited;
+      },
+    };
+  },
+  async "a ReadableStream"() {
+    // (The host keeps the stream's controller, as something that may still enqueue does.)
+    let held: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        held = controller;
+        controller.enqueue(new TextEncoder().encode(firstPiece));
+      },
+    });
+    return { input: new Response(stream), [Symbol.asyncDispose]: async () => void (held = undefined) };
+  },
+  // Its producer waits for the rewrite to take what it wrote: more than the rewrite lets run ahead of a reader.
+  async "a direct ReadableStream whose pull() waits in flush(true)"() {
+    const piece = firstPiece + Buffer.alloc(32 * 1024, "x").toString();
+    const stream = new ReadableStream({
+      type: "direct",
+      async pull(controller: any) {
+        for (;;) {
+          controller.write(piece);
+          await controller.flush(true);
+        }
+      },
+    } as any);
+    return { input: new Response(stream), [Symbol.asyncDispose]: async () => {} };
+  },
+};
 
 async function accepts(port: number): Promise<boolean> {
   try {
@@ -411,6 +483,109 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       const graph = lifetimes.track("graph", new ModuleGraph());
       const io = await graph.import(file("io.mjs"));
       await graph.run(() => io.rewriteThatWaitsForAnEndTag());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // The handler is the graph's and the stream that feeds the rewrite is the host's: a rewrite that went on
+  // after dispose() kept its handlers, and so the graph, for as long as the host's stream stayed open.
+  for (const kind of Object.keys(openBodies) as (keyof typeof openBodies)[]) {
+    test(`an HTMLRewriter rewrite of the host's body (${kind}), when its graph is disposed, lets the graph go while that body is open`, async () => {
+      const lifetimes = new Lifetimes();
+      await using body = await openBodies[kind]();
+      let output: Response | undefined;
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph());
+        const io = await graph.import(file("io.mjs"));
+        const seen = Promise.withResolvers<void>();
+        output = graph.run(() => io.rewrite(body.input, seen.resolve));
+        await seen.promise;
+        graph.dispose();
+      })();
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      // (The host held the output all along.)
+      expect(await output!.text().then(() => "fulfilled", String)).toBe("AbortError: The operation was aborted.");
+    });
+  }
+
+  // The stream that the graph's script made of the output is stopped before the rewrite, and cancels it.
+  test("an HTMLRewriter rewrite whose output the graph's script took, when its graph is disposed, lets go of the promise that a direct stream's pull() waits for in flush(true)", async () => {
+    const lifetimes = new Lifetimes();
+    const piece = firstPiece + Buffer.alloc(32 * 1024, "x").toString();
+    const waiting = Promise.withResolvers<void>();
+    const input = new Response(
+      new ReadableStream({
+        type: "direct",
+        async pull(controller: any) {
+          for (;;) {
+            controller.write(piece);
+            const flushed = controller.flush(true);
+            if (flushed instanceof Promise) {
+              lifetimes.track("the promise of flush(true)", flushed);
+              waiting.resolve();
+            }
+            await flushed;
+          }
+        },
+      } as any),
+    );
+    let output: Response | undefined;
+    await (async () => {
+      const graph = new ModuleGraph();
+      const io = await graph.import(file("io.mjs"));
+      output = graph.run(() => io.rewriteAndTakeBody(input, () => {}));
+      await waiting.promise;
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("the promise of flush(true)")).toEqual([]);
+    // (The host held the output all along.)
+    expect(output).toBeInstanceOf(Response);
+  });
+
+  // Collection is not dispose(): nothing of the graph is left in a rewrite that outlives it, and it goes on.
+  test("an HTMLRewriter rewrite goes on to its end when the graph that started it is collected without dispose(), with handlers and a body of the host's", async () => {
+    const lifetimes = new Lifetimes();
+    let body!: ReadableStreamDefaultController<Uint8Array>;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start: controller => void ((body = controller), controller.enqueue(new TextEncoder().encode(firstPiece))),
+          }),
+        ),
+    });
+    const input = await fetch(server.url);
+    void input.body;
+    const seen = Promise.withResolvers<void>();
+    const rewriter = new HTMLRewriter().on("script", { element: element => void (element.remove(), seen.resolve()) });
+    let output: Response | undefined;
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      output = graph.run(() => io.rewriteWith(rewriter, input));
+      await seen.promise;
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    body.enqueue(new TextEncoder().encode("<p>2</p><script>2</script>"));
+    body.close();
+    expect(await output!.text()).toBe("<p>1</p><p>2</p>");
+  });
+
+  // The promise of a read of the whole output is a GC root until the body is settled, and its reactions reach
+  // the graph whose script waits. Nothing settled it while the host's stream stayed open.
+  test("an HTMLRewriter rewrite whose whole output the graph's script waits for, when its graph is disposed, lets the graph go while its input is open", async () => {
+    const lifetimes = new Lifetimes();
+    await using body = await openBodies["a fetch() response"]();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      const seen = Promise.withResolvers<void>();
+      graph.run(() => io.rewriteAndWait(body.input, seen.resolve));
+      await seen.promise;
       graph.dispose();
     })();
     expect(await lifetimes.stillAlive("graph")).toEqual([]);

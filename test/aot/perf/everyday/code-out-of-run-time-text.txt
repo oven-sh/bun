@@ -74,3 +74,40 @@ const urls: string[] = ["http://127.0.0.1:3000/api/projects/7/tasks?status=open"
 function turn(i: number): number {
   return pathOf(urls[i & 1]!).length;
 }
+//// a-method-called-on-an-object-that-the-text-made
+// The yardstick of the five idioms below: no built-in has a method `reading`, so the call says nothing of its receiver.
+const nothing = String(Date.now()).slice(99);
+const gauge: any = new Function("return { reading() { return 1.5; } }" + nothing)();
+function turn(i: number): number {
+  return gauge.reading() >= 0 ? i & 1 : 2;
+}
+//// get-time-called-on-an-object-that-the-text-made
+const nothing = String(Date.now()).slice(99);
+const stamp: any = new Function("return { getTime() { return 1.5; } }" + nothing)();
+function turn(i: number): number {
+  return stamp.getTime() >= 0 ? i & 1 : 2;
+}
+//// send-called-on-an-object-that-the-text-made
+const nothing = String(Date.now()).slice(99);
+const channel: any = new Function("return { send() { return 1.5; } }" + nothing)();
+function turn(i: number): number {
+  return channel.send() >= 0 ? i & 1 : 2;
+}
+//// now-called-on-an-object-that-the-text-made
+const nothing = String(Date.now()).slice(99);
+const clock: any = new Function("return { now() { return 1.5; } }" + nothing)();
+function turn(i: number): number {
+  return clock.now() >= 0 ? i & 1 : 2;
+}
+//// get-time-called-on-a-date-that-the-text-made
+const nothing = String(Date.now()).slice(99);
+const stamp: any = new Function("return new Date(1700000000000)" + nothing)();
+function turn(i: number): number {
+  return stamp.getTime() >= 0 ? i & 1 : 2;
+}
+//// now-called-on-the-performance-object-that-the-text-handed-over
+const nothing = String(Date.now()).slice(99);
+const clock: any = new Function("return performance" + nothing)();
+function turn(i: number): number {
+  return clock.now() >= 0 ? i & 1 : 2;
+}

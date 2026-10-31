@@ -103,3 +103,11 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+{
+  const image = new Bun.Image("./photo.jpg");
+  tsd.expectType(image.resize(1200, 630, { fit: "cover", position: "left top" })).is<Bun.Image>();
+  tsd.expectType(image.resize(1200, 630, { fit: "cover", position: "top left" })).is<Bun.Image>();
+  // @ts-expect-error - corners are two words, not hyphenated
+  image.resize(1200, 630, { fit: "cover", position: "top-left" });
+}

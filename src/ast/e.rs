@@ -1923,6 +1923,18 @@ impl EString {
         Some(self.slice16().len() as u32)
     }
 
+    /// `Number(string)`. `None` for a rope.
+    pub fn to_number(&self) -> Option<f64> {
+        if self.next.is_some() {
+            return None;
+        }
+        Some(if self.is_utf8() {
+            bun_core::fmt::js_string_to_number(self.slice8())
+        } else {
+            bun_core::fmt::js_string_to_number_utf16(self.slice16())
+        })
+    }
+
     // `eql`, split by operand type.
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {

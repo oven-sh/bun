@@ -1642,6 +1642,102 @@ describe("bundler", () => {
     run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
   });
 
+  // Constant propagation folds `==` and `!=` of a string and a number or a boolean. The number of the string is
+  // `Number(text)`, for an 8-bit string (ASCII, a define) and for a UTF-16 string (a literal that is not ASCII, a
+  // macro's result). Each row gives what JavaScript computes.
+  const digits = (count: number) => Buffer.alloc(count, "1234567890").toString();
+  const zeros = (count: number) => Buffer.alloc(count, "0").toString();
+  const looseEquality: Record<string, [expression: string, value: boolean]> = {
+    // `Infinity` has one spelling.
+    Inf: [`"inf" == Infinity`, false],
+    MinusInf: [`-Infinity == "-inf"`, false],
+    MinusInfinity: [`"-Infinity" == -Infinity`, true],
+    // No sign follows `0x`, `0o` or `0b`.
+    HexSign: [`"0x+10" == 16`, false],
+    OctalSign: [`"0o+7" != 7`, true],
+    BinarySign: [`true == "0b+1"`, false],
+    // The prefix can be in upper case.
+    HexUpperCase: [`"0XfF" == 255`, true],
+    OctalUpperCase: [`"0O17" != 15`, false],
+    BinaryUpperCase: [`true == "0B1"`, true],
+    // More digits than 64 bits hold. After the first row the number is `Number(BigInt(text))`, the nearest double,
+    // where a sum of the digits in a double gives the double next to it.
+    Hex17Digits: [`"0x10000000000000000" == 18446744073709551616`, true],
+    HexNearestDouble: [`"0x100000000000017fffffffffffff" == 3.245185536584268e32`, true],
+    // Both are 2^64 + 2^60 + 2^11 + 1.
+    OctalNearestDouble: [`"0o2100000000000000004001" == 19599665578316403000`, true],
+    BinaryNearestDouble: [`"0b10001${zeros(48)}1${zeros(10)}1" != 19599665578316403000`, false],
+    // White space is what `String.prototype.trim` takes off: U+00A0, U+FEFF and U+2028 are, U+0085 is not.
+    Nbsp: [`"\\u00A01" == 1`, true],
+    BomAndLineSeparator: [`1 != "\\uFEFF1\\u2028"`, false],
+    Nel: [`"\\u00851" == 1`, false],
+    OnlyWhiteSpace: [`"\\u00A0" == false`, true],
+    Joined: [`"\\u00A0" + "1" == 1`, true],
+    Template: ["`\\u00A0${1}` == 1", true],
+    NotANumber: [`"1\\u00E9" != 1`, true],
+    // The low byte of U+0131 is `1`, and that of U+0120 is a space.
+    LowByteIsADigit: [`"\\u0131" == 1`, false],
+    LowByteIsASpace: [`"\\u0120" == false`, false],
+    LowBytesAreDigits: [`"\\u0131${digits(70)}" == 1.1234567890123457e70`, false],
+    // 64 units after the white space, then 65.
+    Units64: [`"\\u00A0${digits(64)}" == 1.2345678901234568e63`, true],
+    Units65: [`"\\u00A0${digits(65)}" == 1.2345678901234568e64`, true],
+    DefineNbsp: [`true != NBSP_ONE`, false],
+    DefineBom: [`BOM_ONE == 1`, true],
+    DefineNel: [`NEL_ONE == 1`, false],
+    DefineHalfOfAPair: [`HALF_OF_A_PAIR != 1`, true],
+    // A macro's string is UTF-16, also when it is ASCII.
+    Macro: [`five() == 5`, true],
+    MacroNbsp: [`nbspFive() == 5`, true],
+  };
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`react-compiler/LooseEqualityOfAStringAndANumber/${backend}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as forms from "./forms.jsx";
+          const children = name => forms[name]({ then: "then", else: "else" }).p.children;
+          console.log(Object.keys(forms).sort().map(name => name + "=" + children(name)).join("\\n"));
+        `,
+        "/forms.jsx": [
+          `import { five, nbspFive } from "./macro.ts" with { type: "macro" };`,
+          ...Object.entries(looseEquality).map(
+            ([name, [expression]]) => `export function ${name}() { return <i>{String(${expression})}</i>; }`,
+          ),
+          // The branch that the comparison selects is the one that is kept.
+          `export function Branch(props) { let kept; if ("\\uFEFF1" == 1) kept = props.then; else kept = props.else; return <i>{kept}</i>; }`,
+          `export function InAnArrow() { const f = () => ("0x+10" != 16 ? "unequal" : "equal"); return <i>{f()}</i>; }`,
+        ].join("\n"),
+        "/macro.ts": `export function five() { return "5"; }\nexport function nbspFive() { return "\\u00A05"; }`,
+        ...stubReact,
+      },
+      define: {
+        NBSP_ONE: '"\u00A01"',
+        BOM_ONE: '"\uFEFF1"',
+        NEL_ONE: '"\u00851"',
+        HALF_OF_A_PAIR: '"\\ud800"',
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        // Every row is a constant in the output, so what is printed is what the compiler computed.
+        expect(out.match(/String\((true|false)\)/g)).toHaveLength(Object.keys(looseEquality).length);
+        // One branch of `Branch` is left, and no comparison is left in `InAnArrow`.
+        expect(out.match(/props\.(then|else)|0x\+10/g)).toHaveLength(1);
+      },
+      run: {
+        stdout: [
+          ...Object.entries(looseEquality).map(([name, [, value]]) => `${name}=${value}`),
+          "Branch=then",
+          "InAnArrow=unequal",
+        ]
+          .sort()
+          .join("\n"),
+      },
+    });
+  }
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `

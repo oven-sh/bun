@@ -70,6 +70,13 @@ impl JsString {
         (!s.is_utf16).then(|| s.slice8())
     }
 
+    /// JS `Number(string)`.
+    #[inline]
+    pub fn to_number(&self) -> f64 {
+        // `None` is for a rope, which this never is.
+        self.0.get().to_number().unwrap_or(f64::NAN)
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.get().data.is_empty()

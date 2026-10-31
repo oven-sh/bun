@@ -1151,12 +1151,12 @@ describe("every command that installs runs the scanner", () => {
     const ctx = await createTestContext();
     try {
       const dir = ctx.package_dir;
-      // `bar` accepts any baz. Its baz 0.0.3 stays in the lockfile next to the project's 0.0.5, until `bun dedupe`
-      // merges them.
+      // `bar` accepts any baz. Its baz 0.0.5 stays in the lockfile next to the project's lower 0.0.3, until
+      // `bun dedupe` merges them.
       const versions: Record<string, Record<string, object>> = {
         bar: { "0.0.2": { dependencies: { baz: ">=0.0.3" } } },
         boba: { "0.0.2": {} },
-        baz: { "0.0.3": {} },
+        baz: { "0.0.3": {}, "0.0.5": {} },
       };
       setContextHandler(ctx, async request => {
         const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "");
@@ -1188,8 +1188,7 @@ describe("every command that installs runs the scanner", () => {
       };
 
       await install({ bar: "0.0.2", boba: "0.0.2" });
-      versions.baz["0.0.5"] = {};
-      await install({ bar: "0.0.2", boba: "0.0.2", baz: "0.0.5" });
+      await install({ bar: "0.0.2", boba: "0.0.2", baz: "0.0.3" });
       await prepare?.(bun, dir);
       rmSync(join(dir, "node_modules", "boba"), { recursive: true, force: true });
       await Bun.write(join(dir, "scanner.ts"), scanner);

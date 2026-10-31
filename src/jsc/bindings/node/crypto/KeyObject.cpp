@@ -1207,6 +1207,12 @@ inline BignumPointer jwkBufToBn(JSArrayBufferView* buf)
     return BignumPointer(reinterpret_cast<uint8_t*>(buf->vector()), buf->byteLength());
 }
 
+static bool hasRawPublicKey(const EVPKeyPointer& key, std::span<const uint8_t> expected)
+{
+    auto derived = key.rawPublicKey();
+    return derived && derived.size() == expected.size() && CRYPTO_memcmp(derived.get(), expected.data(), expected.size()) == 0;
+}
+
 __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, PrepareAsymmetricKeyMode mode)
 {
     auto ktyView = getJwkStringView(globalObject, scope, jwk, "kty"_s, "key.kty"_s);
@@ -1304,14 +1310,9 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         }
 
         // "pub" must agree with the public key derived from the seed.
-        if (jwkType == CryptoKeyType::Private) {
-            auto derivedPub = key.rawPublicKey();
-            auto expected = pubBuf->span();
-            if (!derivedPub || derivedPub.size() != expected.size()
-                || CRYPTO_memcmp(derivedPub.get(), expected.data(), expected.size()) != 0) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
-                return {};
-            }
+        if (jwkType == CryptoKeyType::Private && !hasRawPublicKey(key, pubBuf->span())) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+            return {};
         }
 
         JSC::ensureStillAliveHere(pubBuf);
@@ -1352,6 +1353,12 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         RETURN_IF_EXCEPTION(scope, {});
         auto bufSpan = dataBuf->span();
 
+        JSArrayBufferView* xBuf = dataBuf;
+        if (keyType != CryptoKeyType::Public) {
+            xBuf = decodeJwkString(globalObject, scope, xView, "key.x"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
         switch (nid) {
         case EVP_PKEY_ED25519:
         case EVP_PKEY_X25519:
@@ -1390,6 +1397,13 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
             return {};
         }
 
+        // "x" must agree with the public key derived from "d".
+        if (keyType != CryptoKeyType::Public && !hasRawPublicKey(key, xBuf->span())) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK OKP key"_s);
+            return {};
+        }
+
+        JSC::ensureStillAliveHere(xBuf);
         return create(keyType, WTF::move(key));
     }
     case Kty::Ec: {

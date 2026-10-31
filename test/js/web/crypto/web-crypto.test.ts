@@ -1214,7 +1214,7 @@ describe("X25519 JWK import", () => {
   const x25519Public: JsonWebKey = {
     kty: "OKP",
     crv: "X25519",
-    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
   };
   const x25519Private: JsonWebKey = {
     ...x25519Public,
@@ -1566,6 +1566,32 @@ describe("JWK import validation", () => {
       () => "resolved",
       e => e.name,
     );
+
+  it.each(["Ed25519", "X25519"])("%s private keys need the matching x", async name => {
+    const usages: KeyUsage[] = name === "Ed25519" ? ["sign"] : ["deriveBits"];
+    const generate = async () =>
+      crypto.subtle.exportKey(
+        "jwk",
+        (
+          (await crypto.subtle.generateKey(name, true, [
+            ...usages,
+            ...(name === "Ed25519" ? ["verify"] : []),
+          ] as KeyUsage[])) as CryptoKeyPair
+        ).privateKey,
+      );
+    const [jwk, other] = [await generate(), await generate()];
+    const importJwk = (key: JsonWebKey) => crypto.subtle.importKey("jwk", key, name, true, usages);
+
+    expect((await importJwk(jwk)).type).toBe("private");
+    expect((await importJwk({ ...jwk, x: Buffer.from(jwk.x!, "base64url").toString("base64") })).type).toBe("private");
+    const { x, ...withoutX } = jwk;
+    expect({
+      otherKey: await rejection(importJwk({ ...jwk, x: other.x })),
+      missing: await rejection(importJwk(withoutX)),
+      notBase64: await rejection(importJwk({ ...jwk, x: "!!" })),
+      shortD: await rejection(importJwk({ ...jwk, d: "AA" })),
+    }).toEqual({ otherKey: "DataError", missing: "DataError", notBase64: "DataError", shortD: "DataError" });
+  });
 
   it("rejects a repeated key_ops entry for every key type", async () => {
     const pair = async (algorithm: any, usages: KeyUsage[]) =>

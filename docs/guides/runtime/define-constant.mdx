@@ -140,7 +140,7 @@ Into the following output:
 console.log("Hello, world!");
 ```
 
-## How is this different than setting a variable?
+## How is this different from setting a variable?
 
 You can also set `process.env.NODE_ENV` to `"production"` in your code, but that doesn't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV` to `"production"`, static analysis tools can't assume it is still `"production"` on the next line.
 

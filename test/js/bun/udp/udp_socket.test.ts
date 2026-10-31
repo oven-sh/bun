@@ -855,8 +855,8 @@ test("udpSocket({ hostname }) does not leak the hostname", async () => {
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });
 
-// Where the kernel has no usable batch receive (macOS below 15.6, FreeBSD) a
-// batch is one recvmsg per datagram, and each call consumes what it returns: a
+// Where the kernel has no usable batch receive (macOS below 15.6) a batch is
+// one recvmsg per datagram, and each call consumes what it returns: a
 // datagram, or a pending socket error that the kernel clears as it reports it.
 // A receive that fails after the first one leaves two results, and both must
 // reach the socket. A recvmsg fault rule that names the descriptor puts a
@@ -956,9 +956,10 @@ describe.skipIf(isWindows)("a connected socket with datagrams queued ahead of an
   });
 
   // Below macOS 15.6 a batch is one recvmsg per datagram. There the call that
-  // returns the error used to discard the datagrams read before it. macOS
-  // reports 10.16 as its version to a process that has SYSTEM_VERSION_COMPAT=1
-  // in its environment, so that process takes the same path on a newer macOS.
+  // returns the error used to discard the datagrams read before it. Up to
+  // macOS 15, a process that has SYSTEM_VERSION_COMPAT=1 in its environment is
+  // told that the version is 10.16, so it takes that path on 15.6 and later
+  // too. Where the answer is not below 15.6 (macOS 26), the test is skipped.
   const compat = { SYSTEM_VERSION_COMPAT: "1" };
   function compatReportsBelow15_6() {
     const { stdout } = Bun.spawnSync({

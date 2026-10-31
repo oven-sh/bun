@@ -1613,9 +1613,9 @@ describe("the BoringSSL error queue", () => {
     "ecdh.setPrivateKey with an oversized key": () => crypto.createECDH("prime256v1").setPrivateKey(tooLongForBignum),
     "dh.computeSecret with an oversized key": () => crypto.getDiffieHellman("modp5").computeSecret(tooLongForBignum),
     "generateKeyPair with an oversized prime": () =>
-      crypto.generateKeyPair("dh", { prime: tooLongForBignum }, () => {}),
+      util.promisify(crypto.generateKeyPair)("dh", { prime: tooLongForBignum }),
     "generateKeyPairSync of a tiny RSA key": () => crypto.generateKeyPairSync("rsa", { modulusLength: 64 }),
-    "getCipherInfo with an impossible iv length": () => crypto.getCipherInfo("aes-128-gcm", { ivLength: 0 }),
+    "getCipherInfo with an impossible key length": () => crypto.getCipherInfo("aes-128-gcm", { keyLength: 5 }),
     "decipher.final with bad padding": () => {
       const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
       decipher.update(Buffer.alloc(32, 3));
@@ -1633,11 +1633,18 @@ describe("the BoringSSL error queue", () => {
       ]),
   };
 
+  // The others throw or reject.
+  const failsByReturning = {
+    "Certificate.verifySpkac": false,
+    "Certificate.exportPublicKey": "",
+    "Certificate.exportChallenge": "",
+    "getCipherInfo with an impossible key length": undefined,
+  };
+
   it.each(Object.keys(failures))("is empty after %s", async name => {
     takeBoringSSLErrorQueueForTesting();
-    try {
-      await failures[name]();
-    } catch {}
+    if (name in failsByReturning) expect(failures[name]()).toBe(failsByReturning[name]);
+    else await expect((async () => failures[name]())()).rejects.toThrow();
     expect(takeBoringSSLErrorQueueForTesting()).toEqual([]);
   });
 

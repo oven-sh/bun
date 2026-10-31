@@ -993,6 +993,13 @@ const cases: Case[] = [
     loose: true,
   },
   {
+    name: "public KeyObjects imported twice from the same bytes",
+    a: () => createPublicKey(ecKeys[0].publicKey.export({ type: "spki", format: "pem" })),
+    b: () => createPublicKey(ecKeys[0].publicKey.export({ type: "spki", format: "pem" })),
+    strict: true,
+    loose: true,
+  },
+  {
     name: "a KeyObject and an empty object",
     a: () => createSecretKey(Buffer.alloc(16, 1)),
     b: () => ({}),

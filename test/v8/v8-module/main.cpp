@@ -662,9 +662,11 @@ void global_local_outlives_nested_reset(
 
 // Prints and resets the Globals that the previous round stored, prints
 // undefined, null, true and false, and then stores undefined (twice), null,
-// true, false, a small integer, a double and a string. They rotate by `round`,
-// so that a handle that is used again holds another kind of value. A negative
-// round stores nothing.
+// true, false, a small integer, a double and a string. In Bun the Globals of
+// undefined, null, true and false share the isolate's slot for that value
+// with its Locals, so resetting one must leave the slot alone. The values
+// rotate by `round`, so that a handle that is used again holds another kind
+// of value. A negative round stores nothing.
 void global_primitives_round(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   int round = static_cast<int>(info[0].As<Number>()->Value());

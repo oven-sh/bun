@@ -21,7 +21,11 @@ namespace shim {
 // The object actually allocated and returned as a v8::BackingStore* / std::shared_ptr<BackingStore>.
 // v8::BackingStore methods reinterpret_cast `this` to this layout.
 struct BackingStoreImpl {
+    // ArrayBuffer::GetBackingStore(): the buffer this store stands for.
     RefPtr<JSC::ArrayBuffer> buffer;
+    // A store that stands for no buffer: memory an addon owns.
+    void* data { nullptr };
+    size_t byteLength { 0 };
 };
 
 } // namespace shim
@@ -39,6 +43,7 @@ public:
     BUN_EXPORT static Local<ArrayBuffer> New(
         Isolate* isolate, size_t byte_length,
         BackingStoreInitializationMode initialization_mode = BackingStoreInitializationMode::kZeroInitialized);
+    BUN_EXPORT static Local<ArrayBuffer> New(Isolate* isolate, std::shared_ptr<BackingStore> backing_store);
 
     BUN_EXPORT std::shared_ptr<BackingStore> GetBackingStore();
 

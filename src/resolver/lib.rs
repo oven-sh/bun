@@ -52,9 +52,9 @@ pub use resolver::{
     AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
 };
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, FoundInDirectory, LoadResult,
+    MatchResult, MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result,
+    ResultFlags, ResultUnion,
 };
 pub use standalone_module_graph::{
     BytecodeModule, LINKED_BYTECODE_REGION_COUNT, StandaloneModuleGraph,
@@ -783,6 +783,15 @@ pub mod fs {
                     (entries.get(query), entries.fd)
                 }
                 EntriesOption::Err(_) => (None, Fd::INVALID),
+            }
+        }
+
+        /// Whether the listing has no entry: an empty directory, or one that could not be read.
+        pub(crate) fn has_no_entry(&self) -> bool {
+            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => entries.data.count() == 0,
+                EntriesOption::Err(_) => true,
             }
         }
 

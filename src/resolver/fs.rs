@@ -186,6 +186,17 @@ impl Entry {
         self.dir
     }
 
+    /// Whether the file system has this entry under `name`. A listing finds it by a name in any case.
+    pub(crate) fn is_named(&self, name: &[u8]) -> bool {
+        if self.base() == name {
+            return true;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        bun_sys::exists(bun_paths::resolve_path::join_string_buf::<
+            bun_paths::platform::Auto,
+        >(&mut buf[..], &[self.dir, name]))
+    }
+
     /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.
     #[inline]
     pub fn abs_path(&self) -> Interned {

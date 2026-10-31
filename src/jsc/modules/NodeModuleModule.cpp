@@ -528,6 +528,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             true
 #endif
             )) {
+        JSValue paths;
         if (parent.paths) {
             auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
@@ -538,18 +539,19 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
                 array->push(globalObject, path);
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            RELEASE_AND_RETURN(scope, array);
+            paths = array;
         } else if (parent.pathsArrayLazy && parent.filename) {
             auto filenameValue = parent.filename->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto filename = Bun::toString(filenameValue);
-            auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filename, globalObject, true));
-            RELEASE_AND_RETURN(scope, paths);
-        } else {
-            auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filename, globalObject, true));
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, array);
+        } else {
+            paths = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
         }
+        // Node ends the list with Module.globalPaths. require() searches those directories last.
+        RELEASE_AND_RETURN(scope, JSValue::decode(Resolver__appendNodePath(globalObject, JSValue::encode(paths))));
     }
 
     JSValue dirname;
@@ -567,7 +569,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 }
 
 extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*,
-    const BunString*, JSArray*);
+    const BunString*, JSC::EncodedJSValue paths);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -577,13 +579,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     JSValue request_value = callFrame->argument(0);
     JSValue paths_value = callFrame->argument(1);
 
+    // Node's first statement is path.isAbsolute(request): a request that is not a string is an invalid "path" argument.
+    if (!request_value.isString()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "path"_s, "string"_s, request_value);
+
     String request = request_value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     BunString request_bun_str = Bun::toString(request);
 
-    JSArray* paths = paths_value.isCell() ? dynamicDowncast<JSArray>(paths_value) : nullptr;
-
-    return NodeModuleModule__findPath(globalObject, &request_bun_str, paths);
+    RELEASE_AND_RETURN(scope, NodeModuleModule__findPath(globalObject, &request_bun_str, JSValue::encode(paths_value)));
 }
 
 // These two setters are only used if you directly hit
@@ -697,9 +701,13 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
     // See getBuiltinModulesObject for why this needs a top exception scope.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalObject = moduleObject->globalObject();
     auto* globalPaths = JSC::constructEmptyArray(
-        moduleObject->globalObject(),
+        globalObject,
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    // Node lists three more directories after those of NODE_PATH. require() does not search them here.
+    Resolver__appendNodePath(globalObject, JSValue::encode(globalPaths));
     RETURN_IF_EXCEPTION(scope, {});
     return globalPaths;
 }

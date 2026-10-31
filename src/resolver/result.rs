@@ -368,6 +368,14 @@ impl MatchStatus {
     }
 }
 
+/// What [`Resolver::find_in_directory`](crate::Resolver::find_in_directory) found.
+pub enum FoundInDirectory {
+    Found(&'static [u8]),
+    NotFound,
+    /// The `exports` of the package in the directory give no file for the request. Node throws here.
+    NotExported,
+}
+
 pub struct PendingResolution {
     pub esm: crate::package_json::PackageExternal,
     pub dependency: Dependency::Version,

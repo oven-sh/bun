@@ -165,6 +165,20 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let public_root = self.base_public_path_with_default_suffix();
         program.resolve_package(public_root, source_dir, specifier, is_require, search)
     }
+    /// `CompiledProgram::resolve_package_of_directory`.
+    fn resolve_package_of_directory(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> PackageLookup {
+        let Some(program) = self.compiled_program() else {
+            return PackageLookup::Unknown;
+        };
+        let public_root = self.base_public_path_with_default_suffix();
+        program.resolve_package_of_directory(public_root, source_dir, specifier, is_require, search)
+    }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
         if self.compiled_program().is_none() {

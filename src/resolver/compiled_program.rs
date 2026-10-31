@@ -102,6 +102,15 @@ pub enum PackageLookup {
     Unknown,
 }
 
+/// Which `node_modules` directories a package is looked for in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// That of the directory, then that of each directory above it, as `bun run` looks.
+    EachDirectoryAbove,
+    /// That of the directory alone.
+    OwnDirectory,
+}
+
 /// In a public path, a `..` that leaves the root directory of the build.
 const PARENT_OF_ROOT: &[u8] = b"_.._";
 
@@ -472,6 +481,30 @@ impl CompiledProgram {
             specifier,
             is_require,
             search,
+            Reach::EachDirectoryAbove,
+        )
+    }
+
+    /// `resolve_package` for the `node_modules` directory of `source_dir` alone.
+    pub fn resolve_package_of_directory(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> PackageLookup {
+        let Some(lookup) = self.module_lookup.get() else {
+            return PackageLookup::Unknown;
+        };
+        self.resolve_package_among(
+            lookup,
+            public_root,
+            source_dir,
+            specifier,
+            is_require,
+            search,
+            Reach::OwnDirectory,
         )
     }
 
@@ -483,6 +516,7 @@ impl CompiledProgram {
         specifier: &[u8],
         is_require: bool,
         search: &ExtensionSearch<'_>,
+        reach: Reach,
     ) -> PackageLookup {
         use PackageLookup::{Found, Hidden, Unknown};
         if self.preserves_source_paths
@@ -505,12 +539,16 @@ impl CompiledProgram {
             let is_above = |segment: &&&[u8]| **segment == PARENT_OF_ROOT;
             segments.map_or(0, |segments| segments.iter().take_while(is_above).count())
         };
-        let levels_above_root = self
-            .entry_points
-            .iter()
-            .map(count_levels)
-            .max()
-            .unwrap_or(0);
+        // A lookup in one directory does not go above the root directory of the build.
+        let levels_above_root = match reach {
+            Reach::OwnDirectory => 0,
+            Reach::EachDirectoryAbove => self
+                .entry_points
+                .iter()
+                .map(count_levels)
+                .max()
+                .unwrap_or(0),
+        };
         loop {
             if folders.last() != Some(&&b"node_modules"[..]) {
                 let mut segments = folders.clone();
@@ -546,6 +584,9 @@ impl CompiledProgram {
                 if let Some(found) = self.find_file_or_directory(&path, how, search, lookup) {
                     return Found(found);
                 }
+            }
+            if reach == Reach::OwnDirectory {
+                return Unknown;
             }
             // Above the root directory of the build there are as many folders as an entry point lies above it.
             push_segments(&mut folders, core::iter::once(&b".."[..]));
@@ -594,8 +635,15 @@ impl CompiledProgram {
                 ),
             }
         };
-        let package =
-            self.resolve_package_among(&lookup, public_root, public_root, specifier, false, search);
+        let package = self.resolve_package_among(
+            &lookup,
+            public_root,
+            public_root,
+            specifier,
+            false,
+            search,
+            Reach::EachDirectoryAbove,
+        );
         let module = match package {
             PackageLookup::Found(module) => Some(module),
             PackageLookup::Hidden => None,
@@ -1073,6 +1121,33 @@ mod tests {
                     false,
                 );
                 assert_eq!(imported, Unknown);
+            }
+
+            #[test]
+            fn package_of_one_directory_is_not_that_of_a_directory_above() {
+                let program = program(false);
+                let own = |source_dir: &[u8], specifier: &[u8]| {
+                    let extensions = [&b".js"[..], b".cjs"].map(Box::<[u8]>::from);
+                    let search = ExtensionSearch {
+                        extensions: &extensions,
+                        extra_extensions: &[],
+                        rewritten_extensions: &rewrite,
+                    };
+                    program.resolve_package_of_directory(ROOT, source_dir, specifier, true, &search)
+                };
+                assert_eq!(own(ROOT, b"driver"), Found(FILES[1]));
+                assert_eq!(
+                    own(b"/$bunfs/root/node_modules/orm/", b"driver"),
+                    Found(FILES[5])
+                );
+                assert_eq!(own(ROOT, b"both/common.cjs"), Hidden);
+                // `resolve_package` finds these in the directory above, or lets it hide them.
+                assert_eq!(own(b"/$bunfs/root/lib/", b"driver"), Unknown);
+                assert_eq!(own(b"/$bunfs/root/node_modules/both/", b"driver"), Unknown);
+                assert_eq!(
+                    own(b"/$bunfs/root/node_modules/orm/", b"both/common.cjs"),
+                    Unknown
+                );
             }
 
             #[test]

@@ -1,12 +1,16 @@
+use core::ptr::NonNull;
+
 use crate::{
-    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
-    VirtualMachineRef as VirtualMachine,
+    self as jsc, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachineRef as VirtualMachine,
+    bun_string_jsc,
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
-use bun_core::{String as BunString, strings};
+use bun_collections::SmallList;
+use bun_core::{String as BunString, Utf8Bytes, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
+use bun_resolver::{FoundInDirectory, Resolver};
 
 // `bun.schema.api.Loader` — bindgen-emitted schema enum.
 // Mirrored as a transparent `u8` because the schema enum is *open*
@@ -30,74 +34,130 @@ impl ApiLoader {
     }
 }
 
-// The C++ caller (NodeModuleModule.cpp
-// `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
-// invokes this with the coerced args directly — there is no CallFrame here.
+// `jsFunctionFindPath` (NodeModuleModule.cpp) checks the request and passes `paths` as it is.
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: &BunString,
-    paths_maybe: *mut JSArray,
+    paths: JSValue,
 ) -> JSValue {
-    // `JSArray` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
-    // non-null-ZST deref proof. Nullable per the C++ caller contract.
-    let paths_maybe: Option<&JSArray> =
-        (!paths_maybe.is_null()).then(|| JSArray::opaque_ref(paths_maybe));
-    jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths_maybe))
+    jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths))
 }
 
-// https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L728-L839
 fn find_path(
     global: &JSGlobalObject,
     request_bun_str: &BunString,
-    paths_maybe: Option<&JSArray>,
+    paths: JSValue,
 ) -> JsResult<JSValue> {
     let request_slice = request_bun_str.to_utf8();
     let request = request_slice.slice();
 
+    // Node replaces `paths` with `['']` for an absolute request, and reads it no further.
     let absolute_request = bun_paths::is_absolute(request);
-    if !absolute_request && paths_maybe.is_none() {
-        return Ok(JSValue::FALSE);
-    }
-
-    // for each path
-    let found = if let Some(paths) = paths_maybe {
-        'found: {
-            let mut iter = paths.iterator(global)?;
-            while let Some(path) = iter.next()? {
-                let cur_path = BunString::from_js(path, global)?;
-
-                if let Some(found) = find_path_inner(request_bun_str, &cur_path, global)? {
-                    break 'found Some(found);
-                }
-            }
-
-            break 'found None;
-        }
+    let len = if absolute_request {
+        1
     } else {
-        find_path_inner(request_bun_str, &BunString::EMPTY, global)?
+        paths_length(global, paths)?
     };
 
-    if let Some(str) = found {
-        return str.into_js(global);
+    // What the resolver logs for a directory of `paths` is no error of the caller.
+    let mut log = bun_ast::Log::default();
+    // The second look reads the entries from here, so it runs no getter of `paths`.
+    let mut entries_without_request: SmallList<Utf8Bytes<'static>, 8> = SmallList::default();
+
+    // The first look is in the resolver's cache of the directories, where `require()` looks.
+    for i in 0..len {
+        let cur_path = if absolute_request {
+            Utf8Bytes::Borrowed(b"")
+        } else {
+            let cur_path = paths.get_index(global, i)?;
+            if !cur_path.is_string_literal() {
+                return Err(global.throw_invalid_argument_type_value2(
+                    "paths",
+                    "array of strings",
+                    paths,
+                ));
+            }
+            cur_path.to_utf8(global)?
+        };
+        match look_in_directory(global, &mut log, cur_path.slice(), request, Look::InCache) {
+            FoundInDirectory::Found(path) => {
+                return bun_string_jsc::create_utf8_for_js(global, path);
+            }
+            FoundInDirectory::NotFound => entries_without_request.append(cur_path),
+            // Node throws here. Like Node, look in no other entry, and do not look again.
+            FoundInDirectory::NotExported => return Ok(JSValue::FALSE),
+        }
+    }
+
+    // No entry has the request. The cache can be older than the disk, so look again on the disk.
+    for cur_path in &entries_without_request {
+        match look_in_directory(global, &mut log, cur_path.slice(), request, Look::OnDisk) {
+            FoundInDirectory::Found(path) => {
+                return bun_string_jsc::create_utf8_for_js(global, path);
+            }
+            FoundInDirectory::NotFound => {}
+            FoundInDirectory::NotExported => break,
+        }
     }
 
     Ok(JSValue::FALSE)
 }
 
-fn find_path_inner(
-    request: &BunString,
-    cur_path: &BunString,
+/// Where a look of `find_path` reads a directory from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Look {
+    /// The resolver's cache of the directories.
+    InCache,
+    /// The disk, after the cache forgets the directory.
+    OnDisk,
+}
+
+/// One look for `request` in the directory `dir`. What the resolver logs goes to `log`.
+fn look_in_directory(
     global: &JSGlobalObject,
-) -> JsResult<Option<BunString>> {
-    Ok(VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
-        global,
-        request,
-        cur_path,
-        None,
-        crate::virtual_machine::ResolveMode::RequireResolve,
-    )?
-    .ok())
+    log: &mut bun_ast::Log,
+    dir: &[u8],
+    request: &[u8],
+    look: Look,
+) -> FoundInDirectory {
+    // Reading an entry of `paths` may have run JS that resolves a module. That puts the log of the
+    // VM back, so the log is set for each look, and the VM is read again.
+    // SAFETY: the VM and its resolver outlive this call. The caller's `Log` outlives it too, and
+    // nothing else uses `log` before the guard is dropped. The slot comes from the raw pointer
+    // to the VM, so `as_mut()` below leaves it valid.
+    let _restore_log = unsafe {
+        Resolver::scoped_log(
+            &raw mut (*global.bun_vm_ptr()).transpiler.resolver,
+            NonNull::from(log),
+        )
+    };
+    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+    if look == Look::OnDisk {
+        resolver.forget_in_directory(dir, request);
+    }
+    resolver.find_in_directory(dir, request)
+}
+
+/// How many entries Node's loop `for (let i = 0; i < paths.length; i++)` reads.
+fn paths_length(global: &JSGlobalObject, paths: JSValue) -> JsResult<u32> {
+    let length = if paths.is_array() || paths.is_string_literal() {
+        paths.get_length(global)? as f64
+    } else if paths.is_object() {
+        match paths.get(global, "length")? {
+            Some(length) => length.to_number(global)?,
+            None => 0.0,
+        }
+    } else {
+        0.0
+    };
+    // `NaN` compares false, and a fraction is one more index.
+    Ok(if length > 0.0 {
+        length.ceil().min(u32::MAX as f64) as u32
+    } else {
+        0
+    })
 }
 
 pub(crate) fn stat(path: &[u8]) -> i32 {

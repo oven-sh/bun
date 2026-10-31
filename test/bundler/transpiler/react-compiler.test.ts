@@ -1972,6 +1972,197 @@ describe("bundler", () => {
     },
   });
 
+  // To the compiler `arguments` is a global, so it took what is read from it for the same in every render, and a
+  // function that reads nothing else for one that can be declared at module level, where `arguments` is its own.
+  // Upstream does not compile a function that reads `arguments` (facebook/react#37645).
+  //
+  // Each function is rendered twice with other arguments. The fake `c` keeps one memo cache for each function, so
+  // the second render shows what the first one cached.
+  for (const [mode, target] of [
+    ["Client", "browser"],
+    ["Ssr", "bun"],
+  ] as const) {
+    itBundled(`react-compiler/ImplicitArgumentsIsNotCompiled-${mode}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { useMemo, useState } from "react";
+          import { calls } from "react/compiler-runtime";
+
+          // Read in the body.
+          function Jsx(props) {
+            return <div>{arguments[0].value}</div>;
+          }
+          function useIndex(a, b) {
+            useState(0);
+            const second = arguments[1];
+            return [second];
+          }
+          function useLength() {
+            useState(0);
+            return [arguments.length];
+          }
+          function useSpread() {
+            useState(0);
+            return [...arguments];
+          }
+          function usePattern() {
+            useState(0);
+            const [first, second] = arguments;
+            return [second, first];
+          }
+          function useMemoized() {
+            return useMemo(() => [arguments[0]], [arguments[0]]);
+          }
+          // Read in an arrow function.
+          function useArrow() {
+            useState(0);
+            return () => arguments[0];
+          }
+          function useAlias() {
+            useState(0);
+            const args = arguments;
+            return () => args[0];
+          }
+          function useArrowInFunction() {
+            useState(0);
+            return function () {
+              return () => arguments[0];
+            };
+          }
+          const useUnbound = () => {
+            useState(0);
+            return () => typeof arguments;
+          };
+          // Read in a function that is called where it is written.
+          function useCalledAtOnce(a, b) {
+            useState(0);
+            const count = (function () {
+              return arguments.length;
+            })();
+            return [count];
+          }
+          function useArrowCalledAtOnce() {
+            useState(0);
+            const first = (() => arguments[0])();
+            return [first];
+          }
+          // A function that returns one of its own arguments.
+          function useOwn(value) {
+            useState(0);
+            const items = [];
+            const same = (function (a) {
+              return arguments[0];
+            })(items, 1);
+            same.push(value);
+            return items;
+          }
+          // A function that only passes its own arguments on. It was right before, and is not compiled either:
+          // upstream leaves out every function that reads \`arguments\`.
+          function useForwarder(base) {
+            useState(0);
+            const log = function () {
+              return [base, ...arguments];
+            };
+            return { log };
+          }
+          // No \`arguments\`: these two are compiled.
+          function Plain({ name }) {
+            return <div>Hello {name}</div>;
+          }
+          function useControl() {
+            const [state] = useState("initial");
+            return state;
+          }
+
+          const render = (fn, ...args) => {
+            globalThis.rendering = fn;
+            return fn(...args);
+          };
+          const twice = (fn, first, second, read = it => it) => [
+            read(render(fn, ...first), ...first),
+            read(render(fn, ...second), ...second),
+          ];
+          const renders = {
+            Jsx: twice(Jsx, [{ value: 1 }], [{ value: 2 }], it => it.props.children),
+            useIndex: twice(useIndex, [0, "a"], [0, "b"]),
+            useLength: twice(useLength, [0], [0, 0, 0]),
+            useSpread: twice(useSpread, ["a"], ["b", "c"]),
+            usePattern: twice(usePattern, ["a", "b"], ["c", "d"]),
+            useMemoized: twice(useMemoized, ["a"], ["b"]),
+            useArrow: twice(useArrow, ["a"], ["b"], it => it()),
+            useAlias: twice(useAlias, ["a"], ["b"], it => it()),
+            useArrowInFunction: twice(useArrowInFunction, ["a"], ["b"], (it, inner) => it(inner)()),
+            useUnbound: twice(useUnbound, [], [], it => it() === typeof arguments),
+            useCalledAtOnce: twice(useCalledAtOnce, [0, 0], [0, 0]),
+            useArrowCalledAtOnce: twice(useArrowCalledAtOnce, ["a"], ["b"]),
+            useOwn: twice(useOwn, ["a"], ["b"]),
+            useForwarder: twice(useForwarder, ["a"], ["b"], it => it.log(1, 2)),
+            Plain: twice(Plain, [{ name: "a" }], [{ name: "b" }], it => it.props.children),
+            useControl: twice(useControl, [], []),
+          };
+          const all = { Jsx, useIndex, useLength, useSpread, usePattern, useMemoized, useArrow, useAlias, useArrowInFunction, useUnbound, useCalledAtOnce, useArrowCalledAtOnce, useOwn, useForwarder, Plain, useControl };
+          const withMemoCache = Object.keys(all).filter(name => calls(all[name]) > 0);
+          console.log(JSON.stringify({ renders, withMemoCache }));
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `
+          exports.useState = () => ["from the hook", () => {}];
+          exports.useMemo = make => make();
+        `,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/compiler-runtime.js": `
+          const caches = new Map();
+          const count = new Map();
+          exports.c = size => {
+            const fn = globalThis.rendering;
+            count.set(fn, (count.get(fn) ?? 0) + 1);
+            if (!caches.has(fn)) caches.set(fn, new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+            return caches.get(fn);
+          };
+          exports.calls = fn => count.get(fn) ?? 0;
+        `,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: {
+        stdout: JSON.stringify({
+          renders: {
+            Jsx: [1, 2],
+            useIndex: [["a"], ["b"]],
+            useLength: [[1], [3]],
+            useSpread: [["a"], ["b", "c"]],
+            usePattern: [
+              ["b", "a"],
+              ["d", "c"],
+            ],
+            useMemoized: [["a"], ["b"]],
+            useArrow: ["a", "b"],
+            useAlias: ["a", "b"],
+            useArrowInFunction: ["a", "b"],
+            useUnbound: [true, true],
+            useCalledAtOnce: [[0], [0]],
+            useArrowCalledAtOnce: [["a"], ["b"]],
+            useOwn: [["a"], ["b"]],
+            useForwarder: [
+              ["a", 1, 2],
+              ["b", 1, 2],
+            ],
+            Plain: [
+              ["Hello ", "a"],
+              ["Hello ", "b"],
+            ],
+            // The ssr output mode has the initial state in place of the call: `useControl` is compiled there too.
+            useControl: mode === "Ssr" ? ["initial", "initial"] : ["from the hook", "from the hook"],
+          },
+          // The ssr output mode has no memo cache.
+          withMemoCache: mode === "Ssr" ? [] : ["Plain"],
+        }),
+      },
+    });
+  }
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this

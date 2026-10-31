@@ -4,6 +4,7 @@ use crate::PrintErr;
 use crate::Printer;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::LengthValue as Length;
+use crate::css_values::percentage::Percentage;
 
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
 #[derive(Clone, PartialEq)]
@@ -113,6 +114,69 @@ impl css::generics::IsCompatible for TextShadow {
     fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.is_compatible(browsers)
     }
+}
+
+/// A value for the [hyphens](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#hyphenation) property.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+pub enum Hyphens {
+    /// Words are not hyphenated.
+    None,
+    /// Words are only hyphenated where there are characters inside the word that explicitly suggest hyphenation opportunities.
+    Manual,
+    /// Words may be broken at hyphenation opportunities determined automatically by the UA.
+    Auto,
+}
+
+/// A value for the [text-align-last](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#text-align-last-property) property.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+pub enum TextAlignLast {
+    /// Content on the affected line is aligned per `text-align-all` unless set to `justify`, in which case it is start-aligned.
+    Auto,
+    /// Inline-level content is aligned to the start edge of the line box.
+    Start,
+    /// Inline-level content is aligned to the end edge of the line box.
+    End,
+    /// Inline-level content is aligned to the line-left edge of the line box.
+    Left,
+    /// Inline-level content is aligned to the line-right edge of the line box.
+    Right,
+    /// Inline-level content is centered within the line box.
+    Center,
+    /// Text is justified according to the method specified by the text-justify property.
+    Justify,
+    /// Matches the parent element.
+    MatchParent,
+}
+
+/// A value for the [text-size-adjust](https://w3c.github.io/csswg-drafts/css-size-adjust/#adjustment-control) property.
+#[derive(Clone, Copy, PartialEq, crate::Parse, crate::ToCss)]
+pub enum TextSizeAdjust {
+    /// Use the default size adjustment when displaying on a small device.
+    Auto,
+    /// No size adjustment when displaying on a small device.
+    None,
+    /// When displaying on a small device, the font size is multiplied by this percentage.
+    Percentage(Percentage),
+}
+
+/// A value for the [text-decoration-skip-ink](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-decoration-skip-ink-property) property.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+pub enum TextDecorationSkipInk {
+    /// UAs may interrupt underlines and overlines.
+    Auto,
+    /// UAs must interrupt underlines and overlines.
+    None,
+    /// UA must draw continuous underlines and overlines.
+    All,
+}
+
+/// A value for the [box-decoration-break](https://www.w3.org/TR/css-break-3/#break-decoration) property.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+pub enum BoxDecorationBreak {
+    /// The element is rendered with no breaks present, and then sliced by the breaks afterward.
+    Slice,
+    /// Each box fragment is independently wrapped with the border, padding, and margin.
+    Clone,
 }
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.

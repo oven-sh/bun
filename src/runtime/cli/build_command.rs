@@ -452,6 +452,9 @@ impl BuildCommand {
 
                 this_transpiler.options.compile_entry_point_name =
                     bun_paths::basename(compile_outfile(outfile)).into();
+                this_transpiler
+                    .options
+                    .set_compile_output_dir(outfile_dir(outfile));
             }
         }
 
@@ -864,7 +867,7 @@ impl BuildCommand {
                         && matches!(output_files[0].value, options::OutputFileValue::Buffer { .. }));
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
-                output_dir = bun_core::dirname(outfile).unwrap_or(b".");
+                output_dir = outfile_dir(outfile);
                 // With --compile, the bundler already named the entry point's chunk after the outfile.
                 if !ctx.bundler_options.compile {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
@@ -1050,6 +1053,7 @@ impl BuildCommand {
 
                 // Write external sourcemap files next to the compiled executable.
                 // With --splitting, there can be multiple .map files (one per chunk).
+                // Their `sources` are relative to this directory: see `set_compile_output_dir`.
                 if opt_source_map == options::SourceMapOption::External {
                     for f in output_files.iter() {
                         if f.output_kind == options::OutputKind::Sourcemap
@@ -1315,6 +1319,11 @@ pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {
     } else {
         outfile
     }
+}
+
+/// Where a build with `--outfile` writes: the executable of `--compile` and its `.map` files, or the one output file.
+fn outfile_dir(outfile: &[u8]) -> &[u8] {
+    bun_core::dirname(outfile).unwrap_or(b".")
 }
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {

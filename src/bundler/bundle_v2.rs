@@ -3418,6 +3418,9 @@ pub mod bv2_impl {
                 }
             }
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
+            this.linker.options.compile_output_dir =
+                unsafe { interned_slice(&this.transpiler.options.compile_output_dir) };
             this.linker.options.metafile = this.transpiler.options.metafile;
 
             this.linker.dev_server = this.dev_server;

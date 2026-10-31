@@ -256,6 +256,26 @@ pub struct SourceMapPieces {
     pub prefix: Vec<u8>,
     pub mappings: Vec<u8>,
     pub suffix: Vec<u8>,
+    /// The map of an executable whose `sources` are not what it prints: the name it prints for each entry, in order,
+    /// written by [`push_display_source`]. Empty: it prints the entries.
+    pub display_sources: Box<[u8]>,
+}
+
+/// Appends `name` to a list of display sources: each name follows its length, a little-endian u32. Returns the copy.
+pub fn push_display_source<'a>(list: &'a mut Vec<u8>, name: &[u8]) -> &'a mut [u8] {
+    debug_assert!(u32::try_from(name.len()).is_ok());
+    list.extend_from_slice(&(name.len() as u32).to_le_bytes());
+    let start = list.len();
+    list.extend_from_slice(name);
+    &mut list[start..]
+}
+
+/// Takes the next name off a list of display sources. `None`: the list has no more names, or its bytes are not one.
+pub fn next_display_source<'a>(list: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let (len, rest) = list.split_first_chunk::<4>()?;
+    let (name, rest) = rest.split_at_checked(u32::from_le_bytes(*len) as usize)?;
+    *list = rest;
+    Some(name)
 }
 
 /// This function is extremely hot.

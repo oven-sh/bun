@@ -1241,7 +1241,8 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 break 'brk None;
             };
 
-            let source_map_index: Option<u32> = if let Some(f) = sourcemap_output_file {
+            let source_map_index: Option<u32> = if let Some(mut f) = sourcemap_output_file {
+                f.display_sources = core::mem::take(&mut chunk.output_source_map.display_sources);
                 Some(output_files.insert_for_sourcemap_or_bytecode(f)?)
             } else {
                 None

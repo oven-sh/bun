@@ -1711,7 +1711,7 @@ pub(crate) fn to_bytes(
                 // enough memory for the source-map contents. Calculating
                 // the exact amount is not possible without allocating as it
                 // involves a JSON parser.
-                string_builder.cap += bytes.len() * 2;
+                string_builder.cap += bytes.len() * 2 + output_file.display_sources.len();
             } else if output_file.output_kind == options::OutputKind::Bytecode
                 || output_file.output_kind == options::OutputKind::BuiltinBytecode
                 || output_file.output_kind == options::OutputKind::BytecodeStringTable
@@ -2031,12 +2031,12 @@ pub(crate) fn to_bytes(
     let mut source_map_string_list: Vec<u8> = Vec::new();
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
         if output_file.source_map_index != u32::MAX {
+            let source_map = &output_files[output_file.source_map_index as usize];
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
                 &mut source_map_string_list,
-                output_files[output_file.source_map_index as usize]
-                    .value
-                    .as_slice(),
+                source_map.value.as_slice(),
+                &source_map.display_sources,
             )?;
             module.sourcemap =
                 string_builder.add_concat(&[&source_map_header_list, &source_map_string_list]);
@@ -3828,10 +3828,12 @@ pub struct SerializedSourceMapLoaded {
     pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
+/// `display_sources`: `SourceMapPieces::display_sources`, the names to embed in place of `sources`.
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
+    mut display_sources: &[u8],
 ) -> crate::Result<()> {
     use bun_ast::ExprData as AstData;
 
@@ -3891,8 +3893,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 
+    let embeds_sources = display_sources.is_empty();
     for item in sources_paths.items() {
-        let decoded = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
+        let mut decoded = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
+        if !embeds_sources {
+            decoded = SourceMap::next_display_source(&mut display_sources)
+                .ok_or(crate::Error::InvalidSourceMap)?;
+        }
 
         let offset = string_payload.len();
         string_payload.extend_from_slice(decoded);
@@ -3905,6 +3912,9 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
+    }
+    if !display_sources.is_empty() {
+        return Err(crate::Error::InvalidSourceMap);
     }
 
     for item in sources_content.items() {

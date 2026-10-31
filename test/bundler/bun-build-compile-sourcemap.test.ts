@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { existsSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { tmpdir } from "os";
+import { dirname, join, resolve } from "path";
 
 describe("Bun.build compile with sourcemap", () => {
   const helperFiles = {
@@ -253,6 +255,218 @@ export function greet() {
 
     // Verify no .map was written into the doubled path subdir/subdir/
     expect(await Bun.file(join(String(dir), "subdir", "subdir", "myapp.map")).exists()).toBe(false);
+  });
+
+  // The `.map` files of an executable are beside it, so their `sources` are relative to its directory. The names
+  // that the executable prints are relative to the working directory of the build, wherever the executable goes.
+  describe("sources of the maps, and the names that the executable prints", () => {
+    const project = {
+      "proj/main.ts": `import { where } from "./a/deep/where";\nwhere();`,
+      "proj/a/deep/worker.ts": `import { where } from "./where";\nwhere();`,
+      "proj/a/deep/where.ts": `export function where() {\n  throw new Error("thrown in where");\n}`,
+    };
+    const printedByTheProject = ["at where (proj/a/deep/where.ts:2:9)", "at proj/main.ts:2:1"];
+
+    async function run(cwd: string, ...cmd: string[]) {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // The `sources` of each map below `folder`, and the entries that name no file from the directory of their map.
+    async function readMaps(folder: string) {
+      const sources: Record<string, string[]> = {};
+      const unresolved: string[] = [];
+      for (const map of new Bun.Glob("**/*.map").scanSync({ cwd: folder })) {
+        const entries: string[] = (await Bun.file(join(folder, map)).json()).sources;
+        sources[map.replaceAll("\\", "/")] = entries;
+        unresolved.push(...entries.filter(entry => !existsSync(resolve(dirname(join(folder, map)), entry))));
+      }
+      return { sources, unresolved };
+    }
+
+    // Runs the executable in another directory than the build's.
+    const runExecutable = (...path: string[]) => run(tmpdir(), join(...path) + (isWindows ? ".exe" : ""));
+
+    // The `at` lines of the error that ends the executable.
+    async function printedFrames(...executable: string[]) {
+      const { stderr, exitCode } = await runExecutable(...executable);
+      const lines = stderr.split("\n").map(line => line.trim());
+      return { frames: lines.filter(line => line.startsWith("at ")), exitCode };
+    }
+
+    test.concurrent.each([
+      [
+        "app",
+        {
+          "app.map": ["proj/a/deep/where.ts", "proj/main.ts"],
+          "worker.js.map": ["proj/a/deep/where.ts", "proj/a/deep/worker.ts"],
+        },
+      ],
+      [
+        "out/app",
+        {
+          "out/app.map": ["../proj/a/deep/where.ts", "../proj/main.ts"],
+          "out/worker.js.map": ["../proj/a/deep/where.ts", "../proj/a/deep/worker.ts"],
+        },
+      ],
+    ])(
+      "bun build --compile --outfile %s",
+      async (outfile, sources) => {
+        using dir = tempDir("build-compile-sourcemap-sources-cli", project);
+        const entryPoints = ["./proj/main.ts", "./proj/a/deep/worker.ts"];
+        const build = await run(
+          String(dir),
+          bunExe(),
+          "build",
+          "--compile",
+          "--sourcemap=external",
+          ...entryPoints,
+          "--outfile",
+          outfile,
+        );
+        expect(build.stderr).toBe("");
+        expect(await readMaps(String(dir))).toEqual({ sources, unresolved: [] });
+        expect(build.exitCode).toBe(0);
+        expect(await printedFrames(String(dir), outfile)).toEqual({ frames: printedByTheProject, exitCode: 1 });
+      },
+      60_000,
+    );
+
+    test.concurrent(
+      "Bun.build with an outdir, and an outfile in a directory",
+      async () => {
+        using dir = tempDir("build-compile-sourcemap-sources-api", {
+          ...project,
+          "build-fixture.ts": `
+            const result = await Bun.build({
+              entrypoints: ["./proj/main.ts", "./proj/a/deep/worker.ts"],
+              compile: { outfile: "bin/app" },
+              outdir: "out",
+              sourcemap: "external",
+            });
+            for (const output of result.outputs) {
+              if (output.kind === "sourcemap" && (await output.text()) !== (await Bun.file(output.path).text())) {
+                throw new Error("the artifact is not the file at " + output.path);
+              }
+            }
+          `,
+        });
+        const build = await run(String(dir), bunExe(), "build-fixture.ts");
+        expect(build.stderr).toBe("");
+        expect(await readMaps(String(dir))).toEqual({
+          sources: {
+            "out/bin/app.map": ["../../proj/a/deep/where.ts", "../../proj/main.ts"],
+            "out/bin/worker.js.map": ["../../proj/a/deep/where.ts", "../../proj/a/deep/worker.ts"],
+          },
+          unresolved: [],
+        });
+        expect(build.exitCode).toBe(0);
+        expect(await printedFrames(String(dir), "out", "bin", "app")).toEqual({
+          frames: printedByTheProject,
+          exitCode: 1,
+        });
+      },
+      60_000,
+    );
+
+    // A source that a plugin made has no path: the map and the executable have its name.
+    test.concurrent(
+      "Bun.build with a source of a plugin and a source in memory",
+      async () => {
+        using dir = tempDir("build-compile-sourcemap-sources-not-files", {
+          "proj/main.ts": `
+            import { fromPlugin } from "made:by-a-plugin";
+            import { fromMemory } from "./memory.ts";
+            for (const thrower of [fromPlugin, fromMemory]) {
+              try {
+                thrower();
+              } catch (error) {
+                console.log((error as Error).stack!.split("\\n")[1].trim());
+              }
+            }
+          `,
+          "build-fixture.ts": `
+            import { join } from "path";
+            await Bun.build({
+              entrypoints: ["./proj/main.ts"],
+              compile: { outfile: "app" },
+              outdir: "out",
+              sourcemap: "external",
+              files: {
+                [join(import.meta.dir, "proj", "memory.ts")]: "export function fromMemory() {\\n  throw new Error();\\n}",
+              },
+              plugins: [
+                {
+                  name: "made",
+                  setup(build) {
+                    build.onResolve({ filter: /^made:/ }, args => ({ path: args.path.slice(5), namespace: "made" }));
+                    build.onLoad({ filter: /.*/, namespace: "made" }, () => ({
+                      contents: "export function fromPlugin() {\\n  throw new Error();\\n}",
+                      loader: "ts",
+                    }));
+                  },
+                },
+              ],
+            });
+          `,
+        });
+        const build = await run(String(dir), bunExe(), "build-fixture.ts");
+        expect(build.stderr).toBe("");
+        expect((await readMaps(String(dir))).sources).toEqual({
+          "out/app.map": ["made:by-a-plugin", "../proj/memory.ts", "../proj/main.ts"],
+        });
+        expect(build.exitCode).toBe(0);
+        expect(await runExecutable(String(dir), "out", "app")).toEqual({
+          stdout: "at fromPlugin (made:by-a-plugin:2:9)\nat fromMemory (proj/memory.ts:2:9)\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      60_000,
+    );
+
+    // The executable and its maps go where the linker was told, so the entries resolve from there.
+    test.concurrent(
+      "Bun.build while a plugin changes the working directory",
+      async () => {
+        using dir = tempDir("build-compile-sourcemap-sources-chdir", {
+          ...project,
+          "elsewhere/empty.txt": "",
+          "build-fixture.ts": `
+            import { existsSync } from "fs";
+            import { dirname, join, resolve } from "path";
+            const result = await Bun.build({
+              entrypoints: [join(import.meta.dir, "proj", "main.ts")],
+              compile: { outfile: "app" },
+              outdir: "out",
+              sourcemap: "external",
+              plugins: [
+                {
+                  name: "chdir",
+                  setup(build) {
+                    build.onLoad({ filter: /where\\.ts$/ }, async ({ path }) => {
+                      process.chdir("elsewhere");
+                      return { contents: await Bun.file(path).text(), loader: "ts" };
+                    });
+                  },
+                },
+              ],
+            });
+            const map = result.outputs.find(output => output.kind === "sourcemap")!;
+            const { sources } = await Bun.file(map.path).json();
+            const resolved = sources.filter(source => existsSync(resolve(dirname(map.path), source)));
+            console.log(resolved.length, "of", sources.length);
+          `,
+        });
+        expect(await run(String(dir), bunExe(), "build-fixture.ts")).toEqual({
+          stdout: "2 of 2\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      60_000,
+    );
   });
 
   test("compile with multiple source files", async () => {

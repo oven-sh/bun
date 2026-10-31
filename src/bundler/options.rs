@@ -1354,6 +1354,8 @@ pub struct BundleOptions<'a> {
     pub compile_mode: CompileMode,
     /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
     pub compile_entry_point_name: Box<[u8]>,
+    /// `--compile`: the absolute directory of the executable and its `.map` files. See [`Self::set_compile_output_dir`].
+    pub compile_output_dir: Box<[u8]>,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1436,6 +1438,31 @@ impl<'a> BundleOptions<'a> {
             ForceNodeEnv::Production => false,
             ForceNodeEnv::Unspecified => self.jsx.development,
         }
+    }
+
+    /// `--compile` with a source map: tells the linker the directory of the executable, where its `.map` files go too.
+    ///
+    /// The linker writes `sources` relative to `output_dir`, and an executable prints the names it embeds as they are.
+    /// One list is right for both only when the maps go into `output_dir` and that is the working directory. For every
+    /// other build this sets `compile_output_dir`: the linker writes `sources` relative to it, and keeps the names
+    /// that the executable prints apart (`SourceMapPieces::display_sources`).
+    pub fn set_compile_output_dir(&mut self, executable_dir: &[u8]) {
+        use bun_paths::resolve_path::{join_abs_string, platform};
+        use bun_paths::string_paths::without_trailing_slash_windows_path as without_trailing_slash;
+
+        if self.source_map == SourceMapOption::None {
+            return;
+        }
+        let cwd = without_trailing_slash(Fs::FileSystem::get().top_level_dir());
+        let output_dir_is_cwd =
+            without_trailing_slash(join_abs_string::<platform::Auto>(cwd, &[&self.output_dir]))
+                == cwd;
+        let executable_dir =
+            without_trailing_slash(join_abs_string::<platform::Auto>(cwd, &[executable_dir]));
+        if output_dir_is_cwd && executable_dir == cwd {
+            return;
+        }
+        self.compile_output_dir = Box::from(executable_dir);
     }
 
     /// Per-worker deep clone — replaces the prior bitwise
@@ -1562,6 +1589,7 @@ impl<'a> BundleOptions<'a> {
             debugger: self.debugger,
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
+            compile_output_dir: self.compile_output_dir.clone(),
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1814,6 +1842,7 @@ impl<'a> BundleOptions<'a> {
             debugger: false,
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),
+            compile_output_dir: Box::default(),
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),

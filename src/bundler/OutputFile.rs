@@ -42,6 +42,8 @@ pub struct OutputFile {
     /// Of a `Bytecode` or `BuiltinBytecode` file of a link with an order file, which has no bytes of its own: where its
     /// cache entry starts in the `BytecodePayload`.
     pub bytecode_entry_offset: u32,
+    /// Of a `Sourcemap` file: `SourceMapPieces::display_sources`.
+    pub display_sources: Box<[u8]>,
 }
 
 impl OutputFile {
@@ -71,6 +73,7 @@ impl OutputFile {
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
             bytecode_entry_offset: 0,
+            display_sources: Box::default(),
         }
     }
 }
@@ -192,6 +195,7 @@ impl OutputFile {
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
             bytecode_entry_offset: 0,
+            display_sources: Box::default(),
         }
     }
 

@@ -1234,6 +1234,14 @@ impl<'a> LinkerContext<'a> {
 
         let source_indices = results.items_source_index();
 
+        // An executable's `.map` files are written beside it. See `BundleOptions::set_compile_output_dir`.
+        let compile_output_dir = self.options.compile_output_dir;
+        let chunk_abs_dir = if compile_output_dir.is_empty() {
+            chunk_abs_dir
+        } else {
+            compile_output_dir
+        };
+
         j.push_static(b"{\n  \"version\": 3,\n  \"sources\": [");
         if !source_indices.is_empty() {
             {
@@ -1288,6 +1296,24 @@ impl<'a> LinkerContext<'a> {
         j.push_static(b"],\n  \"sourcesContent\": [");
 
         let source_indices_for_contents = source_id_map.keys();
+
+        // What the executable prints for each entry of `sources`: the path from the working directory of the build.
+        let mut display_sources: Vec<u8> = Vec::new();
+        if !compile_output_dir.is_empty() {
+            let working_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+            for &index in source_indices_for_contents {
+                let path = &sources[index as usize].path;
+                if path.is_file() {
+                    let name = bun_paths::resolve_path::relative(working_dir, path.text);
+                    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                        SourceMap::push_display_source(&mut display_sources, name),
+                    );
+                } else {
+                    SourceMap::push_display_source(&mut display_sources, path.pretty);
+                }
+            }
+        }
+
         if !source_indices_for_contents.is_empty() {
             j.push_static(b"\n    ");
             j.push_static(
@@ -1368,6 +1394,7 @@ impl<'a> LinkerContext<'a> {
         debug_assert!(done[0] == b'{');
 
         let mut pieces = SourceMapPieces::init();
+        pieces.display_sources = display_sources.into_boxed_slice();
         if can_have_shifts {
             pieces.prefix.extend_from_slice(&done[0..mapping_start]);
             pieces
@@ -1448,6 +1475,8 @@ pub struct LinkerOptions {
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
+    /// See `BundleOptions::set_compile_output_dir`.
+    pub(crate) compile_output_dir: &'static [u8],
     pub(crate) metafile: bool,
 
     pub(crate) mode: LinkerOptionsMode,
@@ -1509,6 +1538,7 @@ impl Default for LinkerOptions {
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
+            compile_output_dir: b"",
             metafile: false,
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",

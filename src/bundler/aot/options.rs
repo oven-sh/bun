@@ -86,7 +86,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         loaders: _, jsx: _, react_compiler: _, root_dir: _, preserve_symlinks: _,
         tsconfig_override: _, main_fields: _, transform_options: _, external: _, packages: _,
         extension_order: _, main_field_extension_order: _, no_macros: _, custom_conditions: _,
-        entry_naming: _, compile_entry_point_name: _, force_node_env: _,
+        entry_naming: _, compile_entry_point_name: _, compile_output_dir: _, force_node_env: _,
         emit_decorator_metadata: _, experimental_decorators: _, use_define_for_class_fields: _,
         define: _, drop: _, bundler_feature_flags: _, asset_naming: _,
         auto_import_jsx: _, allow_runtime: _,

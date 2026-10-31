@@ -104,6 +104,9 @@ pub(crate) struct JSBundleCompletionTask {
     /// Armed in the context that called `Bun.build`, when that is a `Bun.ModuleGraph`'s.
     pub(crate) caller: CallerOfTheBuild,
     pub(crate) declarations: Option<DeclarationOutputs>,
+    /// The path of the executable, when the linker wrote the `sources` of its maps relative to its directory
+    /// (`BundleOptions::set_compile_output_dir`). `do_compilation` writes there, also after `process.chdir()`.
+    pub(crate) executable_path: Option<Box<[u8]>>,
 }
 
 pub(crate) struct DeclarationOutputs {
@@ -210,6 +213,7 @@ impl JSBundleCompletionTask {
             plugins,
             started_at_ns: 0,
             declarations: None,
+            executable_path: None,
         }
     }
 
@@ -466,6 +470,7 @@ impl JSBundleCompletionTask {
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(
         config: &JSBundlerConfig,
+        executable: Option<Box<[u8]>>,
         env: &mut bun_dotenv::Loader,
         log: &mut bun_ast::Log,
         output_files: &mut Vec<OutputFile>,
@@ -491,7 +496,8 @@ impl JSBundleCompletionTask {
             return CompileResult::fail(CompileErrorReason::NoEntryPoint);
         };
 
-        let full_outfile_path = executable_path(config, compile_options);
+        let full_outfile_path =
+            executable.unwrap_or_else(|| executable_path(config, compile_options));
 
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
@@ -632,6 +638,7 @@ impl JSBundleCompletionTask {
         // Write external sourcemap files next to the compiled executable and
         // keep them in the output array. Destroy all other non-entry-point files.
         // With --splitting, there can be multiple sourcemap files (one per chunk).
+        // Their `sources` are relative to this directory: see `set_compile_output_dir`.
         let mut kept: usize = 0;
         // Swap-compact in place via index iteration so each loop body holds
         // at most one `&mut` into `output_files`.
@@ -834,6 +841,7 @@ impl JSBundleCompletionTask {
         {
             let compile_result = Self::do_compilation(
                 &this.config,
+                this.executable_path.take(),
                 &mut this.env,
                 &mut this.log,
                 &mut build.output_files,
@@ -1254,6 +1262,15 @@ impl CompletionStruct for JSBundleCompletionTask {
             let executable = executable_path(config, compile);
             transpiler.options.compile_entry_point_name =
                 Box::from(executable_entry_point_name(&executable));
+            // `compile_ahead_of_time` writes no source map of the bundler.
+            if compile.aot.is_none() {
+                transpiler
+                    .options
+                    .set_compile_output_dir(paths::dirname(&executable).unwrap_or(b"."));
+            }
+            if !transpiler.options.compile_output_dir.is_empty() {
+                self.executable_path = Some(executable);
+            }
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
         // Owned so the static bound holds without tying `&mut self` to `'a`.

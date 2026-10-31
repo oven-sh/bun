@@ -125,7 +125,7 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc
 // spec CanTransferArrayBuffer(O) — pure.
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
-// spec StructuredClone(v): no caller — every tee path passes cloneForBranch2 = false.
+// spec StructuredClone(v) is used by Fetch Body cloning's default tee branch.
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count) — pure.
 bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
 
@@ -305,10 +305,10 @@ bool readableStreamHasDefaultReader(JSReadableStream*); // userJS: no — Readab
 bool readableStreamHasBYOBReader(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Tee / from / pipe entry points.
-// Bun: the spec's `cloneForBranch2` is not implemented; both branches share each chunk by
-// reference (see WebStreamsExports.cpp). ALSO runs materializeIfNeeded first.
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
+// `cloneForBranch2` is false for public tee() and true for Fetch Body cloning. ALSO runs
+// materializeIfNeeded first. Byte tee always clones its chunks per spec.
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 // spec ReadableStreamFromIterable(asyncIterable) — `ReadableStream.from`.
 JSReadableStream* readableStreamFromIterable(JSC::JSGlobalObject*, JSC::JSValue asyncIterable); // userJS: yes — ReadableStreamOperations.cpp
@@ -697,7 +697,7 @@ extern "C" {
 int32_t ReadableStreamTag__tagged(Zig::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream, void** ptr);
 
 // The ReadableStream__* set.
-bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2); // userJS: yes
+bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, bool cloneForBranch2, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2); // userJS: yes
 bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 // no-op unless the reader slot holds a REAL reader (the direct/native lock is a no-op here).

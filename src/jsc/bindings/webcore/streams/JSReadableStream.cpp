@@ -712,7 +712,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_tee, (JSGlobalObject 
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
-    auto branches = readableStreamTee(lexicalGlobalObject, stream);
+    auto branches = readableStreamTee(lexicalGlobalObject, stream, false);
     RETURN_IF_EXCEPTION(scope, {});
     auto* array = constructEmptyArray(lexicalGlobalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});

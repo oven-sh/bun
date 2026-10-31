@@ -249,7 +249,7 @@ function acceptBinaryDataOfOtherRealms(win: any) {
   for (let i = 0; i < BINARY_CLASSES.length; i++) {
     const name = BINARY_CLASSES[i];
     const constructor = win[name];
-    if (typeof constructor !== "function" || constructor === globalThis[name]) continue;
+    if (typeof constructor !== "function" || (win !== globalThis && constructor === globalThis[name])) continue;
     const isInstance: (value: unknown) => boolean = types[`is${name}`];
     $Object.$defineProperty(constructor, Symbol.hasInstance, {
       __proto__: null,
@@ -431,8 +431,11 @@ function open(
   sharesGlobal = false,
 ) {
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
-  const found = (keep || sharesGlobal ? find : lastingCopyOfThisModule().find)(name, file, !keep);
+  const lasting = keep || sharesGlobal ? undefined : lastingCopyOfThisModule();
+  const found = (lasting ? lasting.find : find)(name, file, !keep);
   if (typeof found === "string") return found;
+  // happy-dom's window has the classes of the global that the package is loaded into.
+  if (name === "happy-dom") lasting?.acceptBinaryDataOfTestFiles();
   const { packagePath, requireFromTest } = found;
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
@@ -664,6 +667,12 @@ function setup(
 }
 
 setup.find = find;
+let acceptsBinaryDataOfTestFiles = false;
+setup.acceptBinaryDataOfTestFiles = () => {
+  if (acceptsBinaryDataOfTestFiles) return;
+  acceptsBinaryDataOfTestFiles = true;
+  acceptBinaryDataOfOtherRealms(globalThis);
+};
 // For internal/test/globals.ts.
 setup.isEnvironmentGlobal = (key: PropertyKey) => originalDescriptors.$has(key as string);
 

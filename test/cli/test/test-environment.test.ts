@@ -1849,6 +1849,42 @@ describe.concurrent("test environment with the real", () => {
     },
   );
 
+  // With --isolate the package is loaded into a global that outlives the test files, and the window has that global's classes.
+  test.each([[], ["--isolate"], ["--isolate=modules"]])(
+    "happy-dom: binary data that Bun makes is an instance of the global classes: %s",
+    async (...args) => {
+      const file = `// ${VITEST} happy-dom
+        import { test, expect } from "bun:test";
+        import { readFileSync } from "node:fs";
+
+        test("a Uint8Array", () => {
+          const values = [
+            new TextEncoder().encode("a"),
+            Buffer.from("a"),
+            readFileSync(import.meta.path),
+            structuredClone(new Uint8Array(1)),
+            new Uint8Array(1),
+          ];
+          for (const value of values) {
+            expect(value instanceof Uint8Array).toBe(true);
+            expect(value).not.toBeInstanceOf(ArrayBuffer);
+          }
+        });
+
+        test("an ArrayBuffer", () => {
+          for (const value of [Buffer.alloc(1).buffer, structuredClone(new ArrayBuffer(1)), new ArrayBuffer(1)]) {
+            expect(value instanceof ArrayBuffer).toBe(true);
+            expect(value).not.toBeInstanceOf(Uint8Array);
+          }
+        });
+      `;
+      using dir = project({ "1.test.js": file, "2.test.js": file });
+      const { stderr, exitCode } = await bunTest(String(dir), ...args);
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // React 19 calls reportError() where there is one. Node has none, so under vitest React dispatches the event itself.
   test.each(["jsdom", "happy-dom"])("%s: reportError() dispatches an error event at the window", async name => {
     using dir = project({

@@ -67,7 +67,7 @@ describe.concurrent("package.json imports alias as the entry point", () => {
   });
 });
 
-test("a warning in the tsconfig.json beside the entry point does not fire the error event", async () => {
+test.concurrent("a warning in the tsconfig.json beside the entry point does not fire the error event", async () => {
   // The thread that reads a tsconfig.json first logs its warnings. main.js is one directory up, so
   // for each tsconfig.json below that thread is a worker.
   const tsconfig = JSON.stringify({ compilerOptions: { moduleSuffixes: [".ios"] } });

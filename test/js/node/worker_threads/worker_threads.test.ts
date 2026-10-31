@@ -734,7 +734,7 @@ describe("error event", () => {
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
 
-  test("is not fired for a warning in the tsconfig.json beside the entry", async () => {
+  test.concurrent("is not fired for a warning in the tsconfig.json beside the entry", async () => {
     // The parent has no 'error' listener, so an 'error' event ends it with exit code 1.
     // The thread that reads a tsconfig.json first logs its warnings. main.mjs is one
     // directory up, so for sub/tsconfig.json that thread is the worker.

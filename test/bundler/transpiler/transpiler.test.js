@@ -2920,7 +2920,7 @@ export default <>hi</>
 
       // Without the option the level is the log level of the process. The
       // option wins over it in both directions.
-      it("the option wins over logLevel in bunfig.toml", async () => {
+      it.concurrent("the option wins over logLevel in bunfig.toml", async () => {
         using dir = tempDir("transpiler-loglevel-bunfig", {
           "bunfig.toml": 'logLevel = "error"\n',
           "fixture.js": `
@@ -3061,21 +3061,9 @@ export default <>hi</>
         },
       );
 
-      // Proves that each option above does log its warning.
-      it.each(configWarnings)("%s: the warning is thrown beside a define error", async (_, config, warning) => {
-        const e = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" } }));
-        expect(e).toBeInstanceOf(AggregateError);
-        expect(e.message).toBe("Failed to load define");
-        expect(messagesOf(e)).toEqual([["warn", warning], defineError]);
-
-        const atError = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" }, logLevel: "error" }));
-        expect(atError).not.toBeInstanceOf(AggregateError);
-        expect(messagesOf(atError)).toEqual([defineError]);
-      });
-
       // The four tsconfig warnings fill the buffer of the transpiler's log. The
       // twelve define errors that follow make it grow.
-      it("define errors after a warning-only tsconfig do not corrupt the log", async () => {
+      it.concurrent("define errors after a warning-only tsconfig do not corrupt the log", async () => {
         const fixture = `
           const tsconfig = {
             compilerOptions: {
@@ -3107,6 +3095,18 @@ export default <>hi</>
           exitCode: 0,
           signalCode: null,
         });
+      });
+
+      // Proves that each option of `configWarnings` does log its warning.
+      it.each(configWarnings)("%s: the warning is thrown beside a define error", async (_, config, warning) => {
+        const e = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" } }));
+        expect(e).toBeInstanceOf(AggregateError);
+        expect(e.message).toBe("Failed to load define");
+        expect(messagesOf(e)).toEqual([["warn", warning], defineError]);
+
+        const atError = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" }, logLevel: "error" }));
+        expect(atError).not.toBeInstanceOf(AggregateError);
+        expect(messagesOf(atError)).toEqual([defineError]);
       });
     });
   });

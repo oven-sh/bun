@@ -142,7 +142,7 @@ test.concurrent("s3file.writer() fed chunks that do not line up with partSize re
 // of them, so on Linux no memfd either. A source that has a store (an array of
 // parts, a Blob, a buffered Response) is copied by the request, and the write
 // does not keep that store while the PUT is pending.
-describe("a write of in-memory data to S3", () => {
+describe.concurrent("a write of in-memory data to S3", () => {
   const MiB = 1024 * 1024;
 
   // Stands in for S3, in this process: the child only writes, so its memory and
@@ -261,11 +261,12 @@ describe("a write of in-memory data to S3", () => {
           }).length;
         const number = name => Number(name.slice("memfd:memfd-num-".length));
 
-        // A Blob of this size is a memfd store. It stays alive to the end.
+        // A Blob of this size is a memfd store. The two controls stay alive to the end.
         const control = new Blob([new Uint8Array(2 * MiB)]);
-        const before = { stores: stores(), descriptors: descriptors() };
+        const controls = stores();
+        let before = { stores: stores().length, descriptors: descriptors() };
         const held = () => ({
-          stores: stores().length - before.stores.length,
+          stores: stores().length - before.stores,
           descriptors: descriptors() - before.descriptors,
         });
 
@@ -273,7 +274,10 @@ describe("a write of in-memory data to S3", () => {
         const afterTheCall = held();
         await arrived(1);
         const whileThePutIsPending = held();
-        const storesTheBufferWriteMade = Math.max(...stores().map(number)) - number(before.stores[0]);
+        // A store that the write made and freed took a number too.
+        const secondControl = new Blob([new Uint8Array(2 * MiB)]);
+        const storesTheBufferWriteMade = Math.max(...stores().map(number)) - number(controls[0]) - 1;
+        before = { stores: stores().length, descriptors: descriptors() };
 
         // An array of parts still gets a store, here a memfd. The request copies it inside the call.
         const array = Bun.write(client.file("array-held"), [new Uint8Array(2 * MiB).fill(98)]);
@@ -283,28 +287,28 @@ describe("a write of in-memory data to S3", () => {
 
         await release();
         return {
-          control: before.stores.length,
+          controls: controls.length,
           afterTheCall,
           whileThePutIsPending,
           storesTheBufferWriteMade,
           afterTheArrayCall,
           whileTheArrayPutIsPending,
           resolved: [await buffer, await array],
-          controlSize: control.size,
+          controlSizes: [control.size, secondControl.size],
         };
       `,
       ["--smol"],
     );
     const none = { stores: 0, descriptors: 0 };
     expect(result).toEqual({
-      control: 1,
+      controls: 1,
       afterTheCall: none,
       whileThePutIsPending: none,
       storesTheBufferWriteMade: 0,
       afterTheArrayCall: none,
       whileTheArrayPutIsPending: none,
       resolved: [2 * MiB, 2 * MiB],
-      controlSize: 2 * MiB,
+      controlSizes: [2 * MiB, 2 * MiB],
     });
     expect([sink.sent("buffer-held"), sink.sent("array-held")]).toEqual([
       { length: 2 * MiB, fill: 97 },
@@ -344,7 +348,11 @@ describe("a write of in-memory data to S3", () => {
   );
 
   // The source is 64 MiB. One copy for the request is 64 MiB more, a store between the two another 64 MiB.
-  test.each(["Buffer.alloc(size, 97)", '"a".repeat(size)'])("one write of %s makes one copy", async source => {
+  test.each([
+    ["a Buffer", "Buffer.alloc(size, 97)"],
+    // Joined from 1 MiB pieces, so that no 64 MiB Buffer is resident beside the string.
+    ["a string", 'Array(size / MiB).fill(Buffer.alloc(MiB, 97).toString()).join("")'],
+  ])("one write of %s makes one copy", async (_, source) => {
     const size = 64 * MiB;
     await using sink = createSink();
     const body = `
@@ -395,7 +403,7 @@ describe("a write of in-memory data to S3", () => {
           "data-view": await settled(client.write("data-view", new DataView(window.buffer, MiB, 7))),
           "array-buffer": await settled(client.write("array-buffer", words.buffer)),
           "uint16-array": await settled(client.write("uint16-array", words)),
-          ascii: await settled(client.write("ascii", "a".repeat(2 * MiB))),
+          ascii: await settled(client.write("ascii", Buffer.alloc(2 * MiB, 97).toString())),
           latin1: await settled(client.write("latin1", "caf\\u00e9")),
           utf16: await settled(client.write("utf16", text)),
           file: await settled(client.file("file").write(text)),

@@ -1,6 +1,6 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
-const LazyTransform = require("internal/streams/lazy_transform");
+const { LazyTransform, toLazyTransformClass } = require("internal/streams/lazy_transform");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -322,7 +322,7 @@ function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: 
 
   LazyTransform.$apply(this, [options]);
 }
-$toClass(Hash, "Hash", LazyTransform);
+toLazyTransformClass(Hash, "Hash");
 
 Object.assign(Hash.prototype, {
   copy: function (this: $Node.Hash, options?: $Node.TransformOptions): $Node.Hash {
@@ -359,7 +359,7 @@ function Hmac(this: $Node.Hmac, hmac: string, key: unknown, options?: $Node.Tran
 
   LazyTransform.$apply(this, [options]);
 }
-$toClass(Hmac, "Hmac", LazyTransform);
+toLazyTransformClass(Hmac, "Hmac");
 
 Object.assign(Hmac.prototype, {
   update: function (this: $Node.Hmac, data: CryptoData, encoding?: string) {
@@ -594,7 +594,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
     LazyTransform.$apply(this, [options]);
     this._decoder = null;
   }
-  $toClass(Cipheriv, "Cipheriv", LazyTransform);
+  toLazyTransformClass(Cipheriv, "Cipheriv");
 
   Object.assign(Cipheriv.prototype, {
     setAutoPadding: function (this: $Node.Cipher, ap?: boolean) {
@@ -662,7 +662,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
     LazyTransform.$apply(this, [options]);
     this._decoder = null;
   }
-  $toClass(Decipheriv, "Decipheriv", LazyTransform);
+  toLazyTransformClass(Decipheriv, "Decipheriv");
 
   Object.assign(Decipheriv.prototype, {
     setAutoPadding: Cipheriv.prototype.setAutoPadding,

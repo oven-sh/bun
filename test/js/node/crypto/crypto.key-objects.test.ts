@@ -1909,6 +1909,64 @@ test("generateKeyPair passes the thrown Error to the callback when key export fa
   expect(err.message).toContain("Unsupported JWK EC curve");
 });
 
+// Node defines these four as getters in class bodies (lib/internal/crypto/keys.js), so none is enumerable.
+describe("KeyObject accessors are not enumerable", () => {
+  const secretKey = createSecretKey(Buffer.alloc(16, 1));
+  const publicKey = createPublicKey(publicPem);
+  const privateKey = createPrivateKey(privatePem);
+  const keysIn = (value: object) => {
+    const keys: string[] = [];
+    for (const key in value) keys.push(key);
+    return keys;
+  };
+
+  test("type, symmetricKeySize, asymmetricKeyType and asymmetricKeyDetails have the descriptor of a class getter", () => {
+    const shapeOf = (key: KeyObject, name: string) => {
+      for (let proto = Object.getPrototypeOf(key); proto; proto = Object.getPrototypeOf(proto)) {
+        const desc = Object.getOwnPropertyDescriptor(proto, name);
+        if (desc) return { ...desc, get: typeof desc.get, set: typeof desc.set };
+      }
+      return "missing";
+    };
+    const getter = { get: "function", set: "undefined", enumerable: false, configurable: true } as const;
+    expect({
+      type: shapeOf(secretKey, "type"),
+      symmetricKeySize: shapeOf(secretKey, "symmetricKeySize"),
+      asymmetricKeyType: shapeOf(publicKey, "asymmetricKeyType"),
+      asymmetricKeyDetails: shapeOf(privateKey, "asymmetricKeyDetails"),
+    }).toEqual({ type: getter, symmetricKeySize: getter, asymmetricKeyType: getter, asymmetricKeyDetails: getter });
+  });
+
+  test("for..in over a secret, public or private key lists nothing", () => {
+    expect({ secretKey: keysIn(secretKey), publicKey: keysIn(publicKey), privateKey: keysIn(privateKey) }).toEqual({
+      secretKey: [],
+      publicKey: [],
+      privateKey: [],
+    });
+  });
+
+  // Object.entries reads every enumerable property with the prototype as `this`, and the getter throws for it.
+  test("Object.entries of KeyObject.prototype reads no getter", () => {
+    expect(() => KeyObject.prototype.type).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+    );
+    expect(Object.entries(KeyObject.prototype)).toEqual([]);
+  });
+
+  // console.log prints the prototype members of a class instance, enumerable or not.
+  test("Bun.inspect of a key still prints the accessor values", () => {
+    const printedSecret = Bun.inspect(secretKey);
+    expect(printedSecret).toContain('\n  type: "secret",\n');
+    expect(printedSecret).toContain("\n  symmetricKeySize: 16,\n");
+    const printedPrivate = Bun.inspect(privateKey);
+    expect(printedPrivate).toContain('\n  type: "private",\n');
+    expect(printedPrivate).toContain('\n  asymmetricKeyType: "rsa",\n');
+    expect(printedPrivate).toContain(
+      "\n  asymmetricKeyDetails: {\n    modulusLength: 2048,\n    publicExponent: 65537n,\n  },\n",
+    );
+  });
+});
+
 // The async crypto jobs (generateKeyPair, sign, diffieHellman, hkdf, ...) run
 // on the work pool and complete on the JS thread. The native job ctx must be
 // freed before the JS callback is invoked: a callback that never returns

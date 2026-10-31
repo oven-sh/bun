@@ -17,8 +17,8 @@ JSC_DECLARE_CUSTOM_GETTER(jsAsymmetricKeyObjectPrototype_asymmetricKeyDetails);
 const JSC::ClassInfo JSAsymmetricKeyObjectPrototype::s_info = { "AsymmetricKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAsymmetricKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSAsymmetricKeyObjectPrototypeTableValues[] = {
-    { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsAsymmetricKeyObjectPrototype_asymmetricKeyType, 0 } },
-    { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsAsymmetricKeyObjectPrototype_asymmetricKeyDetails, 0 } },
+    { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsAsymmetricKeyObjectPrototype_asymmetricKeyType, 0 } },
+    { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsAsymmetricKeyObjectPrototype_asymmetricKeyDetails, 0 } },
 };
 
 void JSAsymmetricKeyObjectPrototype::finishCreation(JSC::VM& vm)

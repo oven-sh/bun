@@ -480,6 +480,7 @@ interface Map<K, V> {
 }
 
 declare var $Array: ArrayConstructor;
+declare var $Set: SetConstructor;
 declare var $Buffer: {
   byteLength: typeof Buffer.byteLength;
   new (array: Array): Buffer;

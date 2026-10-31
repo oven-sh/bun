@@ -8,13 +8,23 @@ const Transform = require("internal/streams/transform");
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 
+const classPrototypes = new $Set();
+
 function LazyTransform(options) {
   this._options = options;
 }
 $toClass(LazyTransform, "LazyTransform", Transform);
+classPrototypes.$add(LazyTransform.prototype);
+
+function toLazyTransformClass(constructor, name) {
+  $toClass(constructor, name, LazyTransform);
+  classPrototypes.$add(constructor.prototype);
+}
 
 function makeGetter(name) {
   return function () {
+    // Unlike Node: a Transform built on a class prototype is shared by every stream of the class (#29533, #14251).
+    if (classPrototypes.$has(this)) return undefined;
     Transform.$call(this, this._options);
     this._writableState.decodeStrings = false;
     return this[name];
@@ -50,4 +60,4 @@ ObjectDefineProperties(LazyTransform.prototype, {
   },
 });
 
-export default LazyTransform;
+export default { LazyTransform, toLazyTransformClass };

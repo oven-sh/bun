@@ -16,7 +16,7 @@ pub struct SortKeys {
     ignores_computed_keys: bool,
 }
 
-const SORT_KEYS: Message = Message::new(
+const SORT_KEYS: &Message = &Message::new(
     "sortKeys",
     "Expected object keys to be in {{natural}}{{insensitive}}{{order}}ending order. '{{thisName}}' should be before '{{prevName}}'.",
 );

@@ -439,7 +439,7 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f21 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f21 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -452,11 +452,11 @@ function f21 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
 }
 function f22 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f23 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f24 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f25 name="return" module=m3 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f26 name="throw" module=m3 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f24 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f25 name="return" module=m3 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=85 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f26 name="throw" module=m3 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=91 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f27 name="iteratorGenericClose" module=m4 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=131072 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f28 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f28 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=70 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=6 last=6
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -465,7 +465,7 @@ function f28 name="next" module=m5 position=25 kind=Method role=Library flags=[H
     v5 = ResumeGenerator v3, v4
     Return v5
 }
-function f29 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f29 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=86 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=6 last=6
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -486,8 +486,8 @@ function f29 name="return" module=m5 position=326 kind=Method role=Library flags
     v15 = ResumeGenerator v3, v14 resumeMode=Return
     Return v15
 }
-function f30 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=72 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f31 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f30 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f31 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=10 last=10
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -508,14 +508,14 @@ function f31 name="return" module=m6 position=2171 kind=Method role=Library flag
 }
 runtimefunction id=4 function=f23
 runtimefunction id=12 function=f22
-runtimefunction id=69 function=f21
-runtimefunction id=70 function=f24 visibility=Private
-runtimefunction id=71 function=f28 visibility=Private
-runtimefunction id=72 function=f30
-runtimefunction id=86 function=f25 visibility=Private
-runtimefunction id=87 function=f29
-runtimefunction id=88 function=f31
-runtimefunction id=92 function=f26 visibility=Private
+runtimefunction id=68 function=f21
+runtimefunction id=69 function=f24 visibility=Private
+runtimefunction id=70 function=f28 visibility=Private
+runtimefunction id=71 function=f30
+runtimefunction id=85 function=f25 visibility=Private
+runtimefunction id=86 function=f29
+runtimefunction id=87 function=f31
+runtimefunction id=91 function=f26 visibility=Private
 runtimefunction id=131072 function=f27 visibility=Private
 # -- generated: Location toString f5 f7 f9 pathnames
 # CHECK-LABEL: function {{*}}name="Location"

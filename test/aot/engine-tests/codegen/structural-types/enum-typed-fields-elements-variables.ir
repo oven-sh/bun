@@ -1212,7 +1212,7 @@ function f30 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
 function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
 function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f34 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f34 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -1235,7 +1235,7 @@ function f34 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-function f35 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f35 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -2887,8 +2887,8 @@ function f48 name="traverseArray" module=m4 position=2337 kind=Method role=Libra
   b252(v555):
     Return v555
 }
-runtimefunction id=65 function=f35
-runtimefunction id=69 function=f34
+runtimefunction id=64 function=f35
+runtimefunction id=68 function=f34
 runtimefunction id=131087 function=f41
 runtimefunction id=131088 function=f39
 runtimefunction id=131091 function=f48 visibility=Private

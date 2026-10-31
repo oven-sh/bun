@@ -5,11 +5,11 @@ use bun_lint::rule::Plugin;
 /// Enforce that Promise functions are called with the correct number of arguments.
 pub struct ValidParams;
 
-const ZERO_OR_ONE_ARGUMENT_REQUIRED: Message =
-    Message::new("", "`Promise.{{prop_name}}()` requires 0 or 1 arguments, but received {{args_len}}.");
-const ONE_OR_TWO_ARGUMENT_REQUIRED: Message =
-    Message::new("", "`Promise.{{prop_name}}()` requires 1 or 2 arguments, but received {{args_len}}.");
-const ONE_ARGUMENT_REQUIRED: Message = Message::new("", "`Promise.{{prop_name}}()` requires 1 argument, but received {{args_len}}.");
+const ZERO_OR_ONE_ARGUMENT_REQUIRED: &Message =
+    &Message::new("", "`Promise.{{prop_name}}()` requires 0 or 1 arguments, but received {{args_len}}.");
+const ONE_OR_TWO_ARGUMENT_REQUIRED: &Message =
+    &Message::new("", "`Promise.{{prop_name}}()` requires 1 or 2 arguments, but received {{args_len}}.");
+const ONE_ARGUMENT_REQUIRED: &Message = &Message::new("", "`Promise.{{prop_name}}()` requires 1 argument, but received {{args_len}}.");
 
 impl Rule for ValidParams {
     const META: Meta = Meta::oxlint(Plugin::Promise, "valid-params", Kind::Problem);

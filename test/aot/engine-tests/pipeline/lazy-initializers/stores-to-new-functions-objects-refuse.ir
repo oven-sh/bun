@@ -1221,7 +1221,7 @@ function f141 module=m0 role=Signature thisType={type=anything} results=[{type=a
 function f142 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f143 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f144 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f145 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f145 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -1244,7 +1244,7 @@ function f145 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsC
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-runtimefunction id=69 function=f145
+runtimefunction id=68 function=f145
 # -- generated: asyncConstructor generatorConstructor asyncGeneratorConstructor asyncArrowConstructor plainConstructor arrowConstructor plainHasInstance asyncToStringTag generatorToStringTag plainToStringTag generatorPrototype asyncPrototype asyncOtherName asyncToString asyncName asyncDefinition once onceForAGenerator onceUnderASymbol f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31 f32 f33 f34 f35 f36 f37 read f57 f58 f59 f60 f61 f62 f63 f64 f65 f66 f67 f68 f69 f70 f71 f72 f73 next attempt
 # CHECK-LABEL: function {{*}}name="asyncConstructor"
 # CHECK: module=m0 position=607 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined}] functionTypes=[f75] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1739,7 +1739,7 @@ runtimefunction id=69 function=f145
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f235 layout=L(IteratorResult)} {
+# CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f235 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: undefined = CallDirect v0 function=f235
 # CHECK-NEXT: v2: anything = ResultAt v1
@@ -1844,7 +1844,7 @@ runtimefunction id=69 function=f145
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f145}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f145} creator=Entrypoint{target=f145 arguments=Registers} {
+# CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=68 captures=[{type=f145}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f145} creator=Entrypoint{target=f145 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f145, v1: anything):
 # CHECK-NEXT: v2: L(IteratorResult) = CallDirect v1 function=f145
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
@@ -1888,7 +1888,7 @@ runtimefunction id=69 function=f145
 # CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m1 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f145 parameterMap=[{original=0}]} creator=ResultWorker{origin=f145} {
+# CHECK: module=m1 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f145 parameterMap=[{original=0}]} creator=ResultWorker{origin=f145} {
 # CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
 # CHECK-NEXT: v1: boolean = HasJSType v0 first=5 last=5
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b25()

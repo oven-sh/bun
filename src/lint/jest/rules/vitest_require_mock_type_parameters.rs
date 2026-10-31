@@ -7,7 +7,7 @@ pub struct RequireMockTypeParameters<const RUNNER: u8 = { jest::VITEST }> {
     check_import_functions: bool,
 }
 
-const REQUIRE_MOCK_TYPE_PARAMETERS: Message = Message::new("", "Missing type parameters on mock function call");
+const REQUIRE_MOCK_TYPE_PARAMETERS: &Message = &Message::new("", "Missing type parameters on mock function call");
 
 impl<const RUNNER: u8> Rule for RequireMockTypeParameters<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "require-mock-type-parameters", Kind::Problem);

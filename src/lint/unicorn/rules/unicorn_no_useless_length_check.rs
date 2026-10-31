@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 /// Disallow useless array length check.
 pub struct NoUselessLengthCheck;
 
-const USELESS_LENGTH_CHECK: Message = Message::new("", "Found a useless array length check");
+const USELESS_LENGTH_CHECK: &Message = &Message::new("", "Found a useless array length check");
 
 #[derive(Copy, Clone)]
 enum Operand<'a> {

@@ -45,6 +45,105 @@ describe("Web Crypto", () => {
     expect(lines).toStrictEqual(results);
   });
 
+  // unwrapKey imports the key in the realm that started it, after the decrypt has come back from
+  // the thread pool. That realm, or the Bun.ModuleGraph the promise belongs to, can be gone by then.
+  describe.concurrent("unwrapKey whose realm is gone when the decrypt comes back", () => {
+    async function run(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    it.each(["jwk", "raw"])("a collected Bun.ModuleGraph, %s", async format => {
+      const script = /* js */ `
+        import { heapStats } from "bun:jsc";
+        const graphs = () => heapStats().objectTypeCounts.ModuleGraph;
+        const iv = new Uint8Array(12);
+        const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+        const wrapped = await crypto.subtle.wrapKey("${format}", key, kek, { name: "AES-GCM", iv });
+        for (let i = 0; i < 4; i++) {
+          new Bun.ModuleGraph().run(() => {
+            crypto.subtle.unwrapKey("${format}", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]);
+          });
+        }
+        const made = graphs();
+        // In a microtask, so before a decrypt comes back. One collection is not sure to take all four.
+        queueMicrotask(() => {
+          Bun.gc(true);
+          console.log(graphs() < made ? "collected" : "not collected");
+        });
+        // The process ends when the decrypts have come back.
+        process.on("exit", () => console.log("exited"));
+      `;
+      expect(await run(script)).toEqual({ stdout: "collected\nexited", stderr: "", exitCode: 0 });
+    });
+
+    it("a disposed Bun.ModuleGraph: the key is not converted", async () => {
+      const script = /* js */ `
+        const iv = new Uint8Array(12);
+        const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "unwrapKey"]);
+        // Not a JWK: to convert it throws a TypeError, and a disposed graph has nobody to take it.
+        const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, kek, new TextEncoder().encode("123"));
+        const graph = new Bun.ModuleGraph();
+        graph.run(() => {
+          crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]).catch(() => {});
+        });
+        graph.dispose();
+        // Round trips through the thread pool: the decrypt queued before them has come back by the last one.
+        for (let i = 0; i < 20; i++) await crypto.subtle.digest("SHA-256", new Uint8Array(65536));
+        console.log("host finished");
+      `;
+      expect(await run(script)).toEqual({ stdout: "host finished", stderr: "", exitCode: 0 });
+    });
+
+    // Fails without the check only if a decrypt is posted before its realm goes: each run of a debug build.
+    it("a dropped ShadowRealm", async () => {
+      const script = /* js */ `
+        import { heapStats } from "bun:jsc";
+        // Each realm makes its keys, then hands out a function that starts the unwrapKey.
+        const starts = await Promise.all(
+          Array.from({ length: 4 }, () => {
+            const realm = new ShadowRealm();
+            return new Promise(resolve =>
+              realm.evaluate(\`ready => {
+                (async () => {
+                  const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+                  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+                  const iv = new Uint8Array(12);
+                  const wrapped = await crypto.subtle.wrapKey("jwk", key, kek, { name: "AES-GCM", iv });
+                  globalThis.start = () => {
+                    crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]);
+                  };
+                  ready();
+                })();
+              }\`)(() => resolve(realm.evaluate("() => globalThis.start()"))),
+            );
+          }),
+        );
+        function fire() {
+          while (starts.length) starts.pop()();
+        }
+        setImmediate(() => {
+          fire();
+          // In a microtask, so before a decrypt comes back. One collection is not sure to take all four.
+          queueMicrotask(() => {
+            Bun.gc(true);
+            console.log(heapStats().objectTypeCounts.GlobalObject < 5 ? "collected" : "not collected");
+          });
+        });
+        // The process ends when the decrypts have come back.
+        process.on("exit", () => console.log("exited"));
+      `;
+      expect(await run(script)).toEqual({ stdout: "collected\nexited", stderr: "", exitCode: 0 });
+    });
+  });
+
   it("has globals", () => {
     expect(crypto.subtle !== undefined).toBe(true);
     expect(CryptoKey.name).toBe("CryptoKey");

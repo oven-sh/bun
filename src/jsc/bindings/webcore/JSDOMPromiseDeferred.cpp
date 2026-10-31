@@ -223,6 +223,8 @@ JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject& lexi
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, ArrayBuffer* arrayBuffer)
 {
     if (!arrayBuffer) {
+        if (promise->isSuspended())
+            return;
         JSC::JSLockHolder lock(promise->globalObject());
         promise->reject<IDLAny>(createOutOfMemoryError(promise->globalObject()));
         return;

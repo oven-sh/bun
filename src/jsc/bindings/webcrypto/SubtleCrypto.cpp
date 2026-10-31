@@ -1548,6 +1548,11 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = crossThreadCopyImportParams(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
         if (weakThis) {
             if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
+                // The realm may be gone: collected, retired by `bun test --isolate`, or its Bun.ModuleGraph disposed.
+                if (promise->isSuspended()) {
+                    weakThis->m_pendingPromises.remove(index);
+                    return;
+                }
                 auto& state = *(promise->globalObject());
                 auto& vm = state.vm();
                 JSLockHolder locker(vm);

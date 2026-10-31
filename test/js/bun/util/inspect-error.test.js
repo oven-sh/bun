@@ -324,6 +324,12 @@ describe("source map remapping of the printed stack", () => {
       inspect: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
       uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:41:5"],
     });
+    // The code frame is cut from main.js, with the line numbers of main.js.
+    const codeFrame = ["1 | // @bun", `2 | ${main[1]}`];
+    expect({ inspect: out.inspect.split("\n").slice(0, 2), uncaught: stderr.split("\n").slice(0, 2) }).toEqual({
+      inspect: codeFrame,
+      uncaught: codeFrame,
+    });
     expect(exitCode).toBe(1);
   });
 
@@ -676,3 +682,159 @@ code();`;
   expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
   expect(exitCode).toBe(1);
 });
+
+// A source that runs as written has no source map: a `// @bun` file, eval, new Function, node:vm. Until error.stack
+// is read, the error has its JSC frames, and the printer cuts the code frame out of the text that JSC holds.
+describe("code frame of an error thrown from a source that has no source map", () => {
+  const thrower = 'throw new Error("x");';
+  // Under the `new` of `thrower`, for line numbers of one digit.
+  const caret = "          ^";
+  const text = (lines, eol = "\n") => lines.map(line => line + eol).join("");
+  // With displayErrors, node:vm replaces error.stack with the header that node prints.
+  const vm = (source, options) => () =>
+    runInThisContext(source, { filename: "code-frame.js", displayErrors: false, ...options });
+  // JSC puts an identifier that does not resolve one past its last character.
+  const fooFrame = ["1 | 1;", "2 | foo", "       ^", "ReferenceError: foo is not defined"];
+
+  function thrown(run) {
+    try {
+      run();
+    } catch (error) {
+      return error;
+    }
+  }
+
+  test.each([
+    [
+      "each line above the error has its own number",
+      vm(text(["1;", "2;", "3;", "4;", thrower])),
+      ["1 | 1;", "2 | 2;", "3 | 3;", "4 | 4;", `5 | ${thrower}`, caret, "error: x"],
+    ],
+    ["nothing is above an error on line 1", vm(text([thrower, "2;"])), [`1 | ${thrower}`, caret, "error: x"]],
+    ["line 1 is above an error on line 2", vm(text(["1;", thrower])), ["1 | 1;", `2 | ${thrower}`, caret, "error: x"]],
+    ["a first line of one character", vm(text([";", thrower])), ["1 | ;", `2 | ${thrower}`, caret, "error: x"]],
+    [
+      "at most five lines above the error",
+      vm(text(["1;", "2;", "3;", "4;", "5;", "6;", "7;", "8;", "9;", "10;", thrower])),
+      [" 6 | 6;", " 7 | 7;", " 8 | 8;", " 9 | 9;", "10 | 10;", `11 | ${thrower}`, ` ${caret}`, "error: x"],
+    ],
+    [
+      "blank lines, with a blank first line",
+      vm(text(["", "2;", "", thrower])),
+      ["1 | ", "2 | 2;", "3 | ", `4 | ${thrower}`, caret, "error: x"],
+    ],
+    [
+      "CRLF line endings",
+      vm(text(["1;", "", thrower], "\r\n")),
+      ["1 | 1;", "2 | ", `3 | ${thrower}`, caret, "error: x"],
+    ],
+    ["CR line endings", vm(text(["1;", "", thrower], "\r")), ["1 | 1;", "2 | ", `3 | ${thrower}`, caret, "error: x"]],
+    ["the error position is the newline that ends its line", vm(text(["1;", "foo", "3;"])), fooFrame],
+    ["the error position is the end of the source", vm("1;\nfoo"), fooFrame],
+    // JSC puts the disposal of a top-level `using` at the end of the text. That is an empty line here.
+    ...[
+      ["LF", "\n"],
+      ["CRLF", "\r\n"],
+      ["CR", "\r"],
+    ].map(([name, eol]) => [
+      `the error position is after the last line terminator (${name})`,
+      vm(text(["1;", "{", "  using x = { [Symbol.dispose]: Map.prototype.clear };", "}"], eol)),
+      [
+        "1 | 1;",
+        "2 | {",
+        "3 |   using x = { [Symbol.dispose]: Map.prototype.clear };",
+        "4 | }",
+        expect.stringMatching(/^TypeError: /),
+      ],
+    ]),
+    [
+      "the line numbers include the lineOffset of node:vm",
+      vm(text(["1;", "2;", thrower]), { lineOffset: 10 }),
+      ["11 | 1;", "12 | 2;", `13 | ${thrower}`, ` ${caret}`, "error: x"],
+    ],
+    ["indirect eval", () => (0, eval)(text(["1;", thrower])), ["1 | 1;", `2 | ${thrower}`, caret, "error: x"]],
+    [
+      "new Function, whose wrapper has line numbers",
+      () => new Function(text(["1;", thrower]))(),
+      ["1 | function anonymous(", "2 | ) {", "3 | 1;", `4 | ${thrower}`, caret, "error: x"],
+    ],
+    [
+      // Line 1 also holds the CommonJS wrapper. It is more than five lines above the error.
+      "Module.prototype._compile",
+      () =>
+        new Module("code-frame.cjs")._compile(text(["1;", "2;", "3;", "4;", "5;", "6;", thrower]), "code-frame.cjs"),
+      ["2 | 2;", "3 | 3;", "4 | 4;", "5 | 5;", "6 | 6;", `7 | ${thrower}`, caret, "error: x"],
+    ],
+  ])("%s", (_, run, expected) => {
+    expect(Bun.inspect(thrown(run)).split("\n").slice(0, expected.length)).toEqual(expected);
+  });
+
+  // From 1024 characters the lexer records where the lines start while it parses. The table holds them in blocks of
+  // 64 lines, and the length of a line of 128 characters or more takes two bytes.
+  test.each([
+    ["LF", "\n"],
+    ["CRLF", "\r\n"],
+    ["CR", "\r"],
+  ])("a long source with the error after line 64 (%s)", (_, eol) => {
+    const wide = `/* ${Buffer.alloc(130, "w")} */`;
+    const numbered = Array.from({ length: 62 }, (_, i) => `${i + 2};`);
+    const source = text(
+      [`/* ${Buffer.alloc(1024, "p")} */`, ...numbered, wide, "65;", "(function f() {", `  ${thrower}`, "})"],
+      eol,
+    );
+    const f = runInThisContext(source, { filename: "code-frame.js", displayErrors: false });
+    // Nothing asked for a position in this source yet.
+    expect(sourceHasLineStarts(f)).toBe(true);
+    expect(Bun.inspect(thrown(f)).split("\n").slice(0, 8)).toEqual([
+      "62 | 62;",
+      "63 | 63;",
+      `64 | ${wide}`,
+      "65 | 65;",
+      "66 | (function f() {",
+      `67 |   ${thrower}`,
+      `   ${caret}`,
+      "error: x",
+    ]);
+  });
+
+  test.concurrent.each([
+    ["// @bun", ["// @bun", "const a = 1;", "const b = 2;", "function t() {", `  ${thrower}`, "}"], []],
+    [
+      "// @bun @bun-cjs",
+      [
+        "// @bun @bun-cjs",
+        "(function(exports, require, module, __filename, __dirname) {",
+        "const a = 1;",
+        "function t() {",
+        `  ${thrower}`,
+        "}",
+      ],
+      ["})"],
+    ],
+  ])("a `%s` file: Bun.inspect and the uncaught error print the same frame", async (_, lines, end) => {
+    using dir = tempDir("inspect-error-code-frame", {
+      "thrower.js": text([...lines, "try { t(); } catch (e) { console.log(Bun.inspect(e)); }", "t();", ...end]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "thrower.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The error is on line 5 of both files.
+    const frame = [...lines.slice(0, 5).map((line, i) => `${i + 1} | ${line}`), `  ${caret}`, "error: x"];
+    expect({
+      inspect: stdout.split("\n").slice(0, frame.length),
+      uncaught: stderr.split("\n").slice(0, frame.length),
+    }).toEqual({ inspect: frame, uncaught: frame });
+    expect(exitCode).toBe(1);
+  });
+});
+
+// At the end of the file: the inline snapshots above hold its first lines.
+import { sourceHasLineStarts } from "bun:internal-for-testing";
+import Module from "node:module";
+import { runInThisContext } from "node:vm";

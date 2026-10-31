@@ -576,3 +576,72 @@ exports[`Intl.RelativeTimeFormat format across locales 1`] = `
   ],
 }
 `;
+
+exports[`Intl.Collator zh stroke (a second tailoring in coll/zh.res) 1`] = `
+[
+  "一",
+  "丁",
+  "九",
+  "中",
+]
+`;
+
+exports[`Intl.Collator ja (coll/ja.res) 1`] = `
+[
+  "ー",
+  "は",
+  "ハ",
+  "ば",
+  "バ",
+  "ぱ",
+]
+`;
+
+exports[`Intl.Segmenter word — km/lo/my (the khmer/lao/burmese dictionaries) 1`] = `
+{
+  "km": [
+    "ភាសាខ្មែរ",
+    "គឺជា",
+    "ភាសាផ្លូវការ",
+  ],
+  "lo": [
+    "ພາສາ",
+    "ລາວ",
+    "ເປັນ",
+    "ພາສາ",
+    "ທາງການ",
+  ],
+  "my": [
+    "မြန်မာဘာသာ",
+    "စကား",
+    "ဖြစ်သည်",
+  ],
+}
+`;
+
+exports[`Intl.Segmenter word isWordLike across dictionary scripts 1`] = `
+{
+  "ja": [
+    "吾輩",
+    "は",
+    "猫",
+    "で",
+    "ある",
+  ],
+  "th": [
+    "ภาษา",
+    "ไทย",
+    "ไม่มี",
+    "การ",
+    "เว้น",
+    "วรรค",
+  ],
+  "zh": [
+    "中华",
+    "人民",
+    "共和国",
+    "位于",
+    "亚洲",
+  ],
+}
+`;

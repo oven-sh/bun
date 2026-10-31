@@ -187,6 +187,7 @@ extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGl
 }
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     m_failed = !m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, whileScriptAllowed(lexicalGlobalObject));
     if (m_failed)
         m_opensslError = ERR_get_error();

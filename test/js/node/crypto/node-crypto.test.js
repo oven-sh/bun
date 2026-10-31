@@ -1534,9 +1534,10 @@ describe("Certificate spkac argument validation", () => {
   it("an empty spkac gives an empty string, from verifySpkac too", () => {
     expect([
       crypto.Certificate.verifySpkac(Buffer.alloc(0)),
+      crypto.Certificate.verifySpkac(""),
       crypto.Certificate.exportPublicKey(""),
       crypto.Certificate.exportChallenge(""),
-    ]).toEqual(["", "", ""]);
+    ]).toEqual(["", "", "", ""]);
   });
 
   it("Certificate.exportPublicKey and exportChallenge return Buffers", () => {

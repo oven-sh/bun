@@ -886,6 +886,10 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const B
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    // Before the call: a save made while the callback runs is seen, and a callback that throws leaves the file watched.
+    if (!namespaceString)
+        Bun__watchFileLoadedByPlugin(Bun::vm(vm), path);
+
     JSC::MarkedArgumentBuffer arguments;
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);

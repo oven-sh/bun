@@ -758,3 +758,107 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     "/main.ts": [O_CLOEXEC],
   });
 });
+
+// The report of #4689: a preloaded plugin transpiles every .ts file, and a save of an imported one restarted nothing.
+it("--watch restarts when a file that a plugin's onLoad transpiles is saved", async () => {
+  using dir = tempDir("watch-plugin-transpiles", {
+    "bunfig.toml": `preload = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      import { plugin, Transpiler } from "bun";
+      const transpiler = new Transpiler({ loader: "ts" });
+      plugin({
+        name: "transpiles",
+        setup(build) {
+          build.onLoad({ filter: /\\.ts$/ }, async ({ path }) => ({
+            contents: transpiler.transformSync(await Bun.file(path).text()),
+            loader: "js",
+          }));
+        },
+      });
+    `,
+    "src/index.ts": `import { value } from "./imported.ts";\nconsole.log("value=" + value);\n`,
+    "src/imported.ts": `export const value: string = "one";\n`,
+  });
+  watchee = spawn({
+    cwd: String(dir),
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "./src/index.ts"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor, release } = stdoutWaiter(watchee);
+  await waitFor("value=one");
+  await Bun.write(join(String(dir), "src", "imported.ts"), `export const value: string = "two";\n`);
+  await waitFor("value=two");
+  release();
+});
+
+const pluginThatServesFiles = `
+  Bun.plugin({
+    name: "serves files",
+    setup(build) {
+      build.onLoad({ filter: /\\.served$/ }, async ({ path }) => ({
+        contents: "export default " + JSON.stringify(await Bun.file(path).text()) + ";",
+        loader: "js",
+      }));
+    },
+  });
+`;
+
+it("test --watch reruns when a file that a preloaded plugin's onLoad serves is saved", async () => {
+  using dir = tempDir("watch-plugin-test", {
+    "plugin.js": pluginThatServesFiles,
+    "main.test.js": `import { test } from "bun:test";\nimport value from "./data.served";\ntest("prints", () => console.log("value=" + value));\n`,
+    "data.served": "one",
+  });
+  watchee = spawn({
+    cwd: String(dir),
+    cmd: [bunExe(), "test", "--watch", "--preload", "./plugin.js", "main.test.js"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor, release } = stdoutWaiter(watchee);
+  await waitFor("value=one");
+  await Bun.write(join(String(dir), "data.served"), "two");
+  await waitFor("value=two");
+  release();
+});
+
+// A watch by path holds a descriptor on kqueue platforms and none on Linux. A reload calls onLoad again, and that must
+// not add one.
+it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+  "--hot reload does not add a descriptor for a file that a plugin's onLoad serves",
+  async () => {
+    using dir = tempDir("watch-plugin-fds", {
+      "plugin.js": pluginThatServesFiles,
+      "main.js": `import value from "./data.served";\nconsole.log("value=" + value);\n`,
+      "data.served": "one",
+    });
+    const cwd = realpathSync(String(dir));
+    const served = join(cwd, "data.served");
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "--preload", "./plugin.js", "main.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release } = stdoutWaiter(watchee);
+    const held = () => openPaths(watchee.pid).filter(path => path === served).length;
+    await waitFor("value=one");
+    const before = held();
+    for (const value of ["two", "three"]) {
+      await Bun.write(served, value);
+      await waitFor("value=" + value);
+    }
+    const after = held();
+    release();
+
+    const expected = isLinux ? 0 : 1;
+    expect({ before, after }).toEqual({ before: expected, after: expected });
+  },
+);

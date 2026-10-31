@@ -409,3 +409,17 @@ unsafe extern "C" fn Bun__runVirtualModule(
         Ok(None) | Err(_) => JSValue::ZERO,
     }
 }
+
+/// C++ entry point: a plugin's `onLoad` in the `file` namespace is about to be called for `path`.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__watchFileLoadedByPlugin(vm: &VirtualMachine, path: &bun_core::String) {
+    if vm.is_watcher_enabled() {
+        watch_file_loaded_by_plugin(vm, path);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn watch_file_loaded_by_plugin(vm: &VirtualMachine, path: &bun_core::String) {
+    vm.add_plugin_served_file_to_watcher(path.to_utf8().slice());
+}

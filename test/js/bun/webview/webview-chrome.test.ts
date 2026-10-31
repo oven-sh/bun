@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isCI, isLinux, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -7,7 +7,15 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // paths, then the Playwright cache) so the test detects Chrome whenever the
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -28,18 +36,51 @@ function shmUnlinkChrome(name: string): void {
   }
 }
 
-function findChrome(): string | undefined {
-  const isExecutable = (p: string) => {
-    try {
-      accessSync(p, fsConstants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+function isExecutablePath(p: string): boolean {
+  try {
+    accessSync(p, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
+// Bundle names find_chrome() checks on macOS (ChromeProcess.rs's `bundles` array).
+const MACOS_BROWSER_BUNDLES = [
+  "Google Chrome.app/Contents/MacOS/Google Chrome",
+  "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+  "Chromium.app/Contents/MacOS/Chromium",
+  "Brave Browser.app/Contents/MacOS/Brave Browser",
+  "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+];
+
+// ChromeProcess.rs gates several branches on cfg(any(target_os = "linux", target_os = "android")).
+const isLinuxOrAndroid = isLinux || isAndroid;
+
+// Absolute paths find_chrome() checks on Linux and Android (ChromeProcess.rs's `absolute` array).
+const LINUX_HARDCODED_BROWSERS = [
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "/snap/bin/chromium",
+  "/usr/bin/brave-browser",
+  "/snap/bin/brave",
+  "/usr/bin/microsoft-edge",
+];
+
+// Playwright's registry names each cache directory per platform — linux x64 carries no arch
+// suffix: https://github.com/microsoft/playwright/blob/26a9e470a7b3c7822084b09fb7f13902c5f37b51/packages/playwright-core/src/server/registry/index.ts#L75
+const PLAYWRIGHT_SHELL_DIR =
+  process.platform === "win32"
+    ? "chrome-headless-shell-win64"
+    : process.platform === "darwin"
+      ? `chrome-headless-shell-mac-${process.arch === "arm64" ? "arm64" : "x64"}`
+      : "chrome-headless-shell-linux64";
+
+function findChrome(): string | undefined {
   if (process.env.BUN_CHROME_PATH) {
-    return isExecutable(process.env.BUN_CHROME_PATH) ? process.env.BUN_CHROME_PATH : undefined;
+    return process.env.BUN_CHROME_PATH;
   }
 
   // $PATH — same as `which google-chrome` etc.
@@ -62,30 +103,14 @@ function findChrome(): string | undefined {
 
   // Hardcoded absolute paths — app bundles aren't in $PATH on macOS.
   if (process.platform === "darwin") {
-    const bundles = [
-      "Google Chrome.app/Contents/MacOS/Google Chrome",
-      "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-      "Chromium.app/Contents/MacOS/Chromium",
-      "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    ];
-    for (const b of bundles) {
+    for (const b of MACOS_BROWSER_BUNDLES) {
       const sys = join("/Applications", b);
-      if (isExecutable(sys)) return sys;
+      if (isExecutablePath(sys)) return sys;
       const user = join(homedir(), "Applications", b);
-      if (isExecutable(user)) return user;
+      if (isExecutablePath(user)) return user;
     }
-  } else if (process.platform === "linux") {
-    const absolute = [
-      "/usr/bin/google-chrome-stable",
-      "/usr/bin/google-chrome",
-      "/usr/bin/chromium-browser",
-      "/usr/bin/chromium",
-      "/snap/bin/chromium",
-      "/usr/bin/brave-browser",
-      "/snap/bin/brave",
-      "/usr/bin/microsoft-edge",
-    ];
-    for (const c of absolute) if (isExecutable(c)) return c;
+  } else if (isLinuxOrAndroid) {
+    for (const c of LINUX_HARDCODED_BROWSERS) if (isExecutablePath(c)) return c;
   } else if (process.platform === "win32") {
     // Installer layout: <root>\<Vendor>\<Channel>\Application\<exe>. Same
     // candidate order and roots as find_chrome(); Edge lives under
@@ -105,7 +130,7 @@ function findChrome(): string | undefined {
     for (const rel of relative) {
       for (const root of roots) {
         const candidate = join(root, rel);
-        if (isExecutable(candidate)) return candidate;
+        if (isExecutablePath(candidate)) return candidate;
       }
     }
   }
@@ -129,16 +154,14 @@ function findChrome(): string | undefined {
     }
   } catch {}
   if (!bestRev) return undefined;
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const plat = process.platform === "darwin" ? "mac" : "linux";
   const bin =
     process.platform === "win32"
-      ? join(cacheDir, bestName, "chrome-headless-shell-win64", "chrome-headless-shell.exe")
-      : join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
-  if (isExecutable(bin)) return bin;
-  if (process.platform === "linux" && process.arch === "arm64") {
+      ? join(cacheDir, bestName, PLAYWRIGHT_SHELL_DIR, "chrome-headless-shell.exe")
+      : join(cacheDir, bestName, PLAYWRIGHT_SHELL_DIR, "chrome-headless-shell");
+  if (isExecutablePath(bin)) return bin;
+  if (isLinuxOrAndroid && process.arch === "arm64") {
     const bin2 = join(cacheDir, bestName, "chrome-linux/headless_shell");
-    if (isExecutable(bin2)) return bin2;
+    if (isExecutablePath(bin2)) return bin2;
   }
   return undefined;
 }
@@ -1228,6 +1251,71 @@ it("BUN_CHROME_PATH is used as the executable", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "env", stderr: "", exitCode: 0 });
 });
+
+// Regression coverage for find_playwright_shell()'s directory-name bug (ChromeProcess.rs).
+// Builds a fake ms-playwright cache tree in an isolated HOME and proves discovery finds it,
+// spawns it, and completes a real CDP round trip.
+//
+// PATH is cleared and HOME is redirected so $PATH and the Playwright cache are the only discovery
+// steps left live. Skipped if the host also has a browser at one of find_chrome()'s hardcoded
+// absolute paths (checked before the cache) — that would mask this test's target. Windows is
+// skipped outright: its discovered binary must be a real .exe, and CreateProcess won't run a
+// shebang script through one the way POSIX exec does.
+const hasHardcodedBrowser = isLinuxOrAndroid
+  ? LINUX_HARDCODED_BROWSERS.some(isExecutablePath)
+  : process.platform === "darwin"
+    ? MACOS_BROWSER_BUNDLES.some(
+        b => isExecutablePath(join("/Applications", b)) || isExecutablePath(join(homedir(), "Applications", b)),
+      )
+    : false;
+const discoveryTest = process.platform === "win32" || hasHardcodedBrowser ? test.skip : test;
+
+// Playwright has no Chrome-for-Testing headless-shell build for linux/android arm64 —
+// find_playwright_shell() falls back to the non-cft chrome-linux/headless_shell layout there
+// (ChromeProcess.rs's fallback branch). Build whichever layout Playwright actually produces so
+// arm64 exercises that fallback instead of a tree that can't occur in production.
+const isLinuxOrAndroidArm64 = isLinuxOrAndroid && process.arch === "arm64";
+const [playwrightShellRelDir, playwrightShellBinName] = isLinuxOrAndroidArm64
+  ? ["chrome-linux", "headless_shell"]
+  : [PLAYWRIGHT_SHELL_DIR, "chrome-headless-shell"];
+
+discoveryTest(
+  "chrome: discovered via the Playwright chrome-headless-shell cache (fixture tree, no BUN_CHROME_PATH)",
+  async () => {
+    using home = tempDir("webview-playwright-cache", {});
+    const cacheDir = join(
+      String(home),
+      process.platform === "darwin" ? "Library/Caches/ms-playwright" : ".cache/ms-playwright",
+    );
+    const shellDir = join(cacheDir, "chromium_headless_shell-9999", playwrightShellRelDir);
+    mkdirSync(shellDir, { recursive: true });
+    const shimPath = join(shellDir, playwrightShellBinName);
+    // A real chrome-headless-shell accepts --remote-debugging-pipe and speaks CDP over fd 3/4.
+    // This shim ignores every flag the runtime passes it and just runs fake-chrome-fixture.ts,
+    // which speaks that protocol — enough to prove discovery + spawn end-to-end without shipping
+    // a real browser.
+    const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
+    writeFileSync(shimPath, `#!/bin/sh\nexec ${JSON.stringify(bunExe())} ${JSON.stringify(fixture)}\n`);
+    chmodSync(shimPath, 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+          await view.navigate("data:text/html,<body>discovered</body>");
+          console.log(await view.evaluate("'discovered'"));
+          view.close();
+        `,
+      ],
+      env: { ...bunEnv, BUN_CHROME_PATH: undefined, HOME: String(home), PATH: "" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "discovered", stderr: "", exitCode: 0 });
+  },
+);
 
 // No browser involved: the constructor refuses before it would spawn one. The
 // CDP transport is one per process, owned by the global that spawned it, so a

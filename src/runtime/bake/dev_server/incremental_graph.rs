@@ -256,6 +256,8 @@ pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) initial_response_entry_point: &'a [u8],
     pub(crate) react_refresh_entry_point: &'a [u8],
     pub(crate) console_log: bool,
+    /// Parts after this boundary only fill definitions missing from the browser.
+    pub(crate) cached_modules_start: Option<usize>,
     /// The page and layouts of a route whose pages also run in the browser: `config.route`.
     pub(crate) route_page_files: Option<&'a super::router_glue::ClientPageFiles>,
 }
@@ -270,6 +272,7 @@ impl Default for TakeJSBundleOptionsClient<'_> {
             react_refresh_entry_point: b"",
             route_page_files: None,
             console_log: false,
+            cached_modules_start: None,
         }
     }
 }
@@ -1810,6 +1813,28 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(chunk)
     }
 
+    /// Include cached imports when a topology change can reference modules a fresh browser never received.
+    /// The original parts remain first: they alone replace already-loaded module factories.
+    pub(crate) fn include_cached_imports(
+        &mut self,
+        gts: &mut GraphTraceState,
+    ) -> Result<Option<usize>, crate::Error> {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let changed_parts = self.current_chunk_parts.len();
+        for part in &self.current_chunk_parts {
+            gts.bits(SIDE).set(part.get() as usize);
+        }
+        for i in 0..changed_parts {
+            let mut next = self.edge_lists[self.current_chunk_parts[i].get() as usize].first_import;
+            while let Some(index) = next {
+                let edge = self.edges[index.get() as usize];
+                next = edge.next_import;
+                self.trace_imports(edge.imported, gts, TraceImportGoal::FindClientModules)?;
+            }
+        }
+        Ok((changed_parts < self.current_chunk_parts.len()).then_some(changed_parts))
+    }
+
     /// `IncrementalGraph(.client).takeJSBundleToList` (spec :1713).
     pub(crate) fn take_js_bundle_to_list(
         &self,
@@ -1907,7 +1932,25 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     "{}",
                     bun_core::fmt::hex_lower(&options.script_id.get().to_ne_bytes())
                 );
-                end_list.extend_from_slice(b"\")");
+                end_list.push(b'"');
+                if let Some(start) = options.cached_modules_start {
+                    end_list.extend_from_slice(b", [");
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    for (i, part) in self.current_chunk_parts[start..].iter().enumerate() {
+                        if i > 0 {
+                            end_list.extend_from_slice(b", ");
+                        }
+                        let key = &self.bundled_files.keys()[part.get() as usize];
+                        // SAFETY: `relative_path` only reads the owner's root.
+                        let relative = unsafe { (*dev).relative_path(&mut buf, key) };
+                        bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
+                            relative,
+                            &mut end_list,
+                        )?;
+                    }
+                    end_list.push(b']');
+                }
+                end_list.push(b')');
             }
         }
         // sourceMappingURL footer (client only).

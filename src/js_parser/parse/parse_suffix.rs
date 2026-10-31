@@ -20,12 +20,19 @@ enum Continuation {
 type CResult = core::result::Result<Continuation, Error>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
+    fn sfx_handle_typescript_as(
+        p: &mut Self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+    ) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
+            if let Some(errors) = errors {
+                errors.has_erased_syntax = true;
+            }
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
 
@@ -486,6 +493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
+        errors: Option<&mut DeferredErrors>,
     ) -> CResult {
         // Skip over TypeScript non-null assertions
         if p.lexer.has_newline_before {
@@ -497,6 +505,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
+        if let Some(errors) = errors {
+            errors.has_erased_syntax = true;
+        }
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
 
@@ -868,19 +879,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
+    /// TypeScript type arguments inside an expression, as in `a<T>(b)`. Telling them from `<` needs backtracking.
+    fn sfx_skip_type_arguments(
+        p: &mut Self,
+        errors: Option<&mut DeferredErrors>,
+    ) -> Result<bool, Error> {
+        if !Self::IS_TYPESCRIPT_ENABLED
+            || !p.try_skip_type_script_type_arguments_with_backtracking()?
+        {
+            return Ok(false);
+        }
+        if let Some(errors) = errors {
+            errors.has_erased_syntax = true;
+        }
+        Ok(true)
+    }
+
     fn sfx_t_less_than(
         p: &mut Self,
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
+        errors: Option<&mut DeferredErrors>,
     ) -> CResult {
-        // TypeScript allows type arguments to be specified with angle brackets
-        // inside an expression. Unlike in other languages, this unfortunately
-        // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED
-            && p.try_skip_type_script_type_arguments_with_backtracking()?
-        {
+        if Self::sfx_skip_type_arguments(p, errors)? {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -966,13 +989,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
+        errors: Option<&mut DeferredErrors>,
     ) -> CResult {
-        // TypeScript allows type arguments to be specified with angle brackets
-        // inside an expression. Unlike in other languages, this unfortunately
-        // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED
-            && p.try_skip_type_script_type_arguments_with_backtracking()?
-        {
+        if Self::sfx_skip_type_arguments(p, errors)? {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -1556,9 +1575,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TQuestionQuestionEquals => Self::sfx_t_question_question_equals(p, level, left),
                 T::TSlash => Self::sfx_t_slash(p, level, left),
                 T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left),
-                T::TExclamation => {
-                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
-                }
+                T::TExclamation => Self::sfx_t_exclamation(
+                    p,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    errors.as_deref_mut(),
+                ),
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
                 T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left, flags),
@@ -1570,9 +1592,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     old_optional_chain,
                     left,
                 ),
-                T::TLessThan => {
-                    Self::sfx_t_less_than(p, level, &mut optional_chain, old_optional_chain, left)
-                }
+                T::TLessThan => Self::sfx_t_less_than(
+                    p,
+                    level,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    left,
+                    errors.as_deref_mut(),
+                ),
                 T::TOpenParen => {
                     Self::sfx_t_open_paren(p, level, &mut optional_chain, old_optional_chain, left)
                 }
@@ -1597,8 +1624,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut optional_chain,
                     old_optional_chain,
                     left,
+                    errors.as_deref_mut(),
                 ),
-                _ => Self::sfx_handle_typescript_as(p, level),
+                _ => Self::sfx_handle_typescript_as(p, level, errors.as_deref_mut()),
             };
 
             match continuation? {

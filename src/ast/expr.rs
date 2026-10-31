@@ -590,6 +590,8 @@ pub enum EFlags {
     TsDecorator,
     /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
     AfterQuestionAndBeforeColon,
+    /// The operand of a TypeScript `<T>` cast. tsc reads a unary expression there, so a `:` behind its parentheses is not a return type.
+    TsCastOperand,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

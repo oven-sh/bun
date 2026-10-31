@@ -516,9 +516,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Are these arguments to an arrow function?
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+        // Not in esbuild: a cast, "!", type arguments or more parentheses cannot be parameters, so a ":" behind them is not a return type.
         if is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && !errors.has_erased_syntax
+                && !opts.is_cast_operand)
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -573,7 +577,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && invalid_log.is_empty()
+                && !errors.has_erased_syntax
+            {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
@@ -649,7 +657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
                 p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                    .add_range_error(Some(p.source), spread_range, b"Unexpected \"...\"");
                 return Err(crate::Error::SyntaxError);
             }
 
@@ -1725,6 +1733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_async: true,
                             is_after_question_and_before_colon: flags
                                 == EFlags::AfterQuestionAndBeforeColon,
+                            is_cast_operand: flags == EFlags::TsCastOperand,
                             ..Default::default()
                         },
                     );
@@ -1749,6 +1758,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
+                                        is_cast_operand: flags == EFlags::TsCastOperand,
                                         ..Default::default()
                                     },
                                 );

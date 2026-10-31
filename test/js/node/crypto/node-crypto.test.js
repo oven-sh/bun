@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
 import { putBoringSSLErrorForTesting, takeBoringSSLErrorQueueForTesting } from "bun:internal-for-testing";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 
 import crypto from "node:crypto";

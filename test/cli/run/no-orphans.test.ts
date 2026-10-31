@@ -692,13 +692,21 @@ test.concurrent.skipIf(!isLinux)(
         return "X";
       }
     };
-    const waitState = async (pid: number, want: (s: string) => boolean, ms: number) => {
+    const waitState = async (pid: number, want: (s: string) => boolean, ms: number, inARow = 1) => {
       const deadline = Date.now() + ms;
-      while (Date.now() < deadline) {
-        if (want(procState(pid))) return true;
+      for (let seen = 0; ; await sleep(10)) {
+        seen = want(procState(pid)) ? seen + 1 : 0;
+        if (seen === inARow) return true;
+        if (Date.now() >= deadline) return false;
+      }
+    };
+    const statOnceItMatches = async (pid: number, want: RegExp, ms: number) => {
+      const deadline = Date.now() + ms;
+      for (;;) {
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        if (want.test(stat) || Date.now() >= deadline) return stat;
         await sleep(10);
       }
-      return want(procState(pid));
     };
 
     // Wait for the script to write its ids (proves bun run + spawn finished).
@@ -723,11 +731,11 @@ test.concurrent.skipIf(!isLinux)(
       expect(runPid).toBeGreaterThan(0);
       // Preconditions: script is in its own pgroup (`\) . ppid pgrp `), and is
       // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
-      // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
+      // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`. It runs after the spawn returns, so
+      // the script can have written its ids first.
+      const scriptIsForeground = new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `);
       expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      expect(await statOnceItMatches(runPid, scriptIsForeground, 4000)).toMatch(scriptIsForeground);
 
       // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
       // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
@@ -752,19 +760,19 @@ test.concurrent.skipIf(!isLinux)(
           round: i,
           resumed,
           scriptState: procState(scriptPid),
-          runState: procState(runPid),
+          // Neither stopped nor spinning. It can take a moment to be back in poll(), and one that spins there
+          // still reads "S" in 4 of 200 samples.
+          runBlocked: await waitState(runPid, st => st === "S", 3000, 5),
         }).toEqual({
           round: i,
           resumed: true,
           scriptState: expect.stringMatching(/[SR]/),
-          runState: "S",
+          runBlocked: true,
         });
       }
 
       // Foreground pgroup is back on the script after each dance round.
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      expect(await statOnceItMatches(runPid, scriptIsForeground, 4000)).toMatch(scriptIsForeground);
     } finally {
       if (runPid > 0) reap(runPid);
       if (scriptPid > 0) reap(-scriptPid, scriptPid);
@@ -798,29 +806,30 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
     // proves `onChildStopped` delivered SIGCONT to the script pgroup on resume.
+    // `bun run` hands the terminal over after the spawn returns. A ^Z before that stops `bun run` and not the
+    // script, which then has nothing to resume from, so READY waits for the terminal.
     const devScript =
       `perl -MPOSIX -e '` +
       `$|=1; ` +
       `$SIG{CONT}=sub{ print "RESUMED\\n" }; ` +
+      `select(undef, undef, undef, 0.01) until tcgetpgrp(0) == getpgrp(); ` +
       `printf "READY %d\\n", getpgrp(); ` +
       `sleep 1 while 1'`;
 
     // Minimal interactive-shell stand-in. SIGTTOU ignored so `tcsetpgrp` from
     // the background succeeds instead of EIO (session-leader pgroup is
-    // orphaned). BUN_PGID is printed *before* handing off the foreground so
-    // ordering vs. READY is deterministic. `${^CHILD_ERROR_NATIVE}` — not
-    // `$?` — carries the raw WIFSTOPPED bits on a WUNTRACED return.
+    // orphaned). `${^CHILD_ERROR_NATIVE}` — not `$?` — carries the raw
+    // WIFSTOPPED bits on a WUNTRACED return.
     const shellSim =
       `use POSIX qw(:sys_wait_h setpgid tcsetpgrp WIFSTOPPED);` +
       `$|=1; $SIG{TTOU}="IGNORE"; ` +
       `my $bun = fork(); ` +
       // Child sets its own pgroup AND makes itself foreground *before* exec
-      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied
-      // regardless of whether the parent's tcsetpgrp won the fork race.
+      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied.
+      // The parent does not: late, it would take the terminal back from the script.
       `if ($bun == 0) { setpgid(0,0); tcsetpgrp(0,$$); ` +
       `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
       `setpgid($bun, $bun); ` +
-      `tcsetpgrp(0, $bun); ` +
       `print "BUN_PGID $bun\\n"; ` +
       `while (1) { ` +
       `  my $w = waitpid($bun, WUNTRACED); last if $w <= 0; ` +

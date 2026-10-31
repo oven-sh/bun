@@ -572,7 +572,7 @@ impl struct_nameinfo {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
-            this.on_nameinfo(Error::get(status), timeouts, None);
+            this.on_nameinfo(Error::get_for_lookup(status), timeouts, None);
             return;
         }
         this.on_nameinfo(None, timeouts, Some(struct_nameinfo { node, service }));
@@ -638,7 +638,7 @@ impl AddrInfo {
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
-        this.on_addr_info(Error::get(status), timeouts, addr_info);
+        this.on_addr_info(Error::get_for_lookup(status), timeouts, addr_info);
     }
 
     /// FFI destroy — frees a c-ares-allocated addrinfo chain.
@@ -1655,14 +1655,36 @@ impl Error {
     // Deferred / toDeferred / toJSWithSyscall / toJSWithSyscallAndHostname
     // aliases deleted — live in bun_runtime::dns_jsc (extension trait).
 
+    /// The status `dns.lookup` and `dns.lookupService` report, whichever
+    /// backend produced it.
+    ///
+    /// Node's `lookup` and `lookupService` go through getaddrinfo(3) and
+    /// getnameinfo(3) and report `EAI_NODATA` and `EAI_NONAME` as `ENOTFOUND`
+    /// (lib/internal/errors.js, `dnsException`). The c-ares backend
+    /// (`ares_getaddrinfo`, `ares_getnameinfo`) answers the same question with
+    /// its own statuses: `ENODATA` for a name without records of the wanted
+    /// type, `EBADNAME` for a name getaddrinfo(3) rejects with `EAI_NONAME`.
+    /// `resolve*`, `query*` and `reverse` do not go through here: Node reports
+    /// their c-ares status as is (`ENODATA`, `EBADNAME`).
+    pub fn for_lookup(self) -> Error {
+        match self {
+            Error::ENODATA | Error::ENONAME | Error::EBADNAME => Error::ENOTFOUND,
+            other => other,
+        }
+    }
+
+    /// [`Error::get`] for the status of `ares_getaddrinfo` or
+    /// `ares_getnameinfo`, folded by [`Error::for_lookup`].
+    pub fn get_for_lookup(rc: i32) -> Option<Error> {
+        Self::get(rc).map(Error::for_lookup)
+    }
+
+    /// The status of getaddrinfo(3) (libuv's `UV_EAI_*` on Windows, `EAI_*`
+    /// elsewhere), folded by [`Error::for_lookup`].
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
             use bun_libuv_sys as libuv;
-            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
-                return Some(Error::ENOTFOUND);
-            }
             // TODO: revisit this
             return match rc {
                 0 => None,
@@ -1681,17 +1703,13 @@ impl Error {
                 libuv::UV_EAI_SERVICE => Some(Error::ESERVICE),
                 libuv::UV_EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
                 _ => Some(Error::ENOTFOUND), // UV_ENOENT and non documented errors
-            };
+            }
+            .map(Error::for_lookup);
         }
 
         #[cfg(not(windows))]
         {
             let eai = EAI::from_raw(rc);
-
-            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            if eai == EAI::NODATA || eai == EAI::NONAME {
-                return Some(Error::ENOTFOUND);
-            }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if eai == EAI::SOCKTYPE {
@@ -1713,18 +1731,21 @@ impl Error {
             if rc == 0 {
                 return None;
             }
-            match eai {
-                EAI::ADDRFAMILY => Some(Error::EBADFAMILY),
-                EAI::AGAIN => Some(Error::EAI_AGAIN),
-                EAI::BADFLAGS => Some(Error::EBADFLAGS), // Invalid hints
-                EAI::FAIL => Some(Error::EBADRESP),
-                EAI::FAMILY => Some(Error::EBADFAMILY),
-                EAI::MEMORY => Some(Error::ENOMEM),
-                EAI::SERVICE => Some(Error::ESERVICE),
-                EAI::SYSTEM => Some(Error::ESERVFAIL),
+            let err = match eai {
+                EAI::ADDRFAMILY => Error::EBADFAMILY,
+                EAI::AGAIN => Error::EAI_AGAIN,
+                EAI::BADFLAGS => Error::EBADFLAGS, // Invalid hints
+                EAI::FAIL => Error::EBADRESP,
+                EAI::FAMILY => Error::EBADFAMILY,
+                EAI::MEMORY => Error::ENOMEM,
+                EAI::NODATA => Error::ENODATA,
+                EAI::NONAME => Error::ENONAME,
+                EAI::SERVICE => Error::ESERVICE,
+                EAI::SYSTEM => Error::ESERVFAIL,
                 // Any EAI code not mapped above is reported as "not implemented".
-                _ => Some(Error::ENOTIMP),
-            }
+                _ => Error::ENOTIMP,
+            };
+            Some(err.for_lookup())
         }
     }
 
@@ -1768,7 +1789,7 @@ impl Error {
             Error::ENOTIMP => "DNS_ENOTIMP",
             Error::EREFUSED => "DNS_EREFUSED",
             Error::EBADQUERY => "DNS_EBADQUERY",
-            Error::EBADNAME => "DNS_ENOTFOUND",
+            Error::EBADNAME => "DNS_EBADNAME",
             Error::EBADFAMILY => "DNS_EBADFAMILY",
             Error::EBADRESP => "DNS_EBADRESP",
             Error::ECONNREFUSED => "DNS_ECONNREFUSED",
@@ -1779,7 +1800,7 @@ impl Error {
             Error::EDESTRUCTION => "DNS_EDESTRUCTION",
             Error::EBADSTR => "DNS_EBADSTR",
             Error::EBADFLAGS => "DNS_EBADFLAGS",
-            Error::ENONAME => "DNS_ENOTFOUND",
+            Error::ENONAME => "DNS_ENONAME",
             Error::EBADHINTS => "DNS_EBADHINTS",
             Error::ENOTINITIALIZED => "DNS_ENOTINITIALIZED",
             Error::ELOADIPHLPAPI => "DNS_ELOADIPHLPAPI",
@@ -1823,12 +1844,10 @@ impl Error {
         }
     }
 
+    /// The c-ares status as is, the way Node's `cares_wrap.cc`
+    /// (`ToErrorCodeString`) reports it for `resolve*`, `query*` and `reverse`.
+    /// A getaddrinfo-style caller folds it with [`Error::for_lookup`].
     pub fn get(rc: i32) -> Option<Error> {
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-        if rc == ARES_ENODATA || rc == ARES_ENONAME {
-            return Self::get(ARES_ENOTFOUND);
-        }
-
         if rc == 0 {
             return None;
         }

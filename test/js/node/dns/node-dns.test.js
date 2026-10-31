@@ -1175,6 +1175,139 @@ describe("getaddrinfo status mapping", () => {
   });
 });
 
+// An authoritative server for `ipv4-only.test`: A answers with one record,
+// every other type answers NODATA (NOERROR, empty answer section). A name
+// under `nx.test` answers NXDOMAIN. A PTR query answers with a CNAME and no
+// PTR record. Node reports the c-ares status of a `resolve*` or `reverse`
+// query as is (`ENODATA`, `ENOTFOUND`, `EBADNAME`). Only `lookup` and
+// `lookupService`, which go through getaddrinfo, fold them into `ENOTFOUND`.
+async function withNodataServer(fn) {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.on("message", (query, rinfo) => {
+      let off = 12;
+      const labels = [];
+      while (off < query.length && query[off] !== 0) {
+        labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+        off += query[off] + 1;
+      }
+      const type = query.readUInt16BE(off + 1);
+      off += 1 + 2 + 2;
+      const question = query.subarray(12, off);
+
+      const nxdomain = labels.at(-1) === "test" && labels.at(-2) === "nx";
+      const header = Buffer.alloc(12);
+      header[0] = query[0];
+      header[1] = query[1];
+      header[2] = 0x81; // QR=1, RD=1
+      header[3] = nxdomain ? 0x83 : 0x80; // RA=1, RCODE
+      header[5] = 1; // QDCOUNT
+      let answer = Buffer.alloc(0);
+      if (!nxdomain && type === 1) {
+        answer = Buffer.from([0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 192, 0, 2, 1]);
+      } else if (!nxdomain && type === 12) {
+        const cname = Buffer.from([5, ...Buffer.from("alias"), 4, ...Buffer.from("test"), 0]);
+        answer = Buffer.concat([
+          Buffer.from([0xc0, 0x0c, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, cname.length]),
+          cname,
+        ]);
+      }
+      header[7] = answer.length ? 1 : 0; // ANCOUNT
+      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+
+    const resolver = new dns.promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + port]);
+    return await fn(resolver);
+  } finally {
+    socket.close();
+  }
+}
+
+const rejection = promise =>
+  promise.then(null, ({ code, syscall, hostname, message }) => ({ code, syscall, hostname, message }));
+
+describe.skipIf(isWindows)("resolve* reports the c-ares status like Node", () => {
+  test("a NODATA answer is ENODATA", async () => {
+    await withNodataServer(async resolver => {
+      expect(await resolver.resolve4("ipv4-only.test")).toEqual(["192.0.2.1"]);
+      expect(await rejection(resolver.resolve6("ipv4-only.test"))).toEqual({
+        message: "queryAaaa ENODATA ipv4-only.test",
+        code: "ENODATA",
+        syscall: "queryAaaa",
+        hostname: "ipv4-only.test",
+      });
+      expect(await resolver.resolveTxt("ipv4-only.test").then(null, err => err.code)).toBe("ENODATA");
+      expect(await resolver.resolveMx("ipv4-only.test").then(null, err => err.code)).toBe("ENODATA");
+      expect(await resolver.resolveAny("ipv4-only.test").then(null, err => err.code)).toBe("ENODATA");
+      expect(await rejection(resolver.reverse("192.0.2.1"))).toEqual({
+        message: "getHostByAddr ENODATA 192.0.2.1",
+        code: "ENODATA",
+        syscall: "getHostByAddr",
+        hostname: "192.0.2.1",
+      });
+    });
+  });
+
+  test("an NXDOMAIN answer is ENOTFOUND", async () => {
+    await withNodataServer(async resolver => {
+      expect(await rejection(resolver.resolve4("nx.test"))).toEqual({
+        message: "queryA ENOTFOUND nx.test",
+        code: "ENOTFOUND",
+        syscall: "queryA",
+        hostname: "nx.test",
+      });
+      expect(await resolver.resolve6("nx.test").then(null, err => err.code)).toBe("ENOTFOUND");
+    });
+  });
+
+  test("a malformed name is EBADNAME", async () => {
+    await withNodataServer(async resolver => {
+      expect(await rejection(resolver.resolve4("a..b"))).toEqual({
+        message: "queryA EBADNAME a..b",
+        code: "EBADNAME",
+        syscall: "queryA",
+        hostname: "a..b",
+      });
+    });
+  });
+
+  // `dns.setServers` changes the process-wide channel, so this runs in a child.
+  test.skipIf(!isLinux)(
+    "lookup and lookupService through c-ares still fold NODATA and a malformed name into ENOTFOUND",
+    async () => {
+      await withNodataServer(async resolver => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const dns = require("node:dns");
+            dns.setServers(${JSON.stringify(resolver.getServers())});
+            const code = p => p.then(r => JSON.stringify(r), e => e.code + " " + e.syscall);
+            console.log(await code(Bun.dns.lookup("ipv4-only.test", { backend: "c-ares", family: 6 })));
+            console.log(await code(Bun.dns.lookup("a..b", { backend: "c-ares" })));
+            console.log(await code(dns.promises.lookup("ipv4-only.test", { family: 6 })));
+            console.log(await code(dns.promises.lookupService("192.0.2.1", 80)));
+          `,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(
+          "DNS_ENOTFOUND getaddrinfo\nDNS_ENOTFOUND getaddrinfo\nENOTFOUND getaddrinfo\nENOTFOUND getnameinfo\n",
+        );
+        expect(exitCode).toBe(0);
+      });
+    },
+  );
+});
+
 it("argument validation errors name the argument", () => {
   const message = fn => {
     try {

@@ -779,3 +779,139 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
 });
+
+// node gives the same streams for a closed descriptor. Not on Windows, where fs.closeSync() leaves fd 0, 1 and 2 open.
+describe.skipIf(isWindows)("process streams first read on a closed descriptor", () => {
+  // Each program opens data.json while the descriptor is closed: the kernel gives it the closed number.
+  const cases = [
+    {
+      // A file stream over fd 1 closes it at its end, as in node.
+      name: "process.stdout discards",
+      script: `
+        import fs from "node:fs";
+        const report = fs.createWriteStream(null, { fd: 1 });
+        report.end("report done\\n");
+        await new Promise(resolve => report.on("close", resolve));
+        fs.writeFileSync("data.json", JSON.stringify({ ok: true }));
+        const { constructor, fd, _isStdio } = process.stdout;
+        process.stdout.write("cleanup finished\\n", err => {
+          console.error(JSON.stringify({ stream: constructor.name, fd, _isStdio, err: err ?? null }));
+        });
+      `,
+      expected: {
+        stdout: "report done\n",
+        stderr: '{"stream":"Writable","fd":1,"_isStdio":true,"err":null}\n',
+        dataJson: '{"ok":true}',
+      },
+    },
+    {
+      name: "process.stderr discards",
+      script: `
+        import fs from "node:fs";
+        fs.closeSync(2);
+        fs.writeFileSync("data.json", JSON.stringify({ ok: true }));
+        const { constructor, fd, _isStdio } = process.stderr;
+        process.stderr.write("cleanup finished\\n", err => {
+          console.log(JSON.stringify({ stream: constructor.name, fd, _isStdio, err: err ?? null }));
+        });
+      `,
+      expected: {
+        stdout: '{"stream":"Writable","fd":2,"_isStdio":true,"err":null}\n',
+        stderr: "",
+        dataJson: '{"ok":true}',
+      },
+    },
+    {
+      name: "process.stdin has ended",
+      script: `
+        import fs from "node:fs";
+        fs.closeSync(0);
+        fs.writeFileSync("data.json", JSON.stringify({ ok: true }));
+        const { constructor, fd } = process.stdin;
+        let bytes = 0;
+        process.stdin.on("data", chunk => (bytes += chunk.length));
+        process.stdin.on("end", () => console.log(JSON.stringify({ stream: constructor.name, fd, bytes })));
+      `,
+      expected: { stdout: '{"stream":"Readable","fd":0,"bytes":0}\n', stderr: "", dataJson: '{"ok":true}' },
+    },
+    {
+      // Bun.file(1) records that fd 1 is closed. The first read asks the descriptor again.
+      name: "process.stdout writes to a descriptor that was opened again",
+      script: `
+        import fs from "node:fs";
+        fs.closeSync(1);
+        Bun.file(1);
+        const opened = fs.openSync("data.json", "w");
+        const { constructor, fd, _isStdio } = process.stdout;
+        process.stdout.write("redirected\\n", err => {
+          console.error(JSON.stringify({ opened, stream: constructor.name, fd, _isStdio, err: err ?? null }));
+        });
+      `,
+      expected: {
+        stdout: "",
+        stderr: '{"opened":1,"stream":"WriteStream","fd":1,"_isStdio":true,"err":null}\n',
+        dataJson: "redirected\n",
+      },
+    },
+  ];
+
+  test.concurrent.each(cases)("$name", async ({ script, expected }) => {
+    using dir = tempDir("closed-stdio-first-read", { "index.mjs": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = Bun.file(`${dir}/data.json`);
+    const dataJson = (await written.exists()) ? await written.text() : null;
+    expect({ stdout, stderr, dataJson }).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // Whether a descriptor is a terminal is recorded when the process starts: the closed descriptor is asked first.
+  test.concurrent("a terminal that the program closed gives the same streams", async () => {
+    const script = `
+      const fs = require("node:fs");
+      const tty = require("node:tty");
+      const result = { startedAsTTY: tty.isatty(0) && tty.isatty(1) };
+      fs.closeSync(0);
+      fs.closeSync(1);
+      const { stdin, stdout } = process;
+      result.stdin = [stdin.constructor.name, stdin.fd, stdin.isTTY ?? null];
+      result.stdout = [stdout.constructor.name, stdout.fd, stdout.isTTY ?? null];
+      stdout.write("discarded\\n", err => {
+        result.err = err ?? null;
+        stdin.on("data", () => {}).on("end", () => fs.writeSync(2, "RESULT " + JSON.stringify(result) + "\\n"));
+      });
+    `;
+    const resultLine = /RESULT (\{.*\})/;
+    let output = "";
+    const decoder = new TextDecoder();
+    const finished = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (resultLine.test(output)) finished.resolve();
+        },
+        exit() {
+          finished.resolve();
+        },
+      },
+    });
+    await finished.promise;
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    const printed = Bun.stripANSI(output);
+    expect(printed.match(resultLine)?.[1] ?? printed).toBe(
+      '{"startedAsTTY":true,"stdin":["Readable",0,null],"stdout":["Writable",1,null],"err":null}',
+    );
+    expect(exitCode).toBe(0);
+  });
+});

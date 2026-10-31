@@ -3172,6 +3172,7 @@ enum class BunProcessStdinFdType : int32_t {
     file = 0,
     pipe = 1,
     socket = 2,
+    closed = 3,
 };
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 

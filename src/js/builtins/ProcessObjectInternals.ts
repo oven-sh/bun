@@ -28,9 +28,10 @@ const enum BunProcessStdinFdType {
   file = 0,
   pipe = 1,
   socket = 2,
+  closed = 3,
 }
 
-/** `process.stdout` and `process.stderr`: a `tty.WriteStream` or an `fs.WriteStream`. */
+/** `process.stdout` and `process.stderr`: a `tty.WriteStream`, an `fs.WriteStream`, or a `Writable` that discards. */
 interface StdioWriteStream extends $Node.Writable {
   readable: boolean;
   fd: number;
@@ -42,7 +43,7 @@ interface StdioWriteStream extends $Node.Writable {
   [Symbol.asyncIterator]?(): AsyncGenerator<never, void, unknown>;
 }
 
-/** `process.stdin`: a `tty.ReadStream` or an `fs.ReadStream`. */
+/** `process.stdin`: a `tty.ReadStream`, an `fs.ReadStream`, or a `Readable` that has ended. */
 interface StdinStream extends $Node.Readable {
   fd: number;
   ref?(): this;
@@ -58,7 +59,15 @@ export function getStdioWriteStream(
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
   let stream: StdioWriteStream;
-  if (isTTY) {
+  if (fdType === BunProcessStdinFdType.closed) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L94-L103
+    const Writable = require("internal/streams/writable");
+    stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    }) as StdioWriteStream;
+  } else if (isTTY) {
     const tty = require("node:tty");
     stream = new tty.WriteStream(fd);
     // TODO: this is the wrong place for this property.
@@ -130,6 +139,14 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
+  if (fdType === BunProcessStdinFdType.closed) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L239-L245
+    const Readable = require("internal/streams/readable");
+    const ended = new Readable({ read() {} }) as StdinStream;
+    ended.push(null);
+    ended.fd = fd;
+    return ended;
+  }
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 

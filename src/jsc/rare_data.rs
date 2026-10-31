@@ -1027,6 +1027,8 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
+    #[cfg(unix)]
+    Closed = 3,
 }
 
 #[unsafe(no_mangle)]
@@ -1049,6 +1051,13 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
         }
         _ => unreachable!(),
     };
+    // 0 is an `fstat` that failed when the store was made. The number may be open again since, so ask now.
+    #[cfg(unix)]
+    if mode == 0
+        && matches!(syscall::fstat(Fd::from_uv(fd)), Err(err) if err.get_errno() == syscall::E::EBADF)
+    {
+        return StdinFdType::Closed;
+    }
     // `kind_from_mode` uses hard-coded u32 octal masks so it works on
     // Windows where libc::S_IFSOCK is undefined and on macOS where the libc
     // constants are u16.

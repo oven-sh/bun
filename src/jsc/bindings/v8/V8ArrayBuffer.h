@@ -20,6 +20,7 @@ namespace shim {
 
 // Storage for an object that an addon frees with its own `::operator delete`, as V8's headers do for a v8::BackingStore.
 // On Linux that ends in libc's free(), so there it is libc's malloc() and not Bun's operator new (mimalloc's, or a sanitizer's).
+// On Windows it ends in HeapFree() on the process heap, so there it is HeapAlloc() and not Bun's operator new (the debug C runtime's in a debug build).
 void* allocateForAddonDelete(size_t size) RETURNS_NONNULL;
 // Frees that storage as the addon would, for a store that Bun destroys itself.
 void freeWithAddonAllocator(void* storage);

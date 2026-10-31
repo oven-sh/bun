@@ -10,9 +10,11 @@
 
 #if OS(LINUX)
 #include <dlfcn.h>
+#elif OS(WINDOWS)
+#include <windows.h>
+#endif
 
 extern "C" [[noreturn]] void Bun__outOfMemory();
-#endif
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::ArrayBuffer)
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::ArrayBufferView)
@@ -37,9 +39,16 @@ void* allocateForAddonDelete(size_t size)
     if (!storage) [[unlikely]]
         Bun__outOfMemory();
     return storage;
+#elif OS(WINDOWS)
+    // An addon's operator delete is that of the C runtime it links, and a release one is HeapFree() on the process heap.
+    // Bun's operator new does not pair with that in a debug build: the debug runtime (/MTd) puts a header in front of each block.
+    void* storage = HeapAlloc(GetProcessHeap(), 0, size);
+    if (!storage) [[unlikely]]
+        Bun__outOfMemory();
+    return storage;
 #else
     // Elsewhere an addon's operator delete pairs with Bun's operator new: macOS binds the addon to the operators that this
-    // executable exports (MimallocOverrideDarwin.cpp), and on Windows and FreeBSD both sides use the same heap.
+    // executable exports (MimallocOverrideDarwin.cpp), and on FreeBSD both sides use the same heap.
     return ::operator new(size);
 #endif
 }
@@ -51,6 +60,8 @@ void freeWithAddonAllocator(void* storage)
     static const Free addonFree = reinterpret_cast<Free>(dlsym(RTLD_DEFAULT, "free"));
     RELEASE_ASSERT(addonFree, "v8: dlsym() finds no free");
     addonFree(storage);
+#elif OS(WINDOWS)
+    HeapFree(GetProcessHeap(), 0, storage);
 #else
     ::operator delete(storage);
 #endif

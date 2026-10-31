@@ -3559,9 +3559,21 @@ pub mod bv2_impl {
                 Self::on_after_decrement_scan_counter
             );
             if self.asynchronous && self.is_done() {
-                let dev = self
-                    .dev_server
-                    .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
+                self.on_scan_end_from_bake_dev_server();
+            }
+        }
+
+        // Out of line so the path that every parsed file takes keeps its frame.
+        #[inline(never)]
+        fn on_scan_end_from_bake_dev_server(&mut self) {
+            let dev = self
+                .dev_server
+                .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
+            // The dev server can add css roots here, which opens the scan again.
+            dev.join_holders_of_repaired(std::ptr::from_mut(self));
+            // `is_done()` held and no plugin ran since, so only this counter can have moved.
+            debug_assert!(self.graph.deferred_pending == 0);
+            if self.graph.pending_items == 0 {
                 self.finish_from_bake_dev_server(&dev).expect("oom");
             }
         }

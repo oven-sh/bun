@@ -410,6 +410,13 @@ impl CopyFile {
                     return self.fallback_read_write(remain, unknown_size, &mut total_written);
                 }
 
+                // EBADF: copy_file_range(2) fails with it when the destination was opened with
+                // O_APPEND (e.g. stdout redirected with `>>`). A read/write loop appends fine.
+                // (Any other bad fd fails there with its own error.)
+                bun_sys::E::EBADF if total_written == 0 => {
+                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                }
+
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
                 // Also returned when the file descriptor is incompatible with the syscall.
                 bun_sys::E::EINVAL => {

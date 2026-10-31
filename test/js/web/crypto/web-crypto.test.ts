@@ -1579,7 +1579,10 @@ describe("JWK import validation", () => {
           ] as KeyUsage[])) as CryptoKeyPair
         ).privateKey,
       );
-    const [jwk, other] = [await generate(), await generate()];
+    // "-" or "_" in both, so that the two base64 alphabets spell them differently.
+    let jwk = await generate();
+    while (!/[-_]/.test(jwk.x!) || !/[-_]/.test(jwk.d!)) jwk = await generate();
+    const other = await generate();
     const importJwk = (key: JsonWebKey) => crypto.subtle.importKey("jwk", key, name, true, usages);
 
     expect((await importJwk(jwk)).type).toBe("private");

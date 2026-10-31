@@ -234,12 +234,14 @@ export default b.declarations(
     uses: { script: [b.runs("ToPrimitive")] },
     implementation: b.generic,
   }),
+  // It looks at a string. The answer is in the source maps of the modules that loaded while process.sourceMapsEnabled was on.
   b.fn("node:module.findSourceMap", {
     args: { path: b.any.optional },
     returns: b.union(b.instance("SourceMap"), b.undefined).fresh,
     capability: "heap",
     throws: true,
     uses: { path: b.inspected },
+    reads: ["ExternalState"],
     implementation: b.generic,
   }),
   // The import and require() each get a function of their own.

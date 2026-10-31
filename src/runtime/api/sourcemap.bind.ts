@@ -23,7 +23,7 @@ export const SourceMap = b.class({
   },
 });
 
-/** Returns before it looks at `path`: source maps are not enabled. */
+/** The own source map of a module that loaded while `process.sourceMapsEnabled` was on. `path` is not converted: what is no string has none. */
 export const findSourceMap = b.fn({
   args: { path: b.any },
   returns: SourceMap.optional,

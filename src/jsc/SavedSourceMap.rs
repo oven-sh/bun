@@ -89,8 +89,12 @@ impl SourceMapsSupport {
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L382-L384
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L541-L545
     fn applies_to(self, path: &[u8]) -> bool {
-        self.enabled
-            && (self.node_modules || !bun_paths::strings::path_contains_node_modules_folder(path))
+        self.enabled && self.includes(path)
+    }
+
+    /// The `nodeModules` half of [`Self::applies_to`], which is all of it that `module.findSourceMap()` asks.
+    fn includes(self, path: &[u8]) -> bool {
+        self.node_modules || !bun_paths::strings::path_contains_node_modules_folder(path)
     }
 }
 
@@ -153,7 +157,7 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ChainedSourceMap {
 /// A runtime-transpiled module whose source names a source map of its own, put in the table while
 /// `process.sourceMapsEnabled` was on. Two maps in a row: `loaded` goes from what runs to the file that was
 /// loaded, and `text` from that file to what it was made from.
-pub(crate) struct ChainedSourceMap {
+pub struct ChainedSourceMap {
     /// The printer's blob in the shell that `get_with_content` hands out.
     loaded: Arc<ParsedSourceMap>,
     /// The module's own source map as it was when the module loaded. Node.js reads it then too, so what the file
@@ -173,9 +177,21 @@ enum OwnSourceMapText {
 }
 
 impl ChainedSourceMap {
+    /// The JSON of the module's own source map. `arena` has what a `data:` URL decodes to. `None`: the URL has none.
+    pub fn json<'a>(&'a self, arena: &'a bun_alloc::Arena) -> Option<&'a [u8]> {
+        match &self.text {
+            OwnSourceMapText::Json(json) => Some(json),
+            OwnSourceMapText::DataUrl(url) => SourceMap::json_of_data_url_for_node(arena, url).ok(),
+        }
+    }
+
+    /// The URL that [`source_url`] resolves a relative one of the map's `sources` against.
+    pub fn sources_base(&self) -> bun_core::String {
+        bun_url::file_url_from_string(&StringView::from_bytes(&self.sources_relative_to))
+    }
+
     fn parse(&self, hint: SourceMap::ParseUrlResultHint) -> Option<SourceMap::ParseUrl> {
-        let base =
-            bun_url::file_url_from_string(&StringView::from_bytes(&self.sources_relative_to));
+        let base = self.sources_base();
         let resolve_source = |source: &[u8]| shown_source_name(&base, source);
         let policy = SourceMap::ParsePolicy::Node {
             resolve_source: &resolve_source,
@@ -248,11 +264,7 @@ impl ChainedSourceMap {
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/prepare_stack_trace.js#L96-L98
 fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
     if bun_paths::is_absolute(source) {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let normalized = bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::platform::Auto,
-        >(source, &mut buf[..], &[source]);
-        return Box::from(normalized.unwrap_or(source));
+        return resolved_absolute_source(source);
     }
     let url = bun_url::join(base, &StringView::from_bytes(source));
     let shown = if url.starts_with_ascii(b"file:") {
@@ -264,6 +276,25 @@ fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
         return Box::default();
     }
     Box::from(shown.to_utf8().slice())
+}
+
+/// The URL that Node.js writes for `source` in the `sources` of the map that it keeps. It is dead if there is none.
+pub fn source_url(base: &bun_core::String, source: &[u8]) -> bun_core::String {
+    if bun_paths::is_absolute(source) {
+        return bun_url::file_url_from_string(&StringView::from_bytes(&resolved_absolute_source(
+            source,
+        )));
+    }
+    bun_url::join(base, &StringView::from_bytes(source))
+}
+
+/// An absolute `source` is a path, which Node.js resolves as `path.resolve()` does.
+fn resolved_absolute_source(source: &[u8]) -> Box<[u8]> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let normalized = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        bun_paths::platform::Auto,
+    >(source, &mut buf[..], &[source]);
+    Box::from(normalized.unwrap_or(source))
 }
 
 /// What the file at `path` has in it, if it is a regular file: a `sourceMappingURL` comment can name anything.
@@ -649,15 +680,16 @@ impl SavedSourceMap {
             .map
     }
 
-    /// The entry for `path` if it is a module with its own source map that `support` asks for.
-    fn get_chained(
-        &mut self,
-        path: &[u8],
-        support: SourceMapsSupport,
-    ) -> Option<Arc<ChainedSourceMap>> {
-        if !support.applies_to(path) {
+    /// What `module.findSourceMap()` answers with. As in Node.js, a module that loaded with its own source map keeps it when the switch goes off.
+    pub fn own_source_map(&mut self, path: &[u8]) -> Option<Arc<ChainedSourceMap>> {
+        if !self.source_maps_support().includes(path) {
             return None;
         }
+        self.get_chained(path)
+    }
+
+    /// The entry for `path` if it is a module with its own source map.
+    fn get_chained(&mut self, path: &[u8]) -> Option<Arc<ChainedSourceMap>> {
         self.lock();
         let chained = self
             .map
@@ -683,13 +715,11 @@ impl SavedSourceMap {
         source_handling: SourceMap::SourceContentHandling,
         space: PositionSpace,
     ) -> Option<SourceMap::mapping::Lookup> {
-        if space == PositionSpace::Original {
-            let support = self.source_maps_support();
-            if support.enabled
-                && let Some(chained) = self.get_chained(path, support)
-            {
-                return chained.resolve(line, column, source_handling);
-            }
+        if space == PositionSpace::Original
+            && self.source_maps_support().applies_to(path)
+            && let Some(chained) = self.get_chained(path)
+        {
+            return chained.resolve(line, column, source_handling);
         }
 
         let parse = self.get_with_content(

@@ -1298,6 +1298,393 @@ console.log("survived", require("./late.js"));`,
     });
   });
 
+  // Each `main.cjs` prints the same under node v26.3.0 with the same flags, but for the one line that says otherwise.
+  describe("findSourceMap()", () => {
+    // What `tsc --sourceMap` (6.0.2) makes of a `lib.ts` that has a comment on its first line, `boom` on its line 4
+    // and `call` on its line 8.
+    const code = [
+      `"use strict";`,
+      `Object.defineProperty(exports, "__esModule", { value: true });`,
+      `exports.boom = boom;`,
+      `exports.call = call;`,
+      `function boom() {`,
+      `    throw new Error("kaboom");`,
+      `}`,
+      `function call(cb) {`,
+      `    return [cb()];`,
+      `}`,
+      ``,
+    ].join("\n");
+    const mappings =
+      ";;AAGA,oBAEC;AAED,oBAEC;AAND,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AAED,SAAgB,IAAI,CAAI,EAAW;IACjC,OAAO,CAAC,EAAE,EAAE,CAAC,CAAC;AAChB,CAAC";
+    const mapOf = (more = {}) =>
+      JSON.stringify({ version: 3, file: "lib.js", sourceRoot: "", sources: ["lib.ts"], names: [], mappings, ...more });
+    /** `file` and `file.map`. */
+    const withMap = (file, more) => ({
+      [file]: `${code}//# sourceMappingURL=${path.basename(file)}.map\n`,
+      [`${file}.map`]: mapOf(more),
+    });
+    const withUrl = (file, url) => ({ [file]: `${code}//# sourceMappingURL=${url}\n` });
+    const dataUrl = (json, type = "application/json;base64") => `data:${type},${Buffer.from(json).toString("base64")}`;
+
+    // `at(file)` is the path of a fixture, and `kind(map)` says what findSourceMap() answered with. What is printed
+    // has `<dir>` for the folder of the fixtures.
+    const prelude = `
+      const { findSourceMap, SourceMap, setSourceMapsSupport } = require("node:module");
+      const path = require("node:path");
+      const { pathToFileURL } = require("node:url");
+      const at = file => path.join(__dirname, file);
+      const kind = map => (map instanceof SourceMap ? "SourceMap" : String(map));
+      const print = seen => console.log(JSON.stringify(seen).replaceAll(pathToFileURL(__dirname).href, "file://<dir>"));
+    `;
+    async function run(flags, files) {
+      using dir = tempDir("find-source-map", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, "main.cjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+
+    test("answers with the source map that a module named when it loaded", async () => {
+      // The segment of `boom` in `function boom()` has the first of `names`.
+      const named = mappings.replace("SAAgB,IAAI;", "SAAgBA,IAAI;");
+      const files = {
+        ...withMap("lib.js"),
+        ...withUrl("rooted.js", "maps/rooted.js.map"),
+        "maps/rooted.js.map": JSON.stringify({
+          version: 3,
+          sourceRoot: "../src/",
+          sources: ["lib.ts"],
+          sourcesContent: ["// the text of lib.ts"],
+          names: ["boom"],
+          mappings: named,
+        }),
+        ...withUrl(
+          "inline.js",
+          dataUrl(JSON.stringify({ version: 3, sources: ["src/lib.ts", "webpack://app/./lib.ts"], mappings })),
+        ),
+        "esm.mjs": `export const loaded = true;\n//# sourceMappingURL=esm.mjs.map\n`,
+        "esm.mjs.map": JSON.stringify({ version: 3, sources: ["esm.mts"], names: [], mappings: "AAAA" }),
+        "main.cjs": `
+          ${prelude}
+          for (const file of ["lib.js", "rooted.js", "inline.js"]) require(at(file));
+          import("./esm.mjs").then(() => {
+            const seen = {};
+            for (const [file, line, column] of [["lib.js", 5, 10], ["rooted.js", 4, 9], ["inline.js", 8, 12], ["esm.mjs", 0, 0]]) {
+              const map = findSourceMap(at(file));
+              if (!(map instanceof SourceMap)) {
+                seen[file] = kind(map);
+                continue;
+              }
+              const payload = map.payload;
+              seen[file] = {
+                keys: Object.keys(payload),
+                payload,
+                entry: map.findEntry(line, column),
+                // What Next.js asks of a payload.
+                "sections in payload": "sections" in payload,
+              };
+            }
+            seen["an entry before the first segment"] = findSourceMap(at("lib.js"))?.findEntry(0, 0);
+            seen["esm.mjs by its URL"] = kind(findSourceMap(pathToFileURL(at("esm.mjs")).href));
+            print(seen);
+          });
+        `,
+      };
+      // Node.js keeps each source as an absolute URL, and an empty `sourceRoot`, which it adds to a map that has none.
+      expect(await run(["--enable-source-maps"], files)).toEqual({
+        stdout: {
+          "lib.js": {
+            keys: ["version", "file", "sourceRoot", "sources", "names", "mappings"],
+            payload: { ...JSON.parse(mapOf()), sources: ["file://<dir>/lib.ts"] },
+            entry: {
+              generatedLine: 5,
+              generatedColumn: 10,
+              originalSource: "file://<dir>/lib.ts",
+              originalLine: 4,
+              originalColumn: 8,
+            },
+            "sections in payload": false,
+          },
+          "rooted.js": {
+            keys: ["version", "sourceRoot", "sources", "sourcesContent", "names", "mappings"],
+            payload: {
+              version: 3,
+              sourceRoot: "",
+              sources: ["file://<dir>/src/lib.ts"],
+              sourcesContent: ["// the text of lib.ts"],
+              names: ["boom"],
+              mappings: named,
+            },
+            entry: {
+              generatedLine: 4,
+              generatedColumn: 9,
+              originalSource: "file://<dir>/src/lib.ts",
+              originalLine: 3,
+              originalColumn: 16,
+              name: "boom",
+            },
+            "sections in payload": false,
+          },
+          "inline.js": {
+            keys: ["version", "sources", "mappings", "sourceRoot"],
+            payload: {
+              version: 3,
+              sources: ["file://<dir>/src/lib.ts", "webpack://app/lib.ts"],
+              mappings,
+              sourceRoot: "",
+            },
+            entry: {
+              generatedLine: 8,
+              generatedColumn: 12,
+              originalSource: "file://<dir>/src/lib.ts",
+              originalLine: 8,
+              originalColumn: 10,
+            },
+            "sections in payload": false,
+          },
+          "esm.mjs": {
+            keys: ["version", "sources", "names", "mappings", "sourceRoot"],
+            payload: { version: 3, sources: ["file://<dir>/esm.mts"], names: [], mappings: "AAAA", sourceRoot: "" },
+            entry: {
+              generatedLine: 0,
+              generatedColumn: 0,
+              originalSource: "file://<dir>/esm.mts",
+              originalLine: 0,
+              originalColumn: 0,
+            },
+            "sections in payload": false,
+          },
+          "an entry before the first segment": {},
+          "esm.mjs by its URL": "SourceMap",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("a module has one if it named a source map that can be read while source maps were on", async () => {
+      const unusable = {
+        "a map that is not there": {},
+        "a map that is not JSON": { "not-json.js.map": "{ not JSON" },
+        "a map that is a JSON array": { "array.js.map": "[]" },
+        "a map without mappings": { "no-mappings.js.map": JSON.stringify({ version: 3, sources: ["lib.ts"] }) },
+        "a map without sources": { "no-sources.js.map": JSON.stringify({ version: 3, mappings }) },
+        "an index map": {
+          "index-map.js.map": JSON.stringify({
+            version: 3,
+            sections: [{ offset: { line: 0, column: 0 }, map: JSON.parse(mapOf()) }],
+          }),
+        },
+      };
+      const moduleOf = label => Object.keys(unusable[label])[0]?.replace(".map", "") ?? "missing.js";
+      const files = {
+        ...withMap("before.js"),
+        ...withMap("on.js"),
+        ...withMap("never-loaded.js"),
+        "no-comment.js": code,
+        ...Object.assign(
+          {},
+          ...Object.keys(unusable).map(label => ({
+            ...withUrl(moduleOf(label), `${moduleOf(label)}.map`),
+            ...unusable[label],
+          })),
+        ),
+        ...withUrl("not-vlq.js", "not-vlq.js.map"),
+        "not-vlq.js.map": mapOf({ mappings: ";;;;;!!!!" }),
+        ...withUrl("other-type.js", dataUrl(mapOf(), "text/plain;base64")),
+        "main.cjs": `
+          ${prelude}
+          const seen = {};
+          require("./before.js");
+          seen["no switch"] = kind(findSourceMap(at("before.js")));
+          process.setSourceMapsEnabled(true);
+          const on = require("./on.js");
+          seen["a module that loaded before the switch"] = kind(findSourceMap(at("before.js")));
+          seen["a module that loaded while it was on"] = kind(findSourceMap(at("on.js")));
+          seen["a module that did not load"] = kind(findSourceMap(at("never-loaded.js")));
+          seen["the source that the map names"] = kind(findSourceMap(at("lib.ts")));
+          seen["the map"] = kind(findSourceMap(at("on.js.map")));
+          require("./no-comment.js");
+          seen["a module without a sourceMappingURL"] = kind(findSourceMap(at("no-comment.js")));
+          for (const [label, file] of ${JSON.stringify([
+            ...Object.keys(unusable).map(label => [label, moduleOf(label)]),
+            ["a data: URL of another type", "other-type.js"],
+            ["mappings that are no VLQ", "not-vlq.js"],
+          ])}) {
+            require(at(file));
+            seen[label] = kind(findSourceMap(at(file)));
+          }
+          process.setSourceMapsEnabled(false);
+          seen["after the switch goes off"] = kind(findSourceMap(at("on.js")));
+          seen["Error.stack after the switch goes off"] = (() => {
+            try {
+              on.boom();
+            } catch (error) {
+              const [, place] = /\\((.*):\\d+\\)$/.exec(error.stack.split("\\n")[1]);
+              return place.replace(__dirname, "<dir>").replaceAll("\\\\", "/");
+            }
+          })();
+          process.setSourceMapsEnabled(true);
+          seen["after the switch goes on again"] = kind(findSourceMap(at("on.js")));
+          seen["a module that loaded before the switch, still"] = kind(findSourceMap(at("before.js")));
+          print(seen);
+        `,
+      };
+      expect(await run([], files)).toEqual({
+        stdout: {
+          "no switch": "undefined",
+          "a module that loaded before the switch": "undefined",
+          "a module that loaded while it was on": "SourceMap",
+          "a module that did not load": "undefined",
+          "the source that the map names": "undefined",
+          "the map": "undefined",
+          "a module without a sourceMappingURL": "undefined",
+          ...Object.fromEntries(Object.keys(unusable).map(label => [label, "undefined"])),
+          "a data: URL of another type": "undefined",
+          // Node.js reads what it can of such mappings, and answers with a SourceMap.
+          "mappings that are no VLQ": "undefined",
+          // Node.js looks in what it kept when the module loaded, and does not ask the switch again.
+          "after the switch goes off": "SourceMap",
+          "Error.stack after the switch goes off": "<dir>/on.js:6",
+          "after the switch goes on again": "SourceMap",
+          "a module that loaded before the switch, still": "undefined",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // node v26.3.0 asks nodeModules when the module loads and again each time it looks for the source map.
+    test("a module in node_modules has one only while nodeModules is set", async () => {
+      const files = {
+        ...withMap("node_modules/dep/index.js"),
+        ...withMap("my_node_modules/dep/index.js"),
+        "main.cjs": `
+          ${prelude}
+          const dep = require.resolve("dep");
+          const again = () => {
+            delete require.cache[dep];
+            require(dep);
+            return kind(findSourceMap(dep));
+          };
+          const seen = {};
+          setSourceMapsSupport(true);
+          require(dep);
+          require("./my_node_modules/dep/index.js");
+          seen["setSourceMapsSupport(true)"] = kind(findSourceMap(dep));
+          seen["in my_node_modules"] = kind(findSourceMap(at("my_node_modules/dep/index.js")));
+          setSourceMapsSupport(true, { nodeModules: true });
+          seen["loaded before nodeModules was set"] = kind(findSourceMap(dep));
+          seen["loaded again"] = again();
+          setSourceMapsSupport(true);
+          seen["after nodeModules is unset"] = kind(findSourceMap(dep));
+          setSourceMapsSupport(true, { nodeModules: true });
+          seen["after nodeModules is set again"] = kind(findSourceMap(dep));
+          setSourceMapsSupport(false, { nodeModules: true });
+          seen["with the switch off and nodeModules set"] = kind(findSourceMap(dep));
+          process.setSourceMapsEnabled(false);
+          seen["process.setSourceMapsEnabled(false)"] = kind(findSourceMap(dep));
+          process.setSourceMapsEnabled(true);
+          seen["process.setSourceMapsEnabled(true)"] = kind(findSourceMap(dep));
+          print(seen);
+        `,
+      };
+      expect(await run([], files)).toEqual({
+        stdout: {
+          "setSourceMapsSupport(true)": "undefined",
+          "in my_node_modules": "SourceMap",
+          "loaded before nodeModules was set": "undefined",
+          "loaded again": "SourceMap",
+          "after nodeModules is unset": "undefined",
+          "after nodeModules is set again": "SourceMap",
+          "with the switch off and nodeModules set": "SourceMap",
+          "process.setSourceMapsEnabled(false)": "undefined",
+          "process.setSourceMapsEnabled(true)": "SourceMap",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // node v26.3.0 takes a string: a `file:` URL, or a path, which it resolves as pathToFileURL() does. It throws nothing.
+    test("a module is named by its path or its file: URL", async () => {
+      const files = {
+        ...withMap("lib.js"),
+        "sub/empty.txt": "",
+        "main.cjs": `
+          ${prelude}
+          require("./lib.js");
+          const lib = at("lib.js");
+          const seen = {};
+          const find = (label, name) => {
+            try {
+              seen[label] = kind(findSourceMap(name));
+            } catch (error) {
+              seen[label] = "threw " + error.name;
+            }
+          };
+          find("a path", lib);
+          find("a file: URL", pathToFileURL(lib).href);
+          find("a path from the working directory", "./lib.js");
+          find("a name in the working directory", "lib.js");
+          find("a path with . and ..", [__dirname, "sub", "..", ".", "lib.js"].join(path.sep));
+          process.chdir("sub");
+          find("a path from another working directory", "../lib.js");
+          find("the same name in another working directory", "lib.js");
+          process.chdir(__dirname);
+          find("a URL object", pathToFileURL(lib));
+          find("a String object", new String(lib));
+          find("an object with toString()", { toString: () => lib });
+          find("nothing", undefined);
+          find("null", null);
+          find("a number", 1);
+          find("an empty string", "");
+          find("node:fs", "node:fs");
+          find("a file: URL with no path", "file://");
+          find("a file: URL that cannot be decoded", "file:///%");
+          find("FILE:", pathToFileURL(lib).href.replace("file:", "FILE:"));
+          find("an http: URL", "http://localhost/lib.js");
+          find("a data: URL", "data:text/javascript,1");
+          find("a path with a NUL", lib + "\\0");
+          print(seen);
+        `,
+      };
+      expect(await run(["--enable-source-maps"], files)).toEqual({
+        stdout: {
+          "a path": "SourceMap",
+          "a file: URL": "SourceMap",
+          "a path from the working directory": "SourceMap",
+          "a name in the working directory": "SourceMap",
+          "a path with . and ..": "SourceMap",
+          "a path from another working directory": "SourceMap",
+          "the same name in another working directory": "undefined",
+          "a URL object": "undefined",
+          "a String object": "undefined",
+          "an object with toString()": "undefined",
+          "nothing": "undefined",
+          "null": "undefined",
+          "a number": "undefined",
+          "an empty string": "undefined",
+          "node:fs": "undefined",
+          "a file: URL with no path": "undefined",
+          "a file: URL that cannot be decoded": "undefined",
+          "FILE:": "undefined",
+          "an http: URL": "undefined",
+          "a data: URL": "undefined",
+          "a path with a NUL": "undefined",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   test("require cache relative specifier", () => {
     require.cache["./bar.cjs"] = { exports: { default: "bar" } };
     expect(() => require("./bar.cjs")).toThrow("Cannot find module");

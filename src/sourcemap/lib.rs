@@ -890,7 +890,7 @@ pub fn parse_url(
 /// The JSON of a `data:` URL as Node.js takes it. The media type is `application/json` in those letters, the data
 /// is base64 if the last parameter says so, and it ends at a second comma: JSON with a comma in it is cut there.
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L298-L319
-fn json_of_data_url_for_node<'a>(
+pub fn json_of_data_url_for_node<'a>(
     arena: &'a bun_alloc::Arena,
     url: &'a [u8],
 ) -> crate::Result<&'a [u8]> {

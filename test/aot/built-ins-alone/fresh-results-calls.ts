@@ -347,6 +347,10 @@ export const calls: Record<string, string[]> = {
   ],
   "process._getActiveHandles": ["process._getActiveHandles()"],
   "process._getActiveRequests": ["process._getActiveRequests()"],
+  // A module has a source map there if it names one when it loads while source maps are on.
+  "node:module.findSourceMap": [
+    `${temporary}\nimport { findSourceMap } from "node:module";\nawait Bun.write(folder + "/a.cjs", "module.exports = 1;\\n//# sourceMappingURL=data:application/json;base64," + btoa('{"version":3,"sources":["a.ts"],"mappings":"AAAA"}'));\nprocess.setSourceMapsEnabled(true);\nload(folder + "/a.cjs");\nprocess.setSourceMapsEnabled(false);\nfindSourceMap(folder + "/a.cjs")`,
+  ],
   "Blob.prototype.delete": [`${temporary}\nawait Bun.write(folder + "/a", "a");\nBun.file(folder + "/a").delete()`],
   "Blob.prototype.unlink": [
     `${temporary}\nawait Bun.write(folder + "/a", "a");\nBun.file(folder + "/a").unlink()`,
@@ -470,7 +474,6 @@ export const notCalled: Record<string, string> = {
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",
-  "node:module.findSourceMap": "it answers undefined for every file that was tried",
   "Bun.secrets.delete": "it writes to the store of secrets of the operating system",
   "Bun.secrets.get": "the store of secrets of the operating system may ask the person at the machine",
   "Bun.secrets.set": "it writes to the store of secrets of the operating system",

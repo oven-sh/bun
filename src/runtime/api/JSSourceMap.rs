@@ -1,13 +1,15 @@
 //! This implements the JavaScript SourceMap class from Node.js.
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use bstr::BStr;
-
-use bun_core::{self as bstring, strings};
+use bun_core::{self as bstring, EncodedSlice, strings};
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::saved_source_map::{self, ChainedSourceMap};
+use bun_jsc::{
+    CompiledJsonParser, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult,
+    StringJsc as _, bun_string_jsc,
+};
+use bun_paths::resolve_path::{self, platform};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 use crate::generated_bindgen::sourcemap::js_SourceMap as js;
@@ -18,78 +20,66 @@ pub(crate) struct JSSourceMap {
     names: Box<[bstring::String]>,
 }
 
-/// TODO: when we implement --enable-source-map CLI flag, set this to true.
-// Mutable global; AtomicBool for safe mutation.
-static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
-
+/// As in Node.js, what cannot be read is `undefined` and no error: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L372-L407
 pub(crate) fn find_source_map<'a>(
     cx: &mut JsScope<'a>,
     path: JsLocal<'a>,
 ) -> JsResult<Option<JsWrapper<'a, JSSourceMap>>> {
-    // Node.js doesn't enable source maps by default.
-    // In Bun, we do use them for almost all files since we transpile almost all files
-    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
-    // This causes Next.js to emit errors like the below on start:
-    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
-    if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
-        return Ok(None);
-    }
-
     let global = cx.global();
-    let source_url_value = path.to_js();
-    if !source_url_value.is_string() {
+    let name = path.to_js();
+    if !name.is_string_literal() {
         return Ok(None);
     }
-
-    let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
-    let mut source_url_slice = source_url_string.to_utf8();
-
-    {
-        let source_url = source_url_slice.slice();
-        if source_url.starts_with(b"node:")
-            || source_url.starts_with(b"bun:")
-            || source_url.starts_with(b"data:")
-        {
-            return Ok(None);
-        }
-    }
-
-    if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
-        if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_url::path_from_file_url(&source_url_string);
-
-            if path.is_dead() {
-                return Err(global.throw_value(global.err_invalid_url(format_args!(
-                    "Invalid URL: {}",
-                    BStr::new(source_url_slice.slice())
-                ))));
-            }
-
-            // Replace the file:// URL with the absolute path.
-            drop(source_url_slice);
-            source_url_string = path;
-            source_url_slice = source_url_string.to_utf8();
-        }
-    }
-
-    let source_url = source_url_slice.slice();
+    let name = bstring::String::from_js(name, global)?;
+    let Some(path) = module_path(&name) else {
+        return Ok(None);
+    };
 
     // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
     let vm = global.bun_vm().as_mut();
-    let Some(source_map) = vm.source_mappings().get(source_url) else {
+    // Never the map that Bun made of the module: it has no `payload`, and Next.js reports a `SourceMap` without one.
+    let Some(own) = vm.source_mappings().own_source_map(&path) else {
         return Ok(None);
     };
-    drop(source_url_slice);
-    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string]);
-
-    // `SavedSourceMap::get` hands back a +1 ref as an `Arc<ParsedSourceMap>`;
-    // `Drop` on the field releases it — no manual `deref_()` needed.
-    let this = JSSourceMap {
-        sourcemap: source_map,
-        sources: fake_sources_array,
-        names: Box::default(),
+    let Some((this, payload)) = JSSourceMap::of_module(global, &own)? else {
+        return Ok(None);
     };
-    Ok(Some(this.into_js(&cx.heap)))
+
+    let this_value = this.into_js(&cx.heap);
+    js::payload_set_cached(this_value.to_js(), cx.global(), payload);
+    Ok(Some(this_value))
+}
+
+/// The path of the module that `name` is: a `file:` URL, or a path, which Node.js resolves as `pathToFileURL()` does.
+fn module_path(name: &bstring::String) -> Option<Vec<u8>> {
+    let utf8 = name.to_utf8();
+    let name_bytes = utf8.slice();
+    if name_bytes.starts_with(b"node:")
+        || name_bytes.starts_with(b"bun:")
+        || name_bytes.starts_with(b"data:")
+    {
+        return None;
+    }
+
+    // `/^\w+:\/\//` is a URL to Node.js, and only a `file:` one is a module.
+    if let Some(scheme_len) = strings::index_of(name_bytes, b"://")
+        && scheme_len > 0
+        && name_bytes[..scheme_len]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    {
+        if &name_bytes[..scheme_len] != b"file" {
+            return None;
+        }
+        let path = bun_url::path_from_file_url(name);
+        return (!path.is_dead()).then(|| path.to_owned_slice());
+    }
+
+    let cwd = bun_core::working_directory_in_executable()
+        .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
+    // `name` can have any length, so a buffer of the pool may be too short.
+    let mut buf = vec![0u8; cwd.len() + name_bytes.len() + 2];
+    Some(resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut buf, &[name_bytes]).to_vec())
 }
 
 impl JSSourceMap {
@@ -145,18 +135,7 @@ impl JSSourceMap {
             }
         }
 
-        // Parse the VLQ mappings
-        let parse_result = mapping::parse(
-            mappings_str.slice(),
-            None,                                            // estimated_mapping_count
-            i32::try_from(sources.len()).expect("int cast"), // sources_count
-            mapping::ParseOptions {
-                allow_names: true,
-                sort: true,
-            },
-        );
-
-        let mapping_list = match parse_result {
+        let this = match Self::parsed(mappings_str.slice(), sources, names) {
             Ok(parsed) => parsed,
             Err(fail) => {
                 if let Some(loc) = fail.loc.to_nullable() {
@@ -170,14 +149,7 @@ impl JSSourceMap {
             }
         };
 
-        let this_value = structure.create(
-            &cx.heap,
-            JSSourceMap {
-                sourcemap: Arc::new(mapping_list),
-                sources: sources.into_boxed_slice(),
-                names: names.into_boxed_slice(),
-            },
-        );
+        let this_value = structure.create(&cx.heap, this);
 
         let global = cx.global();
         js::payload_set_cached(this_value.to_js(), global, payload);
@@ -186,6 +158,114 @@ impl JSSourceMap {
         }
 
         Ok(this_value)
+    }
+
+    /// `mappings` is the VLQ text of a Source Map V3 payload that has these `sources` and `names`.
+    fn parsed(
+        mappings: &[u8],
+        sources: Vec<bstring::String>,
+        names: Vec<bstring::String>,
+    ) -> Result<Self, bun_sourcemap::ParseFail> {
+        let sourcemap = mapping::parse(
+            mappings,
+            None,                                            // estimated_mapping_count
+            i32::try_from(sources.len()).expect("int cast"), // sources_count
+            mapping::ParseOptions {
+                allow_names: true,
+                sort: true,
+            },
+        )?;
+        Ok(JSSourceMap {
+            sourcemap: Arc::new(sourcemap),
+            sources: sources.into_boxed_slice(),
+            names: names.into_boxed_slice(),
+        })
+    }
+
+    /// The `SourceMap` of a module's own source map, and its payload. `None`: the map is not one that the class reads.
+    fn of_module(
+        global: &JSGlobalObject,
+        own: &ChainedSourceMap,
+    ) -> JsResult<Option<(Self, JSValue)>> {
+        let arena = bun_alloc::Arena::new();
+        let Some(json) = own.json(&arena) else {
+            return Ok(None);
+        };
+        let payload = match EncodedSlice::utf8(json).to_json_object(global, CompiledJsonParser::Try)
+        {
+            Ok(payload) => payload,
+            // Node.js catches what `JSON.parse()` throws: text that is no JSON is no source map.
+            Err(JsError::Thrown) if global.clear_exception_except_termination() => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        if !payload.is_object() {
+            return Ok(None);
+        }
+
+        // Only own properties are read, and only strings are converted, so that no JavaScript runs.
+        let (Some(listed_sources), Some(mappings)) = (
+            payload
+                .get_own_truthy(global, b"sources")?
+                .filter(|sources| sources.is_array()),
+            payload
+                .get_own_truthy(global, b"mappings")?
+                .filter(|mappings| mappings.is_string_literal()),
+        ) else {
+            return Ok(None);
+        };
+        let source_root = match payload.get_own_truthy(global, b"sourceRoot")? {
+            Some(root) if root.is_string_literal() => root.to_bun_string(global)?,
+            _ => bstring::String::EMPTY,
+        };
+        let source_root = source_root.to_utf8();
+
+        // Node.js keeps each of `sources` as an absolute URL, and no `sourceRoot`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L325-L337
+        let base = own.sources_base();
+        let mut listed_sources = listed_sources.array_iterator(global)?;
+        let absolute_sources = JSValue::create_empty_array(global, listed_sources.len as usize)?;
+        let mut sources: Vec<bstring::String> = Vec::with_capacity(listed_sources.len as usize);
+        let mut rooted: Vec<u8> = Vec::new();
+        while let Some(source) = listed_sources.next()? {
+            let index = listed_sources.i - 1;
+            if !source.is_string_literal() {
+                absolute_sources.put_index(global, index, source)?;
+                sources.push(bstring::String::EMPTY);
+                continue;
+            }
+            rooted.clear();
+            rooted.extend_from_slice(source_root.slice());
+            rooted.extend_from_slice(source.to_bun_string(global)?.to_utf8().slice());
+            let url = saved_source_map::source_url(&base, &rooted);
+            if url.is_dead() {
+                return Ok(None);
+            }
+            absolute_sources.put_index(global, index, url.to_js(global)?)?;
+            sources.push(url);
+        }
+        payload.put(global, b"sources", absolute_sources);
+        payload.put(global, b"sourceRoot", JSValue::js_empty_string(global));
+
+        let mut names: Vec<bstring::String> = Vec::new();
+        if let Some(listed_names) = payload
+            .get_own_truthy(global, b"names")?
+            .filter(|names| names.is_array())
+        {
+            let mut listed_names = listed_names.array_iterator(global)?;
+            while let Some(name) = listed_names.next()? {
+                names.push(if name.is_string_literal() {
+                    name.to_bun_string(global)?
+                } else {
+                    bstring::String::EMPTY
+                });
+            }
+        }
+
+        let mappings = mappings.to_bun_string(global)?;
+        Ok(Self::parsed(mappings.to_utf8().slice(), sources, names)
+            .ok()
+            .map(|this| (this, payload)))
     }
 
     pub(crate) fn estimated_size(&self) -> usize {

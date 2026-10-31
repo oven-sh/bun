@@ -1,4 +1,4 @@
-// A `--define` whose value is a global name or a dotted path of global names stands for that path wherever the defined name is written: read, called with the holder as `this`, under `typeof`, on either side of `in`, stored to, updated, destructured into and deleted.
+// A `--define` whose value is a global name or a dotted path of global names stands for that path wherever the defined name is written: read, called with the holder as `this`, under `typeof`, on either side of `in`, stored to, updated, destructured into and deleted. A dotted name that is defined stands for its path in all of these too.
 // Flags: --define LOG=console.log --define ROOT=holder.inner.value --define NAME=target --define DESCRIBE=holder.inner.describe --define FLOOR=Math.floor --define ITERATOR=Symbol.iterator --define process.env.ALIAS=holder.inner.extra
 // Reference: bun build --compile
 declare const LOG: (...values: unknown[]) => void;
@@ -109,12 +109,20 @@ for (ROOT in { first: 0, second: 0 }) visited.push(record.inner.value);
 LOG("loop heads:", visited.join());
 
 record.inner.extra = "extra";
-LOG("dotted name:", process.env.ALIAS, typeof process.env.ALIAS);
+LOG("dotted name:", process.env.ALIAS, typeof process.env.ALIAS, process.env["ALIAS"], process?.env.ALIAS);
 LOG("delete:", delete process.env.ALIAS, "extra" in record.inner, process.env.ALIAS, delete process.env.ALIAS);
-Object.defineProperty(record.inner, "extra", { value: "fixed", configurable: false });
+Object.defineProperty(record.inner, "extra", { value: "fixed", writable: true, configurable: false });
 LOG("delete:", attempt(() => delete process.env.ALIAS), process.env.ALIAS);
-process.env.ALIAS = "in the environment";
-LOG("store to a dotted name:", process.env.ALIAS, Reflect.get(process.env, "ALIAS"));
+process.env.ALIAS = "stored";
+LOG("store to a dotted name:", process.env.ALIAS, record.inner.extra, Reflect.get(process.env, "ALIAS"));
+countHolderReads();
+process.env.ALIAS += " and joined";
+LOG("compound store to a dotted name:", record.inner.extra, countHolderReads());
+process.env["ALIAS"] += " in brackets";
+[process.env.ALIAS] = [process.env.ALIAS + ", then destructured"];
+({ value: process.env.ALIAS = "a default" } = { value: undefined });
+for (process.env.ALIAS of ["a loop head"]) visited.push(record.inner.extra);
+LOG("stores to a dotted name:", record.inner.extra, visited.at(-1), (process.env.ALIAS ??= "not stored"), (process.env.ALIAS = 7), process.env.ALIAS++);
 
 function shadowed(ROOT: number, NAME: number, LOG: (value: number) => number): number {
   ROOT += 1;

@@ -54,26 +54,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let target = self.file.skip_type_syntax(target);
         self.set_position(hir[target].pos);
-        match hir[target].kind {
-            ExprKind::Ident(_) => match self.file.decisions().decision(target) {
-                Decision::GlobalPath(path) => {
-                    let member = self.lower_global_path_holder(path);
-                    match member.holder {
-                        Some(object) => Reference::Property {
-                            object,
-                            name: PropertyName::Constant(self.file.atom_key(member.name)),
-                            access: None,
-                        },
-                        None => Reference::FreeName(member.name),
-                    }
-                }
-                Decision::Unknown
-                | Decision::Constant(_)
-                | Decision::Data(_)
-                | Decision::DeferredData => Reference::Identifier {
-                    target: self.resolve_identifier_target(target),
-                    identifier: target,
+        // A --define gives a name or a path of members another path to stand for, and a store goes there.
+        if let Decision::GlobalPath(path) = self.file.decisions().decision(target) {
+            let member = self.lower_global_path_holder(path);
+            return match member.holder {
+                Some(object) => Reference::Property {
+                    object,
+                    name: PropertyName::Constant(self.file.atom_key(member.name)),
+                    access: None,
                 },
+                None => Reference::FreeName(member.name),
+            };
+        }
+        match hir[target].kind {
+            ExprKind::Ident(_) => Reference::Identifier {
+                target: self.resolve_identifier_target(target),
+                identifier: target,
             },
             ExprKind::Dot {
                 chain: Chain::No, ..

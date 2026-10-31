@@ -28,6 +28,34 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // A name that is not an identifier is read with a string index. `MY.VAR` is one name, not a property of `MY`.
+    if (backend === "cli")
+      itBundled("env/inline index", {
+        env: {
+          "MY-VAR": "dash",
+          "MY.VAR": "dot",
+          MY_VAR: "plain",
+        },
+        backend: backend,
+        dotenv: "inline",
+        files: {
+          "/a.js": `
+        console.log(process.env["MY-VAR"]);
+        console.log(process.env["MY.VAR"]);
+        console.log(process.env["MY_VAR"], process.env?.MY_VAR);
+        console.log(process.env.MY?.VAR);
+      `,
+        },
+        run: {
+          env: {
+            "MY-VAR": "the run-time value",
+            "MY.VAR": "the run-time value",
+            MY_VAR: "the run-time value",
+          },
+          stdout: "dash\ndot\nplain plain\nundefined\n",
+        },
+      });
+
     // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
     // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
     // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).

@@ -29,6 +29,68 @@ describe("bundler", () => {
       api.expectFile("out.js").toIncludeRepeated("debugger", 4);
     },
   });
+  itBundled("drop/IndexAccess", {
+    files: {
+      "/a.js": `
+        console["log"]("hello");
+        console[method]("hello");
+        console[pick()]("hello");
+        console["log"].call(console, "hello");
+        var method = "log";
+        function pick() { return "log"; }
+      `,
+    },
+    run: { stdout: "" },
+    drop: ["console"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("console");
+    },
+  });
+  itBundled("drop/KeepsBareRead", {
+    // Only a call of a dropped name is removed. A bare read of it stays: the first one throws, the second one runs a getter.
+    files: {
+      "/a.js": `
+        try {
+          ASSERT;
+          console.log("no throw");
+        } catch {
+          console.log("threw");
+        }
+        globalThis.logger = { get debug() { console.log("getter ran"); return () => {}; } };
+        logger.debug;
+        logger.debug();
+      `,
+    },
+    run: { stdout: "threw\ngetter ran" },
+    drop: ["ASSERT", "logger.debug"],
+    backend: "api",
+  });
+  itBundled("drop/IndexAccessValue", {
+    // `.bind` makes a function from the method, so the line stays
+    files: {
+      "/a.js": `
+        var level = "log";
+        var computed = console[level].bind(console);
+        computed("hello");
+        var quoted = console["log"].bind(console);
+        quoted("world");
+      `,
+    },
+    run: { stdout: "hello\nworld" },
+    drop: ["console"],
+    backend: "api",
+  });
+  itBundled("drop/DottedNameIndexAccess", {
+    files: {
+      "/a.js": `
+        console.log(Bun.inspect["table"]());
+        console.log(Bun?.inspect?.table());
+      `,
+    },
+    run: { stdout: "undefined\nundefined" },
+    drop: ["Bun.inspect.table"],
+  });
   itBundled("drop/RemovesSideEffects", {
     files: {
       "/a.js": `console.log(alert());`,

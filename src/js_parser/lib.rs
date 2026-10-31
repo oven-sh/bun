@@ -283,7 +283,7 @@ pub mod defines {
         pub data: DefineData,
     }
 
-    /// Bit-packed flags (LSB-first): 3 padding bits, `valueless`,
+    /// Bit-packed flags (LSB-first): 2 padding bits, `plain_path_only`, `valueless`,
     /// `can_be_removed_if_unused`, `call_can_be_unwrapped_if_unused`
     /// (`E.CallUnwrap`, 2 bits), `method_call_must_be_replaced_with_undefined`.
     #[repr(transparent)]
@@ -291,12 +291,17 @@ pub mod defines {
     pub struct Flags(u8);
 
     impl Flags {
+        const PLAIN_PATH_ONLY_SHIFT: u8 = 2;
         const VALUELESS_SHIFT: u8 = 3;
         const CAN_BE_REMOVED_SHIFT: u8 = 4;
         const CALL_UNWRAP_SHIFT: u8 = 5;
         const CALL_UNWRAP_MASK: u8 = 0b11 << Self::CALL_UNWRAP_SHIFT;
         const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
 
+        #[inline]
+        pub(crate) const fn plain_path_only(self) -> bool {
+            (self.0 >> Self::PLAIN_PATH_ONLY_SHIFT) & 1 != 0
+        }
         #[inline]
         pub(crate) const fn valueless(self) -> bool {
             (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
@@ -443,6 +448,14 @@ pub mod defines {
         pub fn valueless(&self) -> bool {
             self.flags.valueless()
         }
+        /// True for a define that `bun build` adds by itself in a build for a server. It replaces a path with a dot last and no `?.`: what it replaced before a define matched `["name"]` and `?.`.
+        #[inline]
+        pub fn plain_path_only(&self) -> bool {
+            self.flags.plain_path_only()
+        }
+        pub fn set_plain_path_only(&mut self) {
+            self.flags.0 |= 1 << Flags::PLAIN_PATH_ONLY_SHIFT;
+        }
 
         pub fn init_boolean(value: bool) -> DefineData {
             let mut flags = Flags::default();
@@ -484,6 +497,8 @@ pub mod defines {
     #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
+        /// The define for a top-level `this`. It is not in `identifiers`, so the visitor hashes nothing for a `this`.
+        pub this: Option<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
         /// about every property access; nearly all miss, and this says so
@@ -495,16 +510,26 @@ pub mod defines {
     }
 
     #[derive(Clone)]
-    pub struct DotFilter([u64; 64]);
+    pub struct DotFilter {
+        bits: [u64; 64],
+        /// The bits of the names from `Define::insert`: user, environment and `--drop` names. Only these can change `a["b"]`.
+        user_bits: [u64; 64],
+        /// The names of `user_bits` with non-ASCII text. The visitor holds such an index literal as UTF-16.
+        non_ascii_names: Vec<Box<[u8]>>,
+    }
 
     impl Default for DotFilter {
         fn default() -> Self {
-            DotFilter([0; 64])
+            DotFilter {
+                bits: [0; 64],
+                user_bits: [0; 64],
+                non_ascii_names: Vec::new(),
+            }
         }
     }
 
     impl DotFilter {
-        #[inline]
+        #[inline(always)]
         fn bit(name: &[u8]) -> usize {
             let (first, last) = match name {
                 [] => (0, 0),
@@ -516,13 +541,36 @@ pub mod defines {
         #[inline]
         pub fn insert(&mut self, name: &[u8]) {
             let bit = Self::bit(name);
-            self.0[bit / 64] |= 1 << (bit % 64);
+            self.bits[bit / 64] |= 1 << (bit % 64);
         }
 
-        #[inline]
+        /// `insert` for a name from `Define::insert`. The global table does not pass through here.
+        pub fn insert_user_name(&mut self, name: &[u8]) {
+            self.insert(name);
+            let bit = Self::bit(name);
+            self.user_bits[bit / 64] |= 1 << (bit % 64);
+            if strings::first_non_ascii(name).is_some()
+                && !self.non_ascii_names.iter().any(|known| **known == *name)
+            {
+                self.non_ascii_names.push(Box::from(name));
+            }
+        }
+
+        #[inline(always)]
         pub fn may_contain(&self, name: &[u8]) -> bool {
             let bit = Self::bit(name);
-            self.0[bit / 64] & (1 << (bit % 64)) != 0
+            self.bits[bit / 64] & (1 << (bit % 64)) != 0
+        }
+
+        #[inline(always)]
+        pub fn may_contain_user_name(&self, name: &[u8]) -> bool {
+            let bit = Self::bit(name);
+            self.user_bits[bit / 64] & (1 << (bit % 64)) != 0
+        }
+
+        #[inline(always)]
+        pub fn non_ascii_names(&self) -> &[Box<[u8]>] {
+            &self.non_ascii_names
         }
     }
 
@@ -573,6 +621,7 @@ pub mod defines {
         fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData) {
             let key = global[global.len() - 1];
             let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+            debug_assert!(key.is_ascii());
             self.dots_filter.insert(key);
             let dot_define = DotDefine {
                 parts,
@@ -595,11 +644,12 @@ pub mod defines {
             self.dots.get(name)
         }
 
-        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        /// Order-independent, length-prefixed hash of the inputs. `None` when all are empty. `plain_path_only`: the keys of `defines` with that flag, which replace less for the same pair.
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             drop: impl IntoIterator<Item = &'i [u8]>,
+            plain_path_only: impl IntoIterator<Item = &'i [u8]>,
         ) -> Option<u64> {
             let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
             let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
@@ -607,10 +657,12 @@ pub mod defines {
             if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
                 return None;
             }
+            let mut plain_path_only: Vec<&[u8]> = plain_path_only.into_iter().collect();
             defines.sort_unstable();
             env_defines.sort_unstable();
             drop.sort_unstable();
             drop.dedup();
+            plain_path_only.sort_unstable();
 
             let mut hasher = bun_wyhash::Wyhash::init(0);
             let mut update = |bytes: &[u8]| {
@@ -625,9 +677,11 @@ pub mod defines {
                     update(value);
                 }
             }
-            update(&(drop.len() as u64).to_le_bytes());
-            for item in drop {
-                update(item);
+            for items in [drop, plain_path_only] {
+                update(&(items.len() as u64).to_le_bytes());
+                for item in items {
+                    update(item);
+                }
             }
             Some(hasher.final_())
         }
@@ -654,37 +708,207 @@ pub mod defines {
             key: &[u8],
             value: DefineData,
         ) -> Result<(), bun_alloc::AllocError> {
-            // If it has a dot, then it's a DotDefine. e.g. process.env.NODE_ENV
-            if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
-                let tail = &key[last_dot + 1..key.len()];
-                let remainder = &key[0..last_dot];
-                let count = strings::count_char(remainder, b'.') + 1;
-                let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in strings::split(remainder, b".") {
-                    parts.push(Box::from(split));
+            // e.g. IS_BROWSER
+            if strings::index_of_any(key, b".[").is_none() {
+                if key == b"this" {
+                    self.this = Some(value);
+                } else {
+                    self.identifiers.put_assume_capacity(key, value);
                 }
-                parts.push(Box::from(tail));
+                return Ok(());
+            }
 
-                self.dots_filter.insert(tail);
-                if let Some(existing) = self.dots.get_mut(tail) {
-                    for part in existing.iter_mut() {
-                        if are_parts_equal(&part.parts, &parts) {
-                            part.data = DefineData::merge(&part.data, value);
-                            return Ok(());
-                        }
-                    }
-                    existing.push(DotDefine { data: value, parts });
+            let parts = define_key_parts(key);
+            if parts.len() == 1 {
+                self.identifiers.put_assume_capacity(&parts[0], value);
+                return Ok(());
+            }
+
+            // e.g. process.env.NODE_ENV
+            let tail: &[u8] = &parts[parts.len() - 1];
+            self.dots_filter.insert_user_name(tail);
+            let existing = self.dots.get_or_put(tail)?.value_ptr;
+            for part in existing.iter_mut() {
+                if are_parts_equal(&part.parts, &parts) {
+                    part.data = DefineData::merge(&part.data, value);
                     return Ok(());
                 }
-
-                self.dots
-                    .put_assume_capacity(tail, vec![DotDefine { data: value, parts }]);
-            } else {
-                // e.g. IS_BROWSER
-                self.identifiers.put_assume_capacity(key, value);
             }
+            existing.push(DotDefine { data: value, parts });
             Ok(())
         }
+    }
+
+    /// Why a define key does not parse.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum DefineKeyError<'a> {
+        /// A `.` part that is not an identifier, or a first part that is a keyword other than `this`/`import`.
+        InvalidIdentifier(&'a [u8]),
+        /// A `[` without a quoted string and `]`, or a `]` not followed by `.`, `[`, or the end of the key.
+        InvalidIndex,
+        /// A `\` in a quoted part that is not before `\`, `"` or `'`.
+        UnsupportedEscape,
+    }
+
+    /// Calls `part` with each part of a define key such as `process.env["NODE-ENV"]`. A subset of esbuild's `ParseGlobalName`: no blanks, three escapes.
+    fn for_each_define_key_part<'k>(
+        key: &'k [u8],
+        mut part: impl FnMut(&[u8]),
+    ) -> Result<(), DefineKeyError<'k>> {
+        use crate::lexer::{is_identifier, keyword};
+
+        fn part_end(key: &[u8], start: usize) -> usize {
+            start + strings::index_of_any(&key[start..], b".[").unwrap_or(key.len() - start)
+        }
+
+        let mut i = part_end(key, 0);
+        let first = &key[..i];
+        if !is_identifier(first) {
+            return Err(DefineKeyError::InvalidIdentifier(first));
+        }
+        match first {
+            b"this" => part(first),
+            b"import" => {
+                // Only `import.meta` can start a key
+                if key.get(i) != Some(&b'.') {
+                    return Err(DefineKeyError::InvalidIdentifier(first));
+                }
+                let meta_end = part_end(key, i + 1);
+                if &key[i + 1..meta_end] != b"meta" {
+                    return Err(DefineKeyError::InvalidIdentifier(first));
+                }
+                part(first);
+                part(b"meta");
+                i = meta_end;
+            }
+            _ if keyword(first).is_some() => {
+                return Err(DefineKeyError::InvalidIdentifier(first));
+            }
+            _ => part(first),
+        }
+
+        while i < key.len() {
+            match key[i] {
+                b'.' => {
+                    let end = part_end(key, i + 1);
+                    let name = &key[i + 1..end];
+                    // A keyword is a valid property name here (`a.if`)
+                    if !is_identifier(name) {
+                        return Err(DefineKeyError::InvalidIdentifier(name));
+                    }
+                    part(name);
+                    i = end;
+                }
+                b'[' => {
+                    let quote = match key.get(i + 1) {
+                        Some(&quote @ (b'"' | b'\'')) => quote,
+                        _ => return Err(DefineKeyError::InvalidIndex),
+                    };
+                    let start = i + 2;
+                    let mut j = start;
+                    // Only a part with an escape needs a copy
+                    let mut unescaped: Option<Vec<u8>> = None;
+                    loop {
+                        match key.get(j) {
+                            None => return Err(DefineKeyError::InvalidIndex),
+                            Some(&c) if c == quote => break,
+                            Some(b'\\') => match key.get(j + 1) {
+                                Some(&escaped @ (b'\\' | b'"' | b'\'')) => {
+                                    unescaped
+                                        .get_or_insert_with(|| key[start..j].to_vec())
+                                        .push(escaped);
+                                    j += 2;
+                                }
+                                Some(_) => return Err(DefineKeyError::UnsupportedEscape),
+                                None => return Err(DefineKeyError::InvalidIndex),
+                            },
+                            Some(&c) => {
+                                if let Some(unescaped) = unescaped.as_mut() {
+                                    unescaped.push(c);
+                                }
+                                j += 1;
+                            }
+                        }
+                    }
+                    if key.get(j + 1) != Some(&b']') {
+                        return Err(DefineKeyError::InvalidIndex);
+                    }
+                    match &unescaped {
+                        Some(unescaped) => part(unescaped),
+                        None => part(&key[start..j]),
+                    }
+                    i = j + 2;
+                }
+                _ => return Err(DefineKeyError::InvalidIndex),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// `process.env["NODE-ENV"]` as `["process", "env", "NODE-ENV"]`.
+    fn parse_define_key(key: &[u8]) -> Result<Vec<Box<[u8]>>, DefineKeyError<'_>> {
+        let mut parts: Vec<Box<[u8]>> = Vec::new();
+        for_each_define_key_part(key, |part| parts.push(Box::from(part)))?;
+        Ok(parts)
+    }
+
+    /// The parts that `Define::insert` files a key under: `process.env["NODE-ENV"]` is `process`, `env`, `NODE-ENV`.
+    pub fn define_key_parts(key: &[u8]) -> Vec<Box<[u8]>> {
+        // Only a key with `[` needs the grammar. Without one the grammar gives the `.` split, or fails into it.
+        if strings::contains_char(key, b'[')
+            && let Ok(parts) = parse_define_key(key)
+        {
+            return parts;
+        }
+        let mut parts = Vec::with_capacity(strings::count_char(key, b'.') + 1);
+        for split in strings::split(key, b".") {
+            parts.push(Box::from(split));
+        }
+        parts
+    }
+
+    /// Checks a define key against the grammar, without a copy of its parts.
+    pub fn validate_define_key(key: &[u8]) -> Result<(), DefineKeyError<'_>> {
+        for_each_define_key_part(key, |_| {})
+    }
+
+    /// The one spelling of a define key: `process.env["NODE_ENV"]` is `process.env.NODE_ENV`. An invalid key stays as written.
+    pub fn canonical_define_key(key: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+        use std::borrow::Cow;
+
+        // A key without brackets has one spelling
+        if !strings::contains_char(key, b'[') {
+            return Cow::Borrowed(key);
+        }
+        let Ok(parts) = parse_define_key(key) else {
+            return Cow::Borrowed(key);
+        };
+
+        let mut canonical: Vec<u8> = Vec::with_capacity(key.len());
+        for (i, part) in parts.iter().enumerate() {
+            if i == 0 {
+                canonical.extend_from_slice(part);
+            } else if crate::lexer::is_identifier(part) {
+                canonical.push(b'.');
+                canonical.extend_from_slice(part);
+            } else {
+                push_define_key_index(&mut canonical, part);
+            }
+        }
+        Cow::Owned(canonical)
+    }
+
+    /// Appends `["part"]` to a define key, in the spelling the key grammar reads back as `part`.
+    pub fn push_define_key_index(key: &mut Vec<u8>, part: &[u8]) {
+        key.extend_from_slice(b"[\"");
+        for &byte in part.iter() {
+            if byte == b'"' || byte == b'\\' {
+                key.push(b'\\');
+            }
+            key.push(byte);
+        }
+        key.extend_from_slice(b"\"]");
     }
 
     pub fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {

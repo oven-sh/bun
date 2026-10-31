@@ -73,7 +73,7 @@ logLevel = "debug" # "debug" | "warn" | "error"
 
 ### `define`
 
-The `define` field replaces global identifiers with constant expressions wherever they appear. The expression should be a JSON string.
+The `define` field replaces global identifiers with constant expressions wherever they appear. The expression is a JSON value, an identifier, or a property path such as `globalThis.foo`.
 
 ```toml title="bunfig.toml" icon="settings"
 [define]

@@ -1,6 +1,6 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
-use super::inputs::{DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind};
+use super::inputs::{DefineRoot, DefineValue, DropReach, LinkForm, PathState, RuntimeValueKind};
 use super::run_order::{ReadOrder, RunOrder};
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
@@ -10,6 +10,7 @@ use crate::bind::{
 use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
 use crate::import_sites::is_in_with_scope;
 use crate::module_format::main_module_operand;
+use crate::verify::is_identifier_text;
 
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_ident(&mut self, e: ExprId, name: Atom) -> Folded {
@@ -31,7 +32,8 @@ impl<'s> Folder<'_, 's> {
             Binding::Symbol(symbol) if self.is_process_import(symbol) && self.is_define_root(e) => {
                 let root = DefineRoot::Global(self.atoms.intern(b"process"));
                 let state = self.inputs.root(root).map(|root| PathState {
-                    has_optional_link: true,
+                    is_bound_root: true,
+                    drop: DropReach::None,
                     has_dynamic_root: !self.has_static_lookup(e),
                     ..root
                 });
@@ -64,23 +66,46 @@ impl<'s> Folder<'_, 's> {
         imports.contains(&symbol)
     }
 
+    /// Runs before the links of an optional chain are asked whether they are reached: `bun build` looks for a define at the whole path first.
+    pub(super) fn fold_path_link(&mut self, e: ExprId, chain: Chain) -> Option<Folded> {
+        let (obj, key) = self.hir.member_key(e)?;
+        // A key that is no text of the program is a step of no define: only a dropped path reaches through it.
+        let is_name = matches!(key, MemberKey::Name(_));
+        if !is_name && !self.inputs.has_dropped_paths {
+            return None;
+        }
+        let &object_state = self.path_states.get(&obj)?;
+        let state = match key {
+            MemberKey::Name(name) => {
+                let form = self.link_form(e, name, chain);
+                self.inputs.child(object_state, name, form)
+            }
+            MemberKey::PrivateName(_) | MemberKey::Computed(_) => {
+                self.inputs.computed_child(object_state)
+            }
+        };
+        self.try_decide_define(e, state)
+    }
+
+    // `"a['b']" => "a.b"` of the visitor: only for a name that is an identifier in ASCII.
+    fn link_form(&self, e: ExprId, name: Atom, chain: Chain) -> LinkForm {
+        let is_printed_behind_dot = || {
+            let text = self.atoms.bytes(name);
+            let is_ascii_name = !text.is_empty() && text.is_ascii();
+            self.inputs.minifies_syntax && is_ascii_name && is_identifier_text(text)
+        };
+        LinkForm {
+            is_in_optional_chain: chain != Chain::No,
+            is_index: self.hir.is_written_in_brackets(e) && !is_printed_behind_dot(),
+        }
+    }
+
     pub(super) fn fold_member(&mut self, e: ExprId, chain: Chain) -> Folded {
         let hir = self.hir;
         let Some((obj, MemberKey::Name(name))) = hir.member_key(e) else {
             return Folded::UNKNOWN;
         };
         let is_in_chain = chain != Chain::No;
-        let form = LinkForm {
-            is_in_optional_chain: is_in_chain,
-            is_index: hir.is_written_in_brackets(e),
-        };
-        let object_state = self.path_states.get(&obj);
-        let object_state =
-            object_state.filter(|_| hir.is_name_resolved_by_transpiler(e, self.atoms.bytes(name)));
-        let state = object_state.and_then(|&state| self.inputs.child(state, name, form));
-        if let Some(folded) = self.try_decide_define(e, state) {
-            return folded;
-        }
         if let Some(folded) = self.fold_imported_member(e, obj, name) {
             return folded;
         }
@@ -213,9 +238,9 @@ impl<'s> Folder<'_, 's> {
         let state = state?;
         self.path_states.insert(e, state);
         let value = self.inputs.value_of(state)?;
-        let is_renamed_identifier = matches!(self.hir[e].kind, ExprKind::Ident(_))
-            && matches!(value, DefineValue::GlobalPath(_));
-        if !is_renamed_identifier && self.is_assignment_target(e) {
+        // `bun build` stores through a path that stands for another path, and leaves any other target as written.
+        let is_renamed = matches!(value, DefineValue::GlobalPath(_));
+        if !is_renamed && self.is_assignment_target(e) {
             return None;
         }
         let constant_globals = [known::undefined, known::NaN, known::Infinity];

@@ -1,5 +1,5 @@
 // A build parses `x["name"]` into the node of `x.name`, so what decides how a program is compiled cannot tell the two apart. The node keeps one bit: written in brackets.
-// Three readers show the text as written to somebody, and only they ask for it: TypeScript's rules, whose errors differ for the two, what `bun build` replaces only behind a dot,
+// Three readers show the text as written to somebody, and only they ask for it: TypeScript's rules, whose errors differ for the two, what `bun build` replaces or drops only behind a dot,
 // and the positions and texts in the errors of a run. Goes by the text of the front end's sources. tools/same-code-in-every-spelling.test.ts asks the same of whole programs.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
@@ -20,7 +20,7 @@ const others: Record<string, string> = {
   "src/sema/check/aot/enum_constants.rs":
     "a member of an enum whose name is not ASCII: `bun build` puts its value there only behind a dot",
   "src/sema/fold/folder_names.rs":
-    "`process.env.NAME`, `process.platform` and what --define names: `bun build` puts a value there only behind a dot",
+    "`process.env.NODE_ENV` as `bun build` defines it by itself: it puts the value there only behind a dot. And what --drop names: a call is dropped through brackets only where they end the callee or its `.call` or `.apply`",
 };
 
 test("only errors, replacements and positions ask how the name of a member is written", () => {

@@ -1,10 +1,12 @@
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
+use core::ops::ControlFlow;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_core::strings;
 
+use crate::defines::{DefineData, DotDefine};
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
@@ -24,6 +26,33 @@ use js_ast::OpCode as Op;
 
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
+
+/// A define value that can replace an assignment target: `FOO = 1` must not become `0 = 1`.
+fn define_value_can_be_assign_target(value: &Expr) -> bool {
+    matches!(
+        value.data.tag(),
+        Tag::EIdentifier | Tag::EDot | Tag::EImportIdentifier | Tag::ECommonjsExportIdentifier
+    )
+}
+
+/// `a.b.c` and `a["b"].c`: a dot last and no `?.`. A define with `plain_path_only` replaces no other spelling.
+fn is_plain_path(expr: &Expr) -> bool {
+    let Data::EDot(last) = expr.data else {
+        return false;
+    };
+    if last.optional_chain.is_some() {
+        return false;
+    }
+    let mut object = last.target;
+    loop {
+        object = match object.data {
+            Data::EDot(dot) if dot.optional_chain.is_none() => dot.target,
+            Data::EIndex(index) if index.optional_chain.is_none() => index.target,
+            Data::EDot(_) | Data::EIndex(_) => return false,
+            _ => return true,
+        };
+    }
+}
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
@@ -106,12 +135,86 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // idc about legacy octal loc
     }
 
-    fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_this(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         p.this_expr_count = p.this_expr_count.wrapping_add(1);
-        if let Some(exp) = p.value_for_this(e.loc) {
-            *e = exp;
-            return;
+        if !p.fn_only_data_visit.is_this_nested && !p.is_revisit_for_substitution {
+            let defines = p.define;
+            if let Some(define) = &defines.this
+                && !define.valueless()
+            {
+                let is_delete_target = matches!(p.delete_target, Data::EThis(..));
+                *e = p.value_for_define(
+                    e,
+                    in_.assign_target,
+                    is_delete_target,
+                    in_.is_property_access_target,
+                    define,
+                );
+            } else if let Some(exp) = p.value_for_this(e.loc) {
+                *e = exp;
+            }
         }
+    }
+
+    /// `*e` is `a["b"]`, and a dot define may end in `b`. Returns whether a define's value replaced `*e`.
+    #[inline(never)]
+    fn apply_index_define(p: &mut Self, e: &mut Expr, in_: ExprIn, is_delete_target: bool) -> bool {
+        let Data::EIndex(index) = e.data else {
+            return false;
+        };
+        let Data::EString(mut name) = index.index.data else {
+            return false;
+        };
+        let defines = p.define;
+        match defines.dots.get(name.slice(p.arena)) {
+            Some(candidates) => {
+                Self::apply_dot_define(p, e, in_, is_delete_target, candidates).is_break()
+            }
+            None => false,
+        }
+    }
+
+    /// `candidates` end in the `b` of `*e` (`a.b`, `a["b"]`). Breaks when a value replaced `*e`, else gives the match.
+    #[inline(never)]
+    fn apply_dot_define(
+        p: &mut Self,
+        e: &mut Expr,
+        in_: ExprIn,
+        is_delete_target: bool,
+        candidates: &'a [DotDefine],
+    ) -> ControlFlow<(), Option<&'a DefineData>> {
+        let expr = *e;
+        for define in candidates {
+            if !p.is_dot_define_match(expr, &define.parts) {
+                continue;
+            }
+            if define.data.plain_path_only() && !is_plain_path(&expr) {
+                continue;
+            }
+            // Substitute user-specified defines
+            if !define.data.valueless() {
+                let replacement = p.value_for_define(
+                    e,
+                    in_.assign_target,
+                    is_delete_target,
+                    in_.is_property_access_target,
+                    &define.data,
+                );
+                if in_.assign_target == js_ast::AssignTarget::None
+                    || define_value_can_be_assign_target(&replacement)
+                {
+                    *e = replacement;
+                    return ControlFlow::Break(());
+                }
+            } else if in_.assign_target == js_ast::AssignTarget::None
+                && define.data.method_call_must_be_replaced_with_undefined()
+                && in_.property_access_for_method_call_maybe_should_replace_with_undefined
+            {
+                p.method_call_must_be_replaced_with_undefined = true;
+            }
+            return ControlFlow::Continue(Some(&define.data));
+        }
+        ControlFlow::Continue(None)
     }
 
     fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -139,6 +242,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
 
     fn e_import_meta(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let expr = *e;
         // TODO: delete import.meta might not work
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
@@ -153,8 +259,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 // Substitute user-specified defines
-                *e =
-                    p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                if !define.data.valueless() {
+                    *e = p.value_for_define(
+                        e,
+                        in_.assign_target,
+                        is_delete_target,
+                        in_.is_property_access_target,
+                        &define.data,
+                    );
+                }
                 return;
             }
         }
@@ -267,8 +380,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.record_assignment(result.r#ref);
         }
 
-        let mut original_name: Option<&[u8]> = None;
-
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
@@ -280,20 +391,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
-                    let newvalue: Expr =
-                        p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
+                    let newvalue: Expr = p.value_for_define(
+                        e,
+                        in_.assign_target,
+                        is_delete_target,
+                        in_.is_property_access_target,
+                        def,
+                    );
 
-                    // Don't substitute an identifier for a non-identifier if this is an
-                    // assignment target, since it'll cause a syntax error
-                    if matches!(newvalue.data.tag(), Tag::EIdentifier)
-                        || in_.assign_target == js_ast::AssignTarget::None
+                    if in_.assign_target == js_ast::AssignTarget::None
+                        || define_value_can_be_assign_target(&newvalue)
                     {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;
                         return;
                     }
-
-                    original_name = def.original_name();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
@@ -338,7 +450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = p.handle_identifier(
             expr.loc,
             e_,
-            original_name,
+            None,
             IdentifierOpts::default()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
@@ -906,9 +1018,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `--drop`: `x[i]()`, `x[i].call()` and `x[i].apply()` call the method. `x[i].bind(y)` makes a value.
+        let call_may_be_dropped = in_
+            .property_access_for_method_call_maybe_should_replace_with_undefined
+            && (is_call_target
+                || matches!(p.call_target, Data::EDot(dot)
+                    if (dot.name == b"call" || dot.name == b"apply")
+                        && matches!(dot.target.data, Data::EIndex(t) if core::ptr::eq(&raw const *e_, &raw const *t))));
+
+        // `a["b"]` matches the same define as `a.b`. The filter takes UTF-8, and a non-ASCII literal is UTF-16.
+        if let Data::EString(s) = e_.index.data
+            && (if s.is_utf8() {
+                s.next.is_some() || p.define.dots_filter.may_contain_user_name(s.data.slice())
+            } else {
+                p.define
+                    .dots_filter
+                    .non_ascii_names()
+                    .iter()
+                    .any(|name| s.eql_bytes(name))
+            })
+            && Self::apply_index_define(
+                p,
+                e,
+                ExprIn {
+                    property_access_for_method_call_maybe_should_replace_with_undefined:
+                        call_may_be_dropped,
+                    ..in_
+                },
+                is_delete_target,
+            )
+        {
+            return;
+        }
+
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
+                property_access_for_method_call_maybe_should_replace_with_undefined:
+                    call_may_be_dropped,
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -994,7 +1141,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
+                // Hide the `--drop` flag from the target visit so a call in the index (`console[foo()]()`) does not consume it
+                let target_is_dropped_method_call =
+                    call_may_be_dropped && p.method_call_must_be_replaced_with_undefined;
+                if target_is_dropped_method_call {
+                    p.method_call_must_be_replaced_with_undefined = false;
+                }
                 p.visit_expr(&mut e_.index);
+                if target_is_dropped_method_call {
+                    p.method_call_must_be_replaced_with_undefined = true;
+                }
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
@@ -1356,43 +1512,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
         // while iterating without laundering.
         let defines = p.define;
-        if let Some(parts) = defines.dots_for(e_.name.slice()) {
-            for define in parts.as_slice() {
-                if p.is_dot_define_match(expr, &define.parts) {
-                    if in_.assign_target == js_ast::AssignTarget::None {
-                        // Substitute user-specified defines
-                        if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
-                            return;
-                        }
-
-                        if define.data.method_call_must_be_replaced_with_undefined()
-                            && in_
-                                .property_access_for_method_call_maybe_should_replace_with_undefined
-                        {
-                            p.method_call_must_be_replaced_with_undefined = true;
-                        }
-                    }
-
+        if let Some(candidates) = defines.dots_for(e_.name.slice()) {
+            match Self::apply_dot_define(p, e, in_, is_delete_target, candidates) {
+                ControlFlow::Break(()) => return,
+                ControlFlow::Continue(None) => {}
+                // Not onto an optional chain: an unused `Symbol?.for("a")` stays, as it checks that `Symbol` exists
+                ControlFlow::Continue(Some(define)) if e_.optional_chain.is_none() => {
                     // Copy the side effect flags over in case this expression is unused
-                    if define.data.can_be_removed_if_unused() {
+                    if define.can_be_removed_if_unused() {
                         e_.can_be_removed_if_unused = true;
                     }
 
-                    if define.data.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
+                    if define.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
                         && !p.options.ignore_dce_annotations
                     {
                         e_.call_can_be_unwrapped_if_unused =
-                            define.data.call_can_be_unwrapped_if_unused();
+                            define.call_can_be_unwrapped_if_unused();
                     }
-
-                    break;
                 }
+                ControlFlow::Continue(Some(_)) => {}
             }
         }
 

@@ -63,6 +63,13 @@ const GLOBAL_PATH: Fold<'static> = Fold {
     defines: &[(Path::Global(&["ALIAS"]), Defined::GlobalPath(&["a", "b"]))],
     ..Fold::NONE
 };
+const MEMBER_GLOBAL_PATH: Fold<'static> = Fold {
+    defines: &[(
+        Path::Global(&["holder", "ALIAS"]),
+        Defined::GlobalPath(&["a", "b"]),
+    )],
+    ..Fold::NONE
+};
 const CONFIG: Fold<'static> = Fold {
     defines: &[(
         Path::Global(&["CONFIG"]),
@@ -105,14 +112,47 @@ const MATCHED_DEFINES: &[(&str, &str)] = &[
     ("a.ts", "process.env!.NODE_ENV;"),
     ("a.cjs", "function f() { eval(s); process.env.NODE_ENV; }"),
     ("a.mjs", "delete process.env.NODE_ENV;"),
-];
-
-const DEFINES_MATCHED_WHEN_MINIFYING_SYNTAX: &[(&str, &str)] = &[
     ("a.mjs", r#"process.env["NODE_ENV"];"#),
     ("a.mjs", r#"process["env"]["NODE_ENV"];"#),
     ("a.mjs", "process.env[`NODE_ENV`];"),
     ("a.mjs", r#"(process.env)[("NODE_ENV")];"#),
     ("a.ts", r#"(process.env as any)["NODE_ENV"];"#),
+    ("a.mjs", r#"delete process.env["NODE_ENV"];"#),
+    ("a.mjs", "process?.env.NODE_ENV;"),
+    ("a.mjs", "process.env?.NODE_ENV;"),
+    ("a.mjs", "process?.env?.NODE_ENV;"),
+    ("a.mjs", r#"process?.["env"]?.["NODE_ENV"];"#),
+];
+
+// What `bun build` defines by itself in a build for a server: only a dot last, and no `?.`.
+const PLAIN_NODE_ENV: Fold<'static> = Fold {
+    plain_path_defines: &[Path::Global(&["process", "env", "NODE_ENV"])],
+    ..NODE_ENV
+};
+
+const PLAIN_PATHS: &[(&str, &str)] = &[
+    ("a.mjs", "process.env.NODE_ENV;"),
+    ("a.mjs", r#"process["env"].NODE_ENV;"#),
+    ("a.mjs", "process[`env`].NODE_ENV;"),
+    ("a.mjs", "(process.env).NODE_ENV;"),
+    ("a.ts", "(process.env as any).NODE_ENV;"),
+    ("a.ts", "process.env!.NODE_ENV;"),
+    ("a.mjs", "delete process.env.NODE_ENV;"),
+];
+
+const PATHS_THAT_ARE_PLAIN_WHEN_MINIFYING_SYNTAX: &[(&str, &str)] = &[
+    ("a.mjs", r#"process.env["NODE_ENV"];"#),
+    ("a.mjs", r#"process["env"]["NODE_ENV"];"#),
+    ("a.mjs", "process.env[`NODE_ENV`];"),
+    ("a.mjs", r#"(process.env)[("NODE_ENV")];"#),
+    ("a.ts", r#"(process.env as any)["NODE_ENV"];"#),
+];
+
+const PATHS_THAT_ARE_NEVER_PLAIN: &[(&str, &str)] = &[
+    ("a.mjs", "process?.env.NODE_ENV;"),
+    ("a.mjs", "process.env?.NODE_ENV;"),
+    ("a.mjs", "process?.env?.NODE_ENV;"),
+    ("a.mjs", r#"process.env?.["NODE_ENV"];"#),
 ];
 
 const UNMATCHED_DEFINES: &[(&str, &str)] = &[
@@ -124,15 +164,15 @@ const UNMATCHED_DEFINES: &[(&str, &str)] = &[
         "a.cjs",
         "with (o) { (function () { eval(s); process.env.NODE_ENV; }); }",
     ),
-    ("a.mjs", "process?.env.NODE_ENV;"),
-    ("a.mjs", "process.env?.NODE_ENV;"),
     ("a.mjs", "process.env.NODE_ENV = 1;"),
+    ("a.mjs", r#"process.env["NODE_ENV"] = 1;"#),
     ("a.mjs", "process.env.NODE_ENV += 1;"),
     ("a.mjs", "process.env.NODE_ENV++;"),
     ("a.mjs", "[process.env.NODE_ENV] = a;"),
     ("a.mjs", "for (process.env.NODE_ENV in o);"),
     ("a.mjs", "x.process.env.NODE_ENV;"),
     ("a.mjs", "process.env[k];"),
+    ("a.mjs", r#"process.env["NODE_" + "ENV"];"#),
     ("a.mjs", "process.env.OTHER;"),
     ("a.mjs", "process.env.NODE_ENV.length;"),
 ];
@@ -146,28 +186,60 @@ const DROPPED_CALLS: &[(&str, &str)] = &[
     ("a.mjs", "tools.trace(f());"),
     ("a.mjs", "tools.trace.deep(f());"),
     ("a.mjs", "tools.trace?.deep(f());"),
+    ("a.mjs", "tools?.trace(f());"),
+    ("a.mjs", "tools?.trace.deep(f());"),
     ("a.ts", "(console as any).info(f());"),
     ("a.cjs", "function g() { eval(s); console.log(f()); }"),
+    ("a.mjs", r#"console["log"](f());"#),
+    ("a.mjs", "console[`log`](f());"),
+    ("a.mjs", r#"console["log"].call(console, f());"#),
+    ("a.mjs", r#"console["log"].apply(console, [f()]);"#),
+    ("a.mjs", r#"console.log["call"](console, f());"#),
+    ("a.mjs", r#"console["not-a-name"](f());"#),
+    ("a.mjs", "console[k](f());"),
+    ("a.mjs", "console[k()](f());"),
+    ("a.mjs", "console[0](f());"),
+    ("a.mjs", "console[k].call(console, f());"),
+    ("a.mjs", "console[k]?.(f());"),
+    ("a.mjs", "assert[k](f());"),
+    ("a.mjs", r#"tools["trace"](f());"#),
+    ("a.mjs", r#"tools?.["trace"](f());"#),
+    ("a.mjs", r#"tools["trace"].call(tools, f());"#),
+    ("a.mjs", r#"tools.trace["deep"](f());"#),
+    ("a.mjs", "class C { #m; static s() { console.#m(f()); } }"),
 ];
 
 const CALLS_DROPPED_WHEN_MINIFYING_SYNTAX: &[(&str, &str)] = &[
-    ("a.mjs", r#"console["log"](f());"#),
-    ("a.mjs", r#"console["log"].call(console, f());"#),
-    ("a.mjs", r#"console.log["call"](console, f());"#),
-    ("a.mjs", r#"tools["trace"](f());"#),
     ("a.mjs", r#"tools["trace"].deep(f());"#),
-    ("a.mjs", r#"tools.trace["deep"](f());"#),
+    ("a.mjs", r#"console["log"].bind(console, f());"#),
+    ("a.mjs", r#"console["log"]["call"](console, f());"#),
+    ("a.mjs", r#"console["a"]["b"](f());"#),
+    ("a.mjs", r#"console.a["b"].c(f());"#),
 ];
 
 const RETAINED_CALLS: &[(&str, &str)] = &[
     ("a.mjs", "tools.keep(f());"),
-    ("a.mjs", "tools?.trace(f());"),
-    ("a.mjs", "tools?.trace.deep(f());"),
+    ("a.mjs", r#"tools.other["trace"](f());"#),
     ("a.mjs", "function g(console) { console.log(f()); }"),
     ("a.mjs", "const console = x; console.log(f());"),
     ("a.mjs", "const alias = console; alias.log(f());"),
     ("a.mjs", "new console.Console(f());"),
     ("a.cjs", "with (o) { console.log(f()); }"),
+    ("a.mjs", "console[k].bind(console, f());"),
+    ("a.mjs", "console[k].other(f());"),
+    ("a.mjs", "console[k].call.call(console, f());"),
+    ("a.mjs", r#"console["not-a-name"].other(f());"#),
+    ("a.mjs", r#"(0, console["log"])(f());"#),
+    (
+        "a.mjs",
+        "class C { #m; static s() { console.#m.other(f()); } }",
+    ),
+];
+
+const CALLS_RETAINED_WHEN_MINIFYING_SYNTAX: &[(&str, &str)] = &[
+    ("a.mjs", "console[k].bind(console, f());"),
+    ("a.mjs", r#"console["not-a-name"].other(f());"#),
+    ("a.mjs", r#"console["ü"].other(f());"#),
 ];
 
 type DeadCalls = (
@@ -1375,16 +1447,12 @@ fn defines_match_free_paths() {
 }
 
 #[test]
-fn defines_match_paths_that_end_in_brackets_when_minifying_syntax() {
+fn defines_match_the_same_paths_when_minifying_syntax() {
     let minifying = Fold {
         minifies_syntax: true,
         ..NODE_ENV
     };
-    for &(path, text) in DEFINES_MATCHED_WHEN_MINIFYING_SYNTAX {
-        folded(path, text, NODE_ENV, |s| {
-            let found = decision(s, last_member(s));
-            assert_eq!(found, Decision::Unknown, "{path}: {text}");
-        });
+    for &(path, text) in MATCHED_DEFINES {
         folded(path, text, minifying, |s| {
             let expected = string(s, "production");
             assert_eq!(decision(s, last_member(s)), expected, "{path}: {text}");
@@ -1393,7 +1461,41 @@ fn defines_match_paths_that_end_in_brackets_when_minifying_syntax() {
 }
 
 #[test]
-fn defines_match_no_path_with_a_name_that_is_not_ascii_in_brackets() {
+fn define_of_a_plain_path_alone_leaves_brackets_at_the_end_and_optional_chains() {
+    let minifying = Fold {
+        minifies_syntax: true,
+        ..PLAIN_NODE_ENV
+    };
+    for &(path, text) in PLAIN_PATHS {
+        for fold in [PLAIN_NODE_ENV, minifying] {
+            folded(path, text, fold, |s| {
+                let expected = string(s, "production");
+                assert_eq!(decision(s, last_member(s)), expected, "{path}: {text}");
+            });
+        }
+    }
+    for &(path, text) in PATHS_THAT_ARE_PLAIN_WHEN_MINIFYING_SYNTAX {
+        folded(path, text, PLAIN_NODE_ENV, |s| {
+            let found = decision(s, last_member(s));
+            assert_eq!(found, Decision::Unknown, "{path}: {text}");
+        });
+        folded(path, text, minifying, |s| {
+            let expected = string(s, "production");
+            assert_eq!(decision(s, last_member(s)), expected, "{path}: {text}");
+        });
+    }
+    for &(path, text) in PATHS_THAT_ARE_NEVER_PLAIN {
+        for fold in [PLAIN_NODE_ENV, minifying] {
+            folded(path, text, fold, |s| {
+                let found = decision(s, last_member(s));
+                assert_eq!(found, Decision::Unknown, "{path}: {text}");
+            });
+        }
+    }
+}
+
+#[test]
+fn defines_match_a_name_that_is_not_ascii_however_it_is_written() {
     let defines = [(
         Path::Global(&["config", "ü", "deep"]),
         Defined::Value(Data::String("production")),
@@ -1404,15 +1506,43 @@ fn defines_match_no_path_with_a_name_that_is_not_ascii_in_brackets() {
             minifies_syntax,
             ..Fold::NONE
         };
-        folded("a.mjs", "config.ü.deep;", fold, |s| {
-            assert_eq!(decision(s, last_member(s)), string(s, "production"));
-        });
-        for text in [r#"config["ü"].deep;"#, r#"config["\u00fc"].deep;"#] {
+        let texts = [
+            "config.ü.deep;",
+            r#"config["ü"].deep;"#,
+            r#"config["\u00fc"].deep;"#,
+            r#"config["ü"]["deep"];"#,
+        ];
+        for text in texts {
             folded("a.mjs", text, fold, |s| {
-                assert_eq!(decision(s, last_member(s)), Decision::Unknown, "{text}");
+                let expected = string(s, "production");
+                assert_eq!(decision(s, last_member(s)), expected, "{text}");
             });
         }
     }
+}
+
+#[test]
+fn define_of_a_longer_path_comes_before_a_short_circuit() {
+    let defines = [
+        (Path::Global(&["a"]), Defined::Value(Data::Null)),
+        (
+            Path::Global(&["a", "b", "c"]),
+            Defined::Value(Data::Number(1.0)),
+        ),
+    ];
+    let fold = Fold {
+        defines: &defines,
+        ..Fold::NONE
+    };
+    folded("a.mjs", "a?.b.c;", fold, |s| {
+        let expected = Decision::Constant(Constant::Number(1.0));
+        assert_eq!(decision(s, last_member(s)), expected);
+    });
+    folded("a.mjs", "a?.b.d;", fold, |s| {
+        let chain = last_member(s);
+        assert_eq!(decision(s, chain), Decision::Unknown);
+        assert!(s.analysis.decisions.is_short_circuited_link(chain));
+    });
 }
 
 #[test]
@@ -1477,6 +1607,30 @@ fn kinds_of_define_values() {
             );
         });
     }
+    let member_texts = [
+        "holder.ALIAS;",
+        "holder.ALIAS = 1;",
+        r#"holder["ALIAS"] = 1;"#,
+        "holder.ALIAS += 1;",
+        "holder.ALIAS++;",
+        "[holder.ALIAS] = a;",
+        "for (holder.ALIAS in o);",
+        "delete holder.ALIAS;",
+        "holder?.ALIAS;",
+    ];
+    for text in member_texts {
+        folded("a.mjs", text, MEMBER_GLOBAL_PATH, |s| {
+            let found = decision(s, last_member(s));
+            let Decision::GlobalPath(names) = found else {
+                panic!("{text}: {found:?}");
+            };
+            assert_eq!(
+                names,
+                [s.workspace.atom("a"), s.workspace.atom("b")],
+                "{text}"
+            );
+        });
+    }
     folded("a.mjs", "CONFIG.a;", CONFIG, |s| {
         let found = decision(s, s.ident("CONFIG", 0));
         assert_eq!(data_text(s, found), r#"{"a":[1]}"#);
@@ -1531,7 +1685,7 @@ fn dropped_calls() {
 }
 
 #[test]
-fn calls_through_brackets_are_dropped_when_minifying_syntax() {
+fn brackets_with_a_name_are_a_dot_when_minifying_syntax() {
     let minifying = Fold {
         minifies_syntax: true,
         ..DROPS
@@ -1542,11 +1696,40 @@ fn calls_through_brackets_are_dropped_when_minifying_syntax() {
             assert_eq!(found, Decision::Unknown, "{path}: {text}");
             assert!(!is_dead(s, "f"), "{path}: {text}");
         });
+    }
+    let dropped = DROPPED_CALLS
+        .iter()
+        .chain(CALLS_DROPPED_WHEN_MINIFYING_SYNTAX);
+    for &(path, text) in dropped {
         folded(path, text, minifying, |s| {
             assert_eq!(decision(s, last_call(s)), UNDEFINED, "{path}: {text}");
             assert!(is_dead(s, "f"), "{path}: {text}");
         });
     }
+    for &(path, text) in CALLS_RETAINED_WHEN_MINIFYING_SYNTAX {
+        folded(path, text, minifying, |s| {
+            let found = decision(s, last_call(s));
+            assert_eq!(found, Decision::Unknown, "{path}: {text}");
+            assert!(!is_dead(s, "f"), "{path}: {text}");
+        });
+    }
+}
+
+#[test]
+fn import_of_process_is_no_dropped_path() {
+    let drops = Fold {
+        dropped_calls: &[Path::Global(&["process"])],
+        ..Fold::NONE
+    };
+    let text = r#"import process from "node:process"; process.exit(f());"#;
+    folded("a.mjs", text, drops, |s| {
+        assert_eq!(decision(s, last_call(s)), Decision::Unknown);
+        assert!(!is_dead(s, "f"));
+    });
+    folded("a.mjs", "process.exit(f());", drops, |s| {
+        assert_eq!(decision(s, last_call(s)), UNDEFINED);
+        assert!(is_dead(s, "f"));
+    });
 }
 
 #[test]

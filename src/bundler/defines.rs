@@ -15,8 +15,9 @@ use bun_js_parser::lexer as js_lexer;
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+    Define, DefineData, DefineKeyError, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
+    UserDefines, UserDefinesArray, are_parts_equal, canonical_define_key, push_define_key_index,
+    validate_define_key,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
@@ -97,8 +98,14 @@ pub(crate) fn copy_env_for_define(
             continue;
         }
         key_buf.clear();
-        key_buf.extend_from_slice(PROCESS_ENV);
-        key_buf.extend_from_slice(k);
+        // A name that is not an identifier (`MY-VAR`, `MY.VAR`) is one quoted part of the key
+        if js_lexer::is_identifier(k) {
+            key_buf.extend_from_slice(PROCESS_ENV);
+            key_buf.extend_from_slice(k);
+        } else {
+            key_buf.extend_from_slice(&PROCESS_ENV[..PROCESS_ENV.len() - 1]);
+            push_define_key_index(&mut key_buf, k);
+        }
         env_string_store_put(to_string, bump, &key_buf, &v.value)?;
     }
 
@@ -181,6 +188,50 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     } else {
         None
     }
+}
+
+/// A member chain value such as `globalThis.foo`; only the first part is keyword-checked, as in esbuild.
+fn is_member_chain_define_value(value_str: &[u8]) -> bool {
+    let mut splitter = strings::split(value_str, b".");
+    let Some(first) = splitter.next() else {
+        return false;
+    };
+    if !js_lexer::is_identifier(first) {
+        return false;
+    }
+    match js_lexer::keyword(first) {
+        None | Some(js_lexer::T::TNull) | Some(js_lexer::T::TThis) => {}
+        Some(js_lexer::T::TImport) => {
+            let after_import = &value_str[first.len()..];
+            if !(after_import == b".meta" || after_import.starts_with(b".meta.")) {
+                return false;
+            }
+        }
+        Some(_) => return false,
+    }
+    while let Some(part) = splitter.next() {
+        if !js_lexer::is_identifier(part) {
+            return false;
+        }
+    }
+    true
+}
+
+/// `123n` or `0xffn` without the `n` suffix, the form `E::BigInt.value` stores.
+fn bigint_define_value(value_str: &[u8]) -> Option<&[u8]> {
+    let digits = value_str.strip_suffix(b"n")?;
+    let (radix, body): (u32, &[u8]) = match digits {
+        [b'0', b'x' | b'X', rest @ ..] => (16, rest),
+        [b'0', b'o' | b'O', rest @ ..] => (8, rest),
+        [b'0', b'b' | b'B', rest @ ..] => (2, rest),
+        // A decimal literal must not have a leading zero, except `0n`
+        [b'0', _, ..] => return None,
+        _ => (10, digits),
+    };
+    if body.is_empty() || !body.iter().all(|c| (*c as char).is_digit(radix)) {
+        return None;
+    }
+    Some(digits)
 }
 
 /// Extension surface for the canonical `DefineData` — `parse` / `from_input`
@@ -268,74 +319,97 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
-        let mut key_splitter = strings::split(key, b".");
-        while let Some(part) = key_splitter.next() {
-            if !js_lexer::is_identifier(part) {
-                if strings::eql(part, key) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::default(),
-                        format_args!(
-                            "define key \"{}\" must be a valid identifier",
-                            bstr::BStr::new(key)
-                        ),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::default(),
-                        format_args!(
-                            "define key \"{}\" contains invalid identifier \"{}\"",
-                            bstr::BStr::new(part),
-                            bstr::BStr::new(value_str)
-                        ),
-                    );
-                }
-                break;
+        match validate_define_key(key) {
+            Ok(()) => {}
+            Err(DefineKeyError::InvalidIdentifier(part)) if strings::eql(part, key) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::default(),
+                    format_args!(
+                        "define key \"{}\" must be a valid identifier",
+                        bstr::BStr::new(key)
+                    ),
+                );
+            }
+            Err(DefineKeyError::InvalidIdentifier(part)) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::default(),
+                    format_args!(
+                        "define key \"{}\" contains invalid identifier \"{}\"",
+                        bstr::BStr::new(key),
+                        bstr::BStr::new(part)
+                    ),
+                );
+            }
+            Err(DefineKeyError::InvalidIndex) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::default(),
+                    format_args!(
+                        "define key \"{}\" must use a quoted string inside \"[]\", for example process.env[\"MY-VAR\"]",
+                        bstr::BStr::new(key)
+                    ),
+                );
+            }
+            Err(DefineKeyError::UnsupportedEscape) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::default(),
+                    format_args!(
+                        "define key \"{}\" has an escape that is not supported inside \"[]\", only \\\\, \\\" and \\' are",
+                        bstr::BStr::new(key)
+                    ),
+                );
             }
         }
 
-        // check for nested identifiers
-        let mut value_splitter = strings::split(value_str, b".");
-        let mut is_ident = true;
+        let finish = |value: ExprData, can_be_removed_if_unused: bool| DefineData {
+            value,
+            // Own the value bytes: these are tiny startup-time copies.
+            original_name: if !value_str.is_empty() {
+                Some(Box::<[u8]>::from(value_str))
+            } else {
+                None
+            },
+            flags: Flags::new(
+                /* valueless: */ value_is_undefined,
+                can_be_removed_if_unused,
+                /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
+                method_call_must_be_replaced_with_undefined_,
+            ),
+        };
 
-        while let Some(part) = value_splitter.next() {
-            if !js_lexer::is_identifier(part) || js_lexer::keyword(part).is_some() {
-                is_ident = false;
-                break;
-            }
+        // Special-case undefined, it's not an identifier here: https://github.com/evanw/esbuild/issues/1407
+        if value_is_undefined || value_str == b"undefined" {
+            // A `--drop` name has no value: a bare read of it stays, and throws when the name is not defined
+            return Ok(finish(
+                ExprData::EUndefined(bun_ast::E::Undefined),
+                !value_is_undefined,
+            ));
         }
 
-        if is_ident {
-            // Special-case undefined. it's not an identifier here
-            // https://github.com/evanw/esbuild/issues/1407
-            let value = if value_is_undefined || value_str == b"undefined" {
-                ExprData::EUndefined(bun_ast::E::Undefined)
+        // The parser builds the chain from `original_name` when it substitutes the define
+        if is_member_chain_define_value(value_str) {
+            // `null` alone is a constant. `null.x` stays a member chain.
+            let value = if value_str == b"null" {
+                ExprData::ENull(bun_ast::E::Null)
             } else {
                 ExprData::EIdentifier(
                     bun_ast::E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
                 )
             };
+            return Ok(finish(value, true));
+        }
 
-            return Ok(DefineData {
-                value,
-                // upstream `DefineData` now owns `original_name:
-                // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of a
-                // borrowed `ptr`/`len` pair. Dupe
-                // the value bytes — these are tiny startup-time copies.
-                original_name: if !value_str.is_empty() {
-                    Some(Box::<[u8]>::from(value_str))
-                } else {
-                    None
+        if let Some(digits) = bigint_define_value(value_str) {
+            let digits: &[u8] = bump.alloc_slice_copy(digits);
+            let value = ExprData::EBigInt(bun_ast::StoreRef::from_bump(bump.alloc(
+                bun_ast::E::BigInt {
+                    value: bun_ast::StoreStr::new(digits),
                 },
-                flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ true,
-                    /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
-                    /* method_call_must_be_replaced_with_undefined: */
-                    method_call_must_be_replaced_with_undefined_,
-                ),
-            });
+            )));
+            return Ok(finish(value, true));
         }
 
         // Fast path for the compile-time-constant literal define *values* that
@@ -349,21 +423,7 @@ impl DefineDataExt for DefineData {
         // (created lazily below only when a value really needs JSON parsing).
         if let Some(value) = const_default_define_value(value_str) {
             let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
-            return Ok(DefineData {
-                value,
-                original_name: if !value_str.is_empty() {
-                    Some(Box::<[u8]>::from(value_str))
-                } else {
-                    None
-                },
-                flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ can_be_removed_if_unused,
-                    /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
-                    /* method_call_must_be_replaced_with_undefined: */
-                    method_call_must_be_replaced_with_undefined_,
-                ),
-            });
+            return Ok(finish(value, can_be_removed_if_unused));
         }
 
         // `parse_env_json` builds `E::String`/`E::Object` nodes in the
@@ -392,21 +452,7 @@ impl DefineDataExt for DefineData {
         clear_locs(&mut expr);
         let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
-        Ok(DefineData {
-            value: data,
-            original_name: if !value_str.is_empty() {
-                Some(Box::<[u8]>::from(value_str))
-            } else {
-                None
-            },
-            flags: Flags::new(
-                /* valueless: */ value_is_undefined,
-                /* can_be_removed_if_unused: */ can_be_removed_if_unused,
-                /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
-                /* method_call_must_be_replaced_with_undefined: */
-                method_call_must_be_replaced_with_undefined_,
-            ),
-        })
+        Ok(finish(data, can_be_removed_if_unused))
     }
 
     fn from_input(
@@ -430,7 +476,8 @@ impl DefineDataExt for DefineData {
         }
 
         for drop_item in drop {
-            if !drop_item.is_empty() {
+            // `--drop=debugger` is a statement drop, the caller sets `Define.drop_debugger` for it
+            if !drop_item.is_empty() && *drop_item != b"debugger" {
                 <Self as DefineDataExt>::from_mergeable_input_entry(
                     &mut user_defines,
                     drop_item,

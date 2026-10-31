@@ -7,6 +7,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
 use bun_js_parser::parser::Runtime;
+use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
@@ -816,6 +817,8 @@ pub(crate) fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
+    // `CompileTarget::prepend_defines` has put `CompileTarget::DEFINE_KEYS` in front of the input
+    has_compile_target_defines: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
@@ -825,11 +828,33 @@ pub(crate) fn defines_from_transform_options(
 
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
     user_defines.reserve(input_keys.len() + 4);
+    let mut compile_target_key_uses = [0usize; CompileTarget::DEFINE_KEYS.len()];
     for (i, key) in input_keys.iter().enumerate() {
-        user_defines.insert(key.as_ref(), input_values[i].clone());
+        // One spelling for each key: a later entry and the defaults below must find an earlier one
+        let key = defines::canonical_define_key(key);
+        if has_compile_target_defines {
+            for (uses, target_key) in compile_target_key_uses
+                .iter_mut()
+                .zip(CompileTarget::DEFINE_KEYS)
+            {
+                *uses += usize::from(*key == *target_key);
+            }
+        }
+        user_defines.insert(&key, input_values[i].clone());
     }
 
     let mut environment_defines = defines::UserDefinesArray::default();
+    // The keys of the defines that Bun adds by itself: those below that no `--define` gave
+    let mut own_defaults: Vec<&'static [u8]> = Vec::new();
+    // A key of the `--compile` target that the input has one time is the one that `--compile` put there
+    for (uses, target_key) in compile_target_key_uses
+        .into_iter()
+        .zip(CompileTarget::DEFINE_KEYS)
+    {
+        if uses == 1 {
+            own_defaults.push(target_key);
+        }
+    }
 
     let mut behavior = api::DotEnvBehavior::disable;
 
@@ -890,13 +915,20 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        let mut add_default = |key: &'static [u8], value: Box<[u8]>| {
+            let added = user_defines.get_or_put_value(key, value)?;
+            if !added.found_existing {
+                own_defaults.push(key);
+            }
+            Ok::<(), bun_alloc::AllocError>(())
+        };
+        add_default(default_user_defines::node_env::KEY, quoted_node_env.clone())?;
+        add_default(b"process.env.BUN_ENV", quoted_node_env)?;
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
         if let Some(value) = target.process_browser_define_value() {
-            user_defines.get_or_put_value(
+            add_default(
                 default_user_defines::process_browser_define::KEY,
                 Box::from(value.as_bytes()),
             )?;
@@ -917,7 +949,20 @@ pub(crate) fn defines_from_transform_options(
         }
     }
 
-    let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
+    let mut resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
+    let mut plain_path_keys: Vec<&'static [u8]> = Vec::new();
+    // A server has the real `process` where it runs, and a program reads it there with `process.env["NODE_ENV"]` or `process?.platform`
+    if target.is_server_side() {
+        for key in own_defaults {
+            // A `--drop` of the same key has the entry now, and that one is the user's.
+            if let Some(data) = resolved_defines.get_mut(key)
+                && !data.valueless()
+            {
+                data.set_plain_path_only();
+                plain_path_keys.push(key);
+            }
+        }
+    }
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
@@ -936,6 +981,7 @@ pub(crate) fn defines_from_transform_options(
                 _ => None,
             }),
         drop.iter().copied(),
+        plain_path_keys.iter().copied(),
     );
 
     let mut define = defines::Define::init(
@@ -1457,6 +1503,7 @@ impl<'a> BundleOptions<'a> {
             banner: self.banner.clone(),
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
+                this: self.define.this.clone(),
                 dots: self.define.dots.clone(),
                 dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
@@ -1680,6 +1727,7 @@ impl<'a> BundleOptions<'a> {
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
+            self.transform_options.has_compile_target_defines,
             arena,
         )?;
         self.defines_loaded = true;

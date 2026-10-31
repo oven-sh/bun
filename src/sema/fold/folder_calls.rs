@@ -1,6 +1,7 @@
 use super::evaluate::Value;
 use super::feature_flags::find_feature_flag;
 use super::folder::{Effects, Folded, Folder};
+use super::inputs::DropReach;
 use super::{Constant, Decision};
 use crate::bind::Binding;
 use crate::hir::{Call, Chain, ExprId, ExprKind, IdList};
@@ -10,7 +11,7 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn fold_call(&mut self, e: ExprId, call: Call) -> Folded {
         self.mark_folded_by_build_alone(e);
         let callee_state = self.path_states.get(&call.callee);
-        if callee_state.is_some_and(|state| state.is_dropped) {
+        if callee_state.is_some_and(|state| state.drop != DropReach::None) {
             return self.decide(e, Decision::Constant(Constant::Undefined));
         }
         if let Some(folded) = self.fold_short_circuit(e, call.callee, call.chain) {

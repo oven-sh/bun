@@ -118,8 +118,9 @@ pub(crate) struct TTY {
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
 
+    /// Made at the first write that the descriptor refuses.
     #[cfg(unix)]
-    writes: JsCell<WriteQueue>,
+    writes: JsCell<Option<Box<WriteQueue>>>,
 
     /// Armed while open: the handle closes when the context that opened it stops (a `Bun.ModuleGraph`, or the thread's VM).
     abort_handle: jsc::AbortHandle,
@@ -341,7 +342,7 @@ impl TTY {
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
             #[cfg(unix)]
-            writes: JsCell::new(WriteQueue::default()),
+            writes: JsCell::new(None),
             abort_handle: jsc::AbortHandle::for_owner::<TTY>(),
         }));
         // SAFETY: the ref `RefCount::init()` took. The wrapper gets it below.
@@ -621,7 +622,7 @@ impl TTY {
         let held = !flags.contains(Flags::CLOSED)
             && (flags.contains(Flags::READING)
                 || self.tty_state.get().holds_reset_snapshot()
-                || !self.writes.get().pending.is_empty());
+                || self.has_queued_writes());
         #[cfg(windows)]
         let held = flags.contains(Flags::READER_STARTED)
             && !flags.intersects(Flags::CLOSED | Flags::READER_DONE);
@@ -690,7 +691,7 @@ impl TTY {
             let fd = self.own_fd.get();
             let mut rest = data;
             // Behind bytes that wait already, nothing is tried: the order of the writes holds.
-            if self.writes.get().pending.is_empty() {
+            if !self.has_queued_writes() {
                 rest = match write_until_refused(fd, data) {
                     Ok(rest) => rest,
                     Err(errno) => return Some(errno),
@@ -708,6 +709,14 @@ impl TTY {
         }
     }
 
+    #[cfg(unix)]
+    fn has_queued_writes(&self) -> bool {
+        self.writes
+            .get()
+            .as_ref()
+            .is_some_and(|q| !q.pending.is_empty())
+    }
+
     /// Keeps what the descriptor refused, and whom to tell when it is out.
     #[cfg(unix)]
     fn queue_write(&self, rest: &[u8], oncomplete: JSValue, context: JSValue) {
@@ -720,6 +729,7 @@ impl TTY {
             context: (!context.is_undefined()).then(|| jsc::Strong::create(context, global)),
         };
         self.writes.with_mut(|q| {
+            let q = q.get_or_insert_default();
             q.bytes.try_reserve(rest.len()).unwrap_or_oom();
             q.bytes.extend_from_slice(rest);
             q.pending.push_back(write);
@@ -727,13 +737,14 @@ impl TTY {
         self.sync_wrapper_hold();
     }
 
-    /// Asks the loop to say once when the descriptor takes more. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does. `false`: the loop takes no poll of it, and the caller waits in place.
+    /// Asks the loop to say when the descriptor takes more, until `idle_write_poll`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does. `false`: the loop takes no poll of it, and the caller waits in place.
     #[cfg(unix)]
     fn arm_write_poll(&self) -> bool {
         let ctx = self.event_loop_handle.as_event_loop_ctx();
         let owner = Owner::new(PollTag::TtyWrite, self.as_ctx_ptr().cast());
         let own_fd = self.own_fd.get();
         let (has_descriptor, armed) = self.writes.with_mut(|q| {
+            let q = q.get_or_insert_default();
             let poll_fd = match q.poll_fd {
                 Some(fd) => fd,
                 None => {
@@ -760,7 +771,7 @@ impl TTY {
             let armed = unsafe {
                 let poll = &mut *poll.as_ptr();
                 let armed = poll
-                    .register(ctx.platform_event_loop(), PollFlag::Writable, true)
+                    .register(ctx.platform_event_loop(), PollFlag::Writable, false)
                     .is_ok();
                 if armed {
                     poll.enable_keeping_process_alive(ctx);
@@ -787,22 +798,18 @@ impl TTY {
         this.deref_();
     }
 
+    /// One write for each time that the loop says so, as `uv__write()` after a short write: what a full descriptor left goes out at the next turn of the loop.
     #[cfg(unix)]
     fn drain_writes(&self) {
         let fd = self.own_fd.get();
         let mut completed: Vec<(PendingWrite, i32)> = Vec::new();
-        let more = self.writes.with_mut(|q| {
-            let mut failed = None;
-            // As `uv__write()`: a bounded number of writes, and then the loop runs the rest of its turn.
-            for _ in 0..32 {
-                if q.head == q.bytes.len() {
-                    break;
-                }
+        let drained = self.writes.with_mut(|q| {
+            let Some(q) = q.as_mut() else {
+                return true;
+            };
+            let status = loop {
                 match sys::write(fd, &q.bytes[q.head..]) {
-                    Ok(0) => {
-                        failed = Some(uv_errno(sys::E::EIO as u16));
-                        break;
-                    }
+                    Ok(0) => break Some(uv_errno(sys::E::EIO as u16)),
                     Ok(n) => {
                         q.head += n;
                         let mut written = n;
@@ -814,38 +821,23 @@ impl TTY {
                             written -= front.len;
                             completed.extend(q.pending.pop_front().map(|write| (write, 0)));
                         }
+                        break None;
                     }
                     Err(err) if err.get_errno() == sys::E::EINTR => {}
-                    Err(err) if err.get_errno() == sys::E::EAGAIN => break,
-                    Err(err) => {
-                        failed = Some(uv_errno(err.errno));
-                        break;
-                    }
+                    Err(err) if err.get_errno() == sys::E::EAGAIN => break None,
+                    Err(err) => break Some(uv_errno(err.errno)),
                 }
-            }
-            if let Some(status) = failed {
+            };
+            if let Some(status) = status {
                 completed.extend(q.pending.drain(..).map(|write| (write, status)));
-                q.head = q.bytes.len();
             }
-            if q.head == q.bytes.len() {
+            if q.pending.is_empty() {
                 q.bytes.clear();
                 q.head = 0;
             }
-            !q.pending.is_empty()
+            q.pending.is_empty()
         });
-        if more && !self.arm_write_poll() {
-            let (bytes, head, pending) = self.writes.with_mut(|q| {
-                let head = core::mem::take(&mut q.head);
-                (
-                    core::mem::take(&mut q.bytes),
-                    head,
-                    core::mem::take(&mut q.pending),
-                )
-            });
-            let status = write_in_place(fd, &bytes[head..]);
-            completed.extend(pending.into_iter().map(|write| (write, status)));
-        }
-        if self.writes.get().pending.is_empty() {
+        if drained {
             self.idle_write_poll();
         }
         self.sync_wrapper_hold();
@@ -854,30 +846,33 @@ impl TTY {
         }
     }
 
-    /// Nothing is queued: the poll has fired and stays for the next refusal, and the loop is let go.
+    /// Nothing is queued: the poll leaves the loop, which it held, and stays for the next refusal.
     #[cfg(unix)]
     fn idle_write_poll(&self) {
         let ctx = self.event_loop_handle.as_event_loop_ctx();
-        if let Some(poll) = self.writes.get().poll {
+        let poll = self.writes.get().as_ref().and_then(|q| q.poll);
+        if let Some(poll) = poll {
             // SAFETY: see `arm_write_poll`.
-            unsafe { (*poll.as_ptr()).disable_keeping_process_alive(ctx) };
+            let _ = unsafe { (*poll.as_ptr()).unregister(ctx.platform_event_loop(), false) };
         }
     }
 
-    /// Takes the poll out of the loop and closes its descriptor. Before `own_fd` closes: the loop keys on the number.
+    /// Drops the queue and its poll, and closes the descriptor of the poll. Before `own_fd` closes: the loop keys on the number.
     #[cfg(unix)]
     fn release_write_poll(&self) {
-        let ctx = self.event_loop_handle.as_event_loop_ctx();
-        let (poll, poll_fd) = self.writes.with_mut(|q| (q.poll.take(), q.poll_fd.take()));
-        if let Some(poll) = poll {
-            // SAFETY: see `arm_write_poll`. A poll that has fired is still in epoll, so the removal is forced.
+        let Some(q) = self.writes.take() else {
+            return;
+        };
+        if let Some(poll) = q.poll {
+            let ctx = self.event_loop_handle.as_event_loop_ctx();
+            // SAFETY: see `arm_write_poll`.
             unsafe {
                 let poll = &mut *poll.as_ptr();
                 let _ = poll.unregister(ctx.platform_event_loop(), true);
                 poll.deinit();
             }
         }
-        if let Some(fd) = poll_fd {
+        if let Some(fd) = q.poll_fd {
             fd.close();
         }
     }
@@ -917,7 +912,11 @@ impl TTY {
             return Ok(());
         }
         #[cfg(unix)]
-        let cancelled = self.writes.with_mut(|q| core::mem::take(&mut q.pending));
+        let cancelled = self.writes.with_mut(|q| {
+            q.as_mut()
+                .map(|q| core::mem::take(&mut q.pending))
+                .unwrap_or_default()
+        });
         self.close_by_owner();
         // libuv's `uv__stream_flush_write_queue(stream, UV_ECANCELED)`: each queued write is told from the loop, before the close callback.
         #[cfg(unix)]
@@ -1035,11 +1034,6 @@ impl TTY {
             state.close(own_fd.native());
             self.tty_state.set(state);
             // `close()` has taken the queued writes to tell them. The end of a context and the collector tell nobody.
-            self.writes.with_mut(|q| {
-                q.pending.clear();
-                q.bytes = Vec::new();
-                q.head = 0;
-            });
             self.release_write_poll();
             let flags = self.flags.get();
             let reader_open =

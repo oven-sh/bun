@@ -39,8 +39,11 @@ const dir = String(
     // What the graph opens reports to, and is stopped through, `control` (a host object in
     // `globals`), so the host can stop it without holding anything of the graph.
     "io.mjs": `
+      import dgram from "node:dgram";
       import http from "node:http";
       import https from "node:https";
+      // A node:dgram socket that nothing has bound yet.
+      export function dgramSocket() { return dgram.createSocket("udp4"); }
       export function serve() {
         const server = Bun.serve({ port: 0, fetch: () => new Response("graph " + TAG) });
         control.httpPort = server.port;
@@ -396,6 +399,45 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     state.stop = true;
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
     expect(await accepts(state.httpPort)).toBe(false);
+  });
+
+  // node:dgram keeps the async context of createSocket() for the bind() that opens the socket, and the frame of the
+  // graph is in it. So a socket that the host holds keeps the disposed graph that made it for as long as nothing has
+  // opened it. A socket the graph bound is the graph's: its handlers hold the graph until the host closes the socket.
+  test("node:dgram sockets the host holds: which keep the disposed graph that made them, and until when", async () => {
+    const lifetimes = new Lifetimes();
+    const storage = new AsyncLocalStorage<string>();
+    const sockets: Record<string, import("node:dgram").Socket> = {};
+    const bind = (socket: import("node:dgram").Socket, port: number) =>
+      new Promise<string>(resolve => {
+        socket.once("error", (error: NodeJS.ErrnoException) => resolve(String(error.code)));
+        socket.bind(port, "127.0.0.1", () => resolve("listening"));
+      });
+    // A bind to its port fails.
+    const holder = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+    try {
+      await (async () => {
+        for (const row of ["never bound", "a bind by the host failed", "bound by the host", "bound by the graph"]) {
+          const graph = lifetimes.track(row, new ModuleGraph({ globals: { TAG: row, control: control() } }));
+          const io = await graph.import(file("io.mjs"));
+          const socket = (sockets[row] = graph.run(() => storage.run("createSocket()", () => io.dgramSocket())));
+          if (row === "a bind by the host failed") expect(await bind(socket, holder.port)).toBe("EADDRINUSE");
+          if (row === "bound by the host") expect(await bind(socket, 0)).toBe("listening");
+          if (row === "bound by the graph") expect(await graph.run(() => bind(socket, 0))).toBe("listening");
+          graph.dispose();
+        }
+      })();
+      expect(await lifetimes.stillAlive("bound by the host")).toEqual([]);
+      const kept: Record<string, boolean> = {};
+      for (const row of ["never bound", "a bind by the host failed", "bound by the graph"]) {
+        kept[row] = await lifetimes.survives(row);
+      }
+      expect(kept).toEqual({ "never bound": true, "a bind by the host failed": true, "bound by the graph": true });
+    } finally {
+      for (const socket of Object.values(sockets)) socket.close();
+      holder.close();
+    }
+    expect(await lifetimes.stillAlive(...Object.keys(sockets))).toEqual([]);
   });
 
   test("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {

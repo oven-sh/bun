@@ -767,8 +767,8 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f17]
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f17]
 function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f22 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f23 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f22 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f23 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -816,8 +816,8 @@ function f23 name="map" module=m2 position=5210 kind=Method role=Library flags=[
   b8(v42):
     Unreachable
 }
-function f24 name="from" module=m3 position=1395 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=49 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f25 module=m3 position=2867 role=Library flags=[IsChecked] enclosingRuntimeFunction=49 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f24 name="from" module=m3 position=1395 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=48 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f25 module=m3 position=2867 role=Library flags=[IsChecked] enclosingRuntimeFunction=48 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f26 name="clampToLength" module=m4 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w142}, {type=number site=w143}] results=[{type=number site=w144}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: number, v1: number):
     v2 = Integer
@@ -1431,9 +1431,9 @@ function f32 name="traverseArray" module=m4 position=2337 kind=Method role=Libra
   b147(v543):
     Return v543
 }
-runtimefunction id=49 function=f24
-runtimefunction id=65 function=f23
-runtimefunction id=69 function=f22
+runtimefunction id=48 function=f24
+runtimefunction id=64 function=f23
+runtimefunction id=68 function=f22
 runtimefunction id=131091 function=f32 visibility=Private
 # -- generated: f0 overWords
 # CHECK-LABEL: function f0 role=

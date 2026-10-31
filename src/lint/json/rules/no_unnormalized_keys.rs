@@ -9,8 +9,8 @@ pub struct NoUnnormalizedKeys {
     form: NormalizationForm,
 }
 
-const UNNORMALIZED_KEY: Message =
-    Message::new("unnormalizedKey", "Unnormalized key '{{key}}' found.");
+const UNNORMALIZED_KEY: &Message =
+    &Message::new("unnormalizedKey", "Unnormalized key '{{key}}' found.");
 
 impl Rule for NoUnnormalizedKeys {
     const META: Meta = Meta::plugin(Plugin::Json, "no-unnormalized-keys", Kind::Problem)

@@ -26,11 +26,11 @@ pub struct DisplayName {
     check_context_objects: bool,
 }
 
-const NO_DISPLAY_NAME: Message = Message::new("noDisplayName", "Component definition is missing display name");
-const NO_CONTEXT_DISPLAY_NAME: Message =
-    Message::new("noContextDisplayName", "Context definition is missing display name");
-const COMPONENT_DISPLAY_NAME: Message = Message::new("", "Component definition is missing display name.");
-const CONTEXT_DISPLAY_NAME: Message = Message::new("", "Context definition is missing display name.");
+const NO_DISPLAY_NAME: &Message = &Message::new("noDisplayName", "Component definition is missing display name");
+const NO_CONTEXT_DISPLAY_NAME: &Message =
+    &Message::new("noContextDisplayName", "Context definition is missing display name");
+const COMPONENT_DISPLAY_NAME: &Message = &Message::new("", "Component definition is missing display name.");
+const CONTEXT_DISPLAY_NAME: &Message = &Message::new("", "Context definition is missing display name.");
 
 #[derive(Copy, Clone)]
 struct ReactComponentInfo<'a> {

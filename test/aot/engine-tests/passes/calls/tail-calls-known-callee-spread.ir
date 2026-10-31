@@ -599,8 +599,8 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f52]
 function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f52]
 function f55 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[Number]
-function f56 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f57 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f56 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f57 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -633,7 +633,7 @@ function f58 name="apply" module=m3 position=1161 kind=Method role=Library flags
     v4 = Call v3, v0, v1, v2
     Return v4
 }
-function f59 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f59 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f60 name="clampToLength" module=m5 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w144}, {type=number site=w145}] results=[{type=number site=w146}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f61 name="storeInNewArray" module=m5 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w147 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w148}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f62 name="appendParts" module=m5 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w149 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w150}, {type=anything}] results=[{type=number site=w151}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -642,9 +642,9 @@ function f64 name="finishJoin" module=m5 position=1934 role=Library flags=[IsChe
 function f65 name="finishReduce" module=m5 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w158}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f66 name="traverseArray" module=m5 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w159 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w160}, {type=undefined|number site=w161}, {type=number site=w162}, {type=undefined|null|Array site=w163 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 runtimefunction id=4 function=f58
-runtimefunction id=65 function=f57
-runtimefunction id=69 function=f56
-runtimefunction id=70 function=f59 visibility=Private
+runtimefunction id=64 function=f57
+runtimefunction id=68 function=f56
+runtimefunction id=69 function=f59 visibility=Private
 runtimefunction id=131091 function=f66 visibility=Private
 # -- generated: join3 spreadIntoSum downBySpread upBySpread selfBySpread downByApply upByApply viaForwarder spreadIntoThrower spreadIntoJoin spreadIntoPair throughTwo viaClosure f23 f25 f26
 # CHECK-LABEL: function {{*}}name="join3"

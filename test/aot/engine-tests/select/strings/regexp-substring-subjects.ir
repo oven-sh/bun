@@ -385,7 +385,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f11 name="reduce" module=m1 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=82 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="reduce" module=m1 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything):
     v4 = ToObject v0 message="Array.prototype.reduce requires that |this| not be null or undefined"
     v5 = PropGet v4 key="length"
@@ -428,7 +428,7 @@ function f11 name="reduce" module=m1 position=1398 kind=Method role=Library flag
   b6(v39, v40):
     Return v15
 }
-runtimefunction id=82 function=f11
+runtimefunction id=81 function=f11
 # -- generated: legacy f3 entries f5
 # CHECK-LABEL: function {{*}}name="legacy"
 # CHECK: module=m0 position=592 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

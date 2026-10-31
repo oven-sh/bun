@@ -1234,12 +1234,22 @@ pub(crate) const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
 /// 25-byte unique-key wire format `{hex16(prefix)}{KIND}{index:08}` shared by
 /// every emitter (ParseTask file/napi/sqlite loaders, server-component
 /// boundaries, HTML-import manifest, chunk IDs) and consumed by exactly one
-/// scanner (`LinkerContext::break_output_into_pieces`).
+/// scanner (`LinkerContext::break_output_into_pieces`). [`UniqueKey::chunk_index`] decodes one key.
 #[derive(Clone, Copy)]
 pub(crate) struct UniqueKey {
     pub prefix: u64,
     pub kind: QueryKind,
     pub index: u32,
+}
+
+impl UniqueKey {
+    /// The index of the chunk that `key` stands for, if `key` is a `Chunk::unique_key`.
+    pub(crate) fn chunk_index(key: &[u8]) -> Option<u32> {
+        if key.len() != UNIQUE_KEY_LEN || key[UNIQUE_KEY_PREFIX_LEN] != QueryKind::Chunk.letter() {
+            return None;
+        }
+        bun_core::fmt::parse_decimal(&key[UNIQUE_KEY_PREFIX_LEN + 1..])
+    }
 }
 
 impl fmt::Display for UniqueKey {

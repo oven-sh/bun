@@ -74,6 +74,8 @@ A workspace needs a `"name"`. Bun skips a matched `package.json` that has no `"n
 
 A workspace can be outside the directory of the root `package.json`, for example `"../shared"` or a symlink that points there. It works like any other workspace: other packages can depend on it, `bun.lock` lists it, and `bun install` installs its dependencies and runs its scripts. Another project may own that directory, so [`bun prune`](/pm/cli/prune) doesn't clean its `node_modules`, and switching linkers doesn't move it aside.
 
+On Linux and macOS, Bun does not take a `package.json` as the root of a project or of a workspace if it is in a directory above the current one that is sticky and writable by its group or by everyone, such as `/tmp`. `bun install`, `bun run --filter` and `bun run --workspaces` print `warn: ignoring package.json in <directory>: directory is writable by other users` and look in the directories above it. To use that `package.json`, run the command in its directory. This applies to that command only: a script that runs `bun` again starts in its own package.
+
 `bun install` installs dependencies for all workspaces in the monorepo, de-duplicating packages if possible. To install dependencies for specific workspaces only, use the `--filter` flag.
 
 ```bash

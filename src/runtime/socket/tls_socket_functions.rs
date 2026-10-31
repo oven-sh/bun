@@ -491,12 +491,11 @@ impl TLSSocket {
                 .map(|i| ffi::sk_X509_value(chain, i))
                 .take_while(|candidate| !candidate.is_null())
                 .collect();
-            // SAFETY: `last_cert` and every candidate are live certificates owned by `ssl_ptr`'s
-            // session (or by `_guard`) for the whole call.
-            while let Some(i) = candidates
-                .iter()
-                .position(|&candidate| unsafe { ffi::X509_check_issued(candidate, last_cert) } == 0)
-            {
+            while let Some(i) = candidates.iter().position(|&candidate| {
+                // SAFETY: `last_cert` and every candidate are live certificates owned by `ssl_ptr`'s
+                // session (or by `_guard`) for the whole call.
+                unsafe { ffi::X509_check_issued(candidate, last_cert) == 0 }
+            }) {
                 let issuer = candidates.remove(i);
                 let obj = X509::to_js(boringssl::X509::opaque_mut(issuer), global)?;
                 prev_obj.put(global, b"issuerCertificate", obj);

@@ -142,17 +142,16 @@ struct ProjectResolver<'h> {
 /// Caches for lookups that are repeated often.
 #[derive(Default)]
 struct Caches<'h> {
-    /// Keyed by the `tsconfig.json` path. An empty key means there's none.
-    resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
-    /// Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is a file.
-    configs: ShardedMap<Vec<u8>, Vec<u8>>,
+    /// One per flavor, keyed by the `tsconfig.json` path. An empty key means there's none.
+    resolvers: PerFlavor<ShardedMap<Vec<u8>, ProjectResolver<'h>>>,
+    /// One per flavor. Maps a directory (a file, with [`Store::tsconfig`]) to the `tsconfig.json` path for its files.
+    configs: PerFlavor<ShardedMap<Vec<u8>, Vec<u8>>>,
     /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`].
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
     /// [`Graph::listed_projects`], keyed by the projects.
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
-    /// The resolution of a non-relative specifier, keyed by the `tsconfig.json`, the directory, the kind of import and
-    /// the specifier.
+    /// The resolution of a non-relative specifier, by flavor, `tsconfig.json`, directory, kind of import and specifier.
     non_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
     /// Maps a path to its real path, with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
@@ -324,6 +323,27 @@ fn is_in_package(path: &[u8]) -> bool {
     strings::contains(path, b"/node_modules/")
 }
 
+/// A cache of what resolves differently in each flavor.
+#[derive(Default)]
+struct PerFlavor<T>(T, T);
+
+impl<T> PerFlavor<T> {
+    fn of(&self, flavor: Flavor) -> &T {
+        match flavor {
+            Flavor::EslintPluginImport => &self.0,
+            Flavor::Oxlint => &self.1,
+        }
+    }
+}
+
+/// The prefix of a cache key for what resolves differently in each flavor.
+fn flavor_key(flavor: Flavor) -> &'static [u8] {
+    match flavor {
+        Flavor::EslintPluginImport => b"e\0",
+        Flavor::Oxlint => b"o\0",
+    }
+}
+
 /// oxlint treats any other file as if it didn't exist.
 fn is_read_by_oxlint(path: &[u8]) -> bool {
     let others: [&[u8]; 3] = [b".vue", b".astro", b".svelte"];
@@ -366,14 +386,14 @@ impl<'h> Graph<'h> {
             .map_or(&[], |it| &it[..])
     }
 
-    fn load_project(&self, config: &[u8], directory: &[u8]) -> Project {
+    fn load_project(&self, flavor: Flavor, config: &[u8], directory: &[u8]) -> Project {
         let flag = |name: &[u8]| (name.to_vec(), Json::Bool(true));
         let word = |name: &[u8], word: &[u8]| (name.to_vec(), Json::String(word.to_vec()));
         // These override the project's options. JavaScript is linted too, and the resolvers emulated here ignore
         // TypeScript's resolution options.
         //
         // oxlint's `condition_names` are `module` and `import`.
-        let conditions = match self.flavor().resolves_as_node() {
+        let conditions = match flavor.resolves_as_node() {
             true => vec![Json::String(b"module".to_vec())],
             false => Vec::new(),
         };
@@ -557,15 +577,15 @@ impl<'h> Graph<'h> {
     }
 
     /// Returns the `tsconfig.json` that applies to the imports of the file `from`, or an empty path if there's none.
-    fn config_of(&self, from: &[u8]) -> &[u8] {
+    fn config_of(&self, flavor: Flavor, from: &[u8]) -> &[u8] {
         let directory = directory_of(from);
-        if !self.flavor().resolves_as_node() {
-            let caches = self.caches();
-            return match caches.configs.get_ref(directory) {
+        if !flavor.resolves_as_node() {
+            let configs = self.caches().configs.of(flavor);
+            return match configs.get_ref(directory) {
                 Some(config) => config,
                 None => {
                     let found = find_config(self.store.disk(), directory).unwrap_or_default();
-                    caches.configs.insert_ref(directory.to_vec(), found)
+                    configs.insert_ref(directory.to_vec(), found)
                 }
             };
         }
@@ -577,13 +597,13 @@ impl<'h> Graph<'h> {
             if referenced.is_empty() {
                 return &own.config;
             }
-            let caches = self.caches();
-            return match caches.configs.get_ref(from) {
+            let configs = self.caches().configs.of(flavor);
+            return match configs.get_ref(from) {
                 Some(config) => config,
                 None => {
                     let file_scope = referenced.iter().find(|it| it.has(from)).unwrap_or(own);
                     let config = file_scope.config.clone();
-                    caches.configs.insert_ref(from.to_vec(), config)
+                    configs.insert_ref(from.to_vec(), config)
                 }
             };
         }
@@ -600,18 +620,18 @@ impl<'h> Graph<'h> {
 
     /// Returns the resolver for the files that the config at `config` applies to. An empty `config` means no config.
     /// `directory` is the directory of one of those files.
-    fn resolver_of(&self, config: &[u8], directory: &[u8]) -> &ProjectResolver<'h> {
-        let caches = self.caches();
-        if let Some(resolver) = caches.resolvers.get_ref(config) {
+    fn resolver_of(&self, flavor: Flavor, config: &[u8], directory: &[u8]) -> &ProjectResolver<'h> {
+        let resolvers = self.caches().resolvers.of(flavor);
+        if let Some(resolver) = resolvers.get_ref(config) {
             return resolver;
         }
         // One thread reads a config while the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = caches.resolvers.get_ref(config) {
+        if let Some(resolver) = resolvers.get_ref(config) {
             return resolver;
         }
         let store: &'h Store = self.store;
-        let mut project = self.load_project(config, directory);
+        let mut project = self.load_project(flavor, config, directory);
         let raw_option = |name: &[u8]| {
             let mut options = project.raw_compiler_options.iter();
             options.find(|it| it.0 == name).map(|it| &it.1)
@@ -630,7 +650,7 @@ impl<'h> Graph<'h> {
             base_url,
             es_module_interop,
         };
-        caches.resolvers.insert_ref(config.to_vec(), resolver)
+        resolvers.insert_ref(config.to_vec(), resolver)
     }
 
     /// `configured_paths` is the `paths` option, whose entries are relative to the working directory.
@@ -668,10 +688,11 @@ impl<'h> Graph<'h> {
             paths: &paths,
             through_paths: false,
             as_import: false,
+            for_require: false,
             base_url: None,
         };
         // No TypeScript config applies here.
-        let plain = self.resolver_of(b"", cwd);
+        let plain = self.resolver_of(Flavor::EslintPluginImport, b"", cwd);
         let (found, at) = (plain.resolver).resolve_as_require(specifier, from, &how)?;
         // `path.join(configured_paths, specifier)`
         let is_relative = at
@@ -693,13 +714,14 @@ impl<'h> Graph<'h> {
     ) -> Option<Vec<u8>> {
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver_of(config, directory_of(from));
+        } = self.resolver_of(Flavor::EslintPluginImport, config, directory_of(from));
         let how = AsRequire {
             extensions,
             module_directories: &[b"node_modules"],
             paths: &[],
             through_paths: true,
             as_import: false,
+            for_require: false,
             base_url: None,
         };
         let from_base_url = || {
@@ -745,12 +767,21 @@ impl<'h> Graph<'h> {
             let found = (by.resolve)(self, typescript_path(from), specifier, is_require)?;
             return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
         }
-        self.resolve_any_path(self.config_of(from), from, specifier, is_require)
-            .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
+        let flavor = self.flavor();
+        self.resolve_any_path(
+            flavor,
+            self.config_of(flavor, from),
+            from,
+            specifier,
+            is_require,
+        )
+        .filter(|it| !flavor.resolves_as_node() || is_read_by_oxlint(&it.0))
     }
 
+    /// Resolves as `flavor`'s tool does, whatever the graph follows.
     fn resolve_any_path(
         &self,
+        flavor: Flavor,
         config: &[u8],
         from: &[u8],
         specifier: &[u8],
@@ -760,16 +791,17 @@ impl<'h> Graph<'h> {
             || specifier.starts_with(b"../")
             || matches!(specifier, b"." | b"..");
         if is_relative {
-            if self.flavor().resolves_as_node()
+            if flavor.resolves_as_node()
                 && let Some(found) = self.resolve_relative_as_node(from, specifier)
             {
                 return found.map(|it| (Cow::Owned(it), false));
             }
-            return self.resolve_with_project(config, from, specifier, is_require);
+            return self.resolve_with_project(flavor, config, from, specifier, is_require);
         }
         // A non-relative specifier resolves the same way in every file of a directory with the same `tsconfig.json`,
         // and it's slow to resolve.
         let key = [
+            flavor_key(flavor),
             config,
             b"\0",
             directory_of(from),
@@ -781,7 +813,7 @@ impl<'h> Graph<'h> {
             Some(found) => found,
             None => {
                 let found = self
-                    .resolve_with_project(config, from, specifier, is_require)
+                    .resolve_with_project(flavor, config, from, specifier, is_require)
                     .map(|it| (it.0.into_owned(), it.1));
                 self.caches().non_relative.insert_ref(key, found)
             }
@@ -841,6 +873,7 @@ impl<'h> Graph<'h> {
 
     fn resolve_with_project(
         &self,
+        flavor: Flavor,
         config: &[u8],
         from: &[u8],
         specifier: &[u8],
@@ -853,18 +886,19 @@ impl<'h> Graph<'h> {
         };
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver_of(config, directory_of(from));
+        } = self.resolver_of(flavor, config, directory_of(from));
         let base_url = base_url
             .as_ref()
             .filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"));
         // TypeScript resolves to the types. oxlint reads the code.
-        if self.flavor().resolves_as_node() {
+        if flavor.resolves_as_node() {
             let how = AsRequire {
                 extensions: &EXTENSIONS,
                 module_directories: &[b"node_modules"],
                 paths: &[],
                 through_paths: true,
                 as_import: true,
+                for_require: is_require,
                 base_url: base_url.map(Vec::as_slice),
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
@@ -1265,6 +1299,30 @@ impl Modules for Graph<'_> {
         let found = match lookup {
             // No system allows a path that long.
             _ if specifier.len() > 4096 => return None,
+            Lookup::Oxlint => {
+                let flavor = Flavor::Oxlint;
+                let config = self.config_of(flavor, &from);
+                let resolve = |specifier: &[u8]| {
+                    self.resolve_any_path(flavor, config, &from, specifier, is_require)
+                };
+                // Bun runs `./data` and `pkg/data` with `data.json`, unless `pkg` has `exports`.
+                let others = [&b".json"[..], b".node"];
+                let is_path = specifier.starts_with(b".") || specifier.starts_with(b"/");
+                let has_exports = |found: &[u8]| {
+                    !is_path
+                        && is_in_package(found)
+                        && self
+                            .package_json(found)
+                            .is_some_and(|it| it.get(b"exports").is_some())
+                };
+                let added = || {
+                    others
+                        .iter()
+                        .find_map(|it| resolve(&[specifier, it].concat()))
+                        .filter(|it| !has_exports(&it.0))
+                };
+                resolve(specifier).or_else(added)?.0.into_owned()
+            }
             Lookup::TypeScript(projects) => {
                 // `removeQuerystring`
                 let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
@@ -1298,7 +1356,8 @@ impl Modules for Graph<'_> {
                     if let Some(exact_file) = exact_file.filter(is_exact_name) {
                         return Some((Cow::Owned(exact_file), false));
                     }
-                    let found = self.resolve_any_path(config, &real, specifier, is_require);
+                    let flavor = Flavor::EslintPluginImport;
+                    let found = self.resolve_any_path(flavor, config, &real, specifier, is_require);
                     let added: &[&[u8]] = match is_script {
                         true => &[b".json", b".node"],
                         false => &[
@@ -1386,7 +1445,8 @@ impl Modules for Graph<'_> {
     fn es_module_interop(&self, directory: &[u8]) -> bool {
         let directory = from_native(directory);
         let config = find_config_file(self.store.disk(), &directory).unwrap_or_default();
-        self.resolver_of(&config, &directory).es_module_interop
+        self.resolver_of(self.flavor(), &config, &directory)
+            .es_module_interop
     }
 
     fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool {

@@ -407,7 +407,7 @@ fn module_request_of<'a>(entry: &ImportEntry<'a>) -> NameSpan<'a> {
 
 /// oxlint's resolver strips a query and a fragment: `./a?raw` and `./a#b` resolve as `./a`. A `#` with no query before
 /// it can also be part of a file name, so the first path returned keeps it, and the second is the fallback without it.
-fn paths_of(specifier: &[u8]) -> (&[u8], Option<&[u8]>) {
+pub fn paths_of(specifier: &[u8]) -> (&[u8], Option<&[u8]>) {
     match strings::index_of_any(specifier.get(1..).unwrap_or_default(), b"?#").map(|at| at + 1) {
         Some(at) if specifier.get(at) == Some(&b'#') => (specifier, specifier.get(..at)),
         Some(at) => (specifier.get(..at).unwrap_or(specifier), None),

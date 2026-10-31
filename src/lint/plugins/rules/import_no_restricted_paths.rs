@@ -195,7 +195,7 @@ impl Rule for NoRestrictedPaths {
         let Some(zones) = self.read.get() else {
             return;
         };
-        let (Some(resolvers), Some(modules)) = (Resolvers::of(file.settings()), file.modules()) else {
+        let (Some(resolvers), Some(modules)) = (Resolvers::of(file), file.modules()) else {
             return;
         };
         let cwd = modules.cwd();

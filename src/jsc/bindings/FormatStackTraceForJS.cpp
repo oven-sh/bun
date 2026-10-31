@@ -901,10 +901,19 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     if (structure->isNonExtensibleOrHasNonConfigurableProperties() && (!structure->hasImmutableProperties() || structure->hasFrozenElementsInPlace())) {
         if (!isExtensibleWithoutTrap(errorObject)) [[unlikely]]
             return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Cannot define property stack, object is not extensible"_s);
-        // An unread Error answers where its `stack` is deleted, with no second lookup.
         unsigned attributes = 0;
         if (!isUnreadError && errorObject->getDirect(vm, vm.propertyNames->stack, attributes) && (attributes & JSC::PropertyAttribute::DontDelete)) [[unlikely]]
             return throwStackIsNotConfigurable(lexicalGlobalObject, scope);
+    }
+
+    // Like V8, an unread Error gets its accessor before the frames are captured. The delete of the `stack` it has is also the test, with no second lookup.
+    if (isUnreadError) {
+        DeletePropertySlot slot;
+        bool isDeleted = JSObject::deleteProperty(instance, globalObject, vm.propertyNames->stack, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isDeleted) [[unlikely]]
+            return throwStackIsNotConfigurable(lexicalGlobalObject, scope);
+        instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
     }
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
@@ -931,14 +940,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
-            DeletePropertySlot slot;
-            bool isDeleted = JSObject::deleteProperty(instance, globalObject, vm.propertyNames->stack, slot);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!isDeleted) [[unlikely]]
-                return throwStackIsNotConfigurable(lexicalGlobalObject, scope);
-
             instance->setStackFrames(vm, WTF::move(stackTrace));
-            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
         OrdinalNumber line;

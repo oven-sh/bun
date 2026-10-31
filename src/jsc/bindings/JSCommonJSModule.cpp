@@ -1660,6 +1660,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
+    // No CommonJS module is made for a disposed graph. The import fails when the source returned is evaluated, as for a module made before dispose().
+    if (graph && graph->disposed()) [[unlikely]]
+        return commonJSModuleSyntheticSourceCode(Zig::toSourceOrigin(sourceURL, isBuiltIn), sourceURL, graph);
+
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue entry = requireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1793,6 +1797,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = sourceProvider->sourceURL();
     SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
+
+    // As in the overload above: no CommonJS module is made for a disposed graph.
+    if (graph && graph->disposed()) [[unlikely]]
+        return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue entry = requireMap->get(globalObject, requireMapKey);

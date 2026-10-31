@@ -1955,11 +1955,10 @@ describe("ES Decorators", () => {
   });
 
   describe("class statement placement", () => {
-    // The runtime hoists a class statement to the top of the module when the
-    // class has no side effects. A static auto-accessor initializer is a side
-    // effect like a static field initializer, so the class must stay where it
-    // was written or the initializer runs before the bindings it reads exist.
-    test("static accessor initializer keeps the class in place", async () => {
+    // A static auto-accessor initializer is a side effect like a static field
+    // initializer. It runs when the class statement runs, after the statements
+    // above the class.
+    test("static accessor initializer runs where the class is written", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         let order = [];
         order.push("top");

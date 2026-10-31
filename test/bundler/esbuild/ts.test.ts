@@ -357,6 +357,35 @@ describe("bundler", () => {
       stdout: `[123,null]`,
     },
   });
+  // TypeScript prints "export = value" as the last statement of the module.
+  itBundled("ts/ExportEqualsAboveClass", {
+    files: {
+      "/a.ts": /* ts */ `
+        import Foo = require('./b.cts')
+        console.log(typeof Foo, new Foo().constructor.name)
+      `,
+      "/b.cts": /* ts */ `
+        export = Foo
+        class Foo {}
+      `,
+    },
+    run: {
+      stdout: "function Foo",
+    },
+  });
+  itBundled("ts/ExportEqualsIsMovedToEndFormatCJS", {
+    files: {
+      "/entry.cts": /* ts */ `
+        const before = typeof module.exports
+        export = function handler() { return 1 }
+        console.log(JSON.stringify([before, typeof module.exports]))
+      `,
+    },
+    format: "cjs",
+    run: {
+      stdout: `["object","object"]`,
+    },
+  });
   itBundled("ts/ExportNamespace", {
     files: {
       "/a.ts": /* ts */ `

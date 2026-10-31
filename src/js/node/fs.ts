@@ -430,13 +430,13 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       callback = ensureCallback(type);
       type = undefined;
     } else if ($isCallable(callback)) {
-      // Not ensureCallback: node does not validate the 4-argument overload's
-      // callback, and a non-callable one must stay an ignored `.then` handler.
       callback = wrapFsCallback(callback);
+    } else {
+      // node does not validate this overload's callback: it skips a non-function one, on failure too
+      callback = () => {};
     }
 
-    if ($isCallable(callback)) fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
-    else fs.symlink(target, path, type).then(callback, callback);
+    fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
   },
   truncate = function truncate(path, len, callback?) {
     if (typeof path === "number") {

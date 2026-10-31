@@ -12,8 +12,8 @@ pub struct PreferConst {
     ignore_read_before_assign: bool,
 }
 
-const USE_CONST: Message =
-    Message::new("useConst", "'{{name}}' is never reassigned. Use 'const' instead.");
+const USE_CONST: &Message =
+    &Message::new("useConst", "'{{name}}' is never reassigned. Use 'const' instead.");
 
 fn is_init_of_for_statement(stmt: Stmt) -> bool {
     matches!(stmt.parent(), Node::Stmt(parent)

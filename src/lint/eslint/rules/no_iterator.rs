@@ -5,7 +5,7 @@ use bun_lint::utils::estree_type_name;
 /// Disallow the use of the `__iterator__` property.
 pub struct NoIterator;
 
-const NO_ITERATOR: Message = Message::new("noIterator", "Reserved name '__iterator__'.");
+const NO_ITERATOR: &Message = &Message::new("noIterator", "Reserved name '__iterator__'.");
 
 /// `member` is the `__iterator__` of `object`. oxlint suggests `object[Symbol.iterator]`.
 fn report<'a>(member: Expr<'a>, object: Expr<'a>, cx: &Cx<'a, NoIterator>) {

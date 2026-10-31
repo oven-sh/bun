@@ -1,12 +1,243 @@
 import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { channel } from "node:diagnostics_channel";
 import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
+
+describe("sqlite.db.query", () => {
+  test("database disposal inside a subscriber leaves the connection open", () => {
+    using db = new DatabaseSync(":memory:");
+    const queries = channel("sqlite.db.query");
+    const results: unknown[] = [];
+    const handler = () => results.push(db[Symbol.dispose](), db.isOpen);
+    queries.subscribe(handler);
+    try {
+      expect(db.prepare("SELECT 42 AS answer").get()).toEqual({ answer: 42 });
+      expect(results).toEqual([undefined, true]);
+    } finally {
+      queries.unsubscribe(handler);
+    }
+    expect(db.prepare("SELECT 1 AS alive").get()).toEqual({ alive: 1 });
+  });
+
+  test("rejects closing parked write statements inside an authorizer callback", () => {
+    for (const method of ["close", Symbol.dispose] as const) {
+      using db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (x INTEGER)");
+      using statement = db.prepare("INSERT INTO t VALUES (1) RETURNING x");
+      statement.iterate().next();
+      let failure: unknown;
+      db.setAuthorizer(() => {
+        try {
+          statement[method]();
+        } catch (error) {
+          failure = error;
+        }
+        return constants.SQLITE_OK;
+      });
+      try {
+        db.prepare("SELECT 42").get();
+        expect(failure).toEqual(
+          expect.objectContaining({
+            code: "ERR_INVALID_STATE",
+            message: "database cannot be accessed from an authorizer callback",
+          }),
+        );
+      } finally {
+        db.setAuthorizer(null);
+      }
+      statement.close();
+      expect(db.prepare("SELECT x FROM t").all()).toEqual([{ x: 1 }]);
+    }
+  });
+
+  test("keeps statements guarded when an error triggers a cleanup reset", async () => {
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync } = require('node:sqlite');
+         const q = require('node:diagnostics_channel').channel('sqlite.db.query');
+         const results = [];
+         for (const method of ['get', 'all']) {
+           const db = new DatabaseSync(':memory:');
+           const stmt = db.prepare('SELECT 9007199254740992');
+           let events = 0, rejected = 0, errorCode;
+           const handler = () => {
+             events++;
+             for (const call of [() => stmt.close(), () => stmt[Symbol.dispose](), () => stmt.get()]) {
+               try { call(); } catch (e) { if (e.code === 'ERR_INVALID_STATE') rejected++; }
+             }
+           };
+           q.subscribe(handler);
+           try { stmt[method](); } catch (e) { errorCode = e.code; }
+           q.unsubscribe(handler);
+           results.push({ method, events, rejected, errorCode });
+           db.close();
+         }
+         console.log(JSON.stringify(results));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect(JSON.parse(stdout)).toEqual([
+      { method: "get", events: 1, rejected: 3, errorCode: "ERR_OUT_OF_RANGE" },
+      { method: "all", events: 1, rejected: 3, errorCode: "ERR_OUT_OF_RANGE" },
+    ]);
+    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test("publishes failed queries while retaining the query exception across nested reads", () => {
+    using db = new DatabaseSync(":memory:");
+    const failure = new Error("query failure");
+    db.function("fail", () => {
+      throw failure;
+    });
+    const queries = channel("sqlite.db.query");
+    const statements: string[] = [];
+    const handler = (message: any) => {
+      statements.push(message.sql);
+      if (message.sql === "SELECT fail()") {
+        expect(db.prepare("SELECT 42 AS answer").get()).toEqual({ answer: 42 });
+      }
+    };
+    queries.subscribe(handler);
+    try {
+      expect(() => db.prepare("SELECT fail()").get()).toThrow(failure);
+      expect(statements).toEqual(["SELECT fail()", "SELECT 42 AS answer"]);
+    } finally {
+      queries.unsubscribe(handler);
+    }
+  });
+
+  test("unguarded subscribers end with RangeError without corrupting the outer query", async () => {
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync } = require('node:sqlite');
+         const q = require('node:diagnostics_channel').channel('sqlite.db.query');
+         const db = new DatabaseSync(':memory:');
+         let calls = 0;
+         const handler = () => { calls++; db.prepare('SELECT 42 AS answer').get(); };
+         process.once('uncaughtException', e => {
+           q.unsubscribe(handler);
+           console.log(e.name, calls > 1);
+           db.close();
+         });
+         q.subscribe(handler);
+         console.log(db.prepare('SELECT 42 AS answer').get().answer);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect(stdout.trim().split(/\r?\n/)).toEqual(["42", "RangeError true"]);
+    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test("passes the unchanged Node diagnostics suite", async () => {
+    await using child = Bun.spawn({
+      // This Node fixture uses node:test suites, which require Bun's test runner.
+      cmd: [bunExe(), "test", path.join(import.meta.dir, "../test/parallel/test-sqlite-diagnostic-channel.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+  test("publishes 16 synchronous nested queries without corrupting the outer statement", () => {
+    using db = new DatabaseSync(":memory:");
+    const queries = channel("sqlite.db.query");
+    let depth = 0;
+    let maxDepth = 0;
+    let events = 0;
+    const nestedRows: number[] = [];
+    const handler = (message: any, name: string) => {
+      expect(name).toBe("sqlite.db.query");
+      expect(message.database).toBe(db);
+      expect(Object.getPrototypeOf(message)).toBeNull();
+      expect(Object.keys(message)).toEqual(["sql", "database", "duration"]);
+      expect(message.sql).toBe("SELECT 42 AS answer");
+      expect(typeof message.duration).toBe("number");
+      expect(message.duration).toBeGreaterThanOrEqual(0);
+      depth++;
+      maxDepth = Math.max(maxDepth, depth);
+      if (++events < 16) {
+        using statement = db.prepare("SELECT 42 AS answer");
+        nestedRows.push(statement.get()!.answer as number);
+      }
+      depth--;
+    };
+    queries.subscribe(handler);
+    try {
+      using statement = db.prepare("SELECT 42 AS answer");
+      expect(events).toBe(0);
+      expect(statement.get()).toEqual({ answer: 42 });
+      expect(events).toBe(16);
+      expect(maxDepth).toBe(16);
+      expect(nestedRows).toEqual(Array(15).fill(42));
+    } finally {
+      queries.unsubscribe(handler);
+    }
+  });
+
+  test("enables existing and new connections and disables them on unsubscribe", () => {
+    using before = new DatabaseSync(":memory:");
+    const queries = channel("sqlite.db.query");
+    const databases: DatabaseSync[] = [];
+    const handler = (message: any) => databases.push(message.database);
+    queries.subscribe(handler);
+    try {
+      using after = new DatabaseSync(":memory:");
+      before.exec("SELECT 1");
+      after.exec("SELECT 2");
+      expect(databases).toEqual([before, after]);
+      queries.unsubscribe(handler);
+      before.exec("SELECT 3");
+      after.exec("SELECT 4");
+      expect(databases).toHaveLength(2);
+      queries.subscribe(handler);
+      before.exec("SELECT 5");
+      expect(databases).toEqual([before, after, before]);
+    } finally {
+      queries.unsubscribe(handler);
+    }
+  });
+
+  test("reports iterator completion and early return, without reporting statement close", () => {
+    using db = new DatabaseSync(":memory:");
+    const queries = channel("sqlite.db.query");
+    let events = 0;
+    const handler = () => events++;
+    queries.subscribe(handler);
+    try {
+      using statement = db.prepare("SELECT 1 AS x UNION ALL SELECT 2 AS x");
+      const iterator = statement.iterate();
+      expect(events).toBe(0);
+      expect(iterator.next().value).toEqual({ x: 1 });
+      expect(events).toBe(0);
+      iterator.return();
+      expect(events).toBe(1);
+      expect([...statement.iterate()]).toEqual([{ x: 1 }, { x: 2 }]);
+      expect(events).toBe(2);
+      statement.iterate().next();
+      statement.close();
+      expect(events).toBe(2);
+    } finally {
+      queries.unsubscribe(handler);
+    }
+  });
+});
 
 declare module "node:sqlite" {
   class Session {
@@ -1806,7 +2037,7 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     expect(stmt.run().changes).toBe(1);
     expect(errors).toEqual([
       expect.objectContaining({ code: "ERR_INVALID_STATE", message: "iterator was invalidated" }),
-      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement is currently executing" }),
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement is already being executed" }),
     ]);
     db.setAuthorizer(null);
     expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(2);
@@ -2869,8 +3100,10 @@ describe("module exports", () => {
     expect(() => new Session()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
     // SQLTagStore is Bun-internal (createTagStore()) — not a Node export.
     expect(Object.keys(require("node:sqlite")).sort()).toEqual([
+      "Database",
       "DatabaseSync",
       "Session",
+      "Statement",
       "StatementSync",
       "backup",
       "constants",

@@ -77,10 +77,8 @@ impl MemoryAccessor {
             match self.mem {
                 -2 => break,
                 -1 => {
-                    // SAFETY: getpid has no preconditions. Don't cache across
-                    // calls — it's served from the vDSO and a stale cache after
-                    // fork() would target the wrong process.
-                    let pid = unsafe { libc::getpid() };
+                    // Not cached: after fork() a stale pid would target the wrong process.
+                    let pid = crate::output::getpid();
                     let local = libc::iovec {
                         iov_base: buf.as_mut_ptr().cast(),
                         iov_len: buf.len(),

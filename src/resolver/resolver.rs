@@ -347,8 +347,8 @@ pub struct Bufs {
 
     // NOTE: `DirEntryResolveQueueItem` holds
     // `&'static [u8]` fields, so a zeroed bit-pattern is UB. Use
-    // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
-    // use sites in `dir_info_cached_maybe_log`.
+    // `MaybeUninit` and `assume_init_ref` at the (linear write-then-read)
+    // use site in `dir_info_cached_miss`.
     pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
     pub(crate) open_dirs: [FD; 256],
     pub(crate) resolve_without_remapping: PathBuffer,
@@ -440,13 +440,9 @@ macro_rules! bufs {
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
-// `BoundedArray` has no const constructor; init lazily under
-// `BIN_FOLDERS_LOADED`.
-static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
+    bun_core::RacyCell::new(BoundedArray::new());
 static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
-static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -510,7 +506,7 @@ pub struct Resolver<'a> {
     pub env_loader: Option<NonNull<DotEnv::Loader>>,
     pub store_fd: bool,
 
-    pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
+    pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -606,10 +602,8 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `from`'s `standalone_module_graph` / `env_loader` borrow data that
-    /// outlives the returned resolver (process-lifetime singletons in every
-    /// caller). The lifetime is widened from `'from` to `'a` here; callers
-    /// must uphold that the borrowed data outlives `'a`.
+    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
+    /// loader that `from.env_loader` points to must outlive `'a`.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
@@ -636,16 +630,7 @@ impl<'a> Resolver<'a> {
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
             store_fd: from.store_fd,
-            // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
-            // vtable layout is identical (only the borrow-checker tag differs);
-            // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
-            // via a layout-preserving transmute on the `Option<&dyn>`.
-            standalone_module_graph: unsafe {
-                core::mem::transmute::<
-                    Option<&'_ dyn StandaloneModuleGraph>,
-                    Option<&'a dyn StandaloneModuleGraph>,
-                >(from.standalone_module_graph)
-            },
+            standalone_module_graph: from.standalone_module_graph,
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
@@ -1767,7 +1752,7 @@ impl<'a> Resolver<'a> {
             }
 
             let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
+            if let Some(existing) = result.package_json {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
@@ -1785,12 +1770,10 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            result.package_json = result
-                .package_json
-                .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
+            result.package_json = result.package_json.or_else(|| dir.enclosing_package_json);
 
             if needs_side_effects {
-                if let Some(package_json) = Result::deref_package_json(result.package_json) {
+                if let Some(package_json) = result.package_json {
                     result.primary_side_effects_data =
                         primary_side_effects(&package_json.side_effects, path.text());
                 }
@@ -2131,10 +2114,7 @@ impl<'a> Resolver<'a> {
                     {
                         result.path_pair.primary = fallback_module.path;
                         result.module_type = options::ModuleType::Cjs;
-                        // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                        result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
-                            fallback_module.package_json,
-                        ));
+                        result.package_json = Some(fallback_module.package_json);
                         result.flags.set_is_from_node_modules(true);
                         return ResultUnion::Success(result);
                     }
@@ -2352,7 +2332,7 @@ impl<'a> Resolver<'a> {
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
                                 dirname_fd: match_result.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(pkg)),
+                                package_json: Some(pkg),
                                 jsx: self.opts.jsx.clone(),
                                 module_type: match_result.module_type,
                                 flags,
@@ -2490,7 +2470,7 @@ impl<'a> Resolver<'a> {
                                 return ResultUnion::Success(Result {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
-                                    package_json: Some(std::ptr::from_ref(package_json)),
+                                    package_json: Some(package_json),
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
                                 });
@@ -3010,7 +2990,7 @@ impl<'a> Resolver<'a> {
                                                 package_json.source.path.text,
                                             )
                                             .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            package_json: Some(package_json),
                                             dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
@@ -3525,7 +3505,7 @@ impl<'a> Resolver<'a> {
                                                 .source
                                                 .path
                                                 .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            package_json: Some(package_json),
                                             dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
@@ -3850,7 +3830,7 @@ impl<'a> Resolver<'a> {
         mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -3873,7 +3853,7 @@ impl<'a> Resolver<'a> {
         esm_resolution: &mut crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -4049,12 +4029,7 @@ impl<'a> Resolver<'a> {
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
-                    package_json: Some(
-                        resolved_dir_info
-                            .package_json()
-                            .map(std::ptr::from_ref)
-                            .unwrap_or_else(|| std::ptr::from_ref(package_json)),
-                    ),
+                    package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
                     module_type,
                     ..Default::default()
                 };
@@ -4069,9 +4044,7 @@ impl<'a> Resolver<'a> {
                     .is_success()
                 {
                     out.is_node_module = true;
-                    out.package_json = out
-                        .package_json
-                        .or_else(|| Some(std::ptr::from_ref(package_json)));
+                    out.package_json = out.package_json.or(Some(package_json));
                     return MatchStatus::Success;
                 }
                 esm_resolution.status = Status::ModuleNotFound;
@@ -4092,7 +4065,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         base: &[u8],
         extension_order: options::ExtOrder,
         is_wildcard: bool,
@@ -4181,8 +4154,8 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
-        package_json: &PackageJSON,
-        query: &crate::fs::EntryLookup<'static>,
+        package_json: &'static PackageJSON,
+        query: &crate::fs::EntryLookup,
         out: &mut MatchResult,
     ) -> bool {
         let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
@@ -4216,12 +4189,7 @@ impl<'a> Resolver<'a> {
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
-            package_json: Some(
-                resolved_dir_info
-                    .package_json()
-                    .map(std::ptr::from_ref)
-                    .unwrap_or_else(|| std::ptr::from_ref(package_json)),
-            ),
+            package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
             module_type,
             ..Default::default()
         };
@@ -4319,18 +4287,15 @@ impl<'a> Resolver<'a> {
         }
 
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
-        // ownership — intermediate configs in an extends-chain are dropped via
-        // `heap::take`, the final one is interned into the DirInfo cache.
+        // ownership — intermediate configs in an extends-chain are dropped,
+        // the final one is interned into the DirInfo cache.
         Ok(Some(result))
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
-        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-            return &[];
-        }
-        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites;
-        // `BIN_FOLDERS_LOADED` (acquire) guarantees init.
-        unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
+        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites. The only caller is
+        // `bun getcompletes`, whose one resolver runs on the calling thread: nothing appends.
+        unsafe { (*BIN_FOLDERS.get()).const_slice() }
     }
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -4556,7 +4521,7 @@ impl<'a> Resolver<'a> {
             if i >= queue.len() {
                 return Ok(None);
             }
-            queue[i].write(DirEntryResolveQueueItem {
+            let slot = queue[i].write(DirEntryResolveQueueItem {
                 unsafe_path: bun_ptr::RawSlice::new(top),
                 result,
                 safe_path: b"",
@@ -4566,8 +4531,6 @@ impl<'a> Resolver<'a> {
             if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                        // SAFETY: slot was written immediately above.
-                        let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
@@ -4594,7 +4557,7 @@ impl<'a> Resolver<'a> {
                 if i >= queue.len() {
                     return Ok(None);
                 }
-                queue[i].write(DirEntryResolveQueueItem {
+                let slot = queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
                     safe_path: b"",
@@ -4603,8 +4566,6 @@ impl<'a> Resolver<'a> {
                 if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                            // SAFETY: slot was written immediately above.
-                            let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }
@@ -5468,7 +5429,7 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                package_json: Some(std::ptr::from_ref(browser_json)),
+                                package_json: Some(browser_json),
                                 ..Default::default()
                             };
                             dec_ret!(MatchStatus::Success);
@@ -5495,7 +5456,7 @@ impl<'a> Resolver<'a> {
                         primary: Fs::Path::init(result.path),
                         secondary: None,
                     },
-                    package_json: Some(std::ptr::from_ref(package_json)),
+                    package_json: Some(package_json),
                     dirname_fd: result.dirname_fd,
                     ..Default::default()
                 };
@@ -5642,7 +5603,7 @@ impl<'a> Resolver<'a> {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        package_json: Some(std::ptr::from_ref(package_json)),
+                        package_json: Some(package_json),
                         dirname_fd,
                         ..Default::default()
                     };
@@ -5728,7 +5689,7 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                package_json: Some(std::ptr::from_ref(browser_json)),
+                                package_json: Some(browser_json),
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5803,7 +5764,7 @@ impl<'a> Resolver<'a> {
                                     secondary: None,
                                 },
                                 dirname_fd: file.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(package_json)),
+                                package_json: Some(package_json),
                                 file_fd: file.file_fd,
                                 ..Default::default()
                             };
@@ -5860,11 +5821,11 @@ impl<'a> Resolver<'a> {
                 dec_ret!(MatchStatus::NotFound);
             }
         };
-        let mut package_json: Option<*const PackageJSON> = None;
+        let mut package_json: Option<&'static PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
         if let Some(pkg_json) = dir_info.package_json() {
-            package_json = Some(std::ptr::from_ref(pkg_json));
+            package_json = Some(pkg_json);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
                 // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
@@ -6385,13 +6346,6 @@ impl<'a> Resolver<'a> {
             'append_bin_dir: {
                 if info.has_node_modules() {
                     if entries!().has_comptime_query(b"node_modules") {
-                        // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
-                        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                            // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                            BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
-                        }
-
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
@@ -6407,9 +6361,7 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
-                            for existing_folder in
-                                (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
-                            {
+                            for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
                                 if *existing_folder == bin_path {
                                     break 'append_bin_dir;
                                 }
@@ -6419,7 +6371,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                            let _ = (*BIN_FOLDERS.get()).append(stored);
                         }
                     }
                 }
@@ -6429,14 +6381,6 @@ impl<'a> Resolver<'a> {
                         if q.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
-                            // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
-                            if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                                // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                                BIN_FOLDERS_LOADED
-                                    .store(true, core::sync::atomic::Ordering::Release);
-                            }
-
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
                             else {
                                 break 'append_bin_dir;
@@ -6450,9 +6394,7 @@ impl<'a> Resolver<'a> {
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
-                                for existing_folder in
-                                    (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
-                                {
+                                for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
                                     if *existing_folder == bin_path {
                                         break 'append_bin_dir;
                                     }
@@ -6462,7 +6404,7 @@ impl<'a> Resolver<'a> {
                                 else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                                let _ = (*BIN_FOLDERS.get()).append(stored);
                             }
                         }
                     }
@@ -6696,9 +6638,9 @@ impl<'a> Resolver<'a> {
         tsconfigpath: &[u8],
         fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
-        let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(tsconfigpath, fd)
+        let parsed_tsconfig: Option<Box<TSConfigJSON>> = match self.parse_tsconfig(tsconfigpath, fd)
         {
-            Ok(v) => v.map(bun_core::heap::into_raw),
+            Ok(v) => v,
             Err(err) => {
                 let pretty = tsconfigpath;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -6723,16 +6665,9 @@ impl<'a> Resolver<'a> {
                 None
             }
         };
-        if let Some(tsconfig_json) = parsed_tsconfig {
-            let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
-            parent_configs.append(tsconfig_json)?;
-            // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-            // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-            // this extends-chain walk and freed via heap::take below. Hold as
-            // `BackRef` (pointee outlives holder) so the loop body reads via safe
-            // `Deref` instead of three open-coded raw-ptr derefs.
-            let mut current =
-                bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
+        if let Some(mut current) = parsed_tsconfig {
+            // With `current`, a chain of up to 64 configs.
+            let mut parent_configs: BoundedArray<Box<TSConfigJSON>, 63> = BoundedArray::default();
             while !current.extends.is_empty() {
                 let ts_dir_name = Dirname::dirname(&current.abs_path);
                 // `extends` comes from the config file and can be any length.
@@ -6750,8 +6685,8 @@ impl<'a> Resolver<'a> {
                         &current.extends[..],
                     )),
                 };
-                let parent_config_maybe: Option<*mut TSConfigJSON> = match parsed {
-                    Ok(v) => v.map(bun_core::heap::into_raw),
+                let parent_config_maybe: Option<Box<TSConfigJSON>> = match parsed {
+                    Ok(v) => v,
                     Err((err, shown_path)) => {
                         let _ = self.log_mut().add_debug_fmt(
                             None,
@@ -6766,23 +6701,17 @@ impl<'a> Resolver<'a> {
                     }
                 };
                 if let Some(parent_config) = parent_config_maybe {
-                    parent_configs.append(parent_config)?;
-                    current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                    );
+                    parent_configs.append(core::mem::replace(&mut current, parent_config))?;
                 } else {
                     break;
                 }
             }
 
-            let merged_config = parent_configs.pop().unwrap();
+            let mut merged_config = current;
             // starting from the base config (end of the list)
             // successively apply the inheritable attributes to the next config
-            while let Some(parent_config_ptr) = parent_configs.pop() {
-                // SAFETY: see loop-wide note above.
-                let parent_config = unsafe { &mut *parent_config_ptr };
-                // SAFETY: see loop-wide note above.
-                let mc = unsafe { &mut *merged_config };
+            while let Some(mut parent_config) = parent_configs.pop() {
+                let mc = &mut *merged_config;
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {
@@ -6817,18 +6746,10 @@ impl<'a> Resolver<'a> {
                     // JSON), so this is a no-op but documents the ownership.
                     // (Drop handles parent_config.paths.)
                 }
-                // Every scalar/reference we need has been copied into merged_config
-                // (strings live in dirname_store or default_allocator and outlive the
-                // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                // without this, every intermediate config in an extends chain leaks on
-                // each dir_info_uncached() call, which is especially bad under HMR where
-                // bust_dir_cache triggers a re-parse of the whole chain on every reload.
-                // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
+                // `destroy` logs what tsconfig-extends-leak.test.ts counts.
+                TSConfigJSON::destroy(parent_config);
             }
-            // SAFETY: from `parse_tsconfig` (heap::into_raw) above; the walk is over, so this
-            // is the only pointer to it.
-            return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
+            return Ok(Some(merged_config));
         }
         Ok(None)
     }
@@ -6995,7 +6916,7 @@ pub(crate) struct BrowserMapPath<'b> {
     pub(crate) cleaned: &'b [u8],
     pub(crate) input_path: &'b [u8],
     pub(crate) extension_order: &'b [Box<[u8]>],
-    pub(crate) map: &'b BrowserMap,
+    pub(crate) map: &'static BrowserMap,
 }
 
 impl<'b> BrowserMapPath<'b> {
@@ -7008,11 +6929,7 @@ impl<'b> BrowserMapPath<'b> {
         let cleaned = self.cleaned;
         // Check for equality
         if let Some(result) = map.get(path_to_check) {
-            // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
-            // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
-            // cache is process-global); the `'b` borrow on `map` artificially shortens
-            // what is process-lifetime storage. `Interned` is the canonical proof type.
-            self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+            self.remapped = result;
             return true;
         }
 
@@ -7033,8 +6950,7 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = _remapped;
                     return true;
                 }
             }
@@ -7053,8 +6969,7 @@ impl<'b> BrowserMapPath<'b> {
         };
 
         if let Some(_remapped) = map.get(index_path) {
-            // SAFETY: ARENA — see `result` note above.
-            self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+            self.remapped = _remapped;
             return true;
         }
 
@@ -7072,8 +6987,7 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = _remapped;
                     return true;
                 }
             }

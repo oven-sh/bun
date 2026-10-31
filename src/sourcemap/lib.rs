@@ -352,7 +352,7 @@ impl SourceProviderMap {
     }
 
     pub(crate) fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_provider(self)
+        SourceContentPtr::from_source_provider::<Self>(self)
     }
 }
 
@@ -643,7 +643,7 @@ pub mod SerializedSourceMap {
     /// it lives for the process — modelled as `'static`).
     #[derive(Clone, Copy)]
     pub struct SerializedSourceMap {
-        pub(crate) bytes: &'static [u8],
+        pub bytes: &'static [u8],
     }
 
     impl SerializedSourceMap {
@@ -672,14 +672,13 @@ pub mod SerializedSourceMap {
     }
 
     /// Once loaded, this map stores additional data for keeping track of
-    /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
-    /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
-    pub(crate) struct Loaded {
-        pub(crate) map: SerializedSourceMap,
+    /// source code. Held by `ParsedSourceMap::standalone_module_graph`.
+    pub struct Loaded {
+        pub map: SerializedSourceMap,
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
-        pub(crate) decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
+        pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
     }
 
     impl Loaded {

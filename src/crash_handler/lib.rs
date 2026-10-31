@@ -515,6 +515,13 @@ mod draft {
             libc::abort()
         }
     }
+
+    #[cfg(not(windows))]
+    unsafe extern "C" {
+        // safe: by-value `c_int` only; no memory-safety preconditions.
+        safe fn _exit(code: c_int) -> !;
+        safe fn raise(sig: c_int) -> c_int;
+    }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
@@ -606,7 +613,7 @@ mod draft {
         static PANIC_STAGE: Cell<usize> = const { Cell::new(0) };
 
         static INSIDE_NATIVE_PLUGIN: Cell<Option<*const c_char>> = const { Cell::new(None) };
-        static UNSUPPORTED_UV_FUNCTION: Cell<Option<*const c_char>> = const { Cell::new(None) };
+        static UNSUPPORTED_UV_FUNCTION: Cell<Option<&'static [u8]>> = const { Cell::new(None) };
 
         /// This can be set by various parts of the codebase to indicate a broader
         /// action being taken. It is printed when a crash happens, which can help
@@ -812,10 +819,7 @@ mod draft {
         #[cfg(windows)]
         bun_sys::windows::kernel32::ExitProcess(1);
         #[cfg(not(windows))]
-        // SAFETY: `_exit` has no preconditions and never returns.
-        unsafe {
-            libc::_exit(1)
-        }
+        _exit(1)
     }
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
@@ -914,10 +918,6 @@ mod draft {
                         {
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                 .with(|c| c.get())
-                                .map(|p| {
-                                    // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-                                })
                                 .unwrap_or(b"<unknown>");
                             if write!(
                                 writer,
@@ -1161,10 +1161,6 @@ mod draft {
                             {
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                     .with(|c| c.get())
-                                    .map(|p| {
-                                        // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                        unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-                                    })
                                     .unwrap_or(b"<unknown>");
                                 if write!(
                                     writer,
@@ -2651,18 +2647,10 @@ mod draft {
     // The v1/v2 trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
     // shift every following VLQ byte, making bun.report unable to decode the URL.
-    const GIT_SHA: &str = {
-        const fn sha7(s: &'static str) -> &'static str {
-            let (head, _) = s.as_bytes().split_at(7);
-            // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8
-            // prefix. `split_at` const-panics if the input is shorter than 7.
-            unsafe { core::str::from_utf8_unchecked(head) }
-        }
-        if !Environment::GIT_SHA.is_empty() {
-            sha7(Environment::GIT_SHA)
-        } else {
-            "unknown"
-        }
+    const GIT_SHA: &str = if !Environment::GIT_SHA.is_empty() {
+        Environment::GIT_SHA.split_at(7).0
+    } else {
+        "unknown"
     };
 
     struct StackLine {
@@ -3171,10 +3159,7 @@ mod draft {
                     unsafe {
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
-                    // SAFETY: _exit is async-signal-safe in the forked child
-                    unsafe {
-                        libc::_exit(0);
-                    }
+                    _exit(0);
                 }
                 // success and failure cases: ignore the result
                 _ => {}
@@ -3232,11 +3217,8 @@ mod draft {
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
             }
 
-            // SAFETY: raise has no preconditions; with SIG_DFL installed and
-            // the signal unblocked this terminates the process.
-            unsafe {
-                libc::raise(sig);
-            }
+            // With SIG_DFL installed and the signal unblocked this terminates the process.
+            raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
             core::intrinsics::abort();
         }
@@ -3877,14 +3859,15 @@ mod draft {
     /// # Safety
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
+    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) -> ! {
         bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
-        UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
+        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
+        // This function never returns, so the string outlives every read on this thread.
+        let name_bytes: &'static [u8] = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+        UNSUPPORTED_UV_FUNCTION.with(|c| c.set(Some(name_bytes)));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();
         }
-        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
-        let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),

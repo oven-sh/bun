@@ -277,17 +277,8 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         package_id: PackageID,
         resolution: &hooks::Resolution,
-        buf: &'b mut [u8],
+        path_buf: &'b mut bun_paths::PathBuffer,
     ) -> Result<&'b [u8], bun_core::Error> {
-        // The resolver passes a `bun_paths::PathBuffer`-sized slice
-        // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
-        // signature's `&mut PathBuffer`.
-        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
-        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
-        // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
-        // (asserted above).
-        let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);

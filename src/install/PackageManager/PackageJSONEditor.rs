@@ -1080,7 +1080,7 @@ pub(crate) fn edit(
                     }
                     if let Some(slot) = slot {
                         remove_entry(current_package_json, dependency_list, request.get_name());
-                        request.e_string = Some(slot.as_ptr());
+                        request.e_string = Some(slot);
                         remaining -= 1;
                         changed = true;
                         i += 1;
@@ -1164,8 +1164,7 @@ pub(crate) fn edit(
                                                     .expr
                                                     .data
                                                     .e_string()
-                                                    .expect("infallible: variant checked")
-                                                    .as_ptr(),
+                                                    .expect("infallible: variant checked"),
                                             );
                                             remaining -= 1;
                                         } else {
@@ -1222,8 +1221,7 @@ pub(crate) fn edit(
                                                     request.e_string = Some(
                                                         v.data
                                                             .e_string()
-                                                            .expect("infallible: variant checked")
-                                                            .as_ptr(),
+                                                            .expect("infallible: variant checked"),
                                                     );
                                                     remaining -= 1;
                                                     break 'dependency_group;
@@ -1332,8 +1330,7 @@ pub(crate) fn edit(
                         .unwrap()
                         .data
                         .e_string()
-                        .unwrap()
-                        .as_ptr(),
+                        .unwrap(),
                 );
                 break;
             }
@@ -1436,24 +1433,7 @@ pub(crate) fn edit(
         &[]
     };
     for request in updates.iter_mut() {
-        if let Some(e_string) = request.e_string {
-            // SAFETY: `e_string` is a `*mut E::EString` captured at one of two provenance sites:
-            //   (a) the freshly `Expr::allocate`d empty value string in `new_dependencies` (the
-            //       `e_string().unwrap().as_ptr()` call inside the `while k < new_dependencies.len()`
-            //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
-            //   (b) a pre-existing slot from the parsed `current_package_json` input tree
-            //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan) — backed by the thread-local Expr
-            //       Store, which the *caller* guarantees stays live for the duration of `edit`
-            //       (it owns the parsed tree).
-            // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*
-            // Store use, not a keep-alive — it exists precisely so that the (a)-path nodes are
-            // never Store-backed. The `*current_package_json = Expr::allocate(...)` reassignments
-            // above only overwrite a Copy `Expr` handle; they never reset either arena. The Expr
-            // tree references the slot via `StoreRef` (a Copy `NonNull`) and no `&`/`&mut`
-            // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
-            // so this is the sole mutable borrow.
-            let e_string = unsafe { &mut *e_string };
+        if let Some(mut e_string) = request.e_string {
             // `bun update <pkg>` only moves registry entries. `bun add` replaces any entry.
             if manager.subcommand == Subcommand::Update
                 && !literal_tag(e_string.data.slice()).is_npm()
@@ -1534,8 +1514,7 @@ pub(crate) fn edit(
                                     current_package_json,
                                     DependencyGroup::PEER.prop,
                                     request.name,
-                                )
-                                .map(|slot| slot.as_ptr());
+                                );
                             match updated_version_literal(
                                 original,
                                 resolved,
@@ -1630,7 +1609,7 @@ pub(crate) fn edit(
             let mut declared = groups.iter().filter_map(|(group, _)| entry(group));
             if let Some(slot) = declared
                 .next()
-                .filter(|slot| request.e_string == Some(slot.as_ptr()))
+                .filter(|slot| request.e_string == Some(*slot))
             {
                 also_declared.extend(declared.map(|other| (slot, other)));
             }

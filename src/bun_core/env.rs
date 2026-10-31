@@ -53,7 +53,7 @@ pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
-    const_str_slice(build_options::SHA, 0, 9)
+    build_options::SHA.split_at(9).0
 } else {
     ""
 };
@@ -209,22 +209,3 @@ pub const ARCH: Architecture = if IS_WASM {
 } else {
     panic!("Please add your architecture to the Architecture enum")
 };
-
-// Helper for const &str slicing (Rust stable lacks const range indexing on str).
-const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static str {
-    // `[u8]::split_at` and `str::from_utf8` are both `const` on stable, so the
-    // sub-slice + UTF-8 check happens entirely at compile time without raw
-    // pointer arithmetic.
-    //
-    // ALLOWED `core::str::from_utf8`: this is the ONE permitted call site in
-    // the codebase. simdutf is the runtime validator (`bun_core::strings::
-    // {is_valid_utf8, str_utf8}`); `const fn` cannot call FFI, and this body
-    // const-evals at compile time only (git-SHA slicing).
-    let (head, _) = s.as_bytes().split_at(end);
-    let (_, sub) = head.split_at(start);
-    match core::str::from_utf8(sub) {
-        Ok(s) => s,
-        // Unreachable for git-SHA inputs (hex ASCII); fail the const-eval if not.
-        Err(_) => panic!("const_str_slice: not at a UTF-8 boundary"),
-    }
-}

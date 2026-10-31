@@ -58,19 +58,17 @@ std::thread_local! {
 }
 
 /// Install the per-thread `CRYPTO_BUFFER_POOL`.
-///
-/// # Safety
-/// `ctx` must be a live `SSL_CTX*`.
-pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
+pub fn ssl_ctx_setup(ctx: &boring::OwnedSslCtx) {
     AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
-        // SAFETY: caller guarantees `ctx` is a live `SSL_CTX*`; the pool pointer
+        // SAFETY: `ctx` owns a reference, so it is a live `SSL_CTX*`; the pool pointer
         // is either freshly returned by `CRYPTO_BUFFER_POOL_new` or a previously
-        // stored thread-local pool.
+        // stored thread-local pool. The pool is never freed; `OwnedSslCtx` is
+        // `!Send + !Sync`, so no other thread reads `ctx->pool` during the store.
         unsafe {
             if pool.get().is_null() {
                 pool.set(CRYPTO_BUFFER_POOL_new());
             }
-            SSL_CTX_set0_buffer_pool(ctx, pool.get());
+            SSL_CTX_set0_buffer_pool(ctx.as_ptr(), pool.get());
         }
     });
 }

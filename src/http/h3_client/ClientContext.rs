@@ -71,15 +71,16 @@ impl ClientContext {
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub(crate) fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get_or_create() -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);
-        // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
+        // SAFETY: HTTP-thread only, where `on_start` has set `uws_loop` to the
+        // thread's live `us_loop_t`.
         let qctx = unsafe {
             quic::Context::create_client(
-                loop_.as_ptr(),
+                crate::http_thread().uws_loop(),
                 0,
                 core::mem::size_of::<*mut ClientSession>() as c_uint,
                 core::mem::size_of::<*mut Stream>() as c_uint,

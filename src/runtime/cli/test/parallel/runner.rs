@@ -672,17 +672,7 @@ pub(crate) fn run_as_worker(
     worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    vm.run_with_api_lock(|| {
-        while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).tick() };
-            if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-                break;
-            }
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).auto_tick() };
-        }
-    });
+    vm.run_with_api_lock(|| flush_frames(&raw mut wloop.cmds, vm));
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code = 0;
@@ -694,6 +684,20 @@ pub(crate) fn run_as_worker(
     });
     {
         Global::exit(0);
+    }
+}
+
+/// Ticks until every frame written so far is out, or the channel is done.
+fn flush_frames(cmds: *mut WorkerCommands, vm: &VirtualMachine) {
+    // SAFETY: `cmds` is the worker's live `WorkerCommands`; the process exits before it drops. Each check reads through
+    // the pointer again: a tick can run a channel callback, and that callback forms `&mut WorkerCommands`.
+    let pending = || unsafe { (*cmds).channel.has_pending_writes() && !(*cmds).channel.done.get() };
+    while pending() {
+        vm.event_loop_ref().tick();
+        if !pending() {
+            break;
+        }
+        vm.event_loop_ref().auto_tick();
     }
 }
 
@@ -759,6 +763,16 @@ pub(crate) fn worker_emit_test_done(
             encode_test_case(wf, test);
         }
     });
+}
+
+/// Windows: a frame in flight is a `uv_write`, an active request, so the loop reads as alive until its callback runs.
+#[cfg(windows)]
+pub(crate) fn worker_flush_frames(vm: &VirtualMachine) {
+    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
+    let Some(cmds) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
+    flush_frames(cmds, vm);
 }
 
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {

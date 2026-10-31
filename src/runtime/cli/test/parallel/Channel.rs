@@ -191,7 +191,7 @@ impl Default for WindowsBackend {
 
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
-    /// socketpair end. Windows: the inherited named-pipe end (worker side).
+    /// socketpair end. Windows: the worker's end of the named pipe, unref'd.
     // callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
     // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
     // `&mut`. Take a raw `*const` and cast

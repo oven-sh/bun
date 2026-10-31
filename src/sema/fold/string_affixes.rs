@@ -704,7 +704,7 @@ fn is_segment_boundary(byte: u8) -> bool {
     matches!(byte, b'/' | b'\\' | b':')
 }
 
-fn trim_to_last_segment(text: &mut Vec<u8>) -> bool {
+pub(crate) fn trim_to_last_segment(text: &mut Vec<u8>) -> bool {
     match text.iter().rposition(|&byte| is_segment_boundary(byte)) {
         Some(boundary) => {
             text.drain(..=boundary);

@@ -17,7 +17,8 @@ use crate::load::is_in_node_modules;
 use crate::load::runtime_modules::find_module_named;
 use crate::load::sources::parsed_source;
 use crate::modules::evicted::{
-    FileOfKey, find_file_of_key, find_files_named_with_query, find_paths_changed_on_disk,
+    FileOfKey, find_file_of_key, find_files_named_with_query,
+    find_names_that_unspelled_keys_may_be, find_paths_changed_on_disk,
     stands_where_a_throw_is_caught,
 };
 
@@ -666,6 +667,10 @@ impl Look<'_, '_> {
             }
         }
         self.found.changed_on_disk = find_paths_changed_on_disk(analysis);
+        let names =
+            find_names_that_unspelled_keys_may_be(hir, bound, analysis, self.atoms, self.builtins);
+        let names = names.into_iter().map(|name| self.atoms.intern(name));
+        self.found.evicted.extend(names);
         for site in analysis.import_sites {
             if let ImportSiteKind::Require(call) = site.kind
                 && stands_where_a_throw_is_caught(hir, bound, call)

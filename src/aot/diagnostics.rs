@@ -21,6 +21,7 @@ use bun_sema_driver::{self as driver, LoadedProgram, Locator};
 use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+pub(crate) use self::front_end::syntax_errors_of;
 use self::int32_flows::Int32FlowKey;
 pub use self::shared::{InternalError, Severity};
 pub(crate) use self::sink::log_diagnostic_at;

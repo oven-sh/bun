@@ -288,6 +288,7 @@ pub(super) struct ResolverOutput {
     pub(super) keys_partly_read: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) keys_stored_in_module_cache: Vec<KeyOfModuleCache>,
+    pub(super) hands_module_cache_on: bool,
     pub(super) loses_sight_of_module_cache: bool,
 }
 
@@ -830,6 +831,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),
             keys_stored_in_module_cache: output.keys_stored_in_module_cache.into_boxed_slice(),
+            hands_module_cache_on: output.hands_module_cache_on,
             loses_sight_of_module_cache: output.loses_sight_of_module_cache || names_plugin,
             reaches_module_cache,
         }

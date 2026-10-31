@@ -87,6 +87,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_for_effect(&mut self, expression: ExprId, is_unused_in_bun_run: bool) {
         let position = self.file.hir[expression].pos;
+        debug_assert!(!self.file.hir.is_in_jsdoc(position), "a comment is no code");
         if !self.enter_nesting(position) {
             return;
         }
@@ -164,6 +165,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         evaluation: Evaluation<'_>,
     ) -> ValueId {
         let position = self.file.hir[expression].pos;
+        debug_assert!(!self.file.hir.is_in_jsdoc(position), "a comment is no code");
         if !self.enter_nesting(position) {
             return self.builder.undefined();
         }

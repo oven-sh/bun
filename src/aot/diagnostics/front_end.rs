@@ -247,9 +247,13 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
     }
 }
 
-fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
-    (hir.diagnostics.iter())
-        .filter(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
+/// What keeps a file from being compiled. `/** @import Foo#bar */`: a mistake in a comment of a JavaScript file does not.
+pub(crate) fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
+    hir.diagnostics.iter().filter(|it| {
+        it.kind == DiagnosticKind::Parse
+            && it.class == DiagnosticClass::EarlyError
+            && !hir.is_in_jsdoc(it.start)
+    })
 }
 
 pub(super) fn fold_error_diagnostic(

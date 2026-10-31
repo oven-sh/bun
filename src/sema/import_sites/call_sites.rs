@@ -1,4 +1,4 @@
-use super::alternatives::{WrittenNames, find_alternatives};
+use super::alternatives::{WrittenNames, find_alternatives, find_texts_of_key};
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
@@ -8,7 +8,7 @@ use super::made_requires::{
 use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
-use crate::fold::Decisions;
+use crate::fold::{Decisions, FoldedValue, find_export_of_module};
 use crate::hir::{
     ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind,
 };
@@ -460,6 +460,7 @@ pub(super) struct ScannedCalls {
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_of_changed_files: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, Atom)>,
 }
@@ -476,10 +477,12 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut requires_of_other_files = Vec::new();
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
+    let mut keys_stored_in_caches = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
             names_of_workers.extend(find_name_of_worker(inputs, call, &mut alternatives));
+            keys_stored_in_caches.extend(find_key_stored_in_cache(inputs, call, &mut alternatives));
             continue;
         };
         let is_dead = decisions.is_dead_expr(call);
@@ -519,15 +522,85 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
     names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
+    keys_stored_in_caches.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
         paths_of_changed_files,
+        keys_stored_in_caches,
         module_require_objects,
         requires_of_other_files,
     }
+}
+
+fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        atoms,
+        ..
+    } = inputs;
+    let table = follow_settled_bindings(hir, bound, table);
+    if let Some((object, MemberKey::Name(name))) = hir.member_key(table)
+        && atoms.bytes(name) == b"cache"
+    {
+        let object = hir.skip_type_assertions(object);
+        return is_free_common_js(hir, bound, object, CommonJsVariable::Require);
+    }
+    let find_constant = |e| match decisions.constant(hir, e) {
+        FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+            Some(constant)
+        }
+        FoldedValue::Unknown => None,
+    };
+    let is_module = |specifier: Atom| matches!(atoms.bytes(specifier), b"module" | b"node:module");
+    find_export_of_module(hir, bound, table, &find_constant, &is_module)
+        .is_some_and(|name| atoms.bytes(name) == b"_cache")
+}
+
+fn find_key_stored_in_cache(
+    inputs: &ScanInputs<'_, '_>,
+    entry: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> Option<(ExprId, ImportSpecifier)> {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        ..
+    } = inputs;
+    let ExprKind::Index { .. } = expr_kind(hir, entry)? else {
+        return None;
+    };
+    let (table, MemberKey::Computed(key)) = hir.member_key(entry)? else {
+        return None;
+    };
+    let mut target = entry;
+    while let Parent::Expr(parent) = bound.parent_of_expr(target)
+        && hir.type_assertion_operand(parent) == Some(target)
+    {
+        target = parent;
+    }
+    bound.get_assignment_target(hir, target)?;
+    if decisions.is_dead_expr(entry) || !names_module_cache(inputs, table) {
+        return None;
+    }
+    let texts = find_texts_of_key(inputs, &alternatives.written_names, key)?;
+    let text = match texts[..] {
+        [only] => only,
+        _ => {
+            let first = alternatives.found.len() as u32;
+            alternatives.found.extend_from_slice(&texts);
+            ImportSpecifier::OneOf(Alternatives {
+                first,
+                count: texts.len() as u32,
+            })
+        }
+    };
+    Some((key, text))
 }
 
 // `new Worker(name)`, whatever is called `Worker` there: the argument with what it may be, where it is no constant and is known in part.

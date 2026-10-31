@@ -3,7 +3,9 @@ use super::runtime_reach::{
 };
 use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
 use crate::builtins::BuiltinNames;
-use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::diagnostics::{
+    DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView, syntax_errors_of,
+};
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id, extend_from_boxes};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
@@ -21,11 +23,8 @@ use crate::statistics::{Counters, Stage, StatisticId, Statistics};
 use bun_core::current_work;
 use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{Binding, CommonJsVariable};
-use bun_sema::check::aot::{
-    DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
-};
+use bun_sema::check::aot::{FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics};
 use bun_sema::config;
-use bun_sema::hir::DiagnosticKind;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
@@ -1328,10 +1327,8 @@ fn drop_reports_on_unloadable_modules(
 
 fn is_well_formed(files: &Files<'_>, file: FileId) -> bool {
     let module = files.module(file);
-    let mut diagnostics = module.hir.diagnostics.iter();
     let mut classes = module.bound.class_symbol.iter();
-    !diagnostics
-        .any(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
+    syntax_errors_of(files.hir(file)).next().is_none()
         && !classes.any(|&it| it.is_some() && module.bound.symbol(it).name == known::missing)
 }
 

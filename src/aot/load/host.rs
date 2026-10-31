@@ -10,7 +10,6 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
-use bun_sema::check::aot::DiagnosticClass;
 use bun_sema::erasure::find_type_ranges;
 use bun_sema::hir::{self, DiagnosticKind, ExprId};
 use bun_sema::hir_from_data::HostValue;
@@ -29,7 +28,7 @@ use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compi
 use bun_threading::Guarded;
 
 use crate::builtins::{BuiltinNames, Platforms, ReplacedMembersSought};
-use crate::diagnostics::LoadMessages;
+use crate::diagnostics::{LoadMessages, syntax_errors_of};
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::bundled_commonjs::without_commonjs_wrapper;
 use crate::load::compiler_declarations;
@@ -77,9 +76,7 @@ fn has_syntax_errors(hir: &hir::File<'_>) -> bool {
 }
 
 fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
-    let mut diagnostics = hir.diagnostics.iter();
-    let first = diagnostics
-        .find(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)?;
+    let first = syntax_errors_of(hir).next()?;
     let mut sentence = Vec::new();
     if let Some((_, template)) = bun_sema::messages::message(first.code) {
         bun_sema::messages::format(&mut sentence, template, &first.args);

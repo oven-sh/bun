@@ -23,6 +23,7 @@ export const imageHeader = {
 export const imageFlag = {
   admitsUnknownJavaScript: 1 << 1,
   loadsModulesByName: 1 << 2,
+  runsUnreadCode: 1 << 11,
 } as const;
 
 const minFileAlignment = 512;

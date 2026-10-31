@@ -200,6 +200,7 @@ pub enum ReplacedMembersSought {
     /// No test run.
     None,
     /// Where the file writes a member of a built-in object. In a package a helper that is handed an object and a name mostly reads: `getNative(Object, "create")`.
+    /// So there the object beside the name counts only for a member that is tested where it is used anyway, `fetch` and the timers: to open one costs nothing.
     Written,
     /// And where it may: the object beside the name.
     WrittenOrNamed,
@@ -262,6 +263,7 @@ pub struct ResolvedBuiltins {
     keys_partly_read: Box<[ExprId]>,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
     keys_stored_in_module_cache: Box<[KeyOfModuleCache]>,
+    hands_module_cache_on: bool,
     loses_sight_of_module_cache: bool,
     reaches_module_cache: bool,
 }
@@ -446,6 +448,10 @@ impl ResolvedBuiltins {
     /// `require.cache[key] = entry`: those of `keys_taken_out_of_module_cache` under which the file may leave an entry of its own.
     pub fn keys_stored_in_module_cache(&self) -> &[KeyOfModuleCache] {
         &self.keys_stored_in_module_cache
+    }
+
+    pub fn hands_module_cache_on(&self) -> bool {
+        self.hands_module_cache_on
     }
 
     /// The file names the table, or lets go of something that leads there: it may read what the table lists.

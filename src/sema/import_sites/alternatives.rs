@@ -15,7 +15,7 @@ use crate::bind::{
 };
 use crate::fold::{
     Constant, FoldedValue, PathBelowFolder, apply_binary, apply_template, find_export_of_module,
-    trim_lead_surrogate_at_end, trim_trail_surrogate_at_start,
+    trim_lead_surrogate_at_end, trim_to_last_segment, trim_trail_surrogate_at_start,
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, MemberKey,
@@ -152,6 +152,7 @@ struct Follower<'i, 'a, 's> {
     functions_in_progress: Vec<FnId>,
     expressions_left: u32,
     depth: u32,
+    follows_key: bool,
 }
 
 pub(super) struct Found {
@@ -162,22 +163,68 @@ pub(super) struct Found {
     pub(super) resolved_form: Option<ResolvedForm>,
 }
 
+impl<'i, 'a, 's> Follower<'i, 'a, 's> {
+    fn new(
+        inputs: &'i ScanInputs<'a, 's>,
+        written_names: &'i WrittenNames,
+        follows_key: bool,
+    ) -> Follower<'i, 'a, 's> {
+        Follower {
+            inputs,
+            written_names,
+            kept_as_written: FxHashSet::default(),
+            unchecked: Vec::new(),
+            not_kept_as_written: FxHashSet::default(),
+            variables_in_progress: Vec::new(),
+            functions_in_progress: Vec::new(),
+            expressions_left: MOST_EXPRESSIONS_FOLLOWED,
+            depth: 0,
+            follows_key,
+        }
+    }
+}
+
+pub(super) fn find_texts_of_key(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    key: ExprId,
+) -> Option<Vec<ImportSpecifier>> {
+    let values = Follower::new(inputs, written_names, true).values_of_argument(key)?;
+    let mut texts: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::with_capacity(values.len());
+    for value in values {
+        let mut text = match value {
+            Held::Text(text) | Held::Resolved(text, _) => text,
+            Held::Primitive(_) => continue,
+            _ => return None,
+        };
+        if let Some(end) = &mut text.end {
+            trim_lead_surrogate_at_end(&mut text.start);
+            trim_trail_surrogate_at_start(end);
+            if text.start.is_empty() && end.is_empty() {
+                return None;
+            }
+        }
+        texts.push((text.start, text.end));
+    }
+    texts.shared_sort_unstable();
+    texts.dedup();
+    let atoms = inputs.atoms;
+    let texts = texts.iter().map(|(start, end)| match end {
+        None => ImportSpecifier::Constant(atoms.intern(start)),
+        Some(end) => ImportSpecifier::Pattern {
+            prefix: atoms.intern(start),
+            suffix: atoms.intern(end),
+        },
+    });
+    Some(texts.collect())
+}
+
 pub(super) fn find_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     argument: ExprId,
 ) -> Option<Found> {
-    let mut follower = Follower {
-        inputs,
-        written_names,
-        kept_as_written: FxHashSet::default(),
-        unchecked: Vec::new(),
-        not_kept_as_written: FxHashSet::default(),
-        variables_in_progress: Vec::new(),
-        functions_in_progress: Vec::new(),
-        expressions_left: MOST_EXPRESSIONS_FOLLOWED,
-        depth: 0,
-    };
+    let mut follower = Follower::new(inputs, written_names, false);
     let values = follower.values_of_argument(argument)?;
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
     let mut forms: Vec<Option<ResolvedForm>> = Vec::with_capacity(values.len());
@@ -327,6 +374,9 @@ impl Follower<'_, '_, '_> {
         }
         if is_process(hir, bound, e, &[known::globalThis, known::global]) {
             return Some(vec![Held::Process]);
+        }
+        if self.follows_key && is_free_name(hir, bound, e, &[known::undefined]) {
+            return Some(vec![Held::Primitive(Constant::Undefined)]);
         }
         match expr_kind(hir, e)? {
             ExprKind::Template { exprs } => self.values_of_template(exprs),
@@ -1281,7 +1331,11 @@ impl Follower<'_, '_, '_> {
             return Some(values);
         }
         if let Some(function) = self.find_path_joining_function(callee) {
-            return self.values_of_path_below_folder(call.args, function == known::join);
+            let below_folder = self.values_of_path_below_folder(call.args, function == known::join);
+            return match below_folder {
+                None if self.follows_key => self.values_of_path_below_some_folder(call.args),
+                below_folder => below_folder,
+            };
         }
         if let Some((list, MemberKey::Name(known::join))) = hir.member_key(callee)
             && let Some(lists) = self.values_of(list)
@@ -1653,6 +1707,30 @@ impl Follower<'_, '_, '_> {
                 joined.push(text);
             }
             add(&mut values, Held::Text(joined));
+        }
+        Some(values)
+    }
+
+    fn values_of_path_below_some_folder(&mut self, args: IdList<ExprId>) -> Option<Values> {
+        let last = self.inputs.hir.ids(args).next_back()?;
+        let mut values = Values::new();
+        for part in self.values_apart_from_itself(last)? {
+            let Held::Text(part) = part else {
+                return None;
+            };
+            let mut end = part.end.unwrap_or(part.start);
+            trim_to_last_segment(&mut end);
+            if strings::count_char(&end, b'.') == end.len() {
+                end.clear();
+            }
+            add(
+                &mut values,
+                Held::Text(Text {
+                    start: Vec::new(),
+                    end: Some(end),
+                    starts_at_own_directory: false,
+                }),
+            );
         }
         Some(values)
     }

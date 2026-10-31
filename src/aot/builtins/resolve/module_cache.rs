@@ -149,7 +149,7 @@ impl Resolver<'_, '_> {
             };
             return self.output.keys_taken_out_of_module_cache.push(key);
         }
-        self.output.loses_sight_of_module_cache |= match self.classify_use(table) {
+        let is_handed_on = match self.classify_use(table) {
             MentionUse::Inspected
             | MentionUse::Holder
             | MentionUse::ReadByComputedKey
@@ -161,5 +161,7 @@ impl Resolver<'_, '_> {
                 !self.is_only_listed(table)
             }
         };
+        self.output.hands_module_cache_on |= is_handed_on;
+        self.output.loses_sight_of_module_cache |= is_handed_on;
     }
 }

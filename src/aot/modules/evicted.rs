@@ -7,7 +7,7 @@ use super::module_set::ModuleSet;
 use super::plan::ModuleRef;
 use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ReplacedModules};
-use crate::builtins::{KeyOfModuleCache, RuntimeModule, table};
+use crate::builtins::{KeyOfModuleCache, ResolvedBuiltins, RuntimeModule, table};
 use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::options::ReplacedModule;
@@ -16,8 +16,9 @@ use bun_ast::Target;
 use bun_core::strings::{contains, index_of_char, last_index_of_char};
 use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
 use bun_paths::{is_absolute, path_buffer_pool};
+use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_resolve_builtins::{Alias, Cfg};
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
@@ -551,7 +552,6 @@ fn add_files_named_below_files_left_to_loader(
 
 /// `require.cache["fs"] = { exports: fake }`: from then on `require("fs")` answers with what the entry exports, and `require("node:fs")` with the module.
 /// `overridableRequire` in CommonJS.ts looks in the table for a name in front of which the resolver puts `node:`. These are the modules for which a file spells such a key.
-/// A key that nobody reads opens none: a large program is sure to have one, and every `require` of a Node.js module in it would answer what nobody knows.
 #[derive(Default)]
 pub(super) struct LibraryModulesStoredInCache {
     modules: FxHashSet<RuntimeModule>,
@@ -584,6 +584,54 @@ fn find_module_looked_up_in_cache(name: &[u8]) -> Option<RuntimeModule> {
 fn find_module_stored_under(key: &[u8]) -> Option<RuntimeModule> {
     let (looked_under, module) = find_key_and_module_looked_up_in_cache(key)?;
     (looked_under == key).then_some(module)
+}
+
+pub(crate) fn find_names_that_unspelled_keys_may_be(
+    hir: &bun_sema::hir::File<'_>,
+    bound: &Bound<'_>,
+    analysis: &bun_sema::file_analysis::FileAnalysis<'_>,
+    atoms: &Interner<'_>,
+    builtins: &ResolvedBuiltins,
+) -> Vec<&'static [u8]> {
+    let mut keys: Vec<(&[u8], Option<&[u8]>)> = Vec::new();
+    if builtins.hands_module_cache_on() {
+        keys.push((b"", Some(b"")));
+    }
+    for &key in builtins.keys_stored_in_module_cache() {
+        let text = match (find_file_of_key(hir, bound, analysis, key), key) {
+            (FileOfKey::Path(_), _) | (FileOfKey::Unknown, KeyOfModuleCache::Text(_)) => continue,
+            (FileOfKey::Site(site), _) => &analysis.import_sites[site].specifier,
+            (FileOfKey::Unknown, KeyOfModuleCache::Computed(key)) => analysis
+                .find_key_stored_in_cache(key)
+                .unwrap_or(&ImportSpecifier::Unknown),
+        };
+        keys.extend((analysis.alternatives_of(text).iter()).map(
+            |alternative| match *alternative {
+                ImportSpecifier::Constant(text) => (atoms.bytes(text), None),
+                ImportSpecifier::Pattern { prefix, suffix } => {
+                    (atoms.bytes(prefix), Some(atoms.bytes(suffix)))
+                }
+                ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => (&b""[..], Some(&b""[..])),
+            },
+        ));
+    }
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let may_be = |name: &[u8]| {
+        keys.iter().any(|&(start, end)| match end {
+            None => name == start,
+            Some(end) => {
+                name.len() >= start.len() + end.len()
+                    && name.starts_with(start)
+                    && name.ends_with(end)
+            }
+        })
+    };
+    let names = BUN_ALIASES.iter().copied().flatten().map(|entry| entry.0);
+    names
+        .filter(|name| may_be(name) && find_module_stored_under(name).is_some())
+        .collect()
 }
 
 impl LibraryModulesStoredInCache {
@@ -802,11 +850,13 @@ pub(super) fn find_library_modules_stored_in_cache(
     let mut stored = LibraryModulesStoredInCache::default();
     // The scan of the test files writes each module of the library under its one name.
     for module in input.evicted_modules {
-        if let ReplacedModule::File(name) = module
-            && name.starts_with(b"node:")
-        {
-            stored.modules.extend(table::module_by_specifier(name));
-        }
+        let ReplacedModule::File(name) = module else {
+            continue;
+        };
+        stored.modules.extend(match name.starts_with(b"node:") {
+            true => table::module_by_specifier(name),
+            false => find_module_stored_under(name),
+        });
     }
     for &file in &modules.compiled_files {
         if !matches!(
@@ -833,6 +883,25 @@ pub(super) fn find_library_modules_stored_in_cache(
             };
             (stored.modules).extend(find_module_stored_under(bytes_of(name)));
         }
+        if !input.runs_tests {
+            continue;
+        }
+        let names = find_names_that_unspelled_keys_may_be(
+            hir,
+            bound,
+            analysis,
+            &input.files.atoms,
+            builtins,
+        );
+        if !names.is_empty() && logs_stages() {
+            bun_core::print_errorln!(
+                "AOT test run | an entry in require.cache may answer require() of {} modules of the library: {} stores under a key that it does not spell, or hands the table on",
+                names.len(),
+                bstr::BStr::new(input.files.module(file).file_name()),
+            );
+        }
+        let modules = names.into_iter().filter_map(find_module_stored_under);
+        stored.modules.extend(modules);
     }
     stored.commonjs_files_that_imports_load =
         find_commonjs_files_that_imports_load(input, scans, modules);

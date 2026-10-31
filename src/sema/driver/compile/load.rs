@@ -418,12 +418,30 @@ fn is_project_the_same_with(
         return !further.iter().any(|path| is_typescript_file_name(path));
     }
     let all = [entry_paths, further].concat();
-    first_entry_point_of_largest_project(host, &all)
-        == first_entry_point_of_largest_project(host, entry_paths)
+    first_entry_point_of_largest_project(host, code, &all)
+        == first_entry_point_of_largest_project(host, code, entry_paths)
         && further.iter().all(|path| {
             config::find_config(host, &host.directory_of(path))
                 .is_none_or(|nearest| nearest == config_path)
         })
+}
+
+/// The `tsconfig.json` or `jsconfig.json` in or above `directory` that may be the configuration of a program that begins there. What a
+/// dependency ships says how its author builds it, often over a file that isn't published: its own files are checked by it, in a
+/// program of their own (`EntryPoints::Imported`), and no other package's are.
+fn find_config_of_program(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    directory: &[u8],
+) -> Option<Vec<u8>> {
+    let found = config::find_config(host, directory)?;
+    // The project itself may lie in a `node_modules`.
+    let below = code
+        .working_directory
+        .strip_prefix(&host.directory_of(&found)[..]);
+    let is_of_project = below.is_some_and(|below| below.is_empty() || below[0] == b'/');
+    let is_of_dependency = !is_of_project && bun_core::strings::contains(&found, b"/node_modules/");
+    (!is_of_dependency).then_some(found)
 }
 
 fn find_project(
@@ -435,7 +453,7 @@ fn find_project(
     let first_of_project = match request.entry_points {
         EntryPoints::Imported(_) | EntryPoints::Configured(..) => 0,
         _ if code.tsconfig_override.is_some() => 0,
-        _ => first_entry_point_of_largest_project(host, entry_paths),
+        _ => first_entry_point_of_largest_project(host, code, entry_paths),
     };
     let of_project = &entry_paths[first_of_project..];
     let config_path = match (request.entry_points, &code.tsconfig_override) {
@@ -451,7 +469,10 @@ fn find_project(
                 Some(path) => host.directory_of(path),
                 None => Cow::Borrowed(&code.working_directory[..]),
             };
-            config::find_config(host, &directory)
+            match request.entry_points {
+                EntryPoints::Imported(_) => config::find_config(host, &directory),
+                _ => find_config_of_program(host, code, &directory),
+            }
         }
     };
     let Some(config_path) = config_path else {
@@ -472,7 +493,11 @@ fn find_project(
 /// The position of the first entry point under the `tsconfig.json` that is nearest to the most entry points. Of two that are
 /// nearest to equally many, the one that comes first counts. The files under a configuration with other program-wide options
 /// than the program's are loaded and checked again in a program of their own, and a run of tests has thousands of entry points.
-fn first_entry_point_of_largest_project(host: &dyn CodeHost, entry_paths: &[Vec<u8>]) -> usize {
+fn first_entry_point_of_largest_project(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    entry_paths: &[Vec<u8>],
+) -> usize {
     struct Project {
         config_path: Option<Vec<u8>>,
         first: usize,
@@ -483,7 +508,7 @@ fn first_entry_point_of_largest_project(host: &dyn CodeHost, entry_paths: &[Vec<
     for (position, path) in entry_paths.iter().enumerate() {
         let folder = of_folder.entry(host.directory_of(path));
         let index = *folder.or_insert_with_key(|folder| {
-            let config_path = config::find_config(host, folder);
+            let config_path = find_config_of_program(host, code, folder);
             let known = projects.iter().position(|it| it.config_path == config_path);
             known.unwrap_or_else(|| {
                 projects.push(Project {

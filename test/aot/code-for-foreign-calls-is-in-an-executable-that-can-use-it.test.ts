@@ -85,7 +85,7 @@ describe.concurrent("code for foreign calls", () => {
     };
   }
   const closed = { flags: 0, size: 0, exitCode: 0 };
-  const open = imageFlag.admitsUnknownJavaScript | imageFlag.loadsModulesByName;
+  const open = imageFlag.admitsUnknownJavaScript | imageFlag.loadsModulesByName | imageFlag.runsUnreadCode;
 
   test("is in no program that cannot use it", async () => {
     using dir = tempDir("foreign-calls-hello", files);

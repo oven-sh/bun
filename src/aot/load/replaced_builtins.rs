@@ -14,6 +14,7 @@ use bun_sema::hir::{
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
+use bun_sema::resolve::{JsxSettings, TransformRequest, TranspileSettings, TreeChange};
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
@@ -25,6 +26,7 @@ use crate::builtins::{
 use crate::load::host_platform;
 use crate::load::replaced_modules::find_replaced_modules;
 use crate::load::runtime_modules::find_module_named;
+use crate::load::test_runner_names::import_used_names;
 use crate::options::OpenedName;
 
 // A name of a member is short.
@@ -195,7 +197,25 @@ impl<'s> Look<'s> {
             host_values: &[],
             jsx: JsxMode::Classic,
         };
-        let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
+        let (mut bound, mut analysis) =
+            analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
+        // `bun test` hands every file the names of the test runner: `jest.mock("./a", ..)` and `vi.spyOn(..)` need no import. A build gives the file the import, and so does the look.
+        let mut request = TransformRequest {
+            path,
+            hir: &mut hir,
+            bound: &bound,
+            analysis: &analysis,
+            settings: &TranspileSettings {
+                jsx: JsxSettings::default(),
+                experimental_decorators: false,
+                emits_decorator_metadata: false,
+                use_define_for_class_fields: None,
+            },
+            import_meta_main: None,
+        };
+        if import_used_names(arena, atoms, &mut request) == TreeChange::Changed {
+            (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
+        }
         let module_of = |specifier: ImportSpecifier| match specifier {
             ImportSpecifier::Constant(text) => match atoms.bytes(text) {
                 b"@jest/globals" | b"vitest" => Some(RuntimeModule::BunTest),
@@ -537,6 +557,76 @@ mod tests {
             .collect();
         exports.sort_unstable();
         (modules, exports, found.any_module || found.hands_on_any)
+    }
+
+    fn find_names_that_entries_may_stand_under(text: &str) -> Vec<String> {
+        let found = look_at_file(b"/project/a.test.ts", text.as_bytes());
+        let text_of = |bytes: &Vec<u8>| String::from_utf8(bytes.clone()).expect("it is text");
+        let mut names: Vec<String> = found.evicted.iter().map(text_of).collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    #[test]
+    fn a_key_of_require_cache_that_is_not_spelled_names_the_modules_that_it_may_be() {
+        let find = find_names_that_entries_may_stand_under;
+        let entry = "{ exports: { parse: 1 } }";
+        let whole = [
+            r#"const key = ["u", "r", "l"].join(""); require.cache[key] = ENTRY;"#,
+            r#"export {}; let key; key = ["u", "rl"].join(""); require.cache[key] = ENTRY; key = undefined;"#,
+            r#"function store() { let key; key = ["u", "rl"].join(""); require.cache[key] = ENTRY; key = undefined; }"#,
+            r#"const key = "ur" + tail(); require.cache[key] = ENTRY;"#,
+            r#"const key = head() + "rl"; require.cache[key] = ENTRY;"#,
+            r#"import Module from "node:module"; Module._cache[`ur${middle()}l`] = ENTRY;"#,
+            r#"function stub(name) { require.cache[require.resolve(name)] = ENTRY; } stub("url");"#,
+        ];
+        for text in whole {
+            assert_eq!(find(&text.replace("ENTRY", entry)), ["url"], "{text}");
+        }
+        let none = [
+            r#"import path from "node:path"; const key = path.join(folder(), process.platform, "addon.node"); require.cache[key] = ENTRY;"#,
+            r#"import { resolve } from "path"; let key: string | undefined; key = resolve(folder(), "addon.node"); require.cache[key] = ENTRY; key = undefined;"#,
+            r#"import { afterEach } from "bun:test"; import * as path from "path";
+               let key: string | undefined;
+               function put(folder: string) { key = path.join(folder, process.platform, "addon.node"); require.cache[key] = ENTRY; }
+               afterEach(() => { if (key) { delete require.cache[key]; key = undefined; } });"#,
+            r#"const key = folder() + "/addon.node"; require.cache[key] = ENTRY;"#,
+            r#"require.cache["node:" + name()] = ENTRY;"#,
+            r#"delete require.cache[name()];"#,
+            r#"console.log(Object.keys(require.cache), name() in require.cache, require.cache[name()]);"#,
+        ];
+        for text in none {
+            assert_eq!(find(&text.replace("ENTRY", entry)), [""; 0], "{text}");
+        }
+        let both = find(&r#"require.cache[`u${middle()}l`] = ENTRY;"#.replace("ENTRY", entry));
+        assert_eq!(both, ["url", "util"]);
+        let ends = find(&r#"require.cache[name() + "/promises"] = ENTRY;"#.replace("ENTRY", entry));
+        assert!(ends.contains(&"fs/promises".to_owned()), "{ends:?}");
+        assert!(
+            ends.iter().all(|name| name.ends_with("/promises")),
+            "{ends:?}"
+        );
+        let any = [
+            r#"require.cache[name()] = ENTRY;"#,
+            r#"export function stub(name) { require.cache[require.resolve(name)] = ENTRY; }"#,
+            r#"import path from "node:path"; require.cache[path.join(folder(), name())] = ENTRY;"#,
+            r#"import path from "node:path"; require.cache[path.join(folder(), "..")] = ENTRY;"#,
+            r#"const table = require.cache; table[name()] = ENTRY;"#,
+            r#"put(require.cache, name(), ENTRY);"#,
+            r#"Reflect.set(require.cache, name(), ENTRY);"#,
+            r#"Object.assign(require.cache, entries());"#,
+        ];
+        for text in any {
+            let names = find(&text.replace("ENTRY", entry));
+            for name in ["fs", "url", "events", "fs/promises"] {
+                assert!(names.contains(&name.to_owned()), "{text}: {names:?}");
+            }
+            assert!(
+                !names.iter().any(|name| name.starts_with("node:")),
+                "{text}: {names:?}"
+            );
+        }
     }
 
     #[test]

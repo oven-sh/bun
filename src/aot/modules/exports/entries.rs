@@ -9,7 +9,7 @@ use crate::modules::module_set::ModuleSet;
 use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase, is_replaced_by_object};
 use crate::modules::{BindInput, ExportStatement, ModuleRef, find_library_files};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound, Decl, SymbolId};
+use bun_sema::bind::{Binding, BindingKind, Bound, Decl, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExportSpecId, ImportId, StmtId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
@@ -313,6 +313,10 @@ impl EntryCollector<'_, '_> {
     }
 
     fn find_import_declaration(&self, local: SymbolId) -> Option<(ImportId, ImportedName)> {
+        // `/** @import { f } from "./types" */ function f() {}`: the name has both declarations, and is the function.
+        if self.bound.binding_kind(local) != BindingKind::Import {
+            return None;
+        }
         let mut declarations = self.bound.symbol(local).decls.iter();
         declarations.find_map(|&declaration| {
             let import = match declaration {

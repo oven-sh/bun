@@ -226,6 +226,14 @@ impl ProgramOrigins<'_, '_> {
             && files.export(module, name).is_some()
     }
 
+    /// `/** @param {(this: @f() number) => void} a */`: TS1206. A mistake in a comment of a .js file stops no build.
+    fn is_in_jsdoc_comment(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+            return false;
+        };
+        !diagnostic.has_undefined_range && files.hir(file).is_in_jsdoc(diagnostic.start)
+    }
+
     /// `declare module "node:fs";` says that the module is there and nothing of what it has: `fs.Stats` is `any`, as
     /// `Stats` of `import { Stats } from "node:fs"` is.
     fn is_declared_in_place_of_bun_types(&self, container: Sym) -> bool {
@@ -284,6 +292,7 @@ impl ProgramOrigins<'_, '_> {
                 self.lacks_installed_bun_types && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
             let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
                 Effect::Dropped => return None,
+                Effect::StopsBuild if self.is_in_jsdoc_comment(&diagnostic) => return None,
                 Effect::StopsBuild | Effect::WithdrawsTrust
                     if self.is_from_option_the_file_does_not_have(&diagnostic) =>
                 {

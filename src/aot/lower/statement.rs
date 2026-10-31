@@ -87,6 +87,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_statement_in_place(&mut self, statement: StmtId) {
+        // What the parser makes out of a JSDoc comment says something about types. A comment is no code.
+        if self.file.hir.is_in_jsdoc(self.file.hir[statement].start) {
+            return;
+        }
         self.count_statement(statement);
         if commonjs::is_erased(self.file, statement) {
             self.lower_read_of_erased_callee(statement);

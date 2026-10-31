@@ -401,6 +401,14 @@ impl Resolver<'_, '_> {
         for expr in evaluated {
             if sought == ReplacedMembersSought::WrittenOrNamed {
                 self.find_members_named_by(expr, &mut found);
+            } else if let ExprKind::Call(_) = self.input.hir[expr].kind {
+                // `registry.applyPatch(globalThis, "fetch", wrap)`
+                let mut named = Found::default();
+                self.find_members_named_by(expr, &mut named);
+                let is_cheap = |member: &BuiltinId| {
+                    table::entry(*member).mutability == Mutability::ConstantUnlessWritten
+                };
+                (found.members).extend(named.members.into_iter().filter(is_cheap));
             }
             self.find_members_written_from_literals(expr, &mut found);
             let Some(write) = self.find_write(expr) else {

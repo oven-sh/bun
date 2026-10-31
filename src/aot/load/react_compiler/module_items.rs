@@ -275,6 +275,12 @@ pub(crate) fn finish_file<'s>(
 ) -> File<'s> {
     // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
     file.mentioned.clear();
+    // What stands in a JSDoc comment is no code, and a comment at the head of a file begins where the added statements stand. Nothing that the parser reads out of a comment begins at its first byte.
+    if let Some(first) = file.jsdoc_comments.first_mut()
+        && first.0 == POSITION
+    {
+        first.0 = POSITION + 1;
+    }
     let (mut file, _) = file.into_arena(arena, atoms.session());
     file.finish_nodes();
     file

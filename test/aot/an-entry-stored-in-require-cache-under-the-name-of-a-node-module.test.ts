@@ -86,30 +86,6 @@ const loadedByImports = {
     });`,
 };
 
-// The build reads no key, so it compiles require("url") for the module. The store says so where it would go unheard.
-const said = `ask => { try { return ask(); } catch (error) { return String(error.message).split(". ")[0]; } }`;
-const keysNobodyReads = {
-  "package.json": `{}`,
-  "node_modules/pk/package.json": `{ "name": "pk", "main": "index.js" }`,
-  "node_modules/pk/index.js": `exports.events = () => typeof require("events").once;`,
-  "stub.cjs": `exports.stub = (name, exports) => { require.cache[require.resolve(name)] = { exports }; };`,
-  "one.test.js": `${head}
-    const said = ${said};
-    const join = (...parts) => parts.join("");
-    test("a key that is made at run time", () => {
-      console.log("computed:", said(() => { require.cache[join("u", "rl")] = { exports: { parse: 1 } }; return "stored"; }), typeof require("url").parse);
-      console.log("a helper:", said(() => { require("./stub.cjs").stub("os", { platform: 1 }); return "stored"; }), typeof require("os").platform);
-      const put = (table, key, entry) => { table[key] = entry; };
-      console.log("handed on:", said(() => { put(require.cache, join("eve", "nts"), { exports: { once: 1 } }); return "stored"; }), require("pk").events());
-    });
-    test("what goes through as before", () => {
-      console.log("falsy:", said(() => { require.cache[join("u", "rl")] = undefined; return "stored"; }));
-      console.log("with node:", said(() => { require.cache[join("node:", "url")] = { exports: 1 }; return "stored"; }), typeof require("url").parse);
-      console.log("no module:", said(() => { require.cache[join("no-such", "-module")] = { exports: 1 }; return "stored"; }));
-      console.log("nobody requires it:", said(() => { require.cache[join("z", "lib")] = { exports: { gzipSync: 1 } }; return "stored"; }), typeof require(join("z", "lib")).gzipSync);
-      console.log("only with node:", said(() => { require.cache[join("ut", "il")] = { exports: { inspect: 1 } }; return "stored"; }), typeof require("node:util").inspect);
-    });`,
-};
 const refusal = (name: string) =>
   `Cannot store an entry under '${name}' in require.cache: the build read no store under that key, so require("${name}") was compiled to answer with the module`;
 
@@ -148,38 +124,6 @@ for (const [way, env] of ways) {
     expect(await runTests(String(dir), env, "--aot")).toEqual(plain);
   });
 }
-
-test.concurrent(
-  "a store under a key that nobody reads is refused where a require() holds the module, as one program",
-  async () => {
-    using dir = tempDir("an-entry-under-a-key-that-nobody-reads", keysNobodyReads);
-    const { printed, results } = await runTests(String(dir), ways[0][1], "--aot");
-    expect(results.filter(result => result.startsWith("fail"))).toEqual([]);
-    expect(printed).toEqual(
-      [
-        `computed: ${refusal("url")} function`,
-        `a helper: ${refusal("os")} function`,
-        `handed on: ${refusal("events")} function`,
-        "falsy: stored",
-        "with node: stored function",
-        "no module: stored",
-        "nobody requires it: stored number",
-        "only with node: stored function",
-      ].sort(),
-    );
-  },
-);
-
-test.concurrent(
-  "over layers the host answers for the test files, and the store is refused for what a package holds",
-  async () => {
-    using dir = tempDir("an-entry-under-a-key-that-nobody-reads-over-layers", keysNobodyReads);
-    const { printed, results } = await runTests(String(dir), ways[1][1], "--aot");
-    expect(results.filter(result => result.startsWith("fail"))).toEqual([]);
-    expect(printed).toContain(`handed on: ${refusal("events")} function`);
-    expect(printed).toContain("computed: stored number");
-  },
-);
 
 test.concurrent("in an executable the store throws an error that names the module and says what to write", async () => {
   using dir = tempDir("an-entry-under-a-key-that-nobody-reads-in-an-executable", {

@@ -32,6 +32,7 @@ extern "C" fn same_value_iterator(
 }
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_one_of(
         &self,
         this_value: JsWrapper<'_, Self>,

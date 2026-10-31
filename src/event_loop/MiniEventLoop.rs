@@ -372,7 +372,7 @@ impl MiniEventLoop {
 
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
+    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -386,7 +386,7 @@ impl MiniEventLoop {
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &mut self,
+        &self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,

@@ -287,11 +287,11 @@ static ENVIRONMENTS: [&str; 36] = [
 
 /// The rule, a message's id in today's rule, that message in an earlier ESLint, and the last major version that has it.
 #[rustfmt::skip]
-static MESSAGES: [(&str, &str, Message, u8); 4] = [
-    ("id-length", "tooLongPrivate", Message::new("tooLongPrivate", r##"Identifier name #'{{name}}' is too long (> {{max}})."##), 9),
-    ("no-eval", "unexpected", Message::new("unexpected", r##"eval can be harmful."##), 9),
-    ("no-implicit-coercion", "implicitCoercion", Message::new("useRecommendation", r##"use `{{recommendation}}` instead."##), 8),
-    ("no-useless-assignment", "unnecessaryAssignment", Message::new("unnecessaryAssignment", r##"This assigned value is not used in subsequent statements."##), 9),
+static MESSAGES: [(&str, &str, &Message, u8); 4] = [
+    ("id-length", "tooLongPrivate", &Message::new("tooLongPrivate", r##"Identifier name #'{{name}}' is too long (> {{max}})."##), 9),
+    ("no-eval", "unexpected", &Message::new("unexpected", r##"eval can be harmful."##), 9),
+    ("no-implicit-coercion", "implicitCoercion", &Message::new("useRecommendation", r##"use `{{recommendation}}` instead."##), 8),
+    ("no-useless-assignment", "unnecessaryAssignment", &Message::new("unnecessaryAssignment", r##"This assigned value is not used in subsequent statements."##), 9),
 ];
 
 /// `meta.schema` as JSON, where it differs from `schema::data`, and the last major version that has it. Sorted by rule name.
@@ -414,7 +414,7 @@ pub(super) fn schema_of(name: &[u8], major: u8) -> Option<Json> {
 }
 
 /// The rule `meta`'s `message` in ESLint `major`.
-pub(crate) fn message_of(meta: &Meta, message: Message, major: u8) -> Message {
+pub(crate) fn message_of(meta: &Meta, message: &'static Message, major: u8) -> &'static Message {
     let mut all = MESSAGES.iter().filter(|_| meta.plugin == Plugin::Eslint);
     all.find(|it| it.0 == meta.name && it.1 == message.id && major <= it.3)
         .map_or(message, |it| it.2)

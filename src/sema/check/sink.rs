@@ -242,6 +242,8 @@ impl Reported {
     }
 
     /// `AddRelatedInfo`
+    #[cold]
+    #[inline(never)]
     pub(super) fn add_related_info(&mut self, related: Reported) -> &mut Self {
         self.related_information.push(related);
         self

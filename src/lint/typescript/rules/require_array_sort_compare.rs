@@ -9,7 +9,7 @@ pub struct RequireArraySortCompare {
     ignore_string_arrays: bool,
 }
 
-const REQUIRE_COMPARE: Message = Message::new("requireCompare", "Require 'compare' argument.");
+const REQUIRE_COMPARE: &Message = &Message::new("requireCompare", "Require 'compare' argument.");
 
 /// True if `node` is an array whose elements are all strings.
 fn is_string_array_node(node: Expr) -> bool {

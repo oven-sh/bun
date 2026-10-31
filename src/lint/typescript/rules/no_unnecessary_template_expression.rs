@@ -17,7 +17,7 @@ pub struct NoUnnecessaryTemplateExpression {
     has_old_name: bool,
 }
 
-const NO_UNNECESSARY_TEMPLATE_EXPRESSION: Message = Message::new(
+const NO_UNNECESSARY_TEMPLATE_EXPRESSION: &Message = &Message::new(
     "noUnnecessaryTemplateExpression",
     "Template literal expression is unnecessary and can be simplified.",
 );

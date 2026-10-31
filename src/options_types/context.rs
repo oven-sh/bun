@@ -591,7 +591,7 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
-    pub preconnect: Vec<Box<[u8]>>,
+    pub preconnect: Vec<&'static [u8]>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
     pub dns_result_order: Box<[u8]>,
@@ -611,20 +611,20 @@ pub struct RuntimeOptions {
 
 #[derive(Default)]
 pub struct Eval {
-    pub script: Box<[u8]>,
+    pub script: &'static [u8],
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
-    pub interactive_script: Option<Box<[u8]>>,
+    pub interactive_script: Option<&'static [u8]>,
     /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
     pub reads_configuration: bool,
 }
 
 pub struct CpuProf {
     pub enabled: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
     pub interval: u32,
     pub md_format: bool,
     pub json_format: bool,
@@ -636,8 +636,8 @@ impl Default for CpuProf {
     fn default() -> Self {
         Self {
             enabled: false,
-            name: Box::default(),
-            dir: Box::default(),
+            name: b"",
+            dir: b"",
             interval: 1000,
             md_format: false,
             json_format: false,
@@ -649,8 +649,8 @@ impl Default for CpuProf {
 pub struct HeapProf {
     pub enabled: bool,
     pub text_format: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
 }
 
 impl Default for RuntimeOptions {

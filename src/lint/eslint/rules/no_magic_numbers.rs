@@ -4,11 +4,11 @@ use std::borrow::Cow;
 /// Disallow magic numbers.
 pub struct NoMagicNumbers(Checker);
 
-const USE_CONST: Message = Message::new(
+const USE_CONST: &Message = &Message::new(
     "useConst",
     "Number constants declarations must use 'const'.",
 );
-const NO_MAGIC: Message = Message::new("noMagic", "No magic number: {{raw}}.");
+const NO_MAGIC: &Message = &Message::new("noMagic", "No magic number: {{raw}}.");
 
 /// The specification's maximum array length.
 const MAX_ARRAY_LENGTH: f64 = 4_294_967_295.0;

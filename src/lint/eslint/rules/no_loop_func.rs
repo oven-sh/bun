@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 /// Disallow function declarations that contain unsafe references inside loop statements.
 pub struct NoLoopFunc;
 
-const UNSAFE_REFS: Message = Message::new(
+const UNSAFE_REFS: &Message = &Message::new(
     "unsafeRefs",
     "Function declared in a loop contains unsafe references to variable(s) {{ varNames }}.",
 );

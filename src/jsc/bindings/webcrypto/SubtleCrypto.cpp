@@ -331,7 +331,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -347,7 +347,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });

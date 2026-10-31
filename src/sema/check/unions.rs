@@ -1259,9 +1259,10 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
     }
 
-    /// The end of `filterType`: the union of `kept`, which is what's left of `members`, the members of the union `ty`.
-    fn union_of_kept(&self, ty: TypeId, members: &[TypeId], kept: &[TypeId]) -> TypeId {
-        match *kept {
+    /// The result of `filter` for the union `ty` of `members`, of which `kept` remain.
+    #[inline(never)]
+    fn filtered_union(&mut self, ty: TypeId, members: &[TypeId], kept: &[TypeId]) -> TypeId {
+        match kept[..] {
             [] => TypeId::NEVER,
             [only] => only,
             _ => {
@@ -1324,7 +1325,7 @@ impl<'p, 's> Checker<'p, 's> {
                         kept.push(m);
                     }
                 }
-                self.union_of_kept(ty, members, &kept)
+                self.filtered_union(ty, members, &kept)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never

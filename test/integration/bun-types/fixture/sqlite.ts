@@ -1,5 +1,14 @@
 import { type Changes, Database, type UpdateHook, constants } from "bun:sqlite";
+import { Database as NodeDatabase, DatabaseSync, Statement as NodeStatement, StatementSync } from "node:sqlite";
 import { expectType } from "./utilities";
+
+expectType(NodeDatabase).is<typeof DatabaseSync>();
+expectType(NodeStatement).is<typeof StatementSync>();
+const nodeDatabase: NodeDatabase = new NodeDatabase(":memory:");
+const nodeStatement: NodeStatement = nodeDatabase.prepare("SELECT 1");
+expectType(nodeStatement).is<StatementSync>();
+expectType(nodeStatement.close()).is<void>();
+expectType(nodeStatement[Symbol.dispose]()).is<void>();
 
 expectType(constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE).is<number>();
 expectType<Record<string, number>>(constants);

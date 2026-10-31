@@ -24,6 +24,7 @@
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() (lazy_sqlite3_load_extension != nullptr)
+#define LAZY_SQLITE_HAS_TRACE_V2() (lazy_sqlite3_trace_v2 != nullptr)
 #else
 #ifndef SQLITE_ENABLE_SESSION
 #define SQLITE_ENABLE_SESSION 1
@@ -39,6 +40,7 @@ static_assert(BUN_SQLITE_BUNDLED_VERSION_NUMBER == SQLITE_VERSION_NUMBER,
     "update BUN_SQLITE_BUNDLED_VERSION to match sqlite3_local.h");
 static constexpr bool lazy_sqlite3_has_session = true;
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() true
+#define LAZY_SQLITE_HAS_TRACE_V2() true
 #endif
 
 #include "NodeSqlite.h"
@@ -562,6 +564,9 @@ static void unregisterOpenDatabase(JSDatabaseSync* db)
 
 void JSDatabaseSync::setQueryPublisher(JSObject* publisher)
 {
+    // SQLITE_OMIT_TRACE libraries still support ordinary database operations.
+    if (!LAZY_SQLITE_HAS_TRACE_V2())
+        return;
     if (publisher)
         m_queryPublisher.set(vm(), this, publisher);
     else
@@ -649,7 +654,8 @@ void JSDatabaseSync::closeInternal(bool mayCallScript)
 {
     if (!m_db) return;
     m_deferredClose = std::exchange(m_db, nullptr);
-    sqlite3_trace_v2(m_deferredClose, 0, nullptr, nullptr);
+    if (LAZY_SQLITE_HAS_TRACE_V2())
+        sqlite3_trace_v2(m_deferredClose, 0, nullptr, nullptr);
     m_queryPublisher.clear();
     if (!isBusy())
         finishDeferredClose(mayCallScript);
@@ -815,6 +821,9 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 
     auto utf8 = tryUTF8(globalObject, scope, m_location);
     RETURN_IF_EXCEPTION(scope, false);
+    auto* global = defaultGlobalObject(globalObject);
+    JSValue queryState = BUN_REQUIRE_INTERNAL_MODULE(global, InternalSqlite, "node:sqlite", "publisher"_s);
+    RETURN_IF_EXCEPTION(scope, false);
     sqlite3* db = nullptr;
     int r = sqlite3_open_v2(utf8.legacyCStringPointer(), &db, flags, nullptr);
     if (r != SQLITE_OK) {
@@ -887,9 +896,6 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         }
     }
 
-    auto* global = defaultGlobalObject(globalObject);
-    JSValue queryState = BUN_REQUIRE_INTERNAL_MODULE(global, InternalSqlite, "node:sqlite", "publisher"_s);
-    RETURN_IF_EXCEPTION(scope, false);
     setQueryPublisher(queryState.getObject()->getDirect(vm, Identifier::fromString(vm, "publisher"_s)).getObject());
     return true;
 }

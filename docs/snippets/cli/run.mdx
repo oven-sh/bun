@@ -85,6 +85,12 @@ bun run <file or script>
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>
 
+<ParamField path="--enable-source-maps" type="boolean">
+  Apply the source map that a loaded file names in its <code>sourceMappingURL</code> comment to <code>Error.stack</code>{" "}
+  and to printed errors. Off by default. <code>CallSite</code> objects, code coverage and inline snapshots keep the
+  positions of the loaded file. Bun does not read <code>NODE_OPTIONS</code>
+</ParamField>
+
 <ParamField path="--no-deprecation" type="boolean">
   Silence all deprecation warnings
 </ParamField>

@@ -5036,6 +5036,13 @@
       "multiple": false
     },
     {
+      "name": "enable-source-maps",
+      "description": "Apply the source maps of loaded files to error stack traces",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
       "name": "no-deprecation",
       "description": "Suppress all reporting of the custom deprecation.",
       "hasValue": false,

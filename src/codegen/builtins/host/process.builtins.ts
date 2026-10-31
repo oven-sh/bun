@@ -568,6 +568,7 @@ export default b.declarations(
         uses: { value: b.inspected },
         writes: externalState,
       }),
+      sourceMapsEnabled: { getter: b.bool, capability: "none", reads: externalState, implementation: b.generic },
 
       ...declareEach(functionsDoingNothing, doesNothing),
       ...declareEach(functionsCreatingEmptyArray, createsEmptyArray),

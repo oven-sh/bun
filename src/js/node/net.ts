@@ -183,8 +183,13 @@ declare global {
       /** 0, or a negative libuv errno. */
       readStart(): number;
       readStop(): number;
-      /** Node's signature. A number answers a write that is complete: 0, or a negative libuv errno. */
-      writeBuffer(req: null, data: Uint8Array): number;
+      /** Node's `writeBuffer(req, data)`. A number answers a write that is complete: 0, or a negative libuv errno. `undefined`: the handle finishes the write from the loop and then calls `oncomplete(status, context)`. */
+      writeBuffer<Context>(
+        req: null,
+        data: Uint8Array,
+        oncomplete?: (this: StreamWrapHandle, status: number, context: Context) => void,
+        context?: Context,
+      ): number | undefined;
       /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
       setRawMode(mode: number): number;
       /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
@@ -1412,6 +1417,13 @@ function onStreamRead(this: $Node.StreamWrapHandle, nread: number, buffer?: Buff
     return;
   }
   if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
+}
+// Node's onWriteComplete, for a write that the handle finished from the loop. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L45-L70
+function onStreamWriteComplete(this: $Node.StreamWrapHandle, status: number, callback: WriteCallback) {
+  if (status < 0) return callback(new ErrnoException(status, "write"));
+  const self: $Node.Socket | undefined = this[owner_symbol];
+  if (self && !self.destroyed) self._unrefTimer();
+  callback(null);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self: $Node.Socket, handle: SocketHandle | null) {
@@ -3585,11 +3597,12 @@ Socket.prototype._write = function _write(
     callback(er);
     return false;
   }
-  // A stream-wrap handle takes no request and completes the write in writeBuffer(): 0, or a negative libuv errno. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L143
+  // A stream-wrap handle takes no request. A number from writeBuffer() completes the write here: 0, or a negative libuv errno. Anything else: the handle finishes it from the loop and calls onStreamWriteComplete. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L143
   if (isStreamWrapHandle(socket)) {
-    const err = socket.writeBuffer(null, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+    const data = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    const err = socket.writeBuffer(null, data, onStreamWriteComplete, callback);
     this[kBytesWritten] = socket.bytesWritten;
-    callback(err ? new ErrnoException(err, "write") : null);
+    if (typeof err === "number") callback(err ? new ErrnoException(err, "write") : null);
     return;
   }
   const res = socket.$write(chunk, encoding);

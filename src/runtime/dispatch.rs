@@ -1022,6 +1022,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
             crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
+        bun_io::PollTag::TtyWrite => poll_arm!(crate::node::tty_wrap::TTY, |h| {
+            // SAFETY: tag matched, so `owner.ptr` is the live `*mut TTY` that armed this poll.
+            unsafe { crate::node::tty_wrap::TTY::on_write_poll(h) }
+        }),
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).

@@ -31,8 +31,26 @@ export const TTY = b.class({
     /** 0, or a negative libuv errno. `onread(nread, buffer)` gets what is read. */
     readStart: { returns: b.i32, capability: "js" },
     readStop: { returns: b.i32, capability: "js" },
-    /** Node's signature: `req` is null. All of `data` is written before it returns. 0, or a negative libuv errno. */
-    writeBuffer: { args: { req: b.any, data: b.bytes({ from: ["buffer"] }) }, returns: b.i32 },
+    /** Node's `writeBuffer(req, data)`: `req` is null. A number says that the write is complete: 0, or a negative libuv errno. `undefined` says that the rest goes out from the loop: `oncomplete(status, context)` runs then, with the handle as `this`. */
+    writeBuffer: {
+      args: { req: b.any, data: b.bytes({ from: ["buffer"] }), oncomplete: b.any, context: b.any },
+      returns: b.i32.optional,
+      length: 2,
+      capability: "heap",
+      uses: {
+        oncomplete: [
+          table.retained,
+          table.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "Later",
+            this: table.operand("this"),
+            args: [table.i32, table.operand("context")],
+            result: "Ignored",
+          }),
+        ],
+        context: table.handedOver,
+      },
+    },
     /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
     setRawMode: { args: { mode: b.i32.wrap }, returns: b.i32 },
     /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
@@ -48,7 +66,7 @@ export const TTY = b.class({
     hasRef: { returns: b.bool },
     /** 0: Bun has no async ids. */
     getAsyncId: { returns: b.f64 },
-    /** Every write is complete when `writeBuffer()` returns. 0, or a negative libuv errno. */
+    /** libuv's `uv_stream_set_blocking()`: with `true` every write is complete when `writeBuffer()` returns. 0, or a negative libuv errno. */
     setBlocking: { args: { enable: b.any }, returns: b.i32 },
     /** Node's `HandleWrap::Close`: `callback` runs once, from the loop, with the handle as `this`. A handle that is closed already takes none. */
     close: {

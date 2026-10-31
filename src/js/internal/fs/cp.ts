@@ -67,7 +67,20 @@ async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<C
   if (opts.filter && !(await opts.filter(src, dest))) {
     return { __proto__: null, skipped: true };
   }
-  const { 0: srcStat, 1: destStat } = await getStats(src, dest, opts);
+  // node's getStats() joins the two stats with SafePromiseAll, so the first to reject wins:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/cp/cp.js#L127-L138
+  // Two awaits need no join that a program can replace. The src error wins when both stats fail, as in getStatsSync().
+  const statFunc = opts.dereference ? stat : lstat;
+  const srcStatPromise = statFunc(src, { bigint: true });
+  const destStatPromise = PromisePrototypeThen.$call(
+    statFunc(dest, { bigint: true }),
+    undefined,
+    destStatRejected,
+  ) as Promise<BigIntStats | null>;
+  // Nothing waits for destStatPromise until the src stat settles, and nothing ever does if the src stat fails.
+  $pokePromiseAsHandled(destStatPromise);
+  const srcStat = await srcStatPromise;
+  const destStat = await destStatPromise;
   if (destStat) {
     if (areIdentical(srcStat, destStat)) {
       throw fsCpEinvalError({
@@ -110,17 +123,9 @@ async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<C
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
 
-function getStats(src: string, dest: string, opts: CpOptions) {
-  const statFunc = opts.dereference
-    ? (file: string) => stat(file, { bigint: true })
-    : (file: string) => lstat(file, { bigint: true });
-  return Promise.all([
-    statFunc(src),
-    PromisePrototypeThen.$call(statFunc(dest), undefined, err => {
-      if (err.code === "ENOENT") return null;
-      throw err;
-    }) as Promise<BigIntStats | null>,
-  ]);
+function destStatRejected(err: Error) {
+  if (err.code === "ENOENT") return null;
+  throw err;
 }
 
 // Recursively check if dest parent is a subdirectory of src.

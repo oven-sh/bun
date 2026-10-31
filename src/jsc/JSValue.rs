@@ -2418,9 +2418,7 @@ impl JSValue {
         JSC__JSValue__forEachProperty(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// `JSValue.forEachPropertyNonIndexed` — like
-    /// [`for_each_property`](Self::for_each_property) but skips array-index
-    /// keys.
+    /// The enumerable own named properties of an array: no index, no `length`, nothing inherited.
     pub(crate) fn for_each_property_non_indexed(
         self,
         global: &JSGlobalObject,
@@ -2504,6 +2502,16 @@ impl JSValue {
         match Bun__JSArray__nextPresentIndex(self, start) {
             u64::MAX => None,
             index => Some(index as u32),
+        }
+    }
+    /// For an `Array` cell: its length, and whether its prototype is not its realm's `Array.prototype`. Runs no JS.
+    pub(crate) fn array_length_and_flags(self) -> Option<(u32, bool)> {
+        unsafe extern "C" {
+            safe fn Bun__JSArray__lengthAndFlags(this: JSValue) -> u64;
+        }
+        match Bun__JSArray__lengthAndFlags(self) {
+            u64::MAX => None,
+            bits => Some((bits as u32, bits >> 32 != 0)),
         }
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class

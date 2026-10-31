@@ -4220,7 +4220,25 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            let len = value.get_length(self.global_this)?;
+            // An `Array` subclass instance is `JSType::Array` too: only its prototype differs.
+            let header = if js_type == jsc::JSType::Array {
+                value.array_length_and_flags()
+            } else {
+                None
+            };
+            let len = match header {
+                Some((len, other_prototype)) => {
+                    let len = u64::from(len);
+                    if other_prototype {
+                        if len != 0 && self.depth > self.max_depth {
+                            return self.print_array_class_depth_exceeded::<C>(writer_, value);
+                        }
+                        self.write_array_class_prefix(writer_, value, len)?;
+                    }
+                    len
+                }
+                None => value.get_length(self.global_this)?,
+            };
             if len != 0 && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
             }
@@ -4238,9 +4256,6 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-
-            // TODO: DerivedArray does not get passed along in JSType, and it's
-            // not clear why.
 
             if len == 0 {
                 writer.write_all(b"[]");
@@ -5440,6 +5455,41 @@ pub mod formatter {
                 pfmt!("<r>", C)
             );
             Ok(())
+        }
+
+        /// Writes `Name(len) ` before the bracket of an array with another prototype.
+        #[cold]
+        #[inline(never)]
+        fn write_array_class_prefix(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            len: u64,
+        ) -> JsResult<()> {
+            let name = value.get_class_name(self.global_this)?;
+            if !name.eq_ascii(b"Array") {
+                self.add_for_new_line(
+                    name.length() + bun_core::fmt::digit_count(len) + "() ".len(),
+                );
+                let _ = write!(writer_, "{name}({len}) ");
+            }
+            Ok(())
+        }
+
+        /// Writes `[Name ...]` for an array with another prototype that is past the depth limit.
+        #[cold]
+        #[inline(never)]
+        fn print_array_class_depth_exceeded<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let name = value.get_class_name(self.global_this)?;
+            let name = name.to_utf8();
+            self.print_depth_exceeded_marker::<C>(
+                writer_,
+                core::str::from_utf8(&name).unwrap_or("Array"),
+            )
         }
 
         #[inline(never)]

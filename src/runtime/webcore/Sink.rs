@@ -98,6 +98,7 @@ pub(crate) trait JsSinkType: Sized + 'static {
     /// # Safety
     /// `this` is the object's live sink and must not be used after the call.
     unsafe fn finalize(this: *mut Self);
+    /// `data` is the bytes of a JS buffer, which JavaScript can free: a sink that runs it before its last read copies them first.
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -201,7 +202,7 @@ fn write_chunk<'a, T: JsSinkType>(
 ) -> JsResult<JSValue> {
     // SAFETY: see the section comment.
     let sink = unsafe { &mut *sink.as_ptr() };
-    // The chunk's argument slot holds the bytes for the call, and the sink copies what it keeps.
+    // The chunk's argument slot holds the chunk for the call, and the sink copies what it keeps.
     let written = match chunk {
         SinkChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |bytes| {
             if bytes.is_empty() {
@@ -879,7 +880,7 @@ impl ReadableSinkController {
         }
     }
 
-    /// `write` of bytes that are not in a JS object.
+    /// `write` of a chunk's bytes without its JS object, or of bytes that are not in one.
     pub(crate) fn write_bytes(&self, cx: &mut JsScope<'_>, bytes: &[u8]) -> JsResult<JSValue> {
         let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
@@ -887,8 +888,14 @@ impl ReadableSinkController {
         if bytes.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
+        let chunk = Temporary(RawSlice::new(bytes));
         // SAFETY: the controller is attached, so the sink is live.
-        let written = unsafe { sink.to_sink_handle() }.write(&Temporary(RawSlice::new(bytes)));
+        let written = unsafe {
+            match sink {
+                AnyControlledSink::RewriterPipe(sink) => sink.as_ref().write_js_buffer(&chunk),
+                _ => sink.to_sink_handle().write(&chunk),
+            }
+        };
         Ok(written.to_js(&cx.js_thread()))
     }
 

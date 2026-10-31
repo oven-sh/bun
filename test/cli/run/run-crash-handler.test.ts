@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  isArm64,
   isASAN,
   isDebug,
   isGlibc,
@@ -57,10 +58,10 @@ test.if(isDebug && isLinux && hasSymbolizer)(
 
 // Code compiled with -mbranch-protection=pac-ret saves its return addresses
 // signed. Read as it is, such a word is the address of nothing, and the caller
-// is missing from the crash report. Only Linux arm64 machines with pointer
-// authentication sign anything, which CI's are: elsewhere this passes as is.
-test("a stack walk takes the signature off a return address", () => {
-  expect(crash_handler.stackWalkFindsSignedReturnAddress()).toBe(true);
+// is missing from the crash report. Nothing is signed on a machine without
+// pointer authentication, where this passes as is. CI's machines have it.
+test.if(isLinux && isArm64)("a stack trace takes the signature off a return address", () => {
+  expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
 });
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so

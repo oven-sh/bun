@@ -448,7 +448,16 @@ impl StackIterator {
     }
 }
 
-pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
+/// The return address in the frame record at `fp`, as `StackIterator` gives it.
+///
+/// # Safety
+/// `fp` is the address of a frame record.
+#[inline(always)]
+pub unsafe fn return_address_of_frame(fp: usize) -> usize {
+    // SAFETY: the caller's.
+    let saved = unsafe { *((fp + StackIterator::PC_OFFSET) as *const usize) };
+    strip_return_address_signature(saved)
+}
 
 /// Capture the current thread's call stack.
 ///

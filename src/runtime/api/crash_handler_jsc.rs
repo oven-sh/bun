@@ -171,10 +171,12 @@ pub(crate) fn raise_ignoring_panic_handler() {
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
 }
 
-/// Walks the stack from below a frame whose return address is signed as
-/// `-mbranch-protection=pac-ret` signs it, and says whether the walk gave that
-/// address. Where nothing signs there is nothing to find out.
-pub(crate) fn stack_walk_finds_signed_return_address() -> bool {
+/// Captures the stack from below a frame whose return address is signed as
+/// `-mbranch-protection=pac-ret` signs it, trimmed to that frame's return
+/// address, and says whether the trace starts there. It does only if the walk
+/// and the address to trim by both come without the signature. `None` where
+/// nothing signs.
+pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
     #[cfg(all(target_arch = "aarch64", unix, not(target_vendor = "apple")))]
     {
         #[derive(Default)]
@@ -183,7 +185,11 @@ pub(crate) fn stack_walk_finds_signed_return_address() -> bool {
             len: usize,
         }
         extern "C" fn capture(trace: &mut Trace) {
-            trace.len = bun_core::capture_stack_trace(0, &mut trace.addresses);
+            use bun_core::debug::{frame_address, return_address_of_frame};
+            // SAFETY: a frame record starts with the address of the caller's,
+            // which here is the signed one.
+            let begin = unsafe { return_address_of_frame(*(frame_address() as *const usize)) };
+            trace.len = bun_core::capture_stack_trace(begin, &mut trace.addresses);
         }
         let mut trace = Trace::default();
         let return_address: usize;
@@ -208,11 +214,11 @@ pub(crate) fn stack_walk_finds_signed_return_address() -> bool {
                 clobber_abi("C"),
             )
         };
-        trace.addresses[..trace.len].contains(&return_address)
+        Some(trace.addresses[..trace.len].first() == Some(&return_address))
     }
     #[cfg(not(all(target_arch = "aarch64", unix, not(target_vendor = "apple"))))]
     {
-        true
+        None
     }
 }
 

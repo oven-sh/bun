@@ -1365,7 +1365,7 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
-fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
+pub(crate) fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
     let star = bun_core::strings::index_of_char_usize(text, b'*')?;
     Some((&text[..star], &text[star + 1..]))
 }

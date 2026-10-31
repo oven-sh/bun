@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 /// `toHaveBeenCalledOnce()`.
 pub struct PreferCalledTimes<const RUNNER: u8 = { jest::VITEST }>;
 
-const PREFER_CALLED_TIMES: Message = Message::new(
+const PREFER_CALLED_TIMES: &Message = &Message::new(
     "",
     "Use `toBeCalledTimes(1)` or `toHaveBeenCalledTimes(1)` instead of `toBeCalledOnce()` or `toHaveBeenCalledOnce()`",
 );

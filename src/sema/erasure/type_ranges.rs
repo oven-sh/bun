@@ -9,35 +9,154 @@ use crate::hir::{
 struct TypeRange {
     start: u32,
     end: u32,
-    removed_before: u32,
+    // So many bytes stand in its place that the source lacks. A range either removes or adds.
+    added: u32,
+    // How much shorter the text in front of it is than the source in front of it.
+    removed_before: i64,
+}
+
+impl TypeRange {
+    fn removed_behind(self) -> i64 {
+        self.removed_before + i64::from(self.end - self.start) - i64::from(self.added)
+    }
+}
+
+/// A part of the source in whose place `text` stands.
+pub struct ReplacedText {
+    pub start: u32,
+    pub end: u32,
+    pub text: Box<[u8]>,
+}
+
+fn write_over(kept: &mut [u8], written_over: &[(u32, Box<[u8]>)]) {
+    for (at, text) in written_over {
+        kept[*at as usize..][..text.len()].copy_from_slice(text);
+    }
 }
 
 #[derive(Default, PartialEq, Eq, Debug)]
-pub struct TypeRanges(Vec<TypeRange>);
+pub struct TypeRanges {
+    ranges: Vec<TypeRange>,
+    written_over: Vec<(u32, Box<[u8]>)>,
+}
 
 impl TypeRanges {
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.ranges.is_empty()
     }
 
     pub fn remove_from(&self, text: &[u8]) -> Vec<u8> {
         let mut kept = Vec::with_capacity(text.len());
         let mut at = 0;
-        for range in &self.0 {
+        for range in &self.ranges {
             kept.extend_from_slice(&text[at..range.start as usize]);
+            kept.resize(kept.len() + range.added as usize, b' ');
             at = range.end as usize;
         }
         kept.extend_from_slice(&text[at..]);
+        write_over(&mut kept, &self.written_over);
         kept
     }
 
+    pub fn pack(&self) -> PackedTypeRanges {
+        let mut bytes = Vec::with_capacity(self.ranges.len() * 2);
+        let mut at = 0;
+        for range in &self.ranges {
+            push_number(&mut bytes, range.start - at);
+            push_number(&mut bytes, range.end - range.start);
+            if range.start == range.end {
+                push_number(&mut bytes, range.added);
+            }
+            at = range.end;
+        }
+        PackedTypeRanges {
+            bytes: bytes.into_boxed_slice(),
+            removed: self.ranges.last().map_or(0, |last| last.removed_behind()),
+            written_over: self.written_over.clone().into_boxed_slice(),
+        }
+    }
+
     pub fn map_offset(&self, offset: u32) -> u32 {
-        let before = self.0.partition_point(|range| range.start < offset);
-        match before.checked_sub(1).map(|last| self.0[last]) {
-            Some(last) => offset - last.removed_before - (last.end.min(offset) - last.start),
+        let before = self.ranges.partition_point(|range| range.start < offset);
+        match before.checked_sub(1).map(|last| self.ranges[last]) {
+            Some(last) => {
+                let in_range = i64::from(last.end.min(offset) - last.start) - i64::from(last.added);
+                (i64::from(offset) - last.removed_before - in_range) as u32
+            }
             None => offset,
         }
     }
+
+    /// Whether the text holds all of this part of the source, byte for byte.
+    pub fn keeps_as_written(&self, from: u32, to: u32) -> bool {
+        let (start, end) = (self.map_offset(from), self.map_offset(to));
+        let next =
+            (self.written_over).partition_point(|(at, text)| at + text.len() as u32 <= start);
+        end - start == to - from && (self.written_over.get(next)).is_none_or(|(at, _)| end <= *at)
+    }
+}
+
+/// The ranges in two or three bytes each, for whoever keeps them as long as the text.
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
+pub struct PackedTypeRanges {
+    // For each range, how far it starts behind the range before it, and its length.
+    bytes: Box<[u8]>,
+    removed: i64,
+    written_over: Box<[(u32, Box<[u8]>)]>,
+}
+
+impl PackedTypeRanges {
+    /// For each range, how many bytes are kept between it and the range before it, and its length: seven bits a byte, the lowest first.
+    /// No length: how many bytes the text has there that the source lacks follows.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn kept_len(&self, len_of_text: usize) -> usize {
+        (len_of_text as i64 - self.removed) as usize
+    }
+
+    /// `kept` has room for `kept_len(text.len())`.
+    pub fn remove_from(&self, text: &[u8], kept: &mut [u8]) {
+        let (mut bytes, mut at, mut written) = (&self.bytes[..], 0, 0);
+        let mut keep = |part: &[u8], added_behind: usize| {
+            kept[written..written + part.len()].copy_from_slice(part);
+            written += part.len() + added_behind;
+        };
+        while !bytes.is_empty() {
+            let start = at + take_number(&mut bytes) as usize;
+            let removed = take_number(&mut bytes) as usize;
+            let added = match removed {
+                0 => take_number(&mut bytes) as usize,
+                _ => 0,
+            };
+            keep(&text[at..start], added);
+            at = start + removed;
+        }
+        keep(&text[at..], 0);
+        write_over(kept, &self.written_over);
+    }
+}
+
+fn push_number(bytes: &mut Vec<u8>, mut number: u32) {
+    while number >= 0x80 {
+        bytes.push(number as u8 | 0x80);
+        number >>= 7;
+    }
+    bytes.push(number as u8);
+}
+
+fn take_number(bytes: &mut &[u8]) -> u32 {
+    let (mut number, mut shift) = (0, 0);
+    while let Some((&byte, rest)) = bytes.split_first() {
+        *bytes = rest;
+        number |= u32::from(byte & 0x7f) << shift;
+        shift += 7;
+        if byte < 0x80 {
+            break;
+        }
+    }
+    number
 }
 
 const TYPE_MODIFIERS: Flags = Flags::ABSTRACT
@@ -53,29 +172,71 @@ const TYPE_MODIFIERS: Flags = Flags::ABSTRACT
 const NAME_MARKS: Flags = Flags::OPTIONAL.union(Flags::DEFINITE);
 
 pub fn find_type_ranges(file: &File<'_>) -> TypeRanges {
+    find_type_ranges_beside(file, Vec::new())
+}
+
+pub fn find_type_ranges_beside(file: &File<'_>, replaced: Vec<ReplacedText>) -> TypeRanges {
     let mut finder = Finder {
         file,
         text: &file.text,
         found: Vec::new(),
     };
-    finder.run();
+    if !file.is_js {
+        finder.run();
+    }
+    for part in &replaced {
+        finder.add(part.start + part.text.len() as u32, part.end);
+    }
     let mut found = finder.found;
     found.sort_unstable();
-    let mut merged: Vec<TypeRange> = Vec::with_capacity(found.len());
+    let mut removed: Vec<(u32, u32)> = Vec::with_capacity(found.len());
     for (start, end) in found {
-        match merged.last_mut() {
-            Some(last) if start <= last.end => last.end = last.end.max(end),
-            last => {
-                let removed_before = last.map_or(0, |it| it.removed_before + (it.end - it.start));
-                merged.push(TypeRange {
-                    start,
-                    end,
-                    removed_before,
-                });
-            }
+        match removed.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => removed.push((start, end)),
         }
     }
-    TypeRanges(merged)
+    // What stands in a part that is removed goes with it.
+    let is_kept = |part: &ReplacedText| {
+        let start = part.start;
+        let end = part.end.min(start + part.text.len() as u32);
+        // Text that is only added belongs to what stands in front of it.
+        let next =
+            removed.partition_point(|range| range.1 < start || (range.1 == start && start < end));
+        !part.text.is_empty() && removed.get(next).is_none_or(|range| end <= range.0)
+    };
+    let mut replaced: Vec<ReplacedText> = replaced.into_iter().filter(is_kept).collect();
+    replaced.sort_unstable_by_key(|part| part.start);
+    replaced.dedup_by_key(|part| part.start);
+    let added = replaced.iter().filter_map(|part| {
+        let added = (part.text.len() as u32).checked_sub(part.end - part.start)?;
+        (added > 0).then_some((part.end, part.end, added))
+    });
+    let mut ranges: Vec<(u32, u32, u32)> = (removed.iter())
+        .map(|&(start, end)| (start, end, 0))
+        .chain(added)
+        .collect();
+    ranges.sort_unstable_by_key(|&(start, end, _)| (start, end));
+    let mut removed_before = 0;
+    let ranges = ranges.into_iter().map(|(start, end, added)| {
+        let range = TypeRange {
+            start,
+            end,
+            added,
+            removed_before,
+        };
+        removed_before = range.removed_behind();
+        range
+    });
+    let mut ranges = TypeRanges {
+        ranges: ranges.collect(),
+        written_over: Vec::new(),
+    };
+    let written_over = replaced
+        .into_iter()
+        .map(|part| (ranges.map_offset(part.start), part.text));
+    ranges.written_over = written_over.collect();
+    ranges
 }
 
 struct Finder<'a, 's> {

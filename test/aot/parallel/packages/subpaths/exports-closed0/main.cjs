@@ -6,7 +6,3 @@ const keys = (o) => Object.keys(o).filter((k) => k !== "__esModule").sort().join
 const s = ["sub/lib/a.js"][0];
 t("require", () => require(s).which);
 t("resolve", () => typeof require.resolve(s));
-/* Output:
-require THROWS Error MODULE_NOT_FOUND
-resolve "string"
-*/

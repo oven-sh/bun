@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow reassigning `function` declarations.
 pub struct NoFuncAssign;
 
-const IS_A_FUNCTION: Message = Message::new("isAFunction", "'{{name}}' is a function.");
+const IS_A_FUNCTION: &Message = &Message::new("isAFunction", "'{{name}}' is a function.");
 
 impl Rule for NoFuncAssign {
     const META: Meta = Meta::eslint("no-func-assign", Kind::Problem).recommended().hints();

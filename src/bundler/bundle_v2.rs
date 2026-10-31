@@ -6114,7 +6114,11 @@ pub mod bv2_impl {
                 }
                 // Only a file that parsed as CSS and passed the import scan gets a CSS chunk.
                 start.css_entry_points.retain(|index, _| {
-                    css[index.get() as usize].is_some() && !css_scan_failed.contains(index)
+                    // SAFETY: `index < ast.len()`; see the note above for column aliasing.
+                    let failed = unsafe { (*parts_col.add(index.get() as usize)).len() } == 0;
+                    !failed
+                        && css[index.get() as usize].is_some()
+                        && !css_scan_failed.contains(index)
                 });
 
                 break 'reachable_files self.arena().alloc_slice_copy(&js_files);

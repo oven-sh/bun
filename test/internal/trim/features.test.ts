@@ -146,7 +146,7 @@ const neverOffered: Record<string, string> = {
   "Bun's own modules depend on it":
     "Url Events AbortSignal Headers FormData FsStats WebStreams TextDecoderStream Bodies BunFile Buffer NodeBufferModule NodeEvents FileSink TextDecoder TextEncoder Base64Globals StructuredClone ExternalSerializedValues NodeFs NodeOs NodePath NodeValidators NodeUtil NodeSmallModules NodeUrl StringDecoder CryptoObject CryptoGlobal PackageFiles NodeHttp HttpParser NetAddresses",
   "too small to be worth a name":
-    "Unsafe Ansi EscapeHtml Uuid NodeAssert ModuleGraph NodeV8 DeepEquals ParseArgs SystemCaCertificates ConsoleTable ProcessBinding ProcessExecArgv ProcessUsage ProcessInformation ProcessControl ProcessStdout ProcessOutputStreams ProcessStdin ProcessOpenStdin ConsoleConstructor BunUtilities StringWidth NodeRepl NodeFetch Undici",
+    "Unsafe Ansi EscapeHtml Uuid NodeAssert ModuleGraph NodeV8 DeepEquals ParseArgs ConsoleTable ProcessBinding ProcessExecArgv ProcessUsage ProcessInformation ProcessControl ProcessStdout ProcessOutputStreams ProcessStdin ProcessOpenStdin ConsoleConstructor BunUtilities StringWidth NodeRepl NodeFetch Undici",
   "it has no name yet":
     "NodeWorker Bunfig CliOptions CompressionFunctions BunZstdCompress BunDeflate CompressionStreams CompressionStream DecompressionStream Histogram LegacyEncodings LibdeflateCompressor MessageChannel NodeZlib NodeZlibBrotli NodeZlibZstd PerformanceTimeline PerformanceMarks PostMessage Tls TlsSockets X509 ZstdCompressor",
   "its built-ins still work when the features used with it are removed":

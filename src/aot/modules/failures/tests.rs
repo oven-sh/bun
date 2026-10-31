@@ -101,7 +101,10 @@ fn sites_of(failures: &[ModuleFailure]) -> Vec<(FileId, u32)> {
 fn file_that_is_no_program_stops_build_only_where_it_is_loaded_at_start() {
     let site = ImportSiteKind::ExportFrom(ExportId(0));
     let effect_where = |is_loaded_at_start: bool| {
-        let kind = ModuleFailureKind::NotAProgram { is_loaded_at_start };
+        let kind = ModuleFailureKind::NotAProgram {
+            is_loaded_at_start,
+            is_silent: false,
+        };
         create_failure(kind, FileId(0), site).effect()
     };
     assert_eq!(effect_where(true), FailureEffect::StopsBuild);

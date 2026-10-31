@@ -146,8 +146,14 @@ class T {
 // CHECK-NEXT: b4(v24):
 // CHECK-NEXT: Return v24
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v25 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v25
+// CHECK-NEXT: v25 = TypeTest v18 testedType=undefined|null
+// CHECK-NEXT: Branch v25 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v26):
+// CHECK-NEXT: v27 = PropGet v26 key="#kept"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v28):
+// CHECK-NEXT: v29 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v29
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="readOnThis"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=function flags=[IsExpected]} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {

@@ -5,10 +5,10 @@ use bun_lint::rule::Plugin;
 /// Disallows `oxlint-disable` or `eslint-disable` comments without specifying rules.
 pub struct NoAbusiveEslintDisable;
 
-const ESLINT: Message =
-    Message::new("", "Unexpected `eslint-disable` comment that does not specify any rules to disable.");
-const OXLINT: Message =
-    Message::new("", "Unexpected `oxlint-disable` comment that does not specify any rules to disable.");
+const ESLINT: &Message =
+    &Message::new("", "Unexpected `eslint-disable` comment that does not specify any rules to disable.");
+const OXLINT: &Message =
+    &Message::new("", "Unexpected `oxlint-disable` comment that does not specify any rules to disable.");
 
 impl Rule for NoAbusiveEslintDisable {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-abusive-eslint-disable", Kind::Suggestion);

@@ -1,25 +1,15 @@
-// Generates small deterministic programs for the fuzzer: `generate(random, typed)` returns the text of one ES module, JavaScript
-// or type-correct TypeScript. A program prints what it computes through `print(text)`, which the driver defines, so that two ways
-// of running it can be compared line by line.
-//
-// A program is regular code that is disturbed late:
-//   features   declare things (classes, records, arrays, closures ..), use them, and leave variables in scope for what follows
-//   statements ordinary code of the wanted kinds, built from whatever is in scope; this is where features meet
-//   attacks    change something a whole-program analysis may have proven (the type of a field, a layout, a prototype, a callee, a
-//              built-in), usually from inside a callback that a built-in calls, and then look at the victim again
-//
-// The generator is typed by construction: every variable in scope has a `Kind`, and `expression(kind)` only builds what has that
-// kind. TypeScript differs from JavaScript by what `annotation`, `cast` and `typeArguments` print. A value never enters a location whose
-// written type it does not fit: a location that an attack stores another kind into has the kind `mixed` (`any`) from the start.
-//
-// To add a feature or an attack, write a function that takes the `Generator`, emits code with `emit` and declares what it leaves
-// behind with `declare`, then list it in `features` or `attacks`. The first line of a program names what was drawn.
+// The general-purpose generator: `generate(random, typed)` returns one small deterministic ES module, JavaScript or
+// type-correct TypeScript. A program prints what it computes through `print(text)`, which the runner defines, so that
+// two runs can be compared line by line.
 import { Random } from "./random";
 
 export type Profile = {
-  /** False for a program that uses no built-in that engines write in JavaScript and nothing of a host. Default: true. */
+  /**
+   * False for a program that uses no built-in that engines implement in JavaScript and nothing from a host. Default:
+   * true.
+   */
   library?: boolean;
-  /** The features and attacks to run, in order, instead of a random draw: for looking at one of them alone. */
+  /** The features and attacks to use, in order, instead of a random choice: for testing one of them alone. */
   steps?: readonly string[];
 };
 
@@ -67,11 +57,11 @@ const bigintLiterals = ["0n", "1n", "(-1n)", "7n", "4294967296n", "9007199254740
 const fieldNames = ["x", "y", "size", "name", "label", "flag", "tag", "items", "count", "weight", "id", "note"];
 const methodNames = ["area", "step", "describe", "total", "scale", "render"];
 
-/** Values of another kind for a place that held int32 values or strings so far. */
+/** Values of another type for a place that has only held int32 values or strings. */
 const otherValues = ['"text"', "0.5", "NaN", "(-0)", "undefined", "null", "true", "2147483648", "{ valueOf() { return 42; } }", "[7]", '""'];
 const outOfRange = ["0.5", "NaN", "(-0)", "2147483648", "(-2147483649)", "Infinity", "4294967295", "1e21"];
 
-/** What a program without the library may not contain. */
+/** What a program without the library must not contain. */
 const needsLibrary = new RegExp(
   [
     String.raw`\.(map|filter|reduce|reduceRight|some|every|find|findIndex|findLast|findLastIndex|flatMap|forEach|next|return|throw|call|toSorted|from|fromEntries|entries|groupBy|then|catch|finally|take|drop|toArray|sort)\(`,
@@ -81,7 +71,7 @@ const needsLibrary = new RegExp(
   ].join("|"),
 );
 
-/** Draws from the caller's generator. Among pieces of code it leaves out those the profile does not allow. */
+/** Picks with the caller's generator. Among pieces of code it skips those the profile does not allow. */
 class Choices {
   readonly #source: Random;
   readonly #banned?: RegExp;
@@ -162,7 +152,7 @@ function same(a: Kind, b: Kind): boolean {
   return true;
 }
 
-/** Whether a value of kind `have` may stand where `want` is read. */
+/** Whether a value of kind `have` may be used where `want` is read. */
 function fits(have: Kind, want: Kind): boolean {
   if (want.is === "number") return have.is === "int32" || have.is === "number";
   if (want.is === "mixed") return ["int32", "number", "string", "boolean", "mixed"].includes(have.is);

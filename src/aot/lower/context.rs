@@ -3,31 +3,40 @@ mod function_table;
 mod shown_names;
 #[cfg(test)]
 mod tests;
+mod text_replaced_by_bundling;
 
+use bun_core::current_work;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound};
-use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef, NamedValues, Queries, QueryInputs};
-use bun_sema::erasure::{TypeRanges, find_type_ranges};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
+use bun_sema::bind::{Binding, Bound, SymbolId};
+use bun_sema::check::aot::{
+    BuiltinTypeSymbols, ConstLocalPrefixes, FunctionRef, NamedValues, Queries, QueryInputs,
+};
+use bun_sema::erasure::{TypeRanges, find_type_ranges, find_type_ranges_beside};
+use bun_sema::fold::{Constant, Decisions};
+use bun_sema::hir::{self, ExprId, ExprKind, NodeData, VarDeclId};
 use bun_sema::import_sites::ResolvedForm;
-use bun_sema::program::{CompiledModule, FileId, FileRole};
+use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
 use bun_sema::resolve::TranspileSettings;
 use rustc_hash::FxHashMap;
 
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
+use self::text_replaced_by_bundling::find_text_replaced_by_bundling;
 use super::LoweredFile;
 use super::call::PrintedOperators;
 use super::class::ClassState;
+use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
-use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
-use super::transpiled::{ParsedText, RuntimeTranspiler, TranspileRequest, TranspiledFile};
+use super::prepared::{PreparedFile, PreparedFiles};
+use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
+use super::transpiled::{ParsedText, Rewrite, RuntimeTranspiler, TranspileRequest, TranspiledFile};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
-use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
+use crate::builtins::{
+    BuiltinClass, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+};
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
@@ -72,6 +81,15 @@ pub struct FileInputs<'a> {
     pub builtins: &'a ResolvedBuiltins,
 }
 
+impl FileInputs<'_> {
+    // By what the names in the file are bound to.
+    pub(crate) fn makes_registries(&self) -> bool {
+        let constructor = table::class_data(BuiltinClass::FinalizationRegistry).constructor;
+        let mut mentioned = self.builtins.mentioned().iter();
+        mentioned.any(|&id| Some(table::canonical_id(id)) == constructor)
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct LoweringOptions {
     pub platform: Platforms,
@@ -80,6 +98,8 @@ pub struct LoweringOptions {
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
+    /// `bun test --aot --coverage`: the files of the project count how often their parts run.
+    pub counts_executions: bool,
 }
 
 pub struct LoweringInputs<'a> {
@@ -101,8 +121,15 @@ pub struct LoweringInputs<'a> {
     pub commonjs_exports: &'a CommonJsExports,
     pub defined_object_types: &'a DefinedObjectTypes,
     pub files: &'a [Option<FileInputs<'a>>],
+    // A file of the program makes a FinalizationRegistry, which any file of it may come to hold.
+    pub makes_registries: bool,
+    // A file of an executable reads `__filename` or `__dirname` or asks `require.resolve`: a path of the machine that builds, which any file of the program may come to hold.
+    pub reads_source_paths: bool,
+    /// `LoadOptions::replaced_builtins`
+    pub replaced_builtins: &'a [u32],
     pub limits: &'a LimitValues,
     pub transpiler: &'a RuntimeTranspiler<'a>,
+    pub prepared: &'a PreparedFiles,
     pub options: LoweringOptions,
 }
 
@@ -148,14 +175,22 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     functions: FunctionTable,
     atoms: FxHashMap<Atom, StringId>,
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
+    /// `FileLowering::is_built_by_code`
+    pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
     shown_names: ShownNames,
     has_bundled_positions: bool,
     runs_as_written: bool,
     pub(in crate::lower) transpiled: Option<TranspiledFile>,
+    pub(in crate::lower) const_local_prefixes: ConstLocalPrefixes,
+    pub(in crate::lower) inlined_constants: FxHashMap<VarDeclId, Option<Constant>>,
+    pub(in crate::lower) names_only_inlined_constants: FxHashMap<ExprId, bool>,
+    pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    /// The position of each plain function that has a header, and `FileLowering::position_of_making_this_in`.
+    pub(in crate::lower) where_this_is_made: Vec<(u32, u32)>,
     pub(in crate::lower) printed_operators: PrintedOperators,
+    pub(in crate::lower) counted_places: Option<CountedPlaces>,
     counters: Counters,
     scratch: BuilderScratch,
-    pub(crate) has_chain_past_nesting_limit: bool,
 }
 
 fn runs_file_as_written(kind: load::SourceKind, hir: &hir::File<'_>) -> bool {
@@ -183,12 +218,13 @@ fn imports_macro(hir: &hir::File<'_>) -> bool {
 /// TypeScript erases is taken out.
 fn transpile_file(
     inputs: &LoweringInputs<'_>,
+    files: &Files<'_>,
     file: FileId,
-    queries: &Queries<'_, '_, '_>,
     settings: &TranspileSettings,
     diagnostics: &mut DiagnosticBuffer,
 ) -> Option<TranspiledFile> {
-    let hir = queries.hir();
+    let module = files.module(file);
+    let hir = &module.hir;
     let request = TranspileRequest {
         path: inputs.sources.diagnostic_path(file),
         text: &hir.text,
@@ -197,8 +233,8 @@ fn transpile_file(
         assigns_class_fields: settings.use_define_for_class_fields == Some(false),
         parsed: Some(ParsedText {
             hir,
-            bound: queries.bound(),
-            atoms: &queries.files().atoms,
+            bound: &module.bound,
+            atoms: &files.atoms,
             max_steps: inputs.limits.get(LimitId::MaxStepsToPrintedInitializer),
         }),
     };
@@ -232,6 +268,87 @@ fn transpile_file(
     None
 }
 
+fn transpile_as_at_run_time(
+    inputs: &LoweringInputs<'_>,
+    files: &Files<'_>,
+    file: FileId,
+    diagnostics: &mut DiagnosticBuffer,
+) -> Option<TranspiledFile> {
+    let compiled = files.compiled(file);
+    let compiled = compiled.expect("only compiled files are lowered");
+    // The positions in Bun's own modules come from a table.
+    let is_transpiled_at_run_time = match inputs.sources.kind(file) {
+        load::SourceKind::Program | load::SourceKind::Data | load::SourceKind::TypesOnly => {
+            !runs_file_as_written(inputs.sources.kind(file), files.hir(file))
+        }
+        load::SourceKind::EvaluatedText
+        | load::SourceKind::RuntimeModule(_)
+        | load::SourceKind::RuntimeFunctions => false,
+    };
+    match is_transpiled_at_run_time {
+        true => transpile_file(inputs, files, file, compiled.settings, diagnostics),
+        false => None,
+    }
+}
+
+fn may_hold_registries(inputs: &LoweringInputs<'_>, file: FileId) -> bool {
+    let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+    inputs.makes_registries || file_inputs.makes_registries()
+}
+
+fn analyze_scopes_of_file(
+    inputs: &LoweringInputs<'_>,
+    files: &Files<'_>,
+    file: FileId,
+    transpiled: Option<&TranspiledFile>,
+    holds_registry: &dyn Fn(SymbolId) -> bool,
+) -> ScopeAnalysis {
+    let module = files.module(file);
+    let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+    analyze_scopes(&ScopeInput {
+        file,
+        hir: &module.hir,
+        bound: &module.bound,
+        compiled: module.compiled.expect("only compiled files are lowered"),
+        transpiled,
+        modules: inputs.modules,
+        builtins: file_inputs.builtins,
+        holds_registry,
+        max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
+        max_handler_arguments: inputs.limits.get(LimitId::MaxHandlerArguments) as usize,
+        max_handler_arguments_per_block: inputs.limits.get(LimitId::MaxHandlerArgumentsPerBlock)
+            as usize,
+    })
+}
+
+/// On a thread that does not visit the file, while the file is visited or waits for its visit.
+pub fn prepare_file(
+    inputs: &LoweringInputs<'_>,
+    files: &Files<'_>,
+    file: FileId,
+    may_be_lowered: impl FnOnce() -> bool,
+) {
+    if !inputs.prepared.begin(file) {
+        return;
+    }
+    if !may_be_lowered() {
+        return inputs.prepared.leave_to_the_visit(file);
+    }
+    let path = files.module(file).file_name();
+    let _work = current_work::working_on(current_work::Step::Lower, path);
+    let mut diagnostics = DiagnosticBuffer::default();
+    let transpiled = transpile_as_at_run_time(inputs, files, file, &mut diagnostics);
+    let asks_no_checker = !may_hold_registries(inputs, file);
+    let scopes = (asks_no_checker && inputs.prepared.is_being_lowered(file))
+        .then(|| analyze_scopes_of_file(inputs, files, file, transpiled.as_ref(), &|_| false));
+    let prepared = PreparedFile {
+        transpiled,
+        diagnostics,
+        scopes,
+    };
+    inputs.prepared.finish(file, prepared);
+}
+
 impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(super) fn new(
         inputs: &'a LoweringInputs<'a>,
@@ -244,36 +361,56 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let compiled = compiled.expect("only compiled files are lowered");
         let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
         let runs_as_written = runs_file_as_written(inputs.sources.kind(file), hir);
-        let mut diagnostics = DiagnosticBuffer::default();
-        // The positions in Bun's own modules come from a table.
-        let is_transpiled_at_run_time = match inputs.sources.kind(file) {
-            load::SourceKind::Program | load::SourceKind::Data | load::SourceKind::TypesOnly => {
-                !runs_as_written
+        let PreparedFile {
+            transpiled,
+            diagnostics,
+            scopes,
+        } = inputs.prepared.take(file).unwrap_or_else(|| {
+            let mut diagnostics = DiagnosticBuffer::default();
+            PreparedFile {
+                transpiled: transpile_as_at_run_time(
+                    inputs,
+                    queries.files(),
+                    file,
+                    &mut diagnostics,
+                ),
+                diagnostics,
+                scopes: None,
             }
-            load::SourceKind::EvaluatedText
-            | load::SourceKind::RuntimeModule(_)
-            | load::SourceKind::RuntimeFunctions => false,
-        };
-        let transpiled = match is_transpiled_at_run_time {
-            true => transpile_file(inputs, file, queries, compiled.settings, &mut diagnostics),
-            false => None,
-        };
-        let scopes = analyze_scopes(&ScopeInput {
-            file,
-            hir,
-            bound,
-            compiled,
-            transpiled: transpiled.as_ref(),
-            modules: inputs.modules,
-            builtins: file_inputs.builtins,
-            max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
-            max_handler_arguments: inputs.limits.get(LimitId::MaxHandlerArguments) as usize,
-            max_handler_arguments_per_block: inputs.limits.get(LimitId::MaxHandlerArgumentsPerBlock)
-                as usize,
         });
-        let has_types_in_function_text = inputs.options.embeds_function_text && !hir.is_js;
-        let type_ranges = match has_types_in_function_text {
-            true => find_type_ranges(hir),
+        // What `bun test --coverage` reports on: no package, and nothing of Bun's own.
+        let path = inputs.sources.diagnostic_path(file);
+        let is_counted = inputs.options.counts_executions
+            && inputs.sources.kind(file) == load::SourceKind::Program
+            && !bun_core::strings::contains(path, b"/node_modules/")
+            && !bun_core::strings::contains(path, b"\\node_modules\\");
+        let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
+        let scopes = scopes.unwrap_or_else(|| {
+            let may_hold_registries = may_hold_registries(inputs, file);
+            let files = queries.files();
+            let registries = RegistryNames::new(&mut *queries);
+            analyze_scopes_of_file(inputs, files, file, transpiled.as_ref(), &|symbol| {
+                may_hold_registries && registries.holds(symbol)
+            })
+        });
+        let type_ranges = match inputs.options.embeds_function_text {
+            true => {
+                let decisions = &compiled.analysis.decisions;
+                let atoms = &queries.files().atoms;
+                let find_operand_printed_alone =
+                    |expression: ExprId| match transpiled.as_ref()?.find_rewrite(expression)? {
+                        Rewrite::Operand(operand) => Some(operand),
+                        _ => None,
+                    };
+                let replaced = find_text_replaced_by_bundling(
+                    hir,
+                    bound,
+                    decisions,
+                    atoms,
+                    &find_operand_printed_alone,
+                );
+                find_type_ranges_beside(hir, replaced)
+            }
             false => TypeRanges::default(),
         };
         let removable = Removable::of_file(
@@ -305,6 +442,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             functions: FunctionTable::default(),
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
+            levels_of_literals_inside_built_ones: FxHashMap::default(),
             shown_names: ShownNames::new(
                 inputs.options,
                 file_inputs.source,
@@ -315,24 +453,16 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             runs_as_written,
             transpiled,
+            const_local_prefixes: ConstLocalPrefixes::default(),
+            inlined_constants: FxHashMap::default(),
+            names_only_inlined_constants: FxHashMap::default(),
+            enum_member_reads: FxHashMap::default(),
+            where_this_is_made: Vec::new(),
             printed_operators: PrintedOperators::default(),
+            counted_places,
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
-            has_chain_past_nesting_limit: false,
         }
-    }
-
-    pub(super) fn refuse_chains_past_nesting_limit(&mut self) {
-        let maximum = self.inputs.limits.get(LimitId::MaxNestingDepth);
-        let Some(position) = self.queries.find_chain_longer_than(maximum) else {
-            return;
-        };
-        self.has_chain_past_nesting_limit = true;
-        self.gave_up(LimitId::MaxNestingDepth, position);
-        let span = self.span_at(position);
-        let depth = maximum.to_string();
-        self.diagnostics
-            .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
     }
 
     /// `bun run` reports a file that holds such a literal and runs nothing of it, whether or not anything reads the literal. The engine sees the

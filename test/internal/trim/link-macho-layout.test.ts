@@ -2,6 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import type { FeatureName } from "../../../scripts/build/trim/features.ts";
 import { builtinModulesHeaderBytes } from "../../../scripts/build/trim/link.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import {
@@ -26,6 +27,8 @@ import {
   exitCodeOf,
   expectCleanRuns,
   Extra,
+  indexOf,
+  mainGuardingBoth,
   mixingFunction,
   Other,
   skipNotice,
@@ -440,9 +443,119 @@ describeEachMachine("Mach-O $name", machine => {
       expectCleanRuns({ programResult, trimmedResult });
     });
 
+    const longFunction = (name: string, by: number) =>
+      `__attribute__((noinline)) int ${name}(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); return x * ${by}; }`;
+    const codeThatCanBeCut = (table: TrimTable) => table.ranges.filter(({ isCode, canBeCut }) => isCode && canBeCut);
+    const lieEndToEnd = (pieces: { start: number; end: number }[]) =>
+      pieces.slice(1).every(({ start }, index) => start === pieces[index]!.end);
+    const twoFeatures = {
+      ...sources,
+      "more.c": `${longFunction("other_only", 5)} __attribute__((noinline)) int entry_of_other(int x) { return other_only(x) + 1; }`,
+      "own-order.txt": "_main\n_entered\n_entry_of_other\n",
+    };
+    const linkedByOwnOrder = {
+      objects: ["feature_code", "entry", "more", "embedder", "main"],
+      linkFlags: ["-Wl,-order_file,own-order.txt"],
+    };
+
+    test("what the order file lists of two features lies where the two meet, and each stays one piece", async () => {
+      using dir = tempDir("trim-macho-layout", { ...twoFeatures, "main.c": mainGuardingBoth });
+      const { table, addressOf, programResult, trimmedResult } = await linked(machine, String(dir), linkedByOwnOrder);
+      const pieces = codeThatCanBeCut(table);
+      const order = sortedByIndex(Extra, Other);
+      expect(pieces.map(({ set }) => featureSetNames(table, set))).toEqual(order.map(feature => [feature]));
+      expect(lieEndToEnd(pieces)).toBe(true);
+      expect(addressOf("main")).toBeLessThan(pieces[0]!.start);
+      const unlisted = { [Extra]: ["feature_code_0", `feature_code_${count - 1}`], [Other]: ["other_only"] };
+      const listed = { [Extra]: "entered", [Other]: "entry_of_other" };
+      const [first, second] = order as [string, string];
+      const addresses = [...unlisted[first]!, listed[first]!, listed[second]!, ...unlisted[second]!].map(addressOf);
+      expect(addresses).toEqual(addresses.toSorted((a, b) => a - b));
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("what the order file lists of features that no compiled program has lies in front of them all", async () => {
+      const outsidePrograms: FeatureName[] = ["Repl", "Upgrade"];
+      const [repl, upgrade] = outsidePrograms.map(indexOf);
+      using dir = tempDir("trim-macho-layout", {
+        ...twoFeatures,
+        "main.c": `
+          ${start} int entry_of_other(int);
+          int main(int argc, char **argv) { return argc > 6 ? GUARDED(${upgrade}, entry_of_other, argc) & 63 : argc > 5 ? GUARDED(${repl}, entered, argc) & 63 : 0; }
+        `,
+      });
+      const program = { ...linkedByOwnOrder, removed: outsidePrograms };
+      const { table, addressOf } = await linked(machine, String(dir), program);
+      const pieces = codeThatCanBeCut(table);
+      const features = pieces.map(({ set }) => featureSetNames(table, set).join());
+      expect(features.slice(0, 2).toSorted()).toEqual(outsidePrograms.toSorted());
+      expect(features.slice(2)).toEqual([features[0]!]);
+      expect(lieEndToEnd(pieces)).toBe(true);
+      expect(addressOf("main")).toBeLessThan(pieces[0]!.start);
+      expect(Math.max(...["entered", "entry_of_other"].map(addressOf))).toBeLessThan(
+        Math.min(...["feature_code_0", "other_only"].map(addressOf)),
+      );
+    });
+
+    test("a function that the order file lists by the name another build gave it stays with its feature", async () => {
+      using dir = tempDir("trim-macho-layout", {
+        ...sources,
+        "entry.c": entryCalling("early"),
+        "early.c": `
+          int promoted(int) __asm__("_promoted.llvm.123");
+          ${mixingFunction("promoted", 5)}
+          int early(int x) { return promoted(x) + 1; }
+        `,
+        "own-order.txt": "_retained\n_promoted.llvm.456\n_main\n",
+      });
+      const { table, addressOf, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: ["early", "feature_code", "entry", "table", "embedder", "main"],
+        linkFlags: ["-Wl,-order_file,own-order.txt"],
+      });
+      const pieces = codeThatCanBeCut(table);
+      expect(pieces.map(({ set }) => featureSetNames(table, set))).toEqual([[Extra]]);
+      expect(Math.max(...["retained", "main"].map(addressOf))).toBeLessThan(pieces[0]!.start);
+      expect(addressOf("promoted.llvm.123")).toBeWithin(addressOf(`feature_code_${count - 1}`), pieces[0]!.end);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("a retained function stays out of the features when the second link keeps another folded copy", async () => {
+      const foldable = (name: string) => `static ${mixingFunction(name, 7, 77)}`;
+      const [first, second] = sortedByIndex(Extra, Other);
+      // The first link keeps the copy in early.o. The second has the object compiled from late.c in front and keeps
+      // the copy there, so the linker looks up same_name, a name of the copy in early.o, under the file that has the
+      // feature's same_name.
+      using dir = tempDir("trim-macho-layout", {
+        ...sources,
+        "entry.c": entryCalling("part_of_extra"),
+        "early.c": `${foldable("same_name")} int calls_early(int x) { return same_name(x); }`,
+        "late.c": `
+          ${foldable("late_copy")}
+          static ${longFunction("same_name", 11)}
+          int calls_late(int x) { return late_copy(x + 1); }
+          int part_of_${first === Extra ? "extra" : "other"}(int x) { return same_name(x); }
+          int part_of_${first === Extra ? "other" : "extra"}(int x) { return x + 3; }
+        `,
+        "more.c": `int part_of_other(int); ${longFunction("other_only", 5)} __attribute__((noinline)) int entry_of_other(int x) { return other_only(x) + part_of_other(x); }`,
+        "main.c": `
+          ${start} int entry_of_other(int); int calls_early(int); int calls_late(int);
+          int main(int argc, char **argv) { return argc > 6 ? GUARDED(Other, entry_of_other, argc) & 63 : argc > 5 ? GUARDED(Extra, entered, argc) & 63 : (calls_early(argc) ^ calls_late(argc - 1)) & 64; }
+        `,
+      });
+      const { table, addressOf, isRemovableAt, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: ["early", "feature_code", "entry", "late", "more", "embedder", "main"],
+        compileFlags: { late: ["-flto"] },
+      });
+      expect(isRemovableAt(addressOf("late_copy"))).toBe(false);
+      const groups = codeThatCanBeCut(table).filter(({ start, end }) =>
+        ["feature_code_0", "other_only"].some(name => start <= addressOf(name) && addressOf(name) < end),
+      );
+      expect(groups.map(({ set }) => featureSetNames(table, set))).toEqual([[first], [second]]);
+      expect(lieEndToEnd(groups)).toBe(true);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
     test("what two features share is one group of its own", async () => {
-      const longFunction = (name: string, by: number) =>
-        `__attribute__((noinline)) int ${name}(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); return x * ${by}; }`;
       using dir = tempDir("trim-macho-layout", {
         ...sources,
         "more.c": `

@@ -177,6 +177,7 @@ fn macros_are_unsupported() {
     let atoms = Interner::new_in(&session);
     let call = MacroCall {
         importer: b"/project/a.ts",
+        position: 0,
         macro_path: b"/project/macro.ts",
         export_name: b"value",
         arguments: &[],

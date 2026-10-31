@@ -24,7 +24,7 @@ async function run(cwd: string, ...args: string[]) {
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const errors = (said: string) =>
-  [...said.matchAll(/^error: (TS\d+): .*\n +at (\S+):(\d+):\d+$/gm)]
+  [...said.matchAll(/^(?:error|warn): (TS\d+): .*\n +at (\S+):(\d+):\d+$/gm)]
     .map(match => `${match[2]}:${match[3]} ${match[1]}`)
     .sort();
 
@@ -69,9 +69,83 @@ test("a file of another entry point's project outside the program's rootDir does
       include: ["src"],
     }),
     "src/wrong.ts": `export const wrong: number = "text";\n`,
-    "src/wrong.test.ts": `import { expect, test } from "bun:test";\nimport { wrong } from "./wrong";\ntest("never runs", () => {\n  expect(wrong).toBe("text");\n});\n`,
+    "src/wrong.test.ts": `import { expect, test } from "bun:test";\nimport { wrong } from "./wrong";\ntest("wrong", () => {\n  expect(wrong).toBe("text");\n});\n`,
   });
   const together = await run(String(dir), "test", "--aot", "./src/wrong.test.ts", "./packages/host/src/host.test.ts");
   expect(errors(together.said)).toContain("src/wrong.ts:1 TS2322");
-  expect(passed(together.said)).toEqual(["host"]);
+  expect(passed(together.said)).toEqual(["host", "wrong"]);
 }, 60_000);
+
+test.each([
+  ["allowJs", "main.test.js", `import { said } from "./user.js";`, { "two/user.js": `export const said = 1;\n` }],
+  [
+    "resolveJsonModule",
+    "main.test.ts",
+    `import data from "./data.json";\nconst said: number = data.said;`,
+    { "two/data.json": `{ "said": 1 }\n` },
+  ],
+])(
+  "the files that %s of one project lists do not stop a run whose first test file lies under a tsconfig.json without it",
+  async (option, name, imports, files) => {
+    using dir = tempDir("globals-of-every-project", {
+      "one/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, [option]: false } }),
+      "one/main.test.ts": `import { expect, test } from "bun:test";\nconst n: number = 1;\ntest("one", () => {\n  expect(n).toBe(1);\n});\n`,
+      "two/tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, [option]: true },
+        include: ["**/*", "*.json"],
+      }),
+      [`two/${name}`]: `import { expect, test } from "bun:test";\n${imports}\ntest("two", () => {\n  expect(said).toBe(1);\n});\n`,
+      ...files,
+    });
+    for (const args of [
+      [],
+      ["--isolate"],
+      ["./one/main.test.ts", `./two/${name}`],
+      [`./two/${name}`, "./one/main.test.ts"],
+    ]) {
+      const together = await run(String(dir), "test", "--aot", ...args);
+      const said = together.said.match(/^(?:error|warn): TS\d+/gm) ?? [];
+      expect({ args, said, passed: passed(together.said), exitCode: together.exitCode }).toEqual({
+        args,
+        said: [],
+        passed: ["one", "two"],
+        exitCode: 0,
+      });
+    }
+  },
+  120_000,
+);
+
+test.each([
+  ["a loose test file among strict ones has no type error", true, []],
+  ["a strict test file among loose ones has its type error", false, ["other/other.test.ts:3 TS2322"]],
+])(
+  "a test file is judged by the strictness of the tsconfig.json nearest to it: %s",
+  async (_, strict, expected) => {
+    const most = (n: number) =>
+      `import { expect, test } from "bun:test";\nfunction add(x: number): number {\n  return x + ${n};\n}\ntest("most ${n}", () => {\n  expect(add(1)).toBe(${n + 1});\n});\n`;
+    using dir = tempDir("globals-of-every-project", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, strict } }),
+      "most/one.test.ts": most(1),
+      "most/two.test.ts": most(2),
+      "other/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, strict: !strict } }),
+      "other/helper.ts": `export function twice(x: number): number {\n  return x === null ? -1 : x * 2;\n}\n`,
+      "other/other.test.ts": `import { expect, test } from "bun:test";\nimport { twice } from "./helper";\nfunction own(flag: boolean): number { if (flag) return 2; return null; }\ntest("other", () => {\n  expect([own(true), own(false), twice(own(true)), twice(own(false))]).toEqual([2, null, 4, -1]);\n});\n`,
+    });
+    for (const args of [[], ["--isolate"]]) {
+      const together = await run(String(dir), "test", "--aot", ...args);
+      expect({
+        args,
+        errors: errors(together.said),
+        passed: passed(together.said),
+        exitCode: together.exitCode,
+      }).toEqual({
+        args,
+        errors: expected,
+        passed: ["most 1", "most 2", "other"],
+        exitCode: 0,
+      });
+    }
+  },
+  120_000,
+);

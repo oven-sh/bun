@@ -1,11 +1,16 @@
 // What an executable built with --aot does at run time, seen from outside: what it prints to stderr, a profile, dumps of the engine.
 // The programs share one build.
-import { describe, expect } from "bun:test";
-import { bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { afterAll, describe, expect } from "bun:test";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { run as runCommand } from "../aot/harness/run";
 import { separatePrograms, startsAtAnyEntryPoint } from "../aot/harness/separate-programs";
 import { test } from "../aot/supported";
+import { endChildren, spawn } from "../cli/children";
+
+// A Bun that polls for ever on a top-level await that nothing can settle never ends two of these programs. Their tests
+// run out of time, and this ends the programs with the file.
+afterAll(endChildren);
 
 const rows = (literal: (i: number) => string) => `
   import { heapStats } from "bun:jsc";
@@ -131,7 +136,7 @@ const files = {
 };
 
 describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
-  const { folder, build, start } = separatePrograms(
+  const { folder, executable, build, start } = separatePrograms(
     "compile-aot-run-time",
     files,
     Object.keys(files).filter(file => !/^spies\/(lazy|user)|^await\/imported/.test(file)),
@@ -229,9 +234,17 @@ describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
     ],
     ["await/settled-by-a-timer.ts", "before\nafter\n", /^$/, 0],
   ] as const)("a top-level await ends %s as in plain Bun", async (entry, stdout, stderr, exitCode) => {
-    const result = await start(entry);
-    expect(result.stderr).toMatch(stderr);
-    expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout, exitCode });
+    await build();
+    await using program = spawn({
+      cmd: [executable],
+      cwd: folder,
+      env: { ...bunEnv, BUN_AOT_START_AT: entry },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const result = await Promise.all([program.stdout.text(), program.stderr.text(), program.exited]);
+    expect(result[1]).toMatch(stderr);
+    expect({ stdout: result[0], exitCode: result[2] }).toEqual({ stdout, exitCode });
   });
 
   test.each([

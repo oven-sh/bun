@@ -3192,6 +3192,31 @@ pub fn target_builtins(
     }
 }
 
+fn read_info_plist(path: &[u8]) -> Result<Vec<u8>, CompileError> {
+    // A device or a pipe has no end to read to.
+    let read = Syscall::stat(&bun_core::ZBox::from_bytes(path)).and_then(|stat| {
+        bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode)
+            .then(|| bun_sys::File::read_from(Fd::cwd(), path))
+            .transpose()
+    });
+    match read {
+        Ok(None) => Err(CompileError::fmt(format_args!(
+            "the Info.plist {} is not a regular file",
+            bun_core::fmt::quote(path)
+        ))),
+        Ok(Some(plist)) if plist.is_empty() => Err(CompileError::fmt(format_args!(
+            "the Info.plist {} is empty",
+            bun_core::fmt::quote(path)
+        ))),
+        Ok(Some(plist)) => Ok(plist),
+        Err(e) => Err(CompileError::fmt(format_args!(
+            "failed to read the Info.plist {}: {}",
+            bun_core::fmt::quote(path),
+            e
+        ))),
+    }
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -3209,6 +3234,13 @@ pub fn to_executable(
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
+    let info_plist = match additions.info_plist_path {
+        Some(path) if target.os == CompileTargetOs::Mac => match read_info_plist(path) {
+            Ok(plist) => Some(plist),
+            Err(e) => return Ok(CompileResult::Err(e)),
+        },
+        _ => None,
+    };
     let GraphBytes { mut bytes, image } = match to_bytes(
         target,
         module_prefix,
@@ -3251,7 +3283,7 @@ pub fn to_executable(
     } else {
         b"."
     };
-    let mut injection = additions.for_injection(image);
+    let mut injection = additions.for_injection(image, info_plist);
     let Some(injected) = inject(
         &mut bytes,
         &self_exe,
@@ -3261,6 +3293,9 @@ pub fn to_executable(
         &mut temp_path_buf,
         &mut injection,
     ) else {
+        if let Some(failure) = injection.failure {
+            return Ok(CompileResult::Err(failure));
+        }
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
             "failed to write compiled executable {}",

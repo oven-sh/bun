@@ -254,6 +254,7 @@ pub(crate) mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
+        pub(crate) macos_info_plist: OwnedString,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
@@ -283,6 +284,7 @@ pub(crate) mod js_bundler {
                 windows_version: OwnedString::default(),
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
+                macos_info_plist: OwnedString::default(),
                 outfile: OwnedString::default(),
                 assets: Vec::new(),
                 autoload_dotenv: true,
@@ -341,6 +343,12 @@ pub(crate) mod js_bundler {
         Err(global_this.throw_invalid_arguments(format_args!(
             "{option}: this executable doesn't include the type checker"
         )))
+    }
+
+    fn is_file(path: &[u8]) -> bool {
+        let path = bun_core::ZBox::from_bytes(path);
+        bun_sys::exists_at_type(bun_sys::Fd::cwd(), path.as_zstr())
+            .is_ok_and(|kind| kind == bun_sys::ExistsAtType::File)
     }
 
     fn check_compile_keys(global_this: &JSGlobalObject, compile: JSValue) -> JsResult<()> {
@@ -652,11 +660,7 @@ pub(crate) mod js_bundler {
                 object.get_own(global_this, &BunString::static_("executablePath"))?
             {
                 let slice = executable_path.to_utf8(global_this)?;
-                let path_z = bun_core::ZBox::from_bytes(slice.slice());
-                if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
-                    .unwrap_or(bun_sys::ExistsAtType::Directory)
-                    != bun_sys::ExistsAtType::File
-                {
+                if !is_file(slice.slice()) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "executablePath must be a valid path to a Bun executable"
                     )));
@@ -681,11 +685,7 @@ pub(crate) mod js_bundler {
                     windows.get_own(global_this, &BunString::static_("icon"))?
                 {
                     let slice = windows_icon_path.to_utf8(global_this)?;
-                    let path_z = bun_core::ZBox::from_bytes(slice.slice());
-                    if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
-                        .unwrap_or(bun_sys::ExistsAtType::Directory)
-                        != bun_sys::ExistsAtType::File
-                    {
+                    if !is_file(slice.slice()) {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "windows.icon must be a valid path to an ico file"
                         )));
@@ -727,6 +727,27 @@ pub(crate) mod js_bundler {
                 {
                     let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
+                }
+            }
+
+            if let Some(macos) = object.get_own_truthy(global_this, "macos")? {
+                if !macos.is_object() {
+                    return Err(global_this
+                        .throw_invalid_arguments(format_args!("macos must be an object")));
+                }
+
+                if let Some(info_plist) = macos.get_own_truthy(global_this, "infoPlist")? {
+                    let slice = info_plist.to_utf8(global_this)?;
+                    // A script that builds for several targets need not have the file for the others.
+                    if this.compile_target.os == bun_core::env::OperatingSystem::Mac
+                        && !is_file(slice.slice())
+                    {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "macos.infoPlist must be a valid path to an Info.plist file"
+                        )));
+                    }
+
+                    this.macos_info_plist.append_slice_exact(slice.slice())?;
                 }
             }
 
@@ -1808,6 +1829,13 @@ pub(crate) mod js_bundler {
                 if has_all_html && this.compile.as_ref().is_some_and(|c| !c.assets.is_empty()) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot use compile.assets with target 'browser' for standalone HTML"
+                    )));
+                }
+                if has_all_html
+                    && (this.compile.as_ref()).is_some_and(|c| !c.macos_info_plist.list.is_empty())
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use compile.macos.infoPlist with target 'browser' for standalone HTML"
                     )));
                 }
             }

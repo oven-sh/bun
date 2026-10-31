@@ -835,6 +835,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
         parse_param!(
+            "--macos-info-plist <STR>         When using --compile targeting macOS, embed an Info.plist file in the executable"
+        ),
+        parse_param!(
             "--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable"
         ),
         parse_param!(
@@ -2751,6 +2754,28 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_executable_path = Some(path.into());
+    }
+
+    if let Some(path) = args.option(b"--macos-info-plist") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--macos-info-plist requires --compile", ());
+            Global::crash();
+        }
+        if ctx.bundler_options.compile_target.os != OperatingSystem::Mac {
+            Output::err_generic("--macos-info-plist requires a macOS compile target", ());
+            Global::crash();
+        }
+        let path_z = bun_core::ZBox::from_bytes(path);
+        if !bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
+            .is_ok_and(|kind| kind == bun_sys::ExistsAtType::File)
+        {
+            Output::err_generic(
+                "--macos-info-plist: {} is not a file",
+                format_args!("{}", bun_core::fmt::quote(path)),
+            );
+            Global::crash();
+        }
+        ctx.bundler_options.macos_info_plist = Some(path.into());
     }
 
     if args.flag(b"--windows-hide-console") {

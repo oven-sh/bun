@@ -16,7 +16,7 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use super::{CompileOptions, JSBundleCompletionTask, executable_path, opt_box};
+use super::{CompileOptions, JSBundleCompletionTask, executable_path, opt_box, opt_slice};
 use crate::cli::compile_command::{
     BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
     ExecutableSettings, RequestOrigin, compile_to_executable,
@@ -235,14 +235,11 @@ impl JSBundleCompletionTask {
             }),
             executable: ExecutableSettings {
                 target: &compile.compile_target,
-                executable_path: if compile.executable_path.list.is_empty() {
-                    None
-                } else {
-                    Some(compile.executable_path.list.as_slice())
-                },
+                executable_path: opt_slice(&compile.executable_path.list),
                 root_dir: destination.root_dir.fd,
                 env: &mut self.env,
                 windows: &destination.windows,
+                info_plist_path: opt_slice(&compile.macos_info_plist.list),
                 exec_argv: &compile.exec_argv.list,
                 flags: destination.flags,
                 runtime_options: RuntimeOptions {

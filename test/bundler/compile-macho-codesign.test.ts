@@ -1,10 +1,11 @@
 // https://github.com/oven-sh/bun/issues/32159 — the ad-hoc signer must hash the last partial page unpadded and end the file at the signature.
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isArm64, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { join } from "path";
+import { run } from "../aot/harness/run";
 
 const MH_MAGIC_64 = 0xfeedfacf;
 const CPU_TYPE_ARM64 = 0x0100000c;
@@ -118,6 +119,8 @@ type ParsedSignature = {
   hashType: number;
   pageSizeLog2: number;
   mismatches: Mismatch[];
+  // Hex, from slot -1 down.
+  specialSlots: string[];
 };
 
 // Recompute every CodeDirectory slot hash the way Apple's verifier does (last page unpadded).
@@ -162,7 +165,9 @@ function parseAndVerifySignature(buf: Buffer): ParsedSignature {
   const hashSize = buf.readUInt8(cd + 36);
   const hashType = buf.readUInt8(cd + 37);
   const pageSizeLog2 = buf.readUInt8(cd + 39);
-  expect(nSpecialSlots).toBe(0);
+  const specialSlots = Array.from({ length: nSpecialSlots }, (_, index) =>
+    buf.subarray(cd + hashOffset - (index + 1) * hashSize, cd + hashOffset - index * hashSize).toString("hex"),
+  );
   expect(cd + hashOffset + nCodeSlots * hashSize).toBeLessThanOrEqual(buf.length);
 
   const pageSize = 1 << pageSizeLog2;
@@ -188,6 +193,7 @@ function parseAndVerifySignature(buf: Buffer): ParsedSignature {
     hashType,
     pageSizeLog2,
     mismatches,
+    specialSlots,
   };
 }
 
@@ -236,6 +242,7 @@ test.each(Object.entries(bundles))(
     expect(sig.hashType).toBe(2); // SHA-256
     expect(sig.hashSize).toBe(32);
     expect(1 << sig.pageSizeLog2).toBe(PAGE_SIZE);
+    expect(sig.specialSlots).toEqual([]);
 
     // codeLimit covers everything before the signature blob.
     expect(sig.codeLimit).toBe(sig.dataoff);
@@ -286,3 +293,300 @@ test.skipIf(!isMacOS || !isArm64)(
   },
   60_000,
 );
+
+const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>sh.bun.test.info-plist</string>
+	<key>CFBundleVersion</key>
+	<string>1.2.3</string>
+</dict>
+</plist>
+`;
+
+// `segment` is the name of the load command that has the section, and `segname` the field of the section.
+type Section = { segment: string; segname: string; name: string; addr: bigint; size: number; offset: number };
+
+function readSections(buf: Buffer): Section[] {
+  const readName = (off: number) => buf.toString("latin1", off, off + 16).replace(/\0+$/, "");
+  const sections: Section[] = [];
+  let p = 32;
+  for (let i = buf.readUInt32LE(16); i > 0; i--) {
+    if (buf.readUInt32LE(p) === LC_SEGMENT_64) {
+      for (let index = 0; index < buf.readUInt32LE(p + 64); index++) {
+        const section = p + 72 + index * 80;
+        sections.push({
+          segment: readName(p + 8),
+          segname: readName(section + 16),
+          name: readName(section),
+          addr: buf.readBigUInt64LE(section + 32),
+          size: Number(buf.readBigUInt64LE(section + 40)),
+          offset: buf.readUInt32LE(section + 48),
+        });
+      }
+    }
+    p += buf.readUInt32LE(p + 4);
+  }
+  expect(p).toBe(32 + buf.readUInt32LE(20));
+  return sections;
+}
+
+function readInfoPlist(buf: Buffer): string | undefined {
+  const section = readSections(buf).find(section => section.segment === "__TEXT" && section.name === "__info_plist");
+  return section && buf.toString("utf8", section.offset, section.offset + section.size);
+}
+
+/** The command has to succeed. If it does not, the failure shows what it printed. */
+async function build(cmd: string[], cwd: string) {
+  const { stderr, exitCode } = await run(cmd, cwd);
+  expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+}
+
+describe.concurrent("--macos-info-plist", () => {
+  // From the load commands and one more section_64 to the end of __TEXT, which has no sections.
+  const templateRoom = 0x4000 - (32 + machoTemplate().readUInt32LE(20)) - 80;
+
+  const crossCompile = (template: string, ...args: string[]) => [
+    bunExe(),
+    "build",
+    "--compile",
+    "--target=bun-darwin-arm64",
+    `--compile-executable-path=${template}`,
+    "entry.ts",
+    ...args,
+  ];
+
+  test.each(Object.entries(bundles))(
+    "embeds the file in __TEXT,__info_plist and seals it (%s bundle)",
+    async (label, source) => {
+      using dir = tempDir(`compile-macho-info-plist-${label}`, {
+        "entry.ts": source,
+        "Info.plist": infoPlist,
+        "template": machoTemplate(),
+      });
+      const cwd = String(dir);
+
+      await build(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=out"), cwd);
+
+      const out = readFileSync(join(cwd, "out"));
+      expect(readSections(out)).toEqual([
+        {
+          segment: "__TEXT",
+          segname: "__TEXT",
+          name: "__info_plist",
+          addr: 0x1_0000_0000n + BigInt(0x4000 - infoPlist.length),
+          size: infoPlist.length,
+          offset: 0x4000 - infoPlist.length,
+        },
+        expect.objectContaining({ segment: "__BUN", name: "__bun", offset: 0x4000 }),
+      ]);
+      expect(readInfoPlist(out)).toBe(infoPlist);
+
+      const sig = parseAndVerifySignature(out);
+      expect(sig.specialSlots).toEqual([createHash("sha256").update(infoPlist).digest("hex")]);
+      expect(sig.mismatches).toEqual([]);
+      expect(out.length).toBe(sig.dataoff + sig.datasize);
+    },
+  );
+
+  test("replaces the Info.plist of the executable it copies", async () => {
+    using dir = tempDir("compile-macho-info-plist-replace", {
+      "entry.ts": bundles.tiny,
+      "First.plist": infoPlist.replace("1.2.3", "1.2.3.4.5.6"),
+      "Info.plist": infoPlist,
+      "template": machoTemplate(),
+      "expected": {},
+      "second": {},
+    });
+    const cwd = String(dir);
+
+    await build(crossCompile("template", "--macos-info-plist=First.plist", "--outfile=first"), cwd);
+    await build(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=expected/out"), cwd);
+    await build(crossCompile("first", "--macos-info-plist=Info.plist", "--outfile=second/out"), cwd);
+
+    expect(readInfoPlist(readFileSync(join(cwd, "first")))).toBe(infoPlist.replace("1.2.3", "1.2.3.4.5.6"));
+    expect(readInfoPlist(readFileSync(join(cwd, "second/out")))).toBe(infoPlist);
+    // The name of the file is in the payload, so both are called `out`.
+    expect(readFileSync(join(cwd, "second/out")).equals(readFileSync(join(cwd, "expected/out")))).toBe(true);
+  });
+
+  test("Bun.build embeds compile.macos.infoPlist, for macOS only", async () => {
+    using dir = tempDir("compile-macho-info-plist-api", {
+      "entry.ts": bundles.tiny,
+      "Info.plist": infoPlist,
+      "Large.plist": Buffer.alloc(0x4000, "x"),
+      "index.html": "<p>hi</p>",
+      "template": machoTemplate(),
+      "build.ts": `
+        const entrypoints = ["entry.ts"];
+        const darwin = { target: "bun-darwin-arm64", executablePath: "template" };
+        const macos = { infoPlist: "Info.plist" };
+        const missing = { infoPlist: "Missing.plist" };
+        await Bun.build({ entrypoints, compile: { ...darwin, outfile: "out", macos } });
+        await Bun.build({ entrypoints, compile: { ...darwin, outfile: "without", macos: { infoPlist: undefined } } });
+        await Bun.build({
+          entrypoints,
+          compile: { executablePath: process.execPath, outfile: "native", macos: process.platform === "darwin" ? macos : missing },
+        });
+        for (const options of [
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: 1 } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: missing } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: "Large.plist" } } },
+          { entrypoints: ["index.html"], target: "browser", compile: { ...darwin, macos } },
+        ]) {
+          try {
+            await Bun.build(options);
+          } catch (error) {
+            console.log(error.errors?.[0].message ?? error.message);
+          }
+        }
+      `,
+    });
+    const cwd = String(dir);
+
+    const built = await run([bunExe(), "build.ts"], cwd);
+    expect(built).toEqual({
+      stdout: [
+        "macos must be an object",
+        "macos.infoPlist must be a valid path to an Info.plist file",
+        `failed to embed the Info.plist: it is 16384 bytes, and this executable has room for ${templateRoom} bytes behind its load commands`,
+        "Cannot use compile.macos.infoPlist with target 'browser' for standalone HTML",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(readInfoPlist(readFileSync(join(cwd, "out")))).toBe(infoPlist);
+    expect(readInfoPlist(readFileSync(join(cwd, "without")))).toBeUndefined();
+
+    const native = await run([join(cwd, isWindows ? "native.exe" : "native")], cwd);
+    expect(native).toEqual({ stdout: "hi\n", stderr: "", exitCode: 0 });
+  });
+
+  test("fails when the file does not fit behind the load commands", async () => {
+    using dir = tempDir("compile-macho-info-plist-large", {
+      "entry.ts": bundles.tiny,
+      "Info.plist": Buffer.alloc(0x4000, "x"),
+      "Empty.plist": "",
+      "template": machoTemplate(),
+    });
+    const cwd = String(dir);
+    const large = await run(crossCompile("template", "--macos-info-plist=Info.plist", "--outfile=out"), cwd);
+    expect(large.stderr).toContain(
+      `failed to embed the Info.plist: it is 16384 bytes, and this executable has room for ${templateRoom} bytes behind its load commands`,
+    );
+    expect(large.exitCode).toBe(1);
+
+    const empty = await run(crossCompile("template", "--macos-info-plist=Empty.plist", "--outfile=out"), cwd);
+    expect(empty.stderr).toContain('the Info.plist "Empty.plist" is empty');
+    expect(empty.exitCode).toBe(1);
+
+    const missing = await run(crossCompile("template", "--macos-info-plist=Missing.plist", "--outfile=out"), cwd);
+    expect(missing.stderr).toContain('error: --macos-info-plist: "Missing.plist" is not a file');
+    expect(missing.exitCode).toBe(1);
+
+    if (!isWindows) {
+      const device = await run(crossCompile("template", "--macos-info-plist=/dev/zero", "--outfile=out"), cwd);
+      expect(device.stderr).toContain('the Info.plist "/dev/zero" is not a regular file');
+      expect(device.exitCode).toBe(1);
+    }
+
+    expect(await Bun.file(join(cwd, "out")).exists()).toBe(false);
+  });
+
+  test("requires --compile and a macOS target", async () => {
+    using dir = tempDir("compile-macho-info-plist-flags", {
+      "entry.ts": bundles.tiny,
+      "index.html": "<p>hi</p>",
+      "Info.plist": infoPlist,
+    });
+    const cwd = String(dir);
+
+    const otherTarget = await run(
+      [bunExe(), "build", "--compile", "--target=bun-linux-x64", "--macos-info-plist=Info.plist", "entry.ts"],
+      cwd,
+    );
+    expect(otherTarget.stderr).toContain("error: --macos-info-plist requires a macOS compile target");
+    expect(otherTarget.exitCode).toBe(1);
+
+    const bundled = await run([bunExe(), "build", "--macos-info-plist=Info.plist", "entry.ts"], cwd);
+    expect(bundled.stderr).toContain("error: --macos-info-plist requires --compile");
+    expect(bundled.exitCode).toBe(1);
+
+    const html = await run(
+      [bunExe(), "build", "--compile", "--target=browser", "--macos-info-plist=Info.plist", "index.html"],
+      cwd,
+    );
+    expect(html.stderr).toContain(
+      isMacOS
+        ? "error: cannot use --compile --target browser with --macos-info-plist"
+        : "error: --macos-info-plist requires a macOS compile target",
+    );
+    expect(html.exitCode).toBe(1);
+  });
+
+  test.skipIf(!isMacOS)(
+    "CoreFoundation reads the Info.plist of a natively compiled executable",
+    async () => {
+      using dir = tempDir("compile-macho-info-plist-native", {
+        // Not Info.plist: CoreFoundation reads a file of that name beside an executable before the section.
+        "embedded.plist": infoPlist,
+        "entry.ts": `
+          import { CString, dlopen, ptr } from "bun:ffi";
+          const { symbols: cf } = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", {
+            CFBundleGetMainBundle: { args: [], returns: "ptr" },
+            CFBundleGetIdentifier: { args: ["ptr"], returns: "ptr" },
+            CFStringGetCString: { args: ["ptr", "ptr", "i64", "u32"], returns: "bool" },
+          });
+          const identifier = cf.CFBundleGetIdentifier(cf.CFBundleGetMainBundle());
+          const buffer = new Uint8Array(256);
+          const kCFStringEncodingUTF8 = 0x08000100;
+          if (identifier && cf.CFStringGetCString(identifier, ptr(buffer), buffer.length, kCFStringEncodingUTF8)) {
+            console.log(new CString(ptr(buffer)).toString());
+          } else {
+            console.log("no identifier");
+          }
+        `,
+      });
+      const cwd = String(dir);
+
+      await build(
+        [bunExe(), "build", "--compile", "--macos-info-plist=embedded.plist", "entry.ts", "--outfile=out"],
+        cwd,
+      );
+      expect(readInfoPlist(readFileSync(join(cwd, "out")))).toBe(infoPlist);
+
+      expect(await run([join(cwd, "out")], cwd)).toEqual({
+        stdout: "sh.bun.test.info-plist\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+      if (isArm64) {
+        expect(await run(["codesign", "--verify", "out"], cwd)).toEqual({
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+        });
+        // "Info.plist=not bound" unless the signature has the hash of the section.
+        const described = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
+        expect(described.stderr).toContain("Info.plist entries=2");
+        expect(described.exitCode).toBe(0);
+      }
+
+      // What a developer does to ship it: codesign takes the identifier from the embedded Info.plist.
+      await build(["codesign", "--force", "--sign", "-", "out"], cwd);
+      const resigned = await run(["codesign", "--display", "--verbose=2", "out"], cwd);
+      expect(resigned.stderr).toContain("Identifier=sh.bun.test.info-plist");
+      expect(resigned.stderr).toContain("Info.plist entries=2");
+      expect(await run([join(cwd, "out")], cwd)).toEqual({
+        stdout: "sh.bun.test.info-plist\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    60_000,
+  );
+});

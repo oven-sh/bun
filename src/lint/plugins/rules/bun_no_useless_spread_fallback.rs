@@ -7,11 +7,11 @@ pub struct NoUselessSpreadFallback {
     ignore_conditions_that_call: Box<[Box<[u8]>]>,
 }
 
-const USELESS_FALLBACK: Message = Message::new(
+const USELESS_FALLBACK: &Message = &Message::new(
     "uselessFallback",
     "This empty object is not needed. Spreading `false`, `null` or `undefined` into an object does nothing.",
 );
-const USE_LOGICAL_AND: Message = Message::new("useLogicalAnd", "Replace the conditional expression with `&&`.");
+const USE_LOGICAL_AND: &Message = &Message::new("useLogicalAnd", "Replace the conditional expression with `&&`.");
 
 fn is_empty_object(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Object(properties) if properties.is_empty())

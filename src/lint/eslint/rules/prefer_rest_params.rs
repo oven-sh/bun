@@ -4,7 +4,7 @@ use bun_lint::types::{IdMap, IdSet};
 /// Require rest parameters instead of `arguments`.
 pub struct PreferRestParams;
 
-const PREFER_REST_PARAMS: Message = Message::new(
+const PREFER_REST_PARAMS: &Message = &Message::new(
     "preferRestParams",
     "Use the rest parameters instead of 'arguments'.",
 );

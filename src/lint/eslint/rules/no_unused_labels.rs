@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 /// Disallow unused labels.
 pub struct NoUnusedLabels;
 
-const UNUSED: Message = Message::new("unused", "'{{name}}:' is defined but never used.");
+const UNUSED: &Message = &Message::new("unused", "'{{name}}:' is defined but never used.");
 
 #[derive(Default)]
 pub struct Labels<'a> {

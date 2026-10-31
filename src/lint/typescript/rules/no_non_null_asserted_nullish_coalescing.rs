@@ -6,12 +6,12 @@ use rustc_hash::FxHashMap;
 /// Disallow non-null assertions in the left operand of a nullish coalescing operator.
 pub struct NoNonNullAssertedNullishCoalescing;
 
-const NO_NON_NULL_ASSERTED_NULLISH_COALESCING: Message = Message::new(
+const NO_NON_NULL_ASSERTED_NULLISH_COALESCING: &Message = &Message::new(
     "noNonNullAssertedNullishCoalescing",
     "The nullish coalescing operator is designed to handle undefined and null - using a non-null assertion is not needed.",
 );
-const SUGGEST_REMOVING_NON_NULL: Message =
-    Message::new("suggestRemovingNonNull", "Remove the non-null assertion.");
+const SUGGEST_REMOVING_NON_NULL: &Message =
+    &Message::new("suggestRemovingNonNull", "Remove the non-null assertion.");
 
 /// Caches the end of the first thing that assigns a value to each variable.
 #[derive(Default)]

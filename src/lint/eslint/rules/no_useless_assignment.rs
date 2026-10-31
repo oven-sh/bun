@@ -13,7 +13,7 @@ use std::ops::Range;
 /// Disallow variable assignments when the value is not used.
 pub struct NoUselessAssignment;
 
-const UNNECESSARY_ASSIGNMENT: Message = Message::new(
+const UNNECESSARY_ASSIGNMENT: &Message = &Message::new(
     "unnecessaryAssignment",
     "The value assigned to '{{name}}' is not used in subsequent statements.",
 );

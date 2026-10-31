@@ -9,9 +9,9 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallow usage of the return value of ReactDOM.render
 pub struct NoRenderReturnValue;
 
-const NO_RETURN_VALUE: Message =
-    Message::new("noReturnValue", "Do not depend on the return value from {{node}}.render");
-const OXLINT: Message = Message::new("", "Do not depend on the return value from `ReactDOM.render`.");
+const NO_RETURN_VALUE: &Message =
+    &Message::new("noReturnValue", "Do not depend on the return value from {{node}}.render");
+const OXLINT: &Message = &Message::new("", "Do not depend on the return value from `ReactDOM.render`.");
 
 pub struct State<'a> {
     callee_object_names: &'static [&'static str],

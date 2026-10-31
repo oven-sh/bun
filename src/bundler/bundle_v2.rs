@@ -3128,17 +3128,18 @@ pub mod bv2_impl {
                 (log.errors, log.warnings) = (log_before.1, log_before.2);
                 return Ok(false);
             };
-            let in_bundle = resolved
-                .path_const()
-                .and_then(|path| self.source_index_in_bundle(path.text));
-            // The resolver can spell the key as another path that this bundle holds.
-            if let Some(source_index) = in_bundle {
-                self.add_css_root_from_dev_server(source_index);
-                return Ok(true);
+            // The resolver can spell a path that a plugin gave in another way: that names another file.
+            if resolved.path_const().is_none_or(|path| path.text != key) {
+                return Ok(false);
             }
-            // `None`: a plugin file of this bundle holds this path text in the path map.
-            let entered = self.enqueue_entry_item(&resolved, true, Target::Browser, None)?;
-            Ok(entered.is_some())
+            // An import attribute or a plugin can make a file of any extension a css root.
+            let css = Some(Loader::Css);
+            let entered = self.enqueue_entry_item(&resolved, true, Target::Browser, css)?;
+            if entered.is_none() {
+                // A plugin file of this bundle holds this path text in the path map, and keeps it.
+                self.enqueue_entry_item_outside_path_map(&resolved, true, Target::Browser, css)?;
+            }
+            Ok(true)
         }
 
         /// Gives the css root `key` a css chunk of its own if the running bundle holds it. It enters nothing.
@@ -3211,6 +3212,25 @@ pub mod bv2_impl {
             {
                 return Ok(None);
             }
+            let source_index =
+                self.enqueue_entry_item_outside_path_map(result, is_entry_point, target, loader)?;
+            self.path_to_source_index_map(target)
+                .put(path.text, source_index)
+                .expect("oom");
+            Ok(Some(source_index))
+        }
+
+        /// `enqueue_entry_item` without the path map: always a new source index, and no import of the path finds it.
+        fn enqueue_entry_item_outside_path_map(
+            &mut self,
+            result: &_resolver::Result<'_>,
+            is_entry_point: bool,
+            target: options::Target,
+            loader: Option<Loader>,
+        ) -> Result<IndexInt, Error> {
+            let path = result
+                .path_const()
+                .expect("the caller read the path of this result");
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
@@ -3218,9 +3238,6 @@ pub mod bv2_impl {
 
             let path = self.path_with_pretty_initialized(path, target)?;
             path.assert_pretty_is_valid();
-            self.path_to_source_index_map(target)
-                .put(path.text, source_index.get())
-                .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
             let side_effects = result.primary_side_effects_data;
@@ -3268,7 +3285,7 @@ pub mod bv2_impl {
                 .entry_points
                 .push(bun_ast::Index::init(source_index.get()));
 
-            Ok(Some(source_index.get()))
+            Ok(source_index.get())
         }
 
         /// `heap` is not freed when `deinit`ing the BundleV2

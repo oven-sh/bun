@@ -12,13 +12,13 @@ pub struct JsxFilenameExtension {
     ignore_files_without_code: bool,
 }
 
-const NO_JSX_WITH_EXTENSION: Message =
-    Message::new("noJSXWithExtension", "JSX not allowed in files with extension '{{ext}}'");
-const EXTENSION_ONLY_FOR_JSX: Message =
-    Message::new("extensionOnlyForJSX", "Only files containing JSX may use the extension '{{ext}}'");
-const OXLINT_NO_JSX_WITH_EXTENSION: Message = Message::new("", "JSX not allowed in files with extension '.{{ext}}'");
-const OXLINT_EXTENSION_ONLY_FOR_JSX: Message =
-    Message::new("", "Only files containing JSX may use the extension '.{{ext}}'");
+const NO_JSX_WITH_EXTENSION: &Message =
+    &Message::new("noJSXWithExtension", "JSX not allowed in files with extension '{{ext}}'");
+const EXTENSION_ONLY_FOR_JSX: &Message =
+    &Message::new("extensionOnlyForJSX", "Only files containing JSX may use the extension '{{ext}}'");
+const OXLINT_NO_JSX_WITH_EXTENSION: &Message = &Message::new("", "JSX not allowed in files with extension '.{{ext}}'");
+const OXLINT_EXTENSION_ONLY_FOR_JSX: &Message =
+    &Message::new("", "Only files containing JSX may use the extension '.{{ext}}'");
 
 fn without_dot(extension: &[u8]) -> &[u8] {
     extension.strip_prefix(b".").unwrap_or(extension)

@@ -232,8 +232,9 @@ private:
             return {};
         if (tag == 9 || tag == 10) {
             // acorn and oxlint have `{ pattern, flags }` and `{ raw, cooked }`. typescript-estree has both by name.
-            auto kind = m_host->nodes.kindFor(m_host->isEspree(), m_host->isOxlint(), m_host->shortensNodes());
-            bool secondIsFirst = tag == 9 ? kind == LintNodeState::TypeScript : kind >= LintNodeState::Espree;
+            auto kind = m_host->nodes.kindFor(m_host);
+            bool isTypeScript = LintNodeState::isTypeScript(kind);
+            bool secondIsFirst = tag == 9 ? isTypeScript : !isTypeScript;
             JSObject* object = constructEmptyObject(m_globalObject);
             if (secondIsFirst)
                 object->putDirect(m_vm, tag == 9 ? m_flags : m_raw, second);
@@ -417,6 +418,15 @@ __attribute__((minsize)) bool LintNodeState::load(JSGlobalObject* globalObject, 
     return true;
 }
 
+LintNodeState::LayoutKind LintNodeState::kindFor(const LintHost* host)
+{
+    if (host->isOxlint())
+        return host->shortensNodes() ? OxlintJavaScript : Oxlint;
+    if (host->isEspree())
+        return Espree;
+    return host->hasStartEnd() ? TypeScriptWithStartEnd : TypeScript;
+}
+
 JSString* LintNodeState::typeName(VM& vm, LintHost* host, uint8_t type)
 {
     auto& slot = m_typeNames[type];
@@ -437,7 +447,7 @@ JSString* LintNodeState::knownString(VM& vm, LintHost* host, uint32_t index)
 
 __attribute__((minsize)) JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, LayoutKind kind)
 {
-    if (kind == TypeScript)
+    if (isTypeScript(kind))
         return globalObject->objectPrototype();
     auto& slot = m_sharedPrototypes[kind == OxlintJavaScript ? Oxlint : kind];
     if (slot)
@@ -496,7 +506,7 @@ __attribute__((minsize)) JSObject* LintNodeState::makeTemplate(JSGlobalObject* g
             for (auto& list : host->tokens.listsOfProgram) {
                 if (list.name != key)
                     continue;
-                if (kind >= Oxlint)
+                if (isOxlint(kind))
                     like->putDirectNonIndexAccessor(vm, key, list.getter.get(), static_cast<unsigned>(PropertyAttribute::Accessor));
                 else
                     like->putDirectCustomAccessor(vm, key, list.customValue.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
@@ -518,7 +528,7 @@ __attribute__((minsize)) JSObject* LintNodeState::makeTemplate(JSGlobalObject* g
                 m_lazyEmptyList.set(vm, host, CustomGetterSetter::create(vm, lintLazyEmptyList, nullptr));
             like->putDirectCustomAccessor(vm, key, m_lazyEmptyList.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
         } else {
-            JSValue same = kind >= Oxlint || what == What::Parent ? jsNull() : jsUndefined();
+            JSValue same = isOxlint(kind) || what == What::Parent ? jsNull() : jsUndefined();
             if (what == What::Type)
                 same = typeName(vm, host, type);
             else if (what == What::False)
@@ -538,6 +548,8 @@ __attribute__((minsize)) JSObject* LintNodeState::visitorKeys(JSGlobalObject* gl
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (kind == OxlintJavaScript)
         kind = Oxlint;
+    else if (kind == TypeScriptWithStartEnd)
+        kind = TypeScript;
     if (JSObject* made = m_visitorKeys[kind].get())
         return made;
     JSObject* all = constructEmptyObject(globalObject);
@@ -602,7 +614,7 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     if (!state.isLoaded() || !tree.read(bytes))
         return outOfStep();
     uint32_t count = tree.count;
-    auto kind = state.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes());
+    auto kind = state.kindFor(host);
 
     // Where the words of each node start.
     Vector<uint32_t> offsets(count);

@@ -10,6 +10,7 @@ macro_rules! cat {
 }
 
 mod alias;
+pub mod aot;
 mod call;
 mod check_order;
 mod check_source_file;
@@ -103,6 +104,7 @@ use crate::table::{FileLocal, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
+use aot::DiagnosticClass;
 use bun_threading::Guarded;
 use errors_aliases::SpecifierSite;
 use errors_names_and_exports::{root_declaration, root_pattern};
@@ -208,6 +210,53 @@ pub(crate) use file_local_fields;
 /// true if `instantiateSignature` created it for the call.
 pub(crate) type AssignedSignature = (Option<SigId>, bool);
 
+struct ContextCheck {
+    function: (FileId, FnId),
+    assigned: AssignedSignature,
+    /// The number of parameters for which `assignParameterType` has returned.
+    assigned_parameter_count: usize,
+}
+
+/// A stack in which no function is twice.
+#[derive(Default)]
+struct ContextChecks {
+    checks: Vec<ContextCheck>,
+    positions: FxHashMap<(FileId, FnId), usize>,
+}
+
+impl ContextChecks {
+    fn is_empty(&self) -> bool {
+        self.checks.is_empty()
+    }
+
+    fn get(&self, file: FileId, func: FnId) -> Option<&ContextCheck> {
+        let position = *self.positions.get(&(file, func))?;
+        Some(&self.checks[position])
+    }
+
+    fn contains(&self, file: FileId, func: FnId) -> bool {
+        self.positions.contains_key(&(file, func))
+    }
+
+    fn push(&mut self, file: FileId, func: FnId, assigned: AssignedSignature) -> usize {
+        let position = self.checks.len();
+        let earlier = self.positions.insert((file, func), position);
+        debug_assert!(earlier.is_none());
+        self.checks.push(ContextCheck {
+            function: (file, func),
+            assigned,
+            assigned_parameter_count: 0,
+        });
+        position
+    }
+
+    fn pop(&mut self) {
+        if let Some(check) = self.checks.pop() {
+            self.positions.remove(&check.function);
+        }
+    }
+}
+
 pub struct Program<'s> {
     /// Owns the arenas for the program and everything computed from it.
     pub session: &'s Session,
@@ -225,6 +274,11 @@ pub struct Program<'s> {
     auto_array_type: TypeId,
     /// See `Services::file_info`. Built on first use.
     package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
+    /// See `Checker::modules_that_export`. Built on first use.
+    exporting_modules: std::sync::OnceLock<errors_declaration_emit::ExportingModules>,
+    aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
+    aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
+    aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -520,6 +574,7 @@ pub struct Spare<'s> {
     signature_links: signature_links::SignatureLinks,
     widened_types: shortcuts::TypeMap<TypeId>,
     apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
+    aot_answers: aot::KeptAnswers,
 }
 
 /// `Checker::rechecked_exprs` and `Checker::rechecked_members`.
@@ -592,6 +647,10 @@ impl<'s> Program<'s> {
             properties_referenced_before: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
+            exporting_modules: Default::default(),
+            aot_symbols: Default::default(),
+            aot_store_indexes: Default::default(),
+            aot_prototype_links: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
             type_node_types: ByNode::new_in(&type_nodes, session),
@@ -690,6 +749,7 @@ impl<'s> Program<'s> {
         self.commits.release();
         *self.serial_variances.get_mut() = FxHashMap::default();
         *self.global_errors.get_mut() = Default::default();
+        self.exporting_modules = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
@@ -748,6 +808,7 @@ impl<'s> Program<'s> {
             signature_links: Default::default(),
             widened_types: Default::default(),
             apparent_types_of_intersections: Default::default(),
+            aot_answers: Default::default(),
         })
     }
 
@@ -866,6 +927,7 @@ impl<'s> Program<'s> {
             limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
             relations_of_this_task: Default::default(),
+            relations_of_query: Default::default(),
             stores_relations_per_task: false,
             constraints_of_this_task: Default::default(),
             constraint_cuts: Default::default(),
@@ -877,6 +939,10 @@ impl<'s> Program<'s> {
             enum_literal_types: Default::default(),
             task_facts: spare.task_facts,
             relation_sizes: [0; 6],
+            relation_entries_for_query: None,
+            is_comparing_for_query: false,
+            size_refusals_in_queries: 0,
+            write_constraints_refused_for_size: Default::default(),
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
             spare_inferences: Vec::new(),
@@ -904,6 +970,9 @@ impl<'s> Program<'s> {
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
+            left_out: Default::default(),
+            file_with_early_error: None,
+            dead_code: Default::default(),
             never_in_progress: Vec::new(),
             reduced_unions: spare.reduced_unions,
             union_members: Default::default(),
@@ -924,6 +993,8 @@ impl<'s> Program<'s> {
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
+            unions_without_subtypes: Default::default(),
+            union_members_compared: 0,
             union_calls: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
@@ -942,9 +1013,9 @@ impl<'s> Program<'s> {
             cycle_at: 0,
             limit_at: 0,
             rejected_at: 0,
+            aliases_in_tables: Default::default(),
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
-            exporting_modules: None,
             expected: Requested::All,
             declaration_file: None,
             declaration_indent: None,
@@ -971,7 +1042,7 @@ impl<'s> Program<'s> {
             undefined_properties: Default::default(),
             synthetic_default_import_types: Default::default(),
             referenced_properties: Default::default(),
-            tracked_names: Vec::new(),
+            tracked_names: Default::default(),
             unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
             widened_types: spare.widened_types,
@@ -985,6 +1056,7 @@ impl<'s> Program<'s> {
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
             flow_memo: Default::default(),
+            fixed_length_asked_last: None,
             discriminated: Default::default(),
             conditional_roots: Default::default(),
             contextual_properties: Default::default(),
@@ -1003,7 +1075,7 @@ impl<'s> Program<'s> {
             save_deferred_diagnostics: false,
             node_check_flags: Default::default(),
             within_unreachable_code: false,
-            reported_unreachable_nodes: Vec::new(),
+            reported_unreachable_nodes: Default::default(),
             renamed_binding_elements_in_types: Vec::new(),
             unvisited_exprs: Vec::new(),
             checked_with_contextual_type: Vec::new(),
@@ -1013,10 +1085,12 @@ impl<'s> Program<'s> {
             untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
             assigned_unknown: Vec::new(),
-            context_checking: Vec::new(),
+            context_checking: ContextChecks::default(),
             context_checked_here: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
+            resolved_meanwhile_of_class: [0; 256],
+            fully_marked: FullyMarked::default(),
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
             unresolved_renamed_params: Default::default(),
@@ -1032,10 +1106,12 @@ impl<'s> Program<'s> {
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             rejected_expressions: Vec::new(),
+            aot_answers: spare.aot_answers,
             side_effect_free: Default::default(),
             context_sensitive_functions: Default::default(),
             context_sensitivity_visits: Default::default(),
             unwind_to: usize::MAX,
+            lowest_to_start_over: 0,
             unwind_work: 0,
             restart_with: None,
         }
@@ -1299,6 +1375,86 @@ pub(super) enum CurrentNode {
     Node(FileId, Node),
 }
 
+/// The fields are private to this module, so taking a mark away from a frame takes `FullyMarked` too.
+mod marks {
+    /// What `mark_tainted_from` sets on a `QueryFrame`.
+    #[derive(Copy, Clone, Default)]
+    pub(super) struct Marks {
+        /// A query it made re-entered an entry below it.
+        tainted: bool,
+        /// Its diagnostics are dropped because the result depends on a cycle, a speculative evaluation
+        /// or a provisional type, and will be recomputed.
+        drops_reported: bool,
+    }
+
+    /// Every frame from the first number up that was pushed by the time `work` was the second number has both marks.
+    #[derive(Default)]
+    pub(super) struct FullyMarked(Option<(usize, u64)>);
+
+    impl Marks {
+        #[inline]
+        pub(super) fn new(tainted: bool, drops_reported: bool) -> Self {
+            Self {
+                tainted,
+                drops_reported,
+            }
+        }
+
+        #[inline]
+        pub(super) fn both() -> Self {
+            Self {
+                tainted: true,
+                drops_reported: true,
+            }
+        }
+
+        #[inline]
+        pub(super) fn tainted(self) -> bool {
+            self.tainted
+        }
+
+        #[inline]
+        pub(super) fn drops_reported(self) -> bool {
+            self.drops_reported
+        }
+
+        pub(super) fn taint(&mut self) {
+            self.tainted = true;
+        }
+
+        pub(super) fn drop_reported(&mut self) {
+            self.drops_reported = true;
+        }
+
+        pub(super) fn clear_tainted(&mut self, fully_marked: &mut FullyMarked) {
+            self.tainted = false;
+            fully_marked.0 = None;
+        }
+
+        pub(super) fn set_drops_reported(&mut self, drops: bool, fully_marked: &mut FullyMarked) {
+            if self.drops_reported && !drops {
+                fully_marked.0 = None;
+            }
+            self.drops_reported = drops;
+        }
+    }
+
+    impl FullyMarked {
+        /// True if every frame from `from` up has both marks. `innermost` is the serial number of the innermost frame.
+        pub(super) fn covers(&self, from: usize, innermost: Option<u64>) -> bool {
+            self.0.is_some_and(|(marked_from, by)| {
+                marked_from <= from && innermost.is_none_or(|serial| serial <= by)
+            })
+        }
+
+        /// Call after marking every frame from `from` up. None of them has a serial number above `by`.
+        pub(super) fn record(&mut self, from: usize, by: u64) {
+            self.0 = Some((from, by));
+        }
+    }
+}
+use marks::{FullyMarked, Marks};
+
 /// Metadata for an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
 struct QueryFrame {
@@ -1306,17 +1462,15 @@ struct QueryFrame {
     serial: u64,
     /// `instantiation_depth` when it was pushed.
     entry_depth: u32,
-    /// A query it made re-entered an entry below it.
-    tainted: bool,
+    marks: Marks,
     /// It `is_resolution`, and is part of a cycle of resolutions. See `mark_cycle_from`.
     circular: bool,
-    /// Its diagnostics are dropped because the result depends on a cycle, a speculative evaluation
-    /// or a provisional type, and will be recomputed.
-    drops_reported: bool,
     /// The length of `Checker::reported` when it was pushed. Later entries belong to it.
     reported_from: u32,
     /// Its index in `Checker::in_progress`.
     class: u16,
+    /// What `Checker::in_progress` held for its class when it was pushed: the next entry of the class further down.
+    next_of_class: u32,
     /// `typeResolutionHasProperty`: this checker has cached a result for the same query since the frame was pushed.
     has_result: bool,
     /// Non-cacheable because an incomplete flow-loop type was read (`taint_from`).
@@ -1355,37 +1509,53 @@ pub enum Requested {
     Declaration,
     /// .. and `getBindAndCheckDiagnostics`.
     All,
+    /// `Syntactic`, and every diagnostic of class `EarlyError`. It computes no type.
+    EarlyErrors,
 }
 
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub struct Checker<'p, 's> {
+    files: &'p Files<'s>,
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
     /// be published. Everything else that a task allocates is on the regular heap.
     pub arena: &'s Arena,
+    /// The lowest index given to `mark_tainted_from` since the innermost `begin_scope`.
+    lowest_taint: usize,
+    /// Number of circular queries.
+    cycles: u64,
+    deepest_stack: std::cell::Cell<usize>,
+    /// How many times `error_at_current_node` had nothing to report since `check_file` began. The
+    /// computation in progress at that point isn't cached.
+    limits: u64,
+    ran_out_of_stack: std::cell::Cell<bool>,
     /// The task that this checker runs. Every access to a `Buffered` or `FileLocal` table takes it
     /// as an argument because it owns the write buffer.
     task: Task<'s>,
-    /// The tainted frame that `leave` popped last, for `cache_provisionally`.
-    left_frame: Option<QueryFrame>,
-    files: &'p Files<'s>,
-    /// `varianceTypeParameter`: its name.
-    variance_type_parameter: Atom,
-    /// `autoArrayType`
-    auto_array_type: TypeId,
-    stack: Vec<Query>,
-    /// One per entry of `stack`.
-    frames: Vec<QueryFrame>,
-    /// How many entries of `stack` fall into each class. A query whose class is empty isn't in progress.
-    in_progress: [u16; 1024],
-    /// The result of the last `enter`. `leave` and `excessively_deep` reset it to `Entered`.
-    last_enter: EnterOutcome,
-    /// The patterns whose implied type is being computed as the contextual type of their
-    /// initializer, and the stack depth when that began.
-    contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
-    /// `left` of the latest `getTypeOfExpression(left)` of `getContextualTypeForAssignmentExpression`.
-    requested_assignment_target: Option<(FileId, ExprId)>,
-    /// The type node whose type `precheck_type_node` is requesting.
-    looked_at_type_node: Option<(FileId, TypeNodeId)>,
+    /// For each class, the position of its innermost entry of `stack`, plus one. 0: the class is empty, and a query
+    /// of it isn't in progress. `QueryFrame::next_of_class` leads on to the other entries of the class.
+    in_progress: [u32; 1024],
+    /// For each class of calls, the position of its innermost entry of `resolved_meanwhile`, plus one. As `in_progress`
+    /// and `QueryFrame::next_of_class`.
+    resolved_meanwhile_of_class: [u32; 256],
+    /// See `union_property`.
+    union_members: union_property::UnionMembers<'p>,
+    /// See check/sibling_intersections.rs. `Some` while `reduced_members` filters a union.
+    sibling_intersections: Option<shape::SiblingIntersections<'p>>,
+    union_calls: unions::UnionCalls,
+    /// A 256-bit filter of the property names of `Object`, `Function`, `CallableFunction` and
+    /// `NewableFunction`. A name whose bit is clear isn't one of them. All zero means it isn't built yet.
+    pub(super) inherited_names: [u64; 4],
+    /// The names themselves, to check a name whose bit is set. `None` if it isn't built yet, or if the members
+    /// of one of the four types aren't stored, so that looking up a name in that type resolves them again.
+    pub(super) inherited_name_set: Option<crate::util::FxHashSet<Atom>>,
+    /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
+    /// all nodes of a kind do visit them.
+    never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
+    /// `number_name` of each index, or `NONE` if it hasn't been requested.
+    names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
     /// `membersAndExportsLinks`, keyed by container and side.
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
     /// `symbolNodeLinks.Get(decl).resolvedSymbol != nil`: the declarations that `lateBindMember`
@@ -1393,13 +1563,345 @@ pub struct Checker<'p, 's> {
     late_bound_declarations: crate::util::FxHashSet<(FileId, crate::bind::Decl)>,
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
-    /// The interfaces for which `has_this_type` is in progress.
-    this_types_in_progress: Vec<Sym>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: FxHashMap<Sym, bool>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
     /// the target's type gives. See `link_of_instantiated_symbol`.
     instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, TypeId)>>,
+    /// The sides for which `resolveDeclaredMembers` or `resolveAnonymousTypeMembers` assigned
+    /// `earlySymbols` at the request of a computed name that was being bound for `late_binding_by_symbol`.
+    /// No outer call assigns the members again, so no type of the container gets the late-bound members.
+    permanently_early_bound: crate::util::FxHashSet<(Sym, bool)>,
+    /// `c.flowTypeCache`, for the loop back edge being traversed.
+    flow_type_cache: FxHashMap<(FileId, ExprId), TypeId>,
+    /// `NodeCheckFlagsTypeChecked` on the name of a property access, meaning its 2339 has been
+    /// created. `true` if it was also discarded.
+    non_existent_properties: FxHashMap<(FileId, ExprId), bool>,
+    serialized_types: print::SerializedTypes,
+    /// The `module` and `exports` symbols whose entry was left there.
+    unpopped_resolutions: crate::util::FxHashSet<Sym>,
+    /// The binding elements that got their type from `reportCircularityError` while
+    /// `links.resolvedType` of their parameter's symbol, which `is_resolved_on_request`, was still
+    /// nil. A default in the pattern reads them while that symbol is being resolved.
+    circular_before_parameter_symbol: crate::util::FxHashSet<(FileId, PatId)>,
+    /// Results of rechecks with nothing pushed, which are the same for any caller. Keyed by
+    /// expression, and by member of an object literal or JSX attribute.
+    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
+    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    /// The types that `type_of_mapped_prop` found in `Program::mapped_prop_types`, keyed by what
+    /// decides which entry it reads: the mapped type in the property's source, the property's mapper
+    /// and its name. It isn't a `Recent` because the properties of a union of a hundred `Omit<..>`
+    /// are read in turn, over and over, and there are more of them than a `Recent` has slots.
+    known_mapped_prop_types: FxHashMap<(TypeId, MapperId, Atom), TypeId>,
+    /// Only in a task that commits. The comparisons that succeed because a nested comparison was `TernaryMaybe`, for
+    /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
+    /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
+    /// everything the task has derived from it.
+    relations_of_this_task: FxHashMap<relate::Key, u8>,
+    /// What the comparison that answers a question of `aot::Queries` has settled: see `Relater::is_for_query`. Empty otherwise.
+    relations_of_query: FxHashMap<relate::Key, u8>,
+    /// The same for base constraints that were cut short, or that follow from one that was. Where
+    /// the cut happens depends on how deep the computation was when it reached the type. See
+    /// `known_constraint`.
+    constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,
+    /// The results withheld from `Program::instantiations` because `instantiate` returned the error
+    /// type at a limit, each with the serial number of the mapper's activation and a flag that's
+    /// true if `limits` changed. While the mapper is active, no path to the limit is taken twice
+    /// (`activeTypeMappersCaches`). The next caller hits the limit itself. An entry stored while no mapper was active has
+    /// the number 0 and serves every caller until the end of the file.
+    instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u32, TypeId, bool)>,
+    /// The same for the results of `check_type_related_to` and of `variances_of` during which `cuts` changed.
+    relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
+    /// `enumRelation`, keyed by the source and target symbols.
+    enum_relation: FxHashMap<(Sym, Sym), bool>,
+    /// `enumLiteralTypes` and `enumNaNLiteralTypes`, keyed by the enum symbol and the value.
+    enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
+    /// The arguments of `Checker::write_constraint` for which the answer is the error type, for no other reason than such a refusal.
+    write_constraints_refused_for_size: crate::util::FxHashSet<(TypeId, TypeId, u16)>,
+    variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
+    /// The index of each symbol in `Task::order_dependent_variances`.
+    order_dependent: FxHashMap<Sym, u32>,
+    /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
+    cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
+    interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
+    /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
+    has_class_or_function_declaration: FxHashMap<Sym, bool>,
+    /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
+    counted_export_declarations: FxHashMap<Sym, usize>,
+    /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
+    unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// The unions in which `removeSubtypes` has compared every member with every other and removed none, and whether
+    /// primitives were compared too.
+    unions_without_subtypes: FxHashMap<TypeId, bool>,
+    /// `spread_indices` of the array literals and the calls with many elements or arguments.
+    spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
+    /// Non-cacheable query results, kept for reuse while the computation that made them
+    /// non-cacheable is in flight. See `cache_provisionally`.
+    provisional: FxHashMap<Query, Provisional>,
+    aliases_in_tables: errors_declaration_emit::AliasesInTables,
+    /// `undefinedProperties`
+    undefined_properties: FxHashMap<Atom, Prop<'s>>,
+    /// `cachedTypes[CachedTypeKindSyntheticType]`, keyed by a module's type. True if the cached
+    /// type has a synthetic `default`.
+    synthetic_default_import_types: FxHashMap<TypeId, bool>,
+    /// `symbolReferenceLinks` of the private members marked by an access in a file other than the
+    /// one that declares them (`mark_property_as_referenced`).
+    referenced_properties: crate::util::FxHashSet<Sym>,
+    /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`, by the file it
+    /// starts from: the scope, the name and the meaning. `check_unused` of that file resolves it
+    /// again.
+    tracked_names: FxHashMap<FileId, Vec<(crate::bind::ScopeId, Atom, SymFlags)>>,
+    /// `iterationTypesCache`, keyed by the type and `IterationUse::cache_flags`. The flag is true
+    /// if tsgo has the entry too (`iterable_types`).
+    iteration_types_cache: FxHashMap<(TypeId, u8), (symbols::Iter3, bool)>,
+    /// `links.resolvedSymbol == c.unknownSymbol` for identifiers in the file being checked, meaning
+    /// the `onFailedToResolveSymbol` error has been created. `true` if it was also discarded.
+    unknown_symbols: FxHashMap<ExprId, bool>,
+    /// The other files in which this task has found an error since its last commit. See `View::hides`.
+    files_with_errors: crate::util::FxHashSet<FileId>,
+    /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
+    /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
+    alias_targets_reported: crate::util::FxHashSet<Sym>,
+    is_deferred_node: crate::util::FxHashSet<ExprId>,
+    /// `nodeLinks.flags` for the file being checked.
+    node_check_flags: FxHashMap<Node, u8>,
+    /// `reportedUnreachableNodes` for the file being checked.
+    reported_unreachable_nodes: crate::util::FxHashSet<StmtId>,
+    /// `discriminatedContextualTypes`: the result of `discriminate_by_object_members` for an object
+    /// literal and a union, if it's final.
+    discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
+    /// Caches a `ConditionalRoot` per conditional type node, once the types of its check and extends nodes are final.
+    conditional_roots: FxHashMap<(FileId, TypeNodeId), mapped::ConditionalRoot>,
+    /// See `contextual_property_of_value`.
+    contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
+    /// `cachedTypes[CachedTypeKindApparentType]`, keyed by the intersection and a different `this` argument.
+    apparent_types_with_this_argument: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// The functions whose entry in `Program::context_checked` this checker wrote or tried to
+    /// write. See `is_context_checked`.
+    context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
+    /// The parameters of instantiated signatures, by index, whose `links.resolvedType` is assigned.
+    /// `sig_params` computes the types of all parameters at once. See
+    /// `note_parameter_types_resolved`.
+    resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
+    /// The `sig_params_with_first` lists that are missing a type, each with the number of
+    /// parameters before the first one without a type.
+    partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
+    /// Pairs of a type and a union for which `is_empty_intersection` has looked up every property
+    /// name of the type in the union, and the results are stored.
+    listed_in_unions: crate::util::FxHashSet<(TypeId, TypeId)>,
+    /// The results of `declared_parameter` for all parameters of a function, once `is_declared_parameter_settled`.
+    declared_parameters: FxHashMap<(FileId, FnId), &'p [SigParam]>,
+    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
+    /// `getRestrictiveInstantiation` has returned.
+    restrictive_instantiations: crate::util::FxHashSet<TypeId>,
+    /// The type parameters that `getUniqueTypeParameters` renamed and whose constraint hasn't been
+    /// requested since (`tp.constraint == nil`). They have no constraint declaration, so
+    /// `getRestrictiveTypeParameter` returns such a type parameter unchanged.
+    unresolved_renamed_params: crate::util::FxHashSet<TypeId>,
+    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]` for the types in which a renamed type
+    /// parameter was left unchanged. The entry stays when the constraint is requested later.
+    pinned_restrictive_instantiations: crate::util::FxHashMap<TypeId, TypeId>,
+    /// Functions whose context `prepare_enclosing` has already prepared.
+    prepared: crate::util::FxHashSet<(FileId, FnId)>,
+    /// The derived parts of signatures.
+    signature_links: signature_links::SignatureLinks,
+    /// The functions that a build leaves out of the executable, which `check_file` does not check.
+    left_out: aot::LeftOutOfCheck<'p>,
+    /// `deferredNodes` of the file being checked, an ordered set.
+    deferred_nodes: std::collections::VecDeque<ExprId>,
+    /// See `is_type_reference_checked`: the file, and a bit for each of its type nodes.
+    checked_type_references: (Option<FileId>, Vec<u64>),
+    /// A file, and which of its expressions `prepare_ancestors` has processed.
+    prepared_exprs: (FileId, Vec<bool>),
+    /// For the most recently queried file.
+    exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
+    /// See `provisional_shape`, which returns a reference to one and pushes the next.
+    provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
+    /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
+    /// resolves it and starts over.
+    restart_with: Option<Query>,
+    /// The `errorNode` of the comparison that began while no query or instantiation was in progress
+    /// and hasn't ended yet. See `begin_comparison`.
+    outermost_comparison: Option<Option<(FileId, u32, u32)>>,
+    /// `resolved_signature` resolves the calls in this range of a file as if they had never been
+    /// resolved, and doesn't store the results. See `context_free_type_of_freshly_resolved_call`.
+    calls_to_resolve_afresh: Option<(FileId, u32, u32)>,
+    /// Where `add_diagnostic` stores a diagnostic it discards.
+    discarded: Option<sink::Reported>,
+    /// `simplifiedForReading` and `simplifiedForWriting`.
+    simplified: [shortcuts::TypeMap<TypeId>; 2],
+    dead_code: aot::DeadCodeRanges,
+    /// `stack.len()` when that traversal began, or `usize::MAX` if no back edge is being traversed.
+    flow_type_cache_depth: usize,
+    /// `c.flowInvocationCount`
+    flow_invocation_count: u64,
+    /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` or
+    /// `report_discarded_errors_of` rechecks an expression. Diagnostics reported then are kept.
+    context_free_level: usize,
+    /// How many cycles `mark_cycle_from` has left unmarked because of `eager`. If it grows during a
+    /// walk of a loop, tsgo doesn't make that walk. See `Flow::Loop` in `flow_type`.
+    unmarked_rejections: u64,
+    /// The index in `stack` from which a query counts as in progress.
+    resolution_start: usize,
+    /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
+    taints: u64,
+    /// How many of those, and of `cycles`, come from `taint_from`.
+    incomplete_flow_taints: u64,
+    /// `taints` when the first entry of `contextual_binding_patterns` was pushed, or `u64::MAX` if
+    /// the innermost frame was non-cacheable then.
+    taints_before_patterns: u64,
+    /// The height of `stack` at which `getContextualType` finds nothing pushed. There, the contextual
+    /// types recorded by call resolution (`arg_contexts`) aren't read, and an argument's contextual type
+    /// comes from the parameters of `links.resolvedSignature`. A query entered above that height is
+    /// evaluated normally, so its cached result doesn't depend on the caller. `usize::MAX` means nowhere.
+    pulls_contextual_types_at: usize,
+    /// The height of `stack` at which `checkExpression` isn't memoized. There, an expression is rechecked, and its
+    /// cached type is neither read nor replaced. See `get_type_of_expression_after_check`. `usize::MAX` means nowhere.
+    rechecks_at: usize,
+    /// How many instantiations missed every cache.
+    instantiations_computed: u64,
+    /// How many times `members` skipped the inherited members. Each one also counts in `cycles`.
+    unresolved_members_hits: u64,
+    /// How many times a request for members got the members in place. That covers `unresolved_members_hits`,
+    /// a re-entered query that `has_members_in_place`, `has_no_members_in_place`, and a provisional result
+    /// that follows from any of them. Each one also counts in `cycles`, so no other memo stores what follows
+    /// from it. tsgo doesn't mark anything there. What tsgo assigns once, no matter what's in progress, is
+    /// stored here as well: `compose` (`resolveObjectTypeMembers`), `resolve_type_arguments`
+    /// (`getTypeArguments`) and `instantiate_index_infos` (`resolveAnonymousTypeMembers`). Otherwise n type
+    /// references that each need a member of the others are resolved n! times.
+    members_in_place_hits: u64,
+    /// `work` at the last of them.
+    members_in_place_hit_at: u64,
+    /// How many times `instantiate` returned the error type at a limit since `check_file` began.
+    instantiation_limit_hits: u64,
+    /// The sum of the two at the end of each file that `check_file` has finished.
+    limits_in_earlier_files: u64,
+    /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`).
+    /// That depends on the comparisons in progress and on the order in which the types were created.
+    comparisons_of_deeply_nested_types: u64,
+    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_task` was read.
+    constraint_cuts: std::cell::Cell<u64>,
+    /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task has
+    /// stored. The entries from files that a single checker would have checked earlier aren't counted.
+    relation_sizes: [i32; 6],
+    /// How many times `refuse_cross_product_of_two_unions` has left the task as it is.
+    size_refusals_in_queries: u64,
+    /// Counts requests for the variances of a symbol that is still being measured.
+    in_progress_variance_reads: u64,
+    /// How many times variances in `order_dependent` were used.
+    order_dependent_uses: u64,
+    /// Mapped types whose members are being resolved. See `has_base_type_in_progress`.
+    mapped_types_in_progress: smallvec::SmallVec<[TypeId; 4]>,
+    /// How many pairs of members `removeSubtypes` has compared.
+    union_members_compared: u64,
+    /// `enclosing_scope_of_expr` for the contents of these expressions.
+    scopes_inside_exprs: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
+    /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
+    times_cut_short: std::cell::Cell<u64>,
+    /// `work` when `cycles` was last incremented, when `limits` was, and when a query was last
+    /// rejected by `bailed_out`. `QueryFrame::serial` is `work` when the frame was pushed, so the
+    /// event happened since then if the value is at least the serial number.
+    cycle_at: u64,
+    limit_at: u64,
+    rejected_at: u64,
+    suggestions_among_globals: errors::SuggestionsAmongGlobals,
+    /// `work` at the last of them.
+    any_signature_read_at: u64,
+    last_prepared: (FileId, FnId),
+    /// The stack pointer when the checker was created, and how far below that it may go.
+    stack_base: usize,
+    stack_limit: usize,
+    /// Number of queries made so far.
+    pub work: u64,
+    /// Number of `begin_scope` calls so far for a result that's permanent once stored. It excludes
+    /// the calls for a memo that evicts entries, like `FlowMemo::types_with_facts`, which begins
+    /// another scope for the same question without computing anything new.
+    scopes_begun: u64,
+    /// `enter` takes its slow path when `work` reaches this value. It's the next value of `work`
+    /// while `rejected_expressions` isn't empty, and `WORK_TRAP_DISARMED` otherwise.
+    work_trap: u64,
+    /// `is_side_effect_free` of the binary expressions with a long chain of binary expressions on their left.
+    side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
+    /// `isContextSensitive` of the functions in a long chain where each function returns nothing but the next one.
+    context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
+    /// How many functions it has visited.
+    context_sensitivity_visits: std::cell::Cell<u64>,
+    /// Set when a query was rejected for lack of stack. `enter` rejects every query while `stack` is
+    /// higher than this. `usize::MAX` if no query was rejected. See `starts_over_from_lower`.
+    unwind_to: usize,
+    /// The height of `stack` above the innermost query that waits in `retry_too_deep_query`. What starts over is
+    /// looked for from here up.
+    lowest_to_start_over: usize,
+    /// `work` of the next `enter` while unwinding. That `enter` takes the slow path (`work_trap`).
+    unwind_work: u64,
+    /// The entries most recently found in `Program::members`, indexed by the low bits of the key.
+    recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
+    /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
+    /// of the signature id.
+    recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
+    recent_sig_type_params: Box<[(SigId, &'p [TypeId]); RECENT_SIGS]>,
+    /// The most recent results of `type_param`, indexed by the low bits of the type parameter's number.
+    recent_type_params: Box<[std::cell::Cell<((FileId, TypeParamId), TypeId)>; RECENT_TYPE_PARAMS]>,
+    /// The most recent results of `steps_of_sig_mapper` for functions with type parameters, indexed by the low bits of
+    /// the mapper id.
+    recent_steps: Box<[std::cell::Cell<instantiate::Steps>; RECENT_SIGS]>,
+    checked_leaves: errors::CheckedLeaves,
+    /// The tainted frame that `leave` popped last, for `cache_provisionally`.
+    left_frame: Option<QueryFrame>,
+    /// See check/unlisted_intersections.rs.
+    unlisted_intersections: shape::UnlistedIntersections<'p>,
+    /// `Some`: the next call of `related` answers a question of `aot::Queries`, which no check of the program asks, with this much `relationCount`.
+    relation_entries_for_query: Option<i32>,
+    /// The last file of a build in which `check_file` found an early error.
+    file_with_early_error: Option<FileId>,
+    /// The output `get_declaration_diagnostics` leaves for `checked`.
+    declaration_file: Option<Vec<u8>>,
+    /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
+    /// Computed on first use.
+    reparsed_for_await: Option<Vec<StmtId>>,
+    /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
+    /// them only together with the entry of `calls`.
+    call_resolution_errors: Option<Vec<Reported>>,
+    flow_memo: flow::FlowMemo,
+    aot_answers: aot::KeptAnswers,
+    /// The derived parts of conditional and mapped types, and the aliases of types.
+    links: links::TypeLinks,
+    emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
+    /// See `shortcuts::task_fact`.
+    task_facts: shortcuts::TaskFacts,
+    /// `resolvedReducedType` of a union, once the answer for every member is final.
+    reduced_unions: shortcuts::TypeMap<TypeId>,
+    /// `cachedTypes[CachedTypeKindWidened]`
+    widened_types: shortcuts::TypeMap<TypeId>,
+    /// `resolvedApparentType` of an intersection, where the `this` argument is the intersection itself.
+    apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
+    active_mappers: instantiate::ActiveMappers,
+    /// The functions whose first check is in progress, see `context_checked`. They're published to
+    /// `Program::context_checked`, for every thread, only together with the results of the first check.
+    /// A thread that found one without the other would continue without doing its own first check.
+    context_checking: ContextChecks,
+    /// The entries most recently read from or written to `Program::instantiations`.
+    recent_instantiations: instantiate::Recent,
+    /// The entries most recently read from or written to `Program::composed`.
+    recent_composed: instantiate::Recent,
+    /// The references that `type_with_this_argument_ex` made most recently, keyed by the reference and the argument.
+    recent_with_this: instantiate::Recent,
+    /// `is_const_type_variable`, keyed by the type and 1 + the depth.
+    recent_const_type_variables: instantiate::Recent,
+    /// Keyed by a signature and a `relate::DerivedSig`.
+    recent_derived_sigs: instantiate::Recent,
+    /// The most recent results of `union` for two types, the lower id first.
+    recent_unions: instantiate::Recent,
+    /// The same for `union_unreduced`, in the order of the arguments.
+    recent_unreduced_unions: instantiate::Recent,
+    stack: Vec<Query>,
+    /// One per entry of `stack`.
+    frames: Vec<QueryFrame>,
+    /// The patterns whose implied type is being computed as the contextual type of their
+    /// initializer, and the stack depth when that began.
+    contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
+    /// The interfaces for which `has_this_type` is in progress.
+    this_types_in_progress: Vec<Sym>,
     /// The `getResolvedMembersOrExportsOfSymbol` calls that are binding computed names, with `earlySymbols` in
     /// `links[resolutionKind]`. Each entry is the depth of `stack` at that point, the container, and true for
     /// the exports. See `is_late_binding`. If `earlySymbols` is nil, only the outermost call has an entry.
@@ -1407,10 +1909,6 @@ pub struct Checker<'p, 's> {
     /// The containers (with true for the exports) for which `getLateBoundSymbol` itself is calling
     /// `getMembersOfSymbol` or `getExportsOfSymbol`.
     late_binding_by_symbol: Vec<(Sym, bool)>,
-    /// The sides for which `resolveDeclaredMembers` or `resolveAnonymousTypeMembers` assigned
-    /// `earlySymbols` at the request of a computed name that was being bound for `late_binding_by_symbol`.
-    /// No outer call assigns the members again, so no type of the container gets the late-bound members.
-    permanently_early_bound: crate::util::FxHashSet<(Sym, bool)>,
     /// The `resolveDeclaredMembers` calls that are inside `getMembersOfSymbol`. Each assigns
     /// `declaredMembers` once the names are bound. See `gets_early_symbols_permanently`.
     declared_members_in_progress: Vec<shape::Declaring>,
@@ -1453,20 +1951,6 @@ pub struct Checker<'p, 's> {
     /// The indices in `stack` of the `MappedProp` frames that were re-entered through what
     /// `resolveMappedTypeMembers` resolves before the symbol exists (`type_of_mapped_prop`).
     mapped_props_reentered_through_members: Vec<usize>,
-    /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
-    /// resolutions are made eagerly.
-    serialization_level: u32,
-    /// `c.flowTypeCache`, for the loop back edge being traversed.
-    flow_type_cache: FxHashMap<(FileId, ExprId), TypeId>,
-    /// `stack.len()` when that traversal began, or `usize::MAX` if no back edge is being traversed.
-    flow_type_cache_depth: usize,
-    /// `c.flowInvocationCount`
-    flow_invocation_count: u64,
-    /// Where `add_diagnostic` stores a diagnostic it discards.
-    discarded: Option<sink::Reported>,
-    /// `NodeCheckFlagsTypeChecked` on the name of a property access, meaning its 2339 has been
-    /// created. `true` if it was also discarded.
-    non_existent_properties: FxHashMap<(FileId, ExprId), bool>,
     /// The calls in the file being checked whose `links.resolvedSignature` was assigned at
     /// `maxSerializationLevel`. The errors that `resolveCall` reported in the callee, the type
     /// arguments and the arguments were discarded, and nothing checks them again.
@@ -1476,21 +1960,8 @@ pub struct Checker<'p, 's> {
     expressions_cached_with_errors_discarded: Vec<ExprId>,
     /// The start of each error in the file being checked that was discarded at `maxSerializationLevel`.
     starts_of_discarded_errors: Vec<u32>,
-    /// True if the next `with_printer` isn't a barrier for cycle detection, because it prints when
-    /// and what tsgo prints.
-    printing_closes_cycles: bool,
-    /// True while recreating a message that was dropped along with an uncached result. Its types
-    /// are printed behind the barrier and don't count as a level. tsgo creates the message once.
-    reprinting: bool,
     /// The height of `stack` when each `typeToStringEx` in progress began.
     printing_floors: Vec<usize>,
-    serialized_types: print::SerializedTypes,
-    /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` or
-    /// `report_discarded_errors_of` rechecks an expression. Diagnostics reported then are kept.
-    context_free_level: usize,
-    /// `resolved_signature` resolves the calls in this range of a file as if they had never been
-    /// resolved, and doesn't store the results. See `context_free_type_of_freshly_resolved_call`.
-    calls_to_resolve_afresh: Option<(FileId, u32, u32)>,
     /// The calls resolved that way, each with its result, or `None` while it's being resolved.
     calls_resolved_afresh: Vec<(ExprId, Option<ResolvedCall>)>,
     /// The stack depth at each point where a query was made that TypeScript wouldn't have made
@@ -1500,9 +1971,6 @@ pub struct Checker<'p, 's> {
     /// The entries of `eager` that represent the value assigned on the back edge of a loop in
     /// progress. TypeScript requests that value there as well. See `is_cycle_of_initializers`.
     loop_values: Vec<usize>,
-    /// How many cycles `mark_cycle_from` has left unmarked because of `eager`. If it grows during a
-    /// walk of a loop, tsgo doesn't make that walk. See `Flow::Loop` in `flow_type`.
-    unmarked_rejections: u64,
     /// The height of `stack` at each request of `getNonCircularReturnTypeOfSignature` in progress.
     non_circular_returns: Vec<usize>,
     /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
@@ -1510,87 +1978,18 @@ pub struct Checker<'p, 's> {
     /// The `getObjectTypeInstantiation` calls on mapped types that missed the cache on their key
     /// and haven't assigned `instantiations[key]` yet.
     mapped_instantiations_in_progress: Vec<mapped::MappedInstantiation>,
-    /// The index in `stack` from which a query counts as in progress.
-    resolution_start: usize,
-    /// True if the last `enter` rejected the query because it's one of TypeScript's own resolutions and is in progress.
-    found_cycle: bool,
-    /// True if the frame popped by the last `leave` was in a cycle.
-    left_a_cycle: bool,
     /// The stale entries on `typeResolutions` above a resolution in progress.
     /// `getTypeOfVariableOrParameterOrPropertyWorker` returns the type of `module` or `exports`
     /// without `popTypeResolution`, so every resolution around it pops the entry above its own and
     /// leaves its own behind. Listed from the bottom. Each entry is the height of `stack` below it
     /// and `!result`. Each has its property (`typeResolutionHasProperty`).
     stale_resolutions: Vec<(usize, bool)>,
-    /// The `module` and `exports` symbols whose entry was left there.
-    unpopped_resolutions: crate::util::FxHashSet<Sym>,
-    /// The result of `pop_type_resolution` for a `Query::Pat`, passed on to the `Query::Symbol` right below it.
-    popped_for_symbol: Option<bool>,
-    /// The binding elements that got their type from `reportCircularityError` while
-    /// `links.resolvedType` of their parameter's symbol, which `is_resolved_on_request`, was still
-    /// nil. A default in the pattern reads them while that symbol is being resolved.
-    circular_before_parameter_symbol: crate::util::FxHashSet<(FileId, PatId)>,
-    /// The parameter of one of those, set while `report_on_circular_pat` handles it.
-    parameter_symbol_taken_as_unresolved: Option<(FileId, ParamId)>,
-    /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
-    taints: u64,
-    /// How many of those, and of `cycles`, come from `taint_from`.
-    incomplete_flow_taints: u64,
-    /// See `is_type_reference_checked`: the file, and a bit for each of its type nodes.
-    checked_type_references: (Option<FileId>, Vec<u64>),
-    /// `taints` when the first entry of `contextual_binding_patterns` was pushed, or `u64::MAX` if
-    /// the innermost frame was non-cacheable then.
-    taints_before_patterns: u64,
-    /// Number of circular queries.
-    cycles: u64,
-    /// The lowest index given to `mark_tainted_from` since the innermost `begin_scope`.
-    lowest_taint: usize,
     /// `contextualInfos`
     contextual: Vec<ContextualInfo>,
-    /// The height of `stack` at which `getContextualType` finds nothing pushed. There, the contextual
-    /// types recorded by call resolution (`arg_contexts`) aren't read, and an argument's contextual type
-    /// comes from the parameters of `links.resolvedSignature`. A query entered above that height is
-    /// evaluated normally, so its cached result doesn't depend on the caller. `usize::MAX` means nowhere.
-    pulls_contextual_types_at: usize,
-    /// The height of `stack` at which `checkExpression` isn't memoized. There, an expression is rechecked, and its
-    /// cached type is neither read nor replaced. See `get_type_of_expression_after_check`. `usize::MAX` means nowhere.
-    rechecks_at: usize,
-    /// `checkMode` of the non-memoized check. See `check_mode`.
-    mode_of_recheck: CheckMode,
-    /// `node` of the innermost `getTypeOfExpression` in progress, which is checked under
-    /// `CheckModeTypeOnly`. See `is_checked_type_only`.
-    type_only_node: Option<(FileId, ExprId)>,
-    /// Results of rechecks with nothing pushed, which are the same for any caller. Keyed by
-    /// expression, and by member of an object literal or JSX attribute.
-    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
-    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
     /// Empty maps that `set_rechecked_aside` reuses.
     spare_rechecked: Vec<Rechecked>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
-    instantiation_depth: u32,
-    /// The `errorNode` of the comparison that began while no query or instantiation was in progress
-    /// and hasn't ended yet. See `begin_comparison`.
-    outermost_comparison: Option<Option<(FileId, u32, u32)>>,
-    /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
-    instantiation_count: u32,
-    /// How many instantiations missed every cache.
-    instantiations_computed: u64,
-    /// The entries most recently read from or written to `Program::instantiations`.
-    recent_instantiations: instantiate::Recent,
-    /// The entries most recently read from or written to `Program::composed`.
-    recent_composed: instantiate::Recent,
-    /// The references that `type_with_this_argument_ex` made most recently, keyed by the reference and the argument.
-    recent_with_this: instantiate::Recent,
-    /// `is_const_type_variable`, keyed by the type and 1 + the depth.
-    recent_const_type_variables: instantiate::Recent,
-    /// Keyed by a signature and a `relate::DerivedSig`.
-    recent_derived_sigs: instantiate::Recent,
-    /// The types that `type_of_mapped_prop` found in `Program::mapped_prop_types`, keyed by what
-    /// decides which entry it reads: the mapped type in the property's source, the property's mapper
-    /// and its name. It isn't a `Recent` because the properties of a union of a hundred `Omit<..>`
-    /// are read in turn, over and over, and there are more of them than a `Recent` has slots.
-    known_mapped_prop_types: FxHashMap<(TypeId, MapperId, Atom), TypeId>,
     /// `ObjectFlagsUnresolvedMembers`. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the members
     /// that the class or interface declares before it instantiates the base types. A request for the type reference's
     /// members in the meantime finds no inherited members. With `class C<T extends B> extends B<T["p"]>` and `R` =
@@ -1601,67 +2000,11 @@ pub struct Checker<'p, 's> {
     /// the mapper of the reference's members. There's one entry per `compose` in progress:
     /// `second`, and the height of `frames` when it began.
     unresolved_members: Vec<(MapperId, u32)>,
-    /// How many times `members` skipped the inherited members. Each one also counts in `cycles`.
-    unresolved_members_hits: u64,
-    /// How many times a request for members got the members in place. That covers `unresolved_members_hits`,
-    /// a re-entered query that `has_members_in_place`, `has_no_members_in_place`, and a provisional result
-    /// that follows from any of them. Each one also counts in `cycles`, so no other memo stores what follows
-    /// from it. tsgo doesn't mark anything there. What tsgo assigns once, no matter what's in progress, is
-    /// stored here as well: `compose` (`resolveObjectTypeMembers`), `resolve_type_arguments`
-    /// (`getTypeArguments`) and `instantiate_index_infos` (`resolveAnonymousTypeMembers`). Otherwise n type
-    /// references that each need a member of the others are resolved n! times.
-    members_in_place_hits: u64,
-    /// `work` at the last of them.
-    members_in_place_hit_at: u64,
-    /// The lowest index in `unresolved_members` that had a hit since the innermost `compose` in progress began.
-    lowest_unresolved_members_hit: u32,
-    active_mappers: instantiate::ActiveMappers,
-    /// How many times `error_at_current_node` had nothing to report since `check_file` began. The
-    /// computation in progress at that point isn't cached.
-    limits: u64,
-    /// How many times `instantiate` returned the error type at a limit since `check_file` began.
-    instantiation_limit_hits: u64,
-    /// The sum of the two at the end of each file that `check_file` has finished.
-    limits_in_earlier_files: u64,
-    /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`).
-    /// That depends on the comparisons in progress and on the order in which the types were created.
-    comparisons_of_deeply_nested_types: u64,
-    /// Only in a task that commits. The comparisons that succeed because a nested comparison was `TernaryMaybe`, for
-    /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
-    /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
-    /// everything the task has derived from it.
-    relations_of_this_task: FxHashMap<relate::Key, u8>,
-    /// True if `insert_relation` stores in `relations_of_this_task`.
-    stores_relations_per_task: bool,
-    /// The same for base constraints that were cut short, or that follow from one that was. Where
-    /// the cut happens depends on how deep the computation was when it reached the type. See
-    /// `known_constraint`.
-    constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,
-    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_task` was read.
-    constraint_cuts: std::cell::Cell<u64>,
     /// Only in a task that commits. The keys of the `instantiate_cached` calls in progress that missed the
     /// cache, and the types of the `get_literal_type_from_properties` calls in progress. Of two calls with the
     /// same key, the outer one stores last and its entry wins, so the inner one doesn't write immediately.
     instantiations_in_progress: Vec<(TypeId, MapperId)>,
     keys_of_properties_in_progress: Vec<TypeId>,
-    /// The results withheld from `Program::instantiations` because `instantiate` returned the error
-    /// type at a limit, each with the serial number of the mapper's activation and a flag that's
-    /// true if `limits` changed. While the mapper is active, no path to the limit is taken twice
-    /// (`activeTypeMappersCaches`). The next caller hits the limit itself. An entry stored while no mapper was active has
-    /// the number 0 and serves every caller until the end of the file.
-    instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u32, TypeId, bool)>,
-    /// The same for the results of `check_type_related_to` and of `variances_of` during which `cuts` changed.
-    relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
-    /// `enumRelation`, keyed by the source and target symbols.
-    enum_relation: FxHashMap<(Sym, Sym), bool>,
-    /// `enumLiteralTypes` and `enumNaNLiteralTypes`, keyed by the enum symbol and the value.
-    enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
-    /// See `shortcuts::task_fact`.
-    task_facts: shortcuts::TaskFacts,
-    /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task has
-    /// stored. The entries from files that a single checker would have checked earlier aren't counted.
-    relation_sizes: [i32; 6],
-    variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
     #[expect(
         clippy::vec_box,
         reason = "taking one moves a pointer instead of 280 bytes"
@@ -1673,73 +2016,21 @@ pub struct Checker<'p, 's> {
         reason = "taking one moves a pointer instead of 592 bytes"
     )]
     spare_inferences: Vec<Box<infer::Inference>>,
-    /// The flags that the comparisons in progress have set about the reliability of the variance being computed.
-    reliability: u8,
-    in_variance_computation: bool,
-    /// True if the next `related` call compares two marker types for `variances_of`. Consumed on entry.
-    is_marker_comparison: bool,
-    /// True if the next `related` call is the speculative comparison of `check_type_related_to_ex`.
-    /// See `Relater::stores_failures_locally`.
-    pub(super) is_trial_comparison: bool,
     variances_in_progress: Vec<Sym>,
     /// In-progress symbols that a cycle re-entered. Their variances read as empty until the measurement finishes.
     variances_marked_empty: Vec<Sym>,
     /// Measurements suspended by a restart. Their marker types still count as marker types.
     suspended_variances: Vec<Sym>,
-    /// Counts requests for the variances of a symbol that is still being measured.
-    in_progress_variance_reads: u64,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
-    /// After `type_arguments_related_to` returns false, the index of the unrelated pair.
-    failed_type_argument: u32,
-    /// The index of each symbol in `Task::order_dependent_variances`.
-    order_dependent: FxHashMap<Sym, u32>,
-    /// How many times variances in `order_dependent` were used.
-    order_dependent_uses: u64,
-    /// `simplifiedForReading` and `simplifiedForWriting`.
-    simplified: [shortcuts::TypeMap<TypeId>; 2],
-    /// A 256-bit filter of the property names of `Object`, `Function`, `CallableFunction` and
-    /// `NewableFunction`. A name whose bit is clear isn't one of them. All zero means it isn't built yet.
-    pub(super) inherited_names: [u64; 4],
-    /// The names themselves, to check a name whose bit is set. `None` if it isn't built yet, or if the members
-    /// of one of the four types aren't stored, so that looking up a name in that type resolves them again.
-    pub(super) inherited_name_set: Option<crate::util::FxHashSet<Atom>>,
-    /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
-    cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
-    /// Set when a comparison exhausts `Relater::relation_count` (2859). A caller that wants to know clears it before
-    /// comparing and then puts the old value back, so once it's set outside such a caller it stays set.
-    pub(super) relation_too_complex: bool,
-    /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
-    pub(super) current_source_element: Option<CurrentNode>,
-    /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
-    is_type_checked: bool,
-    /// True while `check_file` answers the queries that `Emit` makes before the check (`Options::emits_first`).
-    is_emitting: bool,
     /// The computed names of `task.file` whose expression `GetConstantValue` was the first to
     /// check. `checkExpressionCached` has then assigned the `links.resolvedType` that
     /// `checkComputedPropertyName` tests before it checks and reports.
     cached_by_emit: Vec<ExprId>,
     /// The diagnostics reported for the queries in progress, and with none in progress. See `sink`.
     reported: Vec<Reported>,
-    /// True while `check_expression` runs for `check_expression_in_flow_loop`, possibly in a file
-    /// other than the task's. It then records nothing for the end of `checkSourceFile`, which is
-    /// the file walk's job, and it checks the calls that it visits.
-    is_checking_in_flow_loop: bool,
-    /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
-    /// all nodes of a kind do visit them.
-    never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
-    /// `resolvedReducedType` of a union, once the answer for every member is final.
-    reduced_unions: shortcuts::TypeMap<TypeId>,
-    /// See `union_property`.
-    union_members: union_property::UnionMembers<'p>,
-    /// See check/unlisted_intersections.rs.
-    unlisted_intersections: shape::UnlistedIntersections<'p>,
-    /// See check/sibling_intersections.rs. `Some` while `reduced_members` filters a union.
-    sibling_intersections: Option<shape::SiblingIntersections<'p>>,
-    /// Mapped types whose members are being resolved. See `has_base_type_in_progress`.
-    mapped_types_in_progress: smallvec::SmallVec<[TypeId; 4]>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
@@ -1750,26 +2041,10 @@ pub struct Checker<'p, 's> {
     /// The type references for which `getSingleBaseForNonAugmentingSubtype` has set
     /// `ObjectFlagsIdenticalBaseTypeCalculated` and hasn't returned, each with the height of `stack` when that began.
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
-    /// `number_name` of each index, or `NONE` if it hasn't been requested.
-    names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
-    interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
-    /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
-    has_class_or_function_declaration: FxHashMap<Sym, bool>,
-    /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
-    counted_export_declarations: FxHashMap<Sym, usize>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// The ones for which it hit the `instantiation_count` limit since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
-    /// The entries most recently found in `Program::members`, indexed by the low bits of the key.
-    recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
-    /// The most recent results of `union` for two types, the lower id first.
-    recent_unions: instantiate::Recent,
-    /// The same for `union_unreduced`, in the order of the arguments.
-    recent_unreduced_unions: instantiate::Recent,
-    /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
-    unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
-    union_calls: unions::UnionCalls,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,
@@ -1784,111 +2059,30 @@ pub struct Checker<'p, 's> {
     /// `c.instantiateTypes(typeArguments, d.mapper)`, outermost first. A reference can appear many
     /// times, because no `Query` is in flight at that point (`popTypeResolution` has already run).
     type_arguments_in_instantiation: Vec<TypeId>,
-    /// `conditionalConstraintDepth`
-    conditional_constraint_depth: u32,
-    deepest_stack: std::cell::Cell<usize>,
-    ran_out_of_stack: std::cell::Cell<bool>,
-    /// `enclosing_scope_of_expr` for the contents of these expressions.
-    scopes_inside_exprs: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
-    /// `spread_indices` of the array literals and the calls with many elements or arguments.
-    spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
-    /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
-    times_cut_short: std::cell::Cell<u64>,
-    /// For the most recently queried file.
-    exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
-    /// See `provisional_shape`, which returns a reference to one and pushes the next.
-    provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
-    /// Non-cacheable query results, kept for reuse while the computation that made them
-    /// non-cacheable is in flight. See `cache_provisionally`.
-    provisional: FxHashMap<Query, Provisional>,
     /// `work` and `from` of each call of `mark_tainted_by_pattern_from` and `taint_from`, in order.
     /// An event is dropped when a later one has a lower or equal `from`, so `from` increases and
     /// the length is bounded by the depth of `stack`. See `lowest_taint_since`.
     taint_events: Vec<(u64, u32)>,
-    /// `work` when `cycles` was last incremented, when `limits` was, and when a query was last
-    /// rejected by `bailed_out`. `QueryFrame::serial` is `work` when the frame was pushed, so the
-    /// event happened since then if the value is at least the serial number.
-    cycle_at: u64,
-    limit_at: u64,
-    rejected_at: u64,
-    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`,
-    /// while the name of an import or an export is printed.
-    enclosing_module_specifier_mode: Option<ResolutionMode>,
-    emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
-    /// See `Checker::modules_that_export`. Unlike `emit_resolver_links`, it's the same for every file.
-    exporting_modules: Option<std::rc::Rc<errors_declaration_emit::ExportingModules>>,
-    expected: Requested,
-    /// The output `get_declaration_diagnostics` leaves for `checked`.
-    declaration_file: Option<Vec<u8>>,
-    /// During declaration emit: the indentation depth of the current line.
-    declaration_indent: Option<usize>,
-    /// True if anything in the file being checked is in an ambient context.
-    has_ambient_context: bool,
-    suggestions_among_globals: errors::SuggestionsAmongGlobals,
-    checked_leaves: errors::CheckedLeaves,
-    /// The derived parts of conditional and mapped types, and the aliases of types.
-    links: links::TypeLinks,
-    /// The derived parts of signatures.
-    signature_links: signature_links::SignatureLinks,
-    /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
-    /// Computed on first use.
-    reparsed_for_await: Option<Vec<StmtId>>,
     /// `flowAnalysisDisabled`: the files for which it's set, in the order it was set. There's more than
     /// one if a query from a file that's too long reaches another file that's too long. Only
     /// `checkBlock` restores it, so after a reference outside any function or module block it stays set
     /// for the rest of the file. In tsgo it applies to every reference, including one in another file
     /// that a query reaches in the meantime, whose `errorType` then ends up in what the query stores.
     flow_analysis_disabled: Vec<FileId>,
-    /// Nesting depth of the `const ok = test` conditions being inlined.
-    inline_level: u32,
-    /// The declared type of the reference that the flow walk in progress narrows.
-    walk_declared: TypeId,
     /// The constants whose initializers `evaluateEntity` is evaluating.
     constants_in_evaluation: Vec<(FileId, VarDeclId)>,
-    /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
-    /// of the signature id.
-    recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
-    recent_sig_type_params: Box<[(SigId, &'p [TypeId]); RECENT_SIGS]>,
-    /// The most recent results of `type_param`, indexed by the low bits of the type parameter's number.
-    recent_type_params: Box<[std::cell::Cell<((FileId, TypeParamId), TypeId)>; RECENT_TYPE_PARAMS]>,
-    /// The most recent results of `steps_of_sig_mapper` for functions with type parameters, indexed by the low bits of
-    /// the mapper id.
-    recent_steps: Box<[std::cell::Cell<instantiate::Steps>; RECENT_SIGS]>,
     /// The unions whose members are being awaited.
     awaiting: Vec<TypeId>,
-    /// `lastFlowNode`, `lastFlowNodeReachable`
-    last_flow_node: (FileId, crate::bind::FlowId, bool),
-    /// `undefinedProperties`
-    undefined_properties: FxHashMap<Atom, Prop<'s>>,
-    /// `cachedTypes[CachedTypeKindSyntheticType]`, keyed by a module's type. True if the cached
-    /// type has a synthetic `default`.
-    synthetic_default_import_types: FxHashMap<TypeId, bool>,
-    /// `symbolReferenceLinks` of the private members marked by an access in a file other than the
-    /// one that declares them (`mark_property_as_referenced`).
-    referenced_properties: crate::util::FxHashSet<Sym>,
-    /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`: the file and
-    /// the scope it starts from, the name and the meaning. `check_unused` of that file resolves it
-    /// again.
-    tracked_names: Vec<(FileId, crate::bind::ScopeId, Atom, SymFlags)>,
     /// `Checked::unused_private_members` of the file being checked.
     unused_private_members: Vec<(Sym, u32)>,
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
     widening_contexts: Vec<symbols::WideningContext<'p>>,
-    /// `cachedTypes[CachedTypeKindWidened]`
-    widened_types: shortcuts::TypeMap<TypeId>,
-    /// `iterationTypesCache`, keyed by the type and `IterationUse::cache_flags`. The flag is true
-    /// if tsgo has the entry too (`iterable_types`).
-    iteration_types_cache: FxHashMap<(TypeId, u8), (symbols::Iter3, bool)>,
     /// The keys of the entries whose request has reported something that a frame in progress may
     /// still drop, each with `work` at that time, in that order (`settle_iteration_requests`).
     reported_iteration_requests: Vec<(u64, (TypeId, u8))>,
     /// The calls of immediately invoked function expressions whose arguments are being checked to
     /// type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
-    /// How often `resolved_signature` has returned `anySignature` for a call in `iife_resolving`.
-    any_signature_reads: u32,
-    /// `work` at the last of them.
-    any_signature_read_at: u64,
     /// The loops in progress, for any walk (`flowLoopStack`): the loop, the reference, its declared
     /// and its initial type, the antecedent types collected so far, and the depth of `stack` when
     /// the pass began.
@@ -1904,40 +2098,19 @@ pub struct Checker<'p, 's> {
     /// `is_at_least_as_new`.
     reverse_mapped_source_stack: Vec<(TypeId, u32)>,
     reverse_mapped_target_stack: Vec<(TypeId, u32)>,
-    reverse_expanding: u8,
-    flow_memo: flow::FlowMemo,
-    /// `deferredNodes` of the file being checked, an ordered set.
-    deferred_nodes: std::collections::VecDeque<ExprId>,
     /// The class expressions that have two entries in `deferred_nodes`, the first for their type
     /// parameters. The flag is true once `checkDeferredNodes` has reached the first.
     deferred_type_parameters: Vec<(ExprId, bool)>,
     /// The identifiers that `getResolvedSymbol` couldn't resolve, held until `report_unresolved_identifiers`.
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
-    /// `links.resolvedSymbol == c.unknownSymbol` for identifiers in the file being checked, meaning
-    /// the `onFailedToResolveSymbol` error has been created. `true` if it was also discarded.
-    unknown_symbols: FxHashMap<ExprId, bool>,
     /// Entries of `Log::node_keys`. See the function of the same name.
     withheld_until_the_file_ends: Vec<[u32; 3]>,
-    /// The other files in which this task has found an error since its last commit. See `View::hides`.
-    files_with_errors: crate::util::FxHashSet<FileId>,
-    /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
-    /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
-    alias_targets_reported: crate::util::FxHashSet<Sym>,
     /// The ones for which `resolveAlias` is in progress.
     alias_targets_in_progress: Vec<Sym>,
-    is_deferred_node: crate::util::FxHashSet<ExprId>,
     /// `deferredDiagnosticCallbacks`: the declarations for which `checkWeakMapSetCollision` or
     /// `checkReflectCollision` is deferred. The other callbacks are in `reported`
     /// (`Reported::deferred`).
     deferred_diagnostics: Vec<Node>,
-    /// `saveDeferredDiagnostics`
-    save_deferred_diagnostics: bool,
-    /// `nodeLinks.flags` for the file being checked.
-    node_check_flags: FxHashMap<Node, u8>,
-    /// `withinUnreachableCode`
-    within_unreachable_code: bool,
-    /// `reportedUnreachableNodes` for the file being checked.
-    reported_unreachable_nodes: Vec<StmtId>,
     /// `renamedBindingElementsInTypes`
     renamed_binding_elements_in_types: Vec<PatPropId>,
     /// The expressions in the file being checked whose parent's check returned before reaching
@@ -1952,40 +2125,12 @@ pub struct Checker<'p, 's> {
     /// `getContextualSignature` as `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` got it, before the
     /// inference context instantiates it, for the functions for which `contextual_param_type_at_check` is requested.
     contextual_signatures_at_check: Vec<((FileId, FnId), SigId)>,
-    /// `discriminatedContextualTypes`: the result of `discriminate_by_object_members` for an object
-    /// literal and a union, if it's final.
-    discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
-    /// Caches a `ConditionalRoot` per conditional type node, once the types of its check and extends nodes are final.
-    conditional_roots: FxHashMap<(FileId, TypeNodeId), mapped::ConditionalRoot>,
-    /// See `contextual_property_of_value`.
-    contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
-    /// `resolvedApparentType` of an intersection, where the `this` argument is the intersection itself.
-    apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
-    /// `cachedTypes[CachedTypeKindApparentType]`, keyed by the intersection and a different `this` argument.
-    apparent_types_with_this_argument: FxHashMap<(TypeId, TypeId), TypeId>,
-    /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
-    /// them only together with the entry of `calls`.
-    call_resolution_errors: Option<Vec<Reported>>,
-    /// True if the call that `resolve_signature` is resolving was already being resolved.
-    is_call_re_resolved: bool,
-    /// The call whose arguments `resolveUntypedCall` is checking, if the call was already being
-    /// resolved and its callee is `any`. See
-    /// `contextually_check_function_expression_or_object_literal_method`.
-    untyped_call_resolved_again: Option<(FileId, ExprId)>,
     /// The indices in `stack` of the parameters whose type `assignParameterType` is computing. It doesn't
     /// push a type resolution, so a cycle through such a parameter's initializer isn't the parameter's cycle.
     assigned_parameters: Vec<usize>,
     /// The patterns of the parameters whose `links.resolvedType` is `unknown` while
     /// `assignParameterType` computes the type of the pattern to replace it.
     assigned_unknown: Vec<(FileId, PatId)>,
-    /// The functions whose first check is in progress, see `context_checked`. They're published to
-    /// `Program::context_checked`, for every thread, only together with the results of the first check.
-    /// A thread that found one without the other would continue without doing its own first check. The
-    /// third field is the number of parameters for which `assignParameterType` has returned.
-    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature, usize)>,
-    /// The functions whose entry in `Program::context_checked` this checker wrote or tried to
-    /// write. See `is_context_checked`.
-    context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
     /// The functions whose first check isn't published because a frame in progress is tainted, with the index and
     /// serial of the lowest such frame. tsgo sets `NodeCheckFlagsContextChecked` and assigns the parameter types no
     /// matter what's in progress. So until that frame is popped, the function counts as checked, with that signature.
@@ -1994,18 +2139,6 @@ pub struct Checker<'p, 's> {
     /// by a nested `checkExpressionCached` of the same initializer. Each entry is the index and
     /// serial of the outermost visit's frame, and the type. See `check_declaration_initializer`.
     initializers_resolved_by_nested_visit: Vec<(usize, u64, TypeId)>,
-    /// The parameters of instantiated signatures, by index, whose `links.resolvedType` is assigned.
-    /// `sig_params` computes the types of all parameters at once. See
-    /// `note_parameter_types_resolved`.
-    resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
-    /// The `sig_params_with_first` lists that are missing a type, each with the number of
-    /// parameters before the first one without a type.
-    partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
-    /// Pairs of a type and a union for which `is_empty_intersection` has looked up every property
-    /// name of the type in the union, and the results are stored.
-    listed_in_unions: crate::util::FxHashSet<(TypeId, TypeId)>,
-    /// The results of `declared_parameter` for all parameters of a function, once `is_declared_parameter_settled`.
-    declared_parameters: FxHashMap<(FileId, FnId), &'p [SigParam]>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
     /// `is_flow_loop_visible`.
@@ -2015,60 +2148,115 @@ pub struct Checker<'p, 's> {
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that no
     /// candidate accepts.
-    resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
+    resolved_meanwhile: Vec<call::ResolvedMeanwhile>,
     /// `links.resolvedSignature` of a call that's being resolved, assigned by the first resolution
     /// nested in the outermost one that returns, if `Program::calls` doesn't accept that result.
     /// `getResolvedSignature` returns it instead of the result of each enclosing resolution.
     signatures_resolved_within: Vec<(FileId, ExprId, call::ResolvedCall)>,
-    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
-    /// `getRestrictiveInstantiation` has returned.
-    restrictive_instantiations: crate::util::FxHashSet<TypeId>,
-    /// The type parameters that `getUniqueTypeParameters` renamed and whose constraint hasn't been
-    /// requested since (`tp.constraint == nil`). They have no constraint declaration, so
-    /// `getRestrictiveTypeParameter` returns such a type parameter unchanged.
-    unresolved_renamed_params: crate::util::FxHashSet<TypeId>,
-    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]` for the types in which a renamed type
-    /// parameter was left unchanged. The entry stays when the constraint is requested later.
-    pinned_restrictive_instantiations: crate::util::FxHashMap<TypeId, TypeId>,
-    /// True if the restrictive instantiation in progress left such a type parameter unchanged.
-    left_a_renamed_param_unchanged: std::cell::Cell<bool>,
-    /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
-    /// instantiating, and the depth of `stack` when it began. `currentNode` is still the argument.
-    instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
-    /// Functions whose context `prepare_enclosing` has already prepared.
-    prepared: crate::util::FxHashSet<(FileId, FnId)>,
-    last_prepared: (FileId, FnId),
-    /// A file, and which of its expressions `prepare_ancestors` has processed.
-    prepared_exprs: (FileId, Vec<bool>),
-    /// The stack pointer when the checker was created, and how far below that it may go.
-    stack_base: usize,
-    stack_limit: usize,
-    /// Number of queries made so far.
-    pub work: u64,
-    /// Number of `begin_scope` calls so far for a result that's permanent once stored. It excludes
-    /// the calls for a memo that evicts entries, like `FlowMemo::types_with_facts`, which begins
-    /// another scope for the same question without computing anything new.
-    scopes_begun: u64,
-    /// `enter` takes its slow path when `work` reaches this value. It's the next value of `work`
-    /// while `rejected_expressions` isn't empty, and `WORK_TRAP_DISARMED` otherwise.
-    work_trap: u64,
     /// The file, start and end of the expressions in which a query was rejected for lack of native
     /// stack. See `reject_for_lack_of_stack`.
     rejected_expressions: Vec<(FileId, u32, u32)>,
-    /// `is_side_effect_free` of the binary expressions with a long chain of binary expressions on their left.
-    side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
-    /// `isContextSensitive` of the functions in a long chain where each function returns nothing but the next one.
-    context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
-    /// How many functions it has visited.
-    context_sensitivity_visits: std::cell::Cell<u64>,
-    /// Set when a query was rejected for lack of stack. `enter` rejects every query while `stack` is
-    /// higher than this. `usize::MAX` if no query was rejected. See `starts_over_from_lower`.
-    unwind_to: usize,
-    /// `work` of the next `enter` while unwinding. That `enter` takes the slow path (`work_trap`).
-    unwind_work: u64,
-    /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
-    /// resolves it and starts over.
-    restart_with: Option<Query>,
+    /// The tuple type that `contextual_element_at` looked at last, and its `fixed_length`.
+    fixed_length_asked_last: Option<(TypeId, usize)>,
+    fully_marked: FullyMarked,
+    /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
+    /// instantiating, and the depth of `stack` when it began. `currentNode` is still the argument.
+    instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
+    /// During declaration emit: the indentation depth of the current line.
+    declaration_indent: Option<usize>,
+    /// `varianceTypeParameter`: its name.
+    variance_type_parameter: Atom,
+    /// `autoArrayType`
+    auto_array_type: TypeId,
+    /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
+    /// resolutions are made eagerly.
+    serialization_level: u32,
+    instantiation_depth: u32,
+    /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
+    instantiation_count: u32,
+    /// The lowest index in `unresolved_members` that had a hit since the innermost `compose` in progress began.
+    lowest_unresolved_members_hit: u32,
+    /// After `type_arguments_related_to` returns false, the index of the unrelated pair.
+    failed_type_argument: u32,
+    /// `conditionalConstraintDepth`
+    conditional_constraint_depth: u32,
+    /// Nesting depth of the `const ok = test` conditions being inlined.
+    inline_level: u32,
+    /// The declared type of the reference that the flow walk in progress narrows.
+    walk_declared: TypeId,
+    /// How often `resolved_signature` has returned `anySignature` for a call in `iife_resolving`.
+    any_signature_reads: u32,
+    /// `lastFlowNode`, `lastFlowNodeReachable`
+    last_flow_node: (FileId, crate::bind::FlowId, bool),
+    /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
+    pub(super) current_source_element: Option<CurrentNode>,
+    /// `left` of the latest `getTypeOfExpression(left)` of `getContextualTypeForAssignmentExpression`.
+    requested_assignment_target: Option<(FileId, ExprId)>,
+    /// The type node whose type `precheck_type_node` is requesting.
+    looked_at_type_node: Option<(FileId, TypeNodeId)>,
+    /// The parameter of one of those, set while `report_on_circular_pat` handles it.
+    parameter_symbol_taken_as_unresolved: Option<(FileId, ParamId)>,
+    /// `node` of the innermost `getTypeOfExpression` in progress, which is checked under
+    /// `CheckModeTypeOnly`. See `is_checked_type_only`.
+    type_only_node: Option<(FileId, ExprId)>,
+    /// The call whose arguments `resolveUntypedCall` is checking, if the call was already being
+    /// resolved and its callee is `any`. See
+    /// `contextually_check_function_expression_or_object_literal_method`.
+    untyped_call_resolved_again: Option<(FileId, ExprId)>,
+    /// `checkMode` of the non-memoized check. See `check_mode`.
+    mode_of_recheck: CheckMode,
+    /// The flags that the comparisons in progress have set about the reliability of the variance being computed.
+    reliability: u8,
+    reverse_expanding: u8,
+    /// True if the restrictive instantiation in progress left such a type parameter unchanged.
+    left_a_renamed_param_unchanged: std::cell::Cell<bool>,
+    expected: Requested,
+    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`,
+    /// while the name of an import or an export is printed.
+    enclosing_module_specifier_mode: Option<ResolutionMode>,
+    /// The result of `pop_type_resolution` for a `Query::Pat`, passed on to the `Query::Symbol` right below it.
+    popped_for_symbol: Option<bool>,
+    /// The result of the last `enter`. `leave` and `excessively_deep` reset it to `Entered`.
+    last_enter: EnterOutcome,
+    /// True if the next `with_printer` isn't a barrier for cycle detection, because it prints when
+    /// and what tsgo prints.
+    printing_closes_cycles: bool,
+    /// True while recreating a message that was dropped along with an uncached result. Its types
+    /// are printed behind the barrier and don't count as a level. tsgo creates the message once.
+    reprinting: bool,
+    /// True if the last `enter` rejected the query because it's one of TypeScript's own resolutions and is in progress.
+    found_cycle: bool,
+    /// True if the frame popped by the last `leave` was in a cycle.
+    left_a_cycle: bool,
+    /// True if `insert_relation` stores in `relations_of_this_task`.
+    stores_relations_per_task: bool,
+    /// A comparison that answers such a question is in progress, with whatever it evaluates on the way.
+    is_comparing_for_query: bool,
+    in_variance_computation: bool,
+    /// True if the next `related` call compares two marker types for `variances_of`. Consumed on entry.
+    is_marker_comparison: bool,
+    /// True if the next `related` call is the speculative comparison of `check_type_related_to_ex`.
+    /// See `Relater::stores_failures_locally`.
+    pub(super) is_trial_comparison: bool,
+    /// Set when a comparison exhausts `Relater::relation_count` (2859). A caller that wants to know clears it before
+    /// comparing and then puts the old value back, so once it's set outside such a caller it stays set.
+    pub(super) relation_too_complex: bool,
+    /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
+    is_type_checked: bool,
+    /// True while `check_file` answers the queries that `Emit` makes before the check (`Options::emits_first`).
+    is_emitting: bool,
+    /// True while `check_expression` runs for `check_expression_in_flow_loop`, possibly in a file
+    /// other than the task's. It then records nothing for the end of `checkSourceFile`, which is
+    /// the file walk's job, and it checks the calls that it visits.
+    is_checking_in_flow_loop: bool,
+    /// True if anything in the file being checked is in an ambient context.
+    has_ambient_context: bool,
+    /// `saveDeferredDiagnostics`
+    save_deferred_diagnostics: bool,
+    /// `withinUnreachableCode`
+    within_unreachable_code: bool,
+    /// True if the call that `resolve_signature` is resolving was already being resolved.
+    is_call_re_resolved: bool,
 }
 
 /// Returns the thread's stack pointer minus a constant. Only the difference between two results is
@@ -2223,6 +2411,13 @@ impl<'p, 's> Checker<'p, 's> {
         self.expected = expected;
     }
 
+    /// Sets how much stack the thread has from here on. Queries that need more yield "unresolved".
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn set_stack_limit(&mut self, bytes: usize) {
+        self.stack_base = stack_pointer();
+        self.stack_limit = bytes;
+    }
+
     /// True if there's little stack left for recursion.
     #[inline]
     pub(crate) fn is_stack_low(&self) -> bool {
@@ -2294,12 +2489,13 @@ impl<'p, 's> Checker<'p, 's> {
             self.reset_instantiation_count_if_idle();
         }
         self.stack.push(q);
-        self.in_progress[class as usize] += 1;
+        let next_of_class = self.in_progress[class as usize];
+        self.in_progress[class as usize] = self.stack.len() as u32;
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
         let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
         let drops_reported =
-            tainted && self.frames.last().is_some_and(|frame| frame.drops_reported);
+            tainted && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported());
         let incomplete_flow = tainted
             && self
                 .frames
@@ -2307,11 +2503,11 @@ impl<'p, 's> Checker<'p, 's> {
                 .is_some_and(|frame| frame.incomplete_flow);
         self.frames.push(QueryFrame {
             class,
+            next_of_class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
-            tainted,
+            marks: Marks::new(tainted, drops_reported),
             circular: false,
-            drops_reported,
             reported_from: self.reported.len() as u32,
             has_result: false,
             incomplete_flow,
@@ -2329,7 +2525,23 @@ impl<'p, 's> Checker<'p, 's> {
     #[cold]
     #[inline(never)]
     fn position_in_progress(&self, q: Query, from: usize) -> Option<usize> {
-        self.stack[from..].iter().rposition(|x| *x == q)
+        let at = self.positions_in_progress(q).next()?;
+        at.checked_sub(from)
+    }
+
+    /// Returns the positions of `q` in `stack`, from the innermost one down.
+    fn positions_in_progress(&self, q: Query) -> impl Iterator<Item = usize> {
+        let mut next = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+        std::iter::from_fn(move || {
+            while next != 0 {
+                let at = next as usize - 1;
+                next = self.frames[at].next_of_class;
+                if self.stack[at] == q {
+                    return Some(at);
+                }
+            }
+            None
+        })
     }
 
     /// The slow path of the first test in `enter`. Returns false if `q` isn't rejected.
@@ -2438,7 +2650,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// height, as long as nothing in progress is a context for them. In that case the outermost such frame
     /// resolves the innermost one from its own height, where it can use the stack that the frames in
     /// between took, and then starts over (`retry_too_deep_query`). The frames below it don't see a
-    /// rejection. A cycle that needs more stack than there is never closes, and is rejected again.
+    /// rejection. That frame's query stays on `stack` meanwhile, so a ring that needs more stack than there is
+    /// closes when it comes back around to it.
     ///
     /// None of the frames in between cache their result. A frame that continued regardless would recompute,
     /// from its lower height, what the frames above it couldn't finish, and a chain of functions that's n
@@ -2458,14 +2671,17 @@ impl<'p, 's> Checker<'p, 's> {
             && self.assigned_parameters.is_empty()
             && self.context_checking.is_empty()
             && self.context_checked_under.is_empty();
-        let outermost = self.stack.iter().position(starts_over);
+        let floor = self.lowest_to_start_over.min(self.stack.len());
+        let above_waiting = &self.stack[floor..];
+        let outermost = above_waiting.iter().position(starts_over);
         let innermost = match starts_over(&q) {
             true => Some(q),
-            false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
+            false => above_waiting.iter().rev().find(|q| starts_over(q)).copied(),
         };
         let (Some(outermost), Some(innermost)) = (outermost, innermost) else {
             return false;
         };
+        let outermost = floor + outermost;
         if !has_no_context || self.stack[outermost] == innermost {
             return false;
         }
@@ -2484,11 +2700,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Call after the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
-    /// `stack.len() == unwind_to`. Returns true if the caller should start over because the query
-    /// that `starts_over_from_lower` rejected now has a result.
+    /// `stack.len() == unwind_to`. `waiting` is that query. Returns true if the caller should start over
+    /// because the query that `starts_over_from_lower` rejected now has a result.
     #[cold]
     #[inline(never)]
-    fn retry_too_deep_query(&mut self) -> bool {
+    fn retry_too_deep_query(&mut self, waiting: Query) -> bool {
         // Every `enter` since the rejection was rejected in turn.
         let is_unwinding = self.unwind_work == self.work + 1;
         let restart_with = self.restart_with.take().filter(|_| is_unwinding);
@@ -2498,6 +2714,13 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.work + 1
         };
+        if restart_with.is_none() {
+            return false;
+        }
+        // For tsgo `waiting` is in progress all the while.
+        let is_waiting = self.enter(waiting);
+        let lowest_to_start_over =
+            std::mem::replace(&mut self.lowest_to_start_over, self.stack.len());
         let is_resolved = match restart_with {
             Some(Query::Symbol(sym)) => {
                 self.type_of_symbol(sym);
@@ -2512,8 +2735,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let key = (file, func);
                 self.p.fn_return_types.get(&self.task, &key).is_some()
             }
-            _ => return false,
+            _ => false,
         };
+        self.lowest_to_start_over = lowest_to_start_over;
+        if is_waiting {
+            let _ = self.leave(waiting);
+            // The ring is cut here. tsgo reports every member, and the ones that were unwound don't know.
+            if self.left_a_cycle {
+                self.ran_out_of_stack.set(true);
+            }
+        }
         if !is_resolved {
             self.ran_out_of_stack.set(true);
             self.bailed_out();
@@ -2861,7 +3092,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_function_in_context_check(&self, q: Query) -> bool {
         matches!(q, Query::Expr(file, e)
             if matches!(self.hir(file)[e].kind, ExprKind::Fn(func)
-                if self.context_checking.iter().any(|c| c.0 == (file, func))))
+                if self.context_checking.contains(file, func)))
     }
 
     /// True if repeating the path from `stack[i]` ends before it reaches a resolution, at such a
@@ -3058,9 +3289,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_resolving(&self, q: Query) -> bool {
         let from = self.resolution_start.min(self.stack.len());
         self.may_be_in_flight(q)
-            && self.stack[from..]
-                .iter()
-                .rposition(|x| *x == q)
+            && (self.position_in_progress(q, from))
                 .is_some_and(|i| !self.is_resolved_since(from + i))
     }
 
@@ -3069,13 +3298,11 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(never)]
     fn note_result(&mut self, q: Query) {
         if self.is_resolution(q) {
-            for (frame, _) in self
-                .frames
-                .iter_mut()
-                .zip(&self.stack)
-                .filter(|x| *x.1 == q)
-            {
-                frame.has_result = true;
+            let mut next = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+            while next != 0 {
+                let at = next as usize - 1;
+                next = self.frames[at].next_of_class;
+                self.frames[at].has_result |= self.stack[at] == q;
             }
         }
     }
@@ -3087,9 +3314,11 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         cold_path();
-        let frames = self.frames.iter_mut().zip(&self.stack);
-        for (frame, _) in frames.filter(|x| *x.1 == q) {
-            frame.is_stored_by_nested_visit = true;
+        let mut next = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+        while next != 0 {
+            let at = next as usize - 1;
+            next = self.frames[at].next_of_class;
+            self.frames[at].is_stored_by_nested_visit |= self.stack[at] == q;
         }
     }
 
@@ -3144,6 +3373,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// it would, so that results computed from it are recorded in turn.
     fn cut_short_again(&mut self) {
         self.times_cut_short.set(self.times_cut_short.get() + 1);
+        // Every other cut discards the task.
+        if self.is_comparing_for_query {
+            self.task.stop_writing_immediately();
+            return self.mark_rejected_from(0);
+        }
         self.bailed_out();
     }
 
@@ -3156,6 +3390,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `bailed_out` for the case where the frame at `from` makes the query again. See `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
         self.note_gave_up();
+        self.mark_rejected_from(from);
+    }
+
+    /// What `bailed_out_from` leaves in the checker.
+    fn mark_rejected_from(&mut self, from: usize) {
         self.mark_tainted_from(from);
         self.note_cycle();
         self.rejected_at = self.work;
@@ -3369,7 +3608,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(q, Query::TypeNode(..))
                     && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
                 {
-                    self.frames[i].tainted = false;
+                    self.frames[i].marks.clear_tainted(&mut self.fully_marked);
                 }
             }
         }
@@ -3378,12 +3617,31 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns false if there's no node to report at. Nothing in progress is stored then.
     fn report_at_current_node(&mut self, code: u32) -> bool {
         self.note_gave_up();
+        self.report_limit_at_current_node(code)
+    }
+
+    /// `error_at_current_node(2590)` for the intersection of two unions, neither of which has primitive types alone.
+    #[cold]
+    fn refuse_cross_product_of_two_unions(&mut self) {
+        if !self.is_comparing_for_query || self.span_to_report_limit_at().is_some() {
+            return self.error_at_current_node(2590);
+        }
+        self.size_refusals_in_queries += 1;
+        self.note_state_was_read();
+        self.task.stop_writing_immediately();
+        self.report_limit_at_current_node(2590);
+    }
+
+    /// Where `report_at_current_node` reports. `None`: nowhere.
+    fn span_to_report_limit_at(&self) -> Option<(FileId, u32, u32)> {
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
-        let is_reported = self.eager.is_empty();
+        if !self.eager.is_empty() {
+            return None;
+        }
         // Outside of an expression, `c.currentNode` is the statement or declaration that `checkSourceElement`
         // is at. The checks after `check_source_file` don't know it. The `errorNode` of their comparison
         // begins at the same position for an assignment, a variable declaration and a `return` statement.
-        let at = match self.current_node() {
+        match self.current_node() {
             Some(current) => Some(self.span_of_current_node(current)),
             // A comparison without an `errorNode` that `check_source_file` makes: of a rest
             // parameter with an array type (2370), of the two types of an assertion.
@@ -3391,11 +3649,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let current = self.current_source_element?;
                 Some(self.span_of_current_node(current))
             }),
-        };
-        let Some(at) = at.filter(|_| is_reported) else {
+        }
+    }
+
+    /// `report_at_current_node`, but for what becomes of the task.
+    fn report_limit_at_current_node(&mut self, code: u32) -> bool {
+        let Some(at) = self.span_to_report_limit_at() else {
             // The result is the error type, to which everything is related, and tsgo reports 2589.
             // The count is reset as in tsgo, so the file isn't reported as clean.
-            if is_reported && self.instantiation_count >= 5_000_000 {
+            if self.eager.is_empty() && self.instantiation_count >= 5_000_000 {
                 self.ran_out_of_stack.set(true);
             }
             self.note_limit();
@@ -3440,10 +3702,10 @@ impl<'p, 's> Checker<'p, 's> {
         debug_assert!(popped == Some(q));
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
-        self.in_progress[frame.class as usize] -= 1;
-        if self.in_progress[frame.class as usize] != 0 {
+        self.in_progress[frame.class as usize] = frame.next_of_class;
+        if frame.next_of_class != 0 {
             cold_path();
-            if !frame.tainted || frame.circular {
+            if !frame.marks.tainted() || frame.circular {
                 self.note_result(q);
             }
         }
@@ -3457,7 +3719,7 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.settle_reported(frame, q);
         }
-        if frame.tainted {
+        if frame.marks.tainted() {
             cold_path();
             self.left_frame = Some(frame);
             return Err(Open);
@@ -3577,9 +3839,31 @@ impl<'p, 's> Checker<'p, 's> {
         self.lowest_taint = self.lowest_taint.min(from);
         self.note_taint_event(from);
         self.note_state_was_read();
+        // While the stack unwinds for lack of room, every query that is turned away marks the same frames again.
+        let innermost = self.frames.last().map(|frame| frame.serial);
+        if self.fully_marked.covers(from, innermost) {
+            return;
+        }
         for frame in &mut self.frames[from..] {
-            frame.tainted = true;
-            frame.drops_reported = true;
+            frame.marks = Marks::both();
+        }
+        // A frame that the `enter` in progress goes on to push has `work` for its serial number.
+        self.fully_marked.record(from, self.work.saturating_sub(1));
+    }
+
+    /// Returns the argument for `restore_drops_reported`.
+    fn save_drops_reported(&self) -> Vec<bool> {
+        let frames = self.frames.iter();
+        frames.map(|frame| frame.marks.drops_reported()).collect()
+    }
+
+    /// Whatever the queries since `save_drops_reported` re-entered, the frames that were in progress then drop what they
+    /// reported only if they did so then.
+    fn restore_drops_reported(&mut self, saved: Vec<bool>) {
+        for (frame, drops) in self.frames.iter_mut().zip(saved) {
+            frame
+                .marks
+                .set_drops_reported(drops, &mut self.fully_marked);
         }
     }
 
@@ -3602,7 +3886,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Drops the innermost query's diagnostics, whether or not its result is cached.
     fn drop_reported(&mut self) {
         if let Some(frame) = self.frames.last_mut() {
-            frame.drops_reported = true;
+            frame.marks.drop_reported();
         }
     }
 
@@ -3673,12 +3957,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// was reported for it belongs to the entry, as after an `Ok`, and no frame below drops it.
     fn incomplete_flow_result(&mut self, q: Query) -> Option<Stored> {
         let frame = self.left_frame.take()?;
-        if !frame.incomplete_flow || frame.drops_reported {
+        if !frame.incomplete_flow || frame.marks.drops_reported() {
             return None;
         }
         if self.reported.len() > frame.reported_from as usize {
             let finished = QueryFrame {
-                tainted: false,
+                marks: Marks::default(),
                 ..frame
             };
             self.settle_reported(finished, q);
@@ -3687,7 +3971,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_innermost_tainted(&self) -> bool {
-        self.frames.last().is_some_and(|frame| frame.tainted)
+        (self.frames.last()).is_some_and(|frame| frame.marks.tainted())
     }
 
     /// Returns the expressions of `file` grouped by kind, for callers that need a few kinds and would
@@ -3761,7 +4045,7 @@ impl<'p, 's> Checker<'p, 's> {
             (outermost.zip(innermost_loop))
                 .map(|(outermost, innermost_loop)| outermost.max(innermost_loop))
         } else {
-            self.frames.iter().position(|frame| frame.tainted)
+            self.frames.iter().position(|frame| frame.marks.tainted())
         };
         // An event from the frame's own index up hasn't tainted a caller.
         let from = self.lowest_taint_since(frame.serial);
@@ -3900,7 +4184,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// comparison limit (2859), for lack of native stack, or at a depth at which a query is rejected. The
     /// result then isn't a function of the question alone. How far from the limit a computation begins, and
     /// how much of it is left to do, depends on what was computed before, which for a task that sees commits
-    /// includes what it found there. Such a task is discarded.
+    /// includes what it found there. Such a task is discarded. The one exception is `refuse_cross_product_of_two_unions`.
     #[cold]
     #[inline(never)]
     pub(super) fn note_gave_up(&self) {
@@ -3972,7 +4256,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
                 continue;
             }
-            self.frames[at].tainted = true;
+            self.frames[at].marks.taint();
             self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;

@@ -4,6 +4,7 @@ use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use std::collections::TryReserveError;
 
 use jsc::StringJsc as _;
 
@@ -96,11 +97,18 @@ impl TextDecoder {
         }
     }
 
+    // Out of line so that this loop and the UTF-8 arm of `decode_slice` are compiled apart.
+    #[inline(never)]
     fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
         &mut self,
         bytes: &[u8],
-    ) -> (Vec<u16>, bool) {
-        let mut output: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
+    ) -> Result<(Vec<u16>, bool), TryReserveError> {
+        // A unit per pair, one for an odd byte that is flushed and one for a carried surrogate: nothing below grows it.
+        let bytes_to_pair = bytes.len() + usize::from(self.lead_byte.is_some());
+        let capacity =
+            (bytes_to_pair + usize::from(FLUSH)) / 2 + usize::from(self.lead_surrogate.is_some());
+        let mut output: Vec<u16> = Vec::new();
+        output.try_reserve_exact(capacity)?;
 
         let mut remain = bytes;
         let mut saw_error = false;
@@ -142,17 +150,23 @@ impl TextDecoder {
             }
         }
 
-        (output, saw_error)
+        debug_assert!(output.len() <= capacity);
+        Ok((output, saw_error))
     }
 
     /// Feeds one chunk to the encoding_rs decoder shared across a stream's
     /// `{stream: true}` chunks. `InvalidByteSequence` is only reported in
     /// fatal mode; otherwise malformed bytes become U+FFFD in the output.
+    #[inline(never)]
     fn decode_with_encoding_rs<const FLUSH: bool>(
         fatal: bool,
         decoder: &mut encoding_rs::Decoder,
         bytes: &[u8],
     ) -> Result<Vec<u16>, strings::ToUTF16Error> {
+        bun_removable_features::removable_definition!(
+            LegacyEncodings,
+            Self::decode_with_encoding_rs::<FLUSH>
+        );
         // Nothing to decode. Also keeps the chunk away from encoding_rs 0.8.35,
         // whose big5, euc-kr and shift_jis decoders forget a pending lead byte
         // when fed an empty non-final chunk.
@@ -219,6 +233,10 @@ impl TextDecoder {
         if !core::mem::replace(&mut self.do_not_flush, stream) {
             self.bom_seen = false;
             self.codec = None;
+            // A flush whose answer had no room left these.
+            self.buffered = Buffered::default();
+            self.lead_byte = None;
+            self.lead_surrogate = None;
         }
         if stream {
             self.decode_slice::<false>(heap, chunk)
@@ -227,6 +245,7 @@ impl TextDecoder {
         }
     }
 
+    /// An answer that is too long or cannot be allocated changes nothing that is carried to the next chunk, unless encoding_rs has read this one.
     fn decode_slice<'a, const FLUSH: bool>(
         &mut self,
         heap: &JsHeap<'a>,
@@ -234,8 +253,11 @@ impl TextDecoder {
     ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
         match self.encoding {
             EncodingLabel::LATIN1 => {
+                if buffer_slice.len() > bun_core::String::max_length() {
+                    return Err(heap.string_too_long());
+                }
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(heap.create_latin1_string(buffer_slice));
+                    return heap.try_create_latin1_string(buffer_slice);
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -243,7 +265,10 @@ impl TextDecoder {
                 //
                 // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
                 let out_length = strings::element_length_cp1252_into_utf16(buffer_slice);
-                let mut units: Vec<u16> = Vec::with_capacity(out_length);
+                let mut units: Vec<u16> = Vec::new();
+                units
+                    .try_reserve_exact(out_length)
+                    .map_err(|_| heap.memory_allocation_failed())?;
                 // SAFETY: `units` has `out_length` spare units; `buf` is only ever written.
                 let buf =
                     unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
@@ -256,11 +281,14 @@ impl TextDecoder {
                 // Prepend the partial UTF-8 sequence carried over from the
                 // previous `{stream: true}` chunk; the BOM check below must
                 // see the JOINED bytes (a BOM may be split across chunks).
-                let joined_owned: Box<[u8]>;
+                let mut joined_owned = Vec::new();
                 let buffered = self.buffered;
                 let joined: &[u8] = if buffered.len > 0 {
-                    joined_owned = [buffered.slice(), buffer_slice].concat().into_boxed_slice();
-                    self.buffered = Buffered::default();
+                    joined_owned
+                        .try_reserve_exact(buffered.slice().len() + buffer_slice.len())
+                        .map_err(|_| heap.memory_allocation_failed())?;
+                    joined_owned.extend_from_slice(buffered.slice());
+                    joined_owned.extend_from_slice(buffer_slice);
                     &joined_owned
                 } else {
                     buffer_slice
@@ -296,6 +324,7 @@ impl TextDecoder {
                     Ok(v) => v,
                     Err(err) => {
                         if self.fatal && matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
+                            self.buffered = Buffered::default();
                             return Err(self.invalid_data(heap));
                         }
 
@@ -308,30 +337,23 @@ impl TextDecoder {
                     }
                 };
 
+                let (string, pending) = match maybe_decode_result {
+                    Some((decoded, buf, len)) => (
+                        heap.create_utf16_string_from_vec(decoded)?,
+                        Buffered { buf, len },
+                    ),
+                    // All ASCII: copied as it is, so `input` may borrow. Experiment: using mimalloc directly is slightly slower
+                    None => (heap.try_create_latin1_string(input)?, Buffered::default()),
+                };
+
                 // "BOM seen" is only written by "serialize I/O queue", which a
                 // thrown fatal decode never reaches, so only commit it once the
                 // decode succeeded.
                 if set_bom_seen {
                     self.bom_seen = true;
                 }
-
-                if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
-                    debug_assert!(self.buffered.len == 0);
-                    if !FLUSH {
-                        if leftover_len != 0 {
-                            self.buffered = Buffered {
-                                buf: leftover,
-                                len: leftover_len,
-                            };
-                        }
-                    }
-                    return heap.create_utf16_string_from_vec(decoded);
-                }
-
-                // All-ASCII input needed no conversion. `create_latin1_string`
-                // copies, so `input` may borrow the caller's buffer or `joined_owned`.
-                // Experiment: using mimalloc directly is slightly slower
-                Ok(heap.create_latin1_string(input))
+                self.buffered = pending;
+                Ok(string)
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -352,11 +374,13 @@ impl TextDecoder {
                     buffer_slice
                 };
 
+                let before = (self.lead_byte, self.lead_surrogate, self.bom_seen);
                 let (mut decoded, saw_error) = if big_endian {
                     self.decode_utf16::<true, FLUSH>(input)
                 } else {
                     self.decode_utf16::<false, FLUSH>(input)
-                };
+                }
+                .map_err(|_| heap.memory_allocation_failed())?;
 
                 if saw_error && self.fatal {
                     return Err(self.invalid_data(heap));
@@ -376,7 +400,9 @@ impl TextDecoder {
                     }
                 }
 
-                heap.create_utf16_string_from_vec(decoded)
+                heap.create_utf16_string_from_vec(decoded).inspect_err(|_| {
+                    (self.lead_byte, self.lead_surrogate, self.bom_seen) = before;
+                })
             }
 
             // Every other encoding goes through encoding_rs.

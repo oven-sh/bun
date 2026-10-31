@@ -1,0 +1,271 @@
+//// map-get-by-string
+const ages = new Map([["ann", 30], ["bob", 25], ["cy", 41], ["dee", 19]]);
+const names = ["ann", "bob", "cy", "dee"];
+function turn(i: number): number {
+  return ages.get(names[i & 3]!)!;
+}
+//// map-get-by-number
+const squares = new Map<number, number>();
+for (let k = 0; k < 64; k++) squares.set(k, k * k);
+function turn(i: number): number {
+  return squares.get(i & 63)!;
+}
+//// map-get-by-object
+const keys = [{}, {}, {}, {}];
+const order = new Map(keys.map((key, k) => [key, k] as const));
+function turn(i: number): number {
+  return order.get(keys[i & 3]!)!;
+}
+//// map-get-missing
+const ages = new Map([["ann", 30], ["bob", 25]]);
+const names = ["ann", "zed", "bob", "yan"];
+function turn(i: number): number {
+  return ages.get(names[i & 3]!) ?? -1;
+}
+//// map-has-then-get
+const cache = new Map<number, number>();
+for (let k = 0; k < 32; k += 2) cache.set(k, k * 3);
+function turn(i: number): number {
+  const key = i & 31;
+  return cache.has(key) ? cache.get(key)! : -1;
+}
+//// map-set-over-existing-keys
+const latest = new Map<number, number>();
+function turn(i: number): number {
+  latest.set(i & 31, i);
+  return latest.size;
+}
+//// map-counting
+const words = ["the", "quick", "brown", "fox", "the", "lazy", "dog", "the"];
+const counts = new Map<string, number>();
+function turn(i: number): number {
+  const word = words[i & 7]!;
+  counts.set(word, (counts.get(word) ?? 0) + 1);
+  return counts.size;
+}
+//// map-get-or-create
+const lists = new Map<number, number[]>();
+function turn(i: number): number {
+  const key = i & 7;
+  let list = lists.get(key);
+  if (!list) lists.set(key, (list = []));
+  if (list.length > 16) list.length = 0;
+  list.push(i);
+  return list.length;
+}
+//// map-memoize
+const memo = new Map<number, number>();
+function slowSquare(n: number): number {
+  let result = memo.get(n);
+  if (result === undefined) memo.set(n, (result = n * n));
+  return result;
+}
+function turn(i: number): number {
+  return slowSquare(i & 127);
+}
+//// map-set-and-delete
+const live = new Map<number, number>();
+function turn(i: number): number {
+  live.set(i, i);
+  live.delete(i - 8);
+  return live.size;
+}
+//// map-made-and-dropped
+function turn(i: number): number {
+  const local = new Map<string, number>();
+  local.set("a", i);
+  local.set("b", i + 1);
+  return local.get("a")! + local.get("b")!;
+}
+//// map-from-pairs
+const pairs: [string, number][] = [["a", 1], ["b", 2], ["c", 3]];
+function turn(i: number): number {
+  return new Map(pairs).get("c")! + (i & 1);
+}
+//// map-for-of
+const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4], ["salt", 1]]);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const [name, count] of stock) sum += count + name.length;
+  return sum;
+}
+//// map-values
+const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4], ["salt", 1]]);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const count of stock.values()) sum += count;
+  return sum;
+}
+//// map-keys-spread
+const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4]]);
+function turn(i: number): number {
+  return [...stock.keys()].length + (i & 1);
+}
+//// map-for-each
+const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4], ["salt", 1]]);
+function turn(i: number): number {
+  let sum = i & 1;
+  stock.forEach((count, name) => {
+    sum += count + name.length;
+  });
+  return sum;
+}
+//// map-entries-to-an-object
+const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4]]);
+function turn(i: number): number {
+  return Object.fromEntries(stock).milk! + (i & 1);
+}
+//// map-size
+const stock = new Map([["tea", 3], ["milk", 2]]);
+function turn(i: number): number {
+  return stock.size + (i & 1);
+}
+//// map-of-maps
+const grid = new Map<number, Map<number, number>>();
+for (let x = 0; x < 4; x++) {
+  const column = new Map<number, number>();
+  for (let y = 0; y < 4; y++) column.set(y, x * y);
+  grid.set(x, column);
+}
+function turn(i: number): number {
+  return grid.get(i & 3)!.get((i >> 2) & 3)!;
+}
+//// map-lru
+const capacity = 8;
+const recent = new Map<number, number>();
+function touch(key: number): number {
+  const hit = recent.get(key);
+  if (hit !== undefined) recent.delete(key);
+  else if (recent.size >= capacity) recent.delete(recent.keys().next().value!);
+  recent.set(key, key * 2);
+  return hit ?? -1;
+}
+function turn(i: number): number {
+  return touch((i * 7) & 15);
+}
+//// set-has-a-string
+const allowed = new Set(["GET", "POST", "PUT", "DELETE"]);
+const asked = ["GET", "TRACE", "PUT", "HEAD"];
+function turn(i: number): number {
+  return allowed.has(asked[i & 3]!) ? 1 : 0;
+}
+//// set-has-a-number
+const odd = new Set<number>();
+for (let k = 1; k < 64; k += 2) odd.add(k);
+function turn(i: number): number {
+  return odd.has(i & 63) ? 1 : 0;
+}
+//// set-add-existing
+const seen = new Set<number>();
+function turn(i: number): number {
+  seen.add(i & 31);
+  return seen.size;
+}
+//// set-add-and-delete
+const open = new Set<number>();
+function turn(i: number): number {
+  open.add(i);
+  open.delete(i - 8);
+  return open.size;
+}
+//// set-made-and-dropped
+function turn(i: number): number {
+  const local = new Set<number>();
+  local.add(i);
+  local.add(i + 1);
+  local.add(i);
+  return local.size;
+}
+//// set-from-an-array
+const repeated = [1, 2, 2, 3, 3, 3];
+function turn(i: number): number {
+  return new Set(repeated).size + (i & 1);
+}
+//// set-for-of
+const members = new Set([3, 1, 4, 1, 5, 9, 2, 6]);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const member of members) sum += member;
+  return sum;
+}
+//// set-spread
+const members = new Set([3, 1, 4, 5, 9]);
+function turn(i: number): number {
+  return [...members][i % 5]!;
+}
+//// set-intersection-by-filter
+const left = new Set([1, 2, 3, 4, 5]);
+const right = new Set([4, 5, 6, 7]);
+function turn(i: number): number {
+  return [...left].filter(member => right.has(member)).length + (i & 1);
+}
+//// set-union-method
+const left = new Set([1, 2, 3]);
+const right = new Set([3, 4]);
+function turn(i: number): number {
+  return left.union(right).size + (i & 1);
+}
+//// set-of-objects
+const nodes = [{}, {}, {}, {}];
+const visited = new Set([nodes[0], nodes[2]]);
+function turn(i: number): number {
+  return visited.has(nodes[i & 3]) ? 1 : 0;
+}
+//// weak-map-get
+const nodes = [{}, {}, {}, {}];
+const depth = new WeakMap<object, number>(nodes.map((node, k) => [node, k]));
+function turn(i: number): number {
+  return depth.get(nodes[i & 3]!)!;
+}
+//// weak-map-set-on-new-objects
+const notes = new WeakMap<object, number>();
+function turn(i: number): number {
+  const key = {};
+  notes.set(key, i);
+  return notes.get(key)!;
+}
+//// weak-map-private-data
+const secrets = new WeakMap<Account, { balance: number }>();
+class Account {
+  constructor(balance: number) {
+    secrets.set(this, { balance });
+  }
+  get balance() {
+    return secrets.get(this)!.balance;
+  }
+}
+const accounts = [new Account(5), new Account(7)];
+function turn(i: number): number {
+  return accounts[i & 1]!.balance;
+}
+//// weak-set-has
+const nodes = [{}, {}, {}, {}];
+const marked = new WeakSet([nodes[1]!, nodes[3]!]);
+function turn(i: number): number {
+  return marked.has(nodes[i & 3]!) ? 1 : 0;
+}
+//// weak-ref-deref
+const target = { value: 5 };
+const reference = new WeakRef(target);
+function turn(i: number): number {
+  return (reference.deref()?.value ?? 0) + (i & 1);
+}
+//// map-with-composite-string-keys
+const cells = new Map<string, number>();
+for (let x = 0; x < 4; x++) for (let y = 0; y < 4; y++) cells.set(x + "," + y, x * y);
+function turn(i: number): number {
+  return cells.get((i & 3) + "," + ((i >> 2) & 3))!;
+}
+//// map-group-by
+const people = [{ team: "a", n: 1 }, { team: "b", n: 2 }, { team: "a", n: 3 }];
+function turn(i: number): number {
+  return Map.groupBy(people, person => person.team).get("a")!.length + (i & 1);
+}
+//// breadth-first-walk
+const graph = new Map<number, number[]>([[0, [1, 2]], [1, [3]], [2, [3]], [3, []]]);
+function turn(i: number): number {
+  const seen = new Set<number>([0]);
+  const queue = [0];
+  while (queue.length) for (const next of graph.get(queue.shift()!)!) if (!seen.has(next)) seen.add(next), queue.push(next);
+  return seen.size + (i & 1);
+}

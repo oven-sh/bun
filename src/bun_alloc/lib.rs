@@ -732,6 +732,11 @@ impl WTFStringImplStruct {
         // `AtomicU32`; see doc comment above.
         unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
     }
+    #[inline(always)]
+    fn is_static(&self) -> bool {
+        let count = self.ref_count_atomic().load(Ordering::Relaxed);
+        count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
+    }
     /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
     ///
     /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
@@ -739,8 +744,12 @@ impl WTFStringImplStruct {
     /// binary), so the one-instruction body is reimplemented here.
     /// `Relaxed` matches WebKit's
     /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
+    /// A static string can be in read-only memory, so its count is never written.
     #[inline]
     pub fn r#ref(&self) {
+        if self.is_static() {
+            return;
+        }
         let old = self
             .ref_count_atomic()
             .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
@@ -755,12 +764,12 @@ impl WTFStringImplStruct {
     ///
     /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
     /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`;
-    /// WTF relies on the static-string flag bit (0x1) to keep static strings'
-    /// counters from ever equalling `s_refCountIncrement`, so no separate
-    /// `isStatic()` check is needed.
+    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`.
     #[inline]
     pub fn deref(&self) {
+        if self.is_static() {
+            return;
+        }
         let old = self
             .ref_count_atomic()
             .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
@@ -1698,9 +1707,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with

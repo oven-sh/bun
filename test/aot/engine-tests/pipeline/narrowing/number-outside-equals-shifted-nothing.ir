@@ -1,0 +1,347 @@
+# -- source: number-outside-equals-shifted-nothing.ts
+# // Numbers come out of parsed text. One that equals itself shifted right by nothing is a whole number that fits in 32 bits without a sign, and a closure takes it.
+# // Flags: --aot-validate
+# const given: number[] = JSON.parse("[0.5, 3, 4294967295, 4294967296, -1, 0, -0]");
+# function once(index: number): string {
+#   const a: number = given[index];
+#   if (a >>> 0 === a) return String((() => a)());
+#   return "-";
+# }
+# function twice(index: number): string {
+#   const a: number = given[index];
+#   if (a >>> 0 === a) {
+#   }
+#   if (a >>> 0 === a) return String((() => a)());
+#   return "-";
+# }
+# for (let index = 0; index < 9; index++) console.log(index, once(index), twice(index));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="number-outside-equals-shifted-nothing.ts" displayPath="number-outside-equals-shifted-nothing.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=194 kind=Variable
+typesite w1 module=m0 position=285 kind=Parameter
+typesite w2 module=m0 position=271 kind=Result
+typesite w3 module=m0 position=424 kind=Parameter
+typesite w4 module=m0 position=409 kind=Result
+typesite w5 module=m0 position=584 kind=Variable
+typesite w6 module=m0 position=634 kind=CallResult
+typesite w7 module=m0 position=647 kind=CallResult
+typesite w8 module=m0 position=318 kind=Variable
+typesite w9 module=m0 position=330 kind=Element
+typesite w10 module=m0 position=380 kind=Result
+typesite w11 module=m0 position=379 kind=CallResult
+typesite w12 module=m0 position=372 kind=CallResult
+typesite w13 module=m0 position=457 kind=Variable
+typesite w14 module=m0 position=469 kind=Element
+typesite w15 module=m0 position=546 kind=Result
+typesite w16 module=m0 position=545 kind=CallResult
+typesite w17 module=m0 position=538 kind=CallResult
+variable g0 name="given" module=m0 declared={type=undefined|null|absent|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=JSON
+    v5 = PropGet v4 key="parse"
+    v6 = Convert v5 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v7 = String string="[0.5, 3, 4294967295, 4294967296, -1, 0, -0]"
+    v8 = Call v6, v4, v7 calleeKey="parse" calleeName="JSON.parse"
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v10 = Convert v9 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v10 variable=g0
+    v12 = Integer
+    v13 = Convert v12 declared={type=number site=w5}
+    Jump -> next b2(v13)
+  b2(v14: number):
+    LoopHint
+    v16 = Integer integer=9
+    v17 = Less v14, v16
+    Branch v17 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v18):
+    Jump -> next b4()
+  b4():
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="console" [isFreeName]
+    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]}
+    v22 = PropGet v21 key="log"
+    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v24 = Call v1, -, v18 calleeName="once"
+    v25 = Convert v24 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v26 = Call v3, -, v18 calleeName="twice"
+    v27 = Convert v26 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v28 = Call v23, v21, v18, v25, v27 calleeKey="log" calleeName="console.log"
+    Jump -> next b5()
+  b5():
+    v29 = Increment v18
+    v30 = Convert v29 declared={type=number site=w5}
+    Jump -> next b2(v30)
+  b6(v31):
+    Jump -> next b7()
+  b7():
+    v32 = Undefined
+    Return v32
+}
+function f1 name="once" module=m0 position=271 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="given"
+    v3 = ElemGet v2, v0
+    v4 = Convert v3 declared={type=number site=w9} illTypedCause=ContainerWriterUnseen
+    v5 = Integer
+    v6 = URShift v4, v5
+    v7 = StrictEq v6, v4
+    Branch v7 -> taken b2(| 1), notTaken b4(| 1)
+  b2(v8):
+    Jump -> next b3()
+  b3():
+    v9 = Builtin builtin=String
+    v10 = NewClosure v8 function=f3
+    v11 = Call v10
+    v12 = Convert v11 declared={type=number site=w11}
+    v13 = Call v9, -, v12 calleeName="String"
+    ReturnCall v13 casts=[{declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}}]
+  b4(v14):
+    Jump -> next b5()
+  b5():
+    v15 = String string="-"
+    v16 = Convert v15 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
+    Return v16
+}
+function f2 name="twice" module=m0 position=409 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="given"
+    v3 = ElemGet v2, v0
+    v4 = Convert v3 declared={type=number site=w14} illTypedCause=ContainerWriterUnseen
+    v5 = Integer
+    v6 = URShift v4, v5
+    v7 = StrictEq v6, v4
+    Branch v7 -> taken b2(| 1), notTaken b4(| 1)
+  b2(v8):
+    Jump -> next b3()
+  b3():
+    Jump -> next b5(v8)
+  b4(v9):
+    Jump -> next b5(v9)
+  b5(v10: number):
+    v11 = Integer
+    v12 = URShift v10, v11
+    v13 = StrictEq v12, v10
+    Branch v13 -> taken b6(| 1), notTaken b8(| 1)
+  b6(v14):
+    Jump -> next b7()
+  b7():
+    v15 = Builtin builtin=String
+    v16 = NewClosure v14 function=f4
+    v17 = Call v16
+    v18 = Convert v17 declared={type=number site=w16}
+    v19 = Call v15, -, v18 calleeName="String"
+    ReturnCall v19 casts=[{declared={type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}}]
+  b8(v20):
+    Jump -> next b9()
+  b9():
+    v21 = String string="-"
+    v22 = Convert v21 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
+    Return v22
+}
+function f3 module=m0 position=380 kind=Arrow flags=[IsChecked] captures=[{type=number site=w8}] thisType={type=anything} results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=number site=w10}
+    Return v1
+}
+function f4 module=m0 position=546 kind=Arrow flags=[IsChecked] captures=[{type=number site=w13}] thisType={type=anything} results=[{type=number site=w15}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=number site=w15}
+    Return v1
+}
+# -- generated: f0 once twice f3 f4
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: ValidateFirstRun variable=g2
+# CHECK-NEXT: v1: "[0.5, 3, 4294967295, 4294967296, -1, 0, -0]" = String string="[0.5, 3, 4294967295, 4294967296, -1, 0, -0]"
+# CHECK-NEXT: v2: boolean = JSONSourceOpen v1
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v3: guard):
+# CHECK-NEXT: v4: cursor = JSONSourceStart v3
+# CHECK-NEXT: v5: cursor = JSONSkipWhitespace v4
+# CHECK-NEXT: v6: undefined = CallDirect v5 function=f7
+# CHECK-NEXT: v7: int[0, 2] = ResultAt v6
+# CHECK-NEXT: v8: undefined|null|Array<number> = ResultAt v6 index=1
+# CHECK-NEXT: v9: cursor = ResultAt v6 index=2
+# CHECK-NEXT: Switch v7 cases=[1] -> case b2(), otherwise b4()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: boolean = JSONSourceClose v3, v9
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: ValidateType v8 validatedType=null|boolean|number|string|object
+# CHECK-NEXT: v12: fact = Specified
+# CHECK-NEXT: v13: null|Array<number> = AssumeType v8, v12 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b6(v13)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v3
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v1, v15 overload=JSONParse/0 accessSite=1
+# CHECK-NEXT: Jump -> next b6(v16)
+# CHECK-NEXT: b6(v17: null|boolean|number|string|object ~ null|Array<number>):
+# CHECK-NEXT: v18: null|boolean|number|string|object ~ null|Array<number> = Upcast v17 castType=anything
+# CHECK-NEXT: ValidateFirstRun variable=g1
+# CHECK-NEXT: PutModuleVariable v18 variable=g0
+# CHECK-NEXT: v21: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v21)
+# CHECK-NEXT: b7(v22: int[0, 9]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v24: 9 = Integer integer=9
+# CHECK-NEXT: v25: boolean = Less v22, v24
+# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v26: int[0, 8]):
+# CHECK-NEXT: v27: string = CallDirect v26 function=f1 accessSite=4
+# CHECK-NEXT: ValidateType v27 validatedType=string
+# CHECK-NEXT: ValidateType v27 validatedType=undefined|null|string
+# CHECK-NEXT: ValidateType v27 validatedType=string
+# CHECK-NEXT: v31: string = CallDirect v26 function=f2 accessSite=5
+# CHECK-NEXT: ValidateType v31 validatedType=string
+# CHECK-NEXT: ValidateType v31 validatedType=undefined|null|string
+# CHECK-NEXT: ValidateType v31 validatedType=string
+# CHECK-NEXT: v35: undefined = CallBuiltin -, v26, v27, v31 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v36: int[1, 9] = Increment v26
+# CHECK-NEXT: Jump -> next b7(v36)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: Return v37
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="once"
+# CHECK: module=m0 position=271 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 8] site=w1}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 8]):
+# CHECK-NEXT: ValidateType v0 validatedType=int
+# CHECK-NEXT: v2: anything ~ undefined|null|Array<number> = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array<number>
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v5: Array<number>):
+# CHECK-NEXT: v6: boolean = HasArrayStorage v5 arrayStorage=Double
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b8()
+# CHECK-NEXT: b2(v7: guard):
+# CHECK-NEXT: v8: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: guard):
+# CHECK-NEXT: ValidateSameValue v5, v3
+# CHECK-NEXT: v11: guard = AllGuards v7, v9
+# CHECK-NEXT: v12: boolean = HasArrayStorage v5 arrayStorage=Double
+# CHECK-NEXT: v13: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v12, v13
+# CHECK-NEXT: v15: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v16: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v15, v16
+# CHECK-NEXT: v18: number = GetArrayElement v5, v0, v11 arrayStorage=Double level=Expected accessSite=7 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: int[0, 4294967295] = URShift v18, v19
+# CHECK-NEXT: v21: boolean = StrictEq v20, v18
+# CHECK-NEXT: Branch v21 -> taken b4(| 1), notTaken b7()
+# CHECK-NEXT: b4(v22: int[0, 4294967295]|whole):
+# CHECK-NEXT: v23: string = CallBuiltin -, v22 overload=String/0 accessSite=9 @0 tail
+# CHECK-NEXT: ValidateType v23 validatedType=string
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v25: anything ~ undefined|number = ElemGet v3, v0 accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v26: anything ~ number = Expect v25 expectedType=number
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: int[0, 4294967295] = URShift v26, v27
+# CHECK-NEXT: v29: boolean = StrictEq v28, v26
+# CHECK-NEXT: Branch v29 -> taken b6(| 1), notTaken b7()
+# CHECK-NEXT: b6(v30: int[0, 4294967295]|whole) frequency=Rare:
+# CHECK-NEXT: v31: number = CallDirect v30 function=f3 accessSite=8
+# CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=String/0 accessSite=9 @0 tail
+# CHECK-NEXT: ValidateType v32 validatedType=string
+# CHECK-NEXT: Return v32
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v34: "-" = String string="-"
+# CHECK-NEXT: Return v34
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v5
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=409 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 8] site=w3}] results=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 8]):
+# CHECK-NEXT: ValidateType v0 validatedType=int
+# CHECK-NEXT: v2: anything ~ undefined|null|Array<number> = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array<number>
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v5: Array<number>):
+# CHECK-NEXT: v6: boolean = HasArrayStorage v5 arrayStorage=Double
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b8()
+# CHECK-NEXT: b2(v7: guard):
+# CHECK-NEXT: v8: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: guard):
+# CHECK-NEXT: ValidateSameValue v5, v3
+# CHECK-NEXT: v11: guard = AllGuards v7, v9
+# CHECK-NEXT: v12: boolean = HasArrayStorage v5 arrayStorage=Double
+# CHECK-NEXT: v13: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v12, v13
+# CHECK-NEXT: v15: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v16: true = Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue v15, v16
+# CHECK-NEXT: v18: number = GetArrayElement v5, v0, v11 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: int[0, 4294967295] = URShift v18, v19
+# CHECK-NEXT: v21: boolean = StrictEq v20, v18
+# CHECK-NEXT: Branch v21 -> taken b4(| 1), notTaken b7()
+# CHECK-NEXT: b4(v22: int[0, 4294967295]|whole):
+# CHECK-NEXT: v23: string = CallBuiltin -, v22 overload=String/0 accessSite=12 @0 tail
+# CHECK-NEXT: ValidateType v23 validatedType=string
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v25: anything ~ undefined|number = ElemGet v3, v0 accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v26: anything ~ number = Expect v25 expectedType=number
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: int[0, 4294967295] = URShift v26, v27
+# CHECK-NEXT: v29: anything ~ number = Upcast v25 castType=anything
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: int[0, 4294967295] = URShift v29, v30
+# CHECK-NEXT: v32: boolean = StrictEq v31, v29
+# CHECK-NEXT: Branch v32 -> taken b6(| 1), notTaken b7()
+# CHECK-NEXT: b6(v33: int[0, 4294967295]|whole) frequency=Rare:
+# CHECK-NEXT: v34: number = CallDirect v33 function=f4 accessSite=11
+# CHECK-NEXT: v35: string = CallBuiltin -, v34 overload=String/0 accessSite=12 @0 tail
+# CHECK-NEXT: ValidateType v35 validatedType=string
+# CHECK-NEXT: Return v35
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v37: "-" = String string="-"
+# CHECK-NEXT: Return v37
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v5
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: }
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=380 kind=Arrow flags=[IsChecked] captures=[{type=number site=w8}] thisType={type=anything} results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=546 kind=Arrow flags=[IsChecked] captures=[{type=number site=w13}] thisType={type=anything} results=[{type=number site=w15}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }

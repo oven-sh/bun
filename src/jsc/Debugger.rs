@@ -11,7 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
@@ -197,6 +197,16 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
+    }
+
+    #[inline(never)]
+    fn wait_for_debugger(this: *mut VirtualMachine) {
         // `this` is the live per-thread VM; same allocation as
         // `VirtualMachine::get()` — route through the safe thread-local
         // accessor instead of open-coding the backref deref. All subsequent
@@ -371,6 +381,20 @@ impl Debugger {
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> crate::CrateResult<()> {
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            this,
+            global_object
+        )
+    }
+
+    #[inline(never)]
+    fn create_debugger(
+        this: *mut VirtualMachine,
+        global_object: &JSGlobalObject,
+    ) -> crate::CrateResult<()> {
         bun_core::scoped_log!(debugger, "create");
         jsc::mark_binding();
         if HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
@@ -489,13 +513,13 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let url = BunString::borrow_utf8(from_env);
+            let url = StringView::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let url = BunString::borrow_utf8(path_or_port);
+            let url = StringView::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
@@ -969,12 +993,23 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
 }
 
 impl LifecycleHandle {
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
+    }
+
+    #[inline(never)]
+    fn report_error_to_agent(&mut self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -1010,7 +1045,7 @@ impl LifecycleAgent {
         core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }

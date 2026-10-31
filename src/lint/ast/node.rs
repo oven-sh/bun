@@ -880,15 +880,14 @@ impl File<'_> {
         let Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return true;
         };
-        match self.hir.stmts.get(parent.idx()).map(|it| it.kind) {
+        !matches!(
+            self.hir.stmts.get(parent.idx()).map(|it| it.kind),
             Some(
                 hir::StmtKind::For { .. }
-                | hir::StmtKind::ForIn { .. }
-                | hir::StmtKind::ForOf { .. },
-            ) => false,
-            Some(hir::StmtKind::Block(_)) => self.hir.with_bodies.is_empty(),
-            _ => true,
-        }
+                    | hir::StmtKind::ForIn { .. }
+                    | hir::StmtKind::ForOf { .. },
+            )
+        )
     }
 
     #[inline]

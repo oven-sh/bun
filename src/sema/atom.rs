@@ -197,7 +197,8 @@ impl Tables {
 
     #[inline]
     fn class(&self, index: u32) -> u32 {
-        let cell = self.classes.existing(index / class::PER_CELL);
+        // Another thread may have just allocated the cells for another text.
+        let cell = self.classes.existing_acquire(index / class::PER_CELL);
         let classes = cell.map_or(0, |cell| cell.load(Ordering::Relaxed));
         classes >> (index % class::PER_CELL * class::BITS) & ((1 << class::BITS) - 1)
     }
@@ -288,6 +289,7 @@ known_atoms! {
     default = "default",
     export_equals = "export=",
     returned = "return=",
+    own_declaration = "declaration=",
     this = "this",
     undefined = "undefined",
     // `Atom::is_keyword_identifier` covers the range from here to `arguments`.
@@ -453,6 +455,31 @@ known_atoms! {
     setTimeout = "setTimeout",
     setInterval = "setInterval",
     execScript = "execScript",
+    use_strict = "use strict",
+    dirname = "__dirname",
+    filename = "__filename",
+    feature = "feature",
+    bun_bundle = "bun:bundle",
+    resolve = "resolve",
+    meta = "meta",
+    main = "main",
+    r#type = "type",
+    r#macro = "macro",
+    with = "with",
+    parse = "parse",
+    getBuiltinModule = "getBuiltinModule",
+    join = "join",
+    path = "path",
+    node_path = "node:path",
+    embed = "embed",
+    createRequire = "createRequire",
+    node_module = "node:module",
+    url = "url",
+    meta_filename = "filename",
+    meta_dir = "dir",
+    meta_dirname = "dirname",
+    Module = "Module",
+    node_process = "node:process",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never
@@ -462,6 +489,11 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 /// Name prefix of a property that a class declares as `#x` (`GetSymbolNameForPrivateIdentifier`):
 /// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
+
+/// `isReservedMemberName`: a name that the binder makes up, other than that of a symbol-keyed or a private property.
+pub fn is_reserved_member_name(name: &[u8]) -> bool {
+    matches!(name, [0xFE, next, ..] if !matches!(next, b'@' | b'#'))
+}
 
 /// `SymbolName`: returns the `#x` of a private name, which is stored as `\xFE#x@<class>`. Returns
 /// any other name unchanged.
@@ -758,6 +790,11 @@ impl<'s> Interner<'s> {
         self.session
     }
 
+    /// The same atoms. What is parsed with it belongs to `session`.
+    pub fn for_files_of(self, session: &'s Session) -> Interner<'s> {
+        Interner { session, ..self }
+    }
+
     /// Sequence number of this interner among all interners ever created. Data cached for one
     /// interner is invalid for another.
     #[inline]
@@ -910,10 +947,16 @@ impl<'p, 's> Atoms<'p, 's> {
             .or_else(|| self.own.find_atom(spread, text))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn own_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.own.atom_bytes(atom)
+    }
+
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &'p [u8] {
         if atom.is_own() {
-            self.own.atom_bytes(atom)
+            self.own_bytes(atom)
         } else {
             self.published.bytes(atom)
         }
@@ -970,4 +1013,38 @@ impl<'p, 's> Atoms<'p, 's> {
 /// `String(n)`, which is a number's property name.
 pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], n).to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    /// A plain name has no stored class, so nothing orders the thread that asks for its class after the thread that
+    /// allocates the cells for another name. Only Miri can fail this test.
+    #[test]
+    fn a_class_is_read_while_another_thread_adds_a_name() {
+        let session = Session::new();
+        // An interner that's layered over another one starts without cells.
+        let atoms = Interner::over(&session, Interner::in_common(&session));
+        let plain = atoms.intern(b"plain");
+        assert!(plain.0 >= atoms.first);
+        // Relaxed, so that it orders nothing. It only makes the reader come second.
+        let added = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                atoms.intern(b"0");
+                added.store(true, Ordering::Relaxed);
+            });
+            scope.spawn(|| {
+                while !added.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                for _ in 0..64 {
+                    assert_eq!(atoms.class(plain), 0);
+                }
+            });
+        });
+        assert_eq!(atoms.class(atoms.intern(b"0")), class::IS_NUMERIC);
+    }
 }

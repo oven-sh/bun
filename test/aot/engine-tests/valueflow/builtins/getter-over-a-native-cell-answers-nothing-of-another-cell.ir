@@ -1,0 +1,39 @@
+# timer = setTimeout(later, 10); listener = Bun.listen({ data: kept, socket: undefined }); listener.data(); timer._onTimeout()
+# Native code keeps the callback of a timer in one cell and `data` of a socket in another, and each getter answers what is in its own.
+# While an async context is set the callback of a timer is kept in a wrapper, which `_onTimeout` hands out: an object that nobody knows
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> SetTimeout
+# CHECK-NEXT: f0 v10 -> BunListen
+# CHECK-NEXT: f0 v12 -> f2
+# CHECK-NEXT: f0 v14 -> unknown f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="data" declared={type=anything} flags=[IsRequired]}, {key="socket" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SetTimeout
+    v1 = Undefined
+    v2 = NewClosure function=f1
+    v3 = Integer integer=10
+    v4 = Call v0, v1, v2, v3
+    v5 = NewClosure function=f2
+    v6 = Undefined
+    v7 = NewObject -, v5, v6 layout=L0 fields=[0, 1]
+    v8 = Builtin builtin=Bun
+    v9 = Builtin builtin=BunListen
+    v10 = Call v9, v8, v7
+    v11 = PropGet v10 key="data"
+    v12 = Call v11, -
+    v13 = PropGet v4 key="_onTimeout"
+    v14 = Call v13, -
+    Return
+}
+function f1 name="later" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="kept" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -13,8 +13,11 @@ mod jsx;
 mod module;
 mod oxc;
 mod pattern;
+mod pure_calls;
 mod recover;
 mod reparse;
+mod runtime_syntax;
+mod skipped_blocks;
 mod stmt;
 mod ty;
 
@@ -62,6 +65,8 @@ pub(crate) mod ctx {
     pub(crate) const IN_NAMESPACE: u32 = 1 << 14;
     /// The node isn't inside a function body. It can still be in a function's parameters or return type, or in a class.
     pub(crate) const OUTSIDE_BODIES: u32 = 1 << 15;
+    /// The node is strict mode code as far as the parser has read: an enclosing class, or a `"use strict"` directive of the file or of an enclosing function.
+    pub(crate) const STRICT: u32 = 1 << 16;
 }
 
 macro_rules! stacks {
@@ -118,6 +123,8 @@ stacks! {
     /// See `note_stray_decorators`. The start and expression of each stray decorator that no statement list has
     /// picked up yet.
     stray_decorators: (u32, ExprId),
+    /// The parts of the templates that are open, innermost last.
+    template_parts: TemplatePart,
 }
 
 macro_rules! file_lists {
@@ -159,6 +166,8 @@ file_lists! {
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
     specifier_expressions, exports_from_expressions,
+    expr_flags, template_parts, template_part_starts, jsx_attribute_texts, export_star_attributes,
+    bigint_names,
 }
 
 /// The range and code of a syntax error that the checker reports.
@@ -173,6 +182,7 @@ pub(crate) struct Checkpoint {
     lists: u32,
     class_depth: u32,
     has_top_level_await: bool,
+    names_await_at_top_level: bool,
     declared: declared::Mark,
     jsdoc: jsdoc::Lens,
     comments: comments::CommentCheckpoint,
@@ -183,32 +193,50 @@ pub(crate) struct Checkpoint {
 ///
 /// `COMMENTS`: the parser finds the nodes around each comment when the options enable it. See [`comments`]. When it's
 /// false that code is compiled out, so `bun check` and `bun lint`, which don't need those nodes, don't pay for it.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
-    pub(crate) lx: Lexer<'a>,
-    pub(crate) f: FileBuilder,
-    pub(crate) s: Stacks,
     /// `ctx`
     pub(crate) context: u32,
-    /// Number of enclosing classes.
-    pub(crate) class_depth: u32,
-    pub(crate) options: Options,
     /// See `recovers()`.
     recovers: bool,
-    /// See `reads_jsdoc()`.
-    reads_jsdoc: bool,
-    pub(crate) jsdoc: jsdoc::State,
-    comments: comments::CommentTracker,
-    /// `parsingContexts`: one bit for each `ListKind` that has an open list.
-    pub(crate) lists: u32,
-    pub(crate) declaration_scan: stmt::DeclarationScan,
-    /// The start of the token where the last error was reported, and how many errors were reported there.
-    pub(crate) errors_at: (u32, u32),
     /// `Dialect::ecmascript`, in a JavaScript file.
     pub(crate) is_ecmascript: bool,
-    /// `Dialect::flow`, in a JavaScript file.
-    flow: bool,
-    /// True if a `<` after an expression can start type arguments. False in JavaScript, except for Flow.
-    pub(crate) has_type_arguments_in_expressions: bool,
+    pub(crate) options: Options,
+    pub(crate) lx: Lexer<'a>,
+    comments: comments::CommentTracker,
+    pub(crate) f: FileBuilder,
+    pub(crate) s: Stacks,
+    pub(crate) jsdoc: jsdoc::State,
+    /// The private names the enclosing classes have declared so far.
+    pub(crate) declared_private_names: Vec<Atom>,
+    pub(crate) declared: Declared,
+    /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
+    pub(crate) not_arrows: Vec<u32>,
+    /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
+    /// position.
+    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
+    /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
+    pub(crate) not_type_arguments: Vec<(u32, u32)>,
+    pub(crate) declaration_scan: stmt::DeclarationScan,
+    /// The token where `fail` was last called, and its position.
+    failed_at: (T, u32),
+    /// `failed_at`, if that call is why the last `try_parse` rolled back.
+    pub(crate) was_abandoned_at: Option<(T, u32)>,
+    /// The start of the token where the last error was reported, and how many errors were reported there.
+    pub(crate) errors_at: (u32, u32),
+    /// For `rare::NESTED_MODULE_SYNTAX`, in a JavaScript file for oxc: how many `import` and `export` statements were
+    /// parsed at any depth, and how many of the file's top-level statements are one.
+    pub(crate) module_statements: (u32, u32),
+    /// See [`Parsed::end`].
+    pub(crate) end: (u32, u32),
+    /// The last `T?` node and its end.
+    pub(crate) last_nullable_type: (TypeNodeId, u32),
+    /// Number of enclosing classes.
+    pub(crate) class_depth: u32,
+    /// `parsingContexts`: one bit for each `ListKind` that has an open list.
+    pub(crate) lists: u32,
     /// In Flow: the start of the last expression statement.
     pub(crate) flow_statement_start: u32,
     /// `TypeExcludesFlags`: the context bits cleared inside a type, an enum's members and a top-level namespace. oxc
@@ -216,6 +244,25 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) cleared_in_types: u32,
     /// Number of `await` and `yield` expressions created so far.
     pub(crate) suspensions: u32,
+    /// Number of parameters so far with a modifier, a `?` or `...`. It only grows.
+    pub(crate) odd_parameters: u32,
+    /// While `reparses_rest_of_file` is set, the start of the previous statement.
+    pub(crate) reparsed_at: u32,
+    /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
+    /// `rescan_jsx_child`.
+    pub(crate) jsx_child_with_stale_token: u32,
+    /// The position of the `?` of the last optional parameter.
+    pub(crate) parameter_question_pos: u32,
+    /// See `private_name_before_in`. The position of the last one.
+    pub(crate) private_name_before_in: u32,
+    /// Number of speculative parses in progress.
+    speculations: u32,
+    /// See `reads_jsdoc()`.
+    reads_jsdoc: bool,
+    /// `Dialect::flow`, in a JavaScript file.
+    flow: bool,
+    /// True if a `<` after an expression can start type arguments. False in JavaScript, except for Flow.
+    pub(crate) has_type_arguments_in_expressions: bool,
     /// `Dialect::oxc`, in a TypeScript file. See `oxc.rs`.
     is_typescript_for_oxc: bool,
     /// True while parsing a class's `implements` clause for oxc, which accepts any word as a name there.
@@ -224,20 +271,12 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) is_in_interface_extends_for_oxc: bool,
     /// With `reports_like_oxc`: the class being parsed has an abstract member or a method without a body.
     pub(crate) has_odd_members: bool,
-    /// For `rare::NESTED_MODULE_SYNTAX`, in a JavaScript file for oxc: how many `import` and `export` statements were
-    /// parsed at any depth, and how many of the file's top-level statements are one.
-    pub(crate) module_statements: (u32, u32),
-    /// Number of parameters so far with a modifier, a `?` or `...`. It only grows.
-    pub(crate) odd_parameters: u32,
-    /// The private names the enclosing classes have declared so far.
-    pub(crate) declared_private_names: Vec<Atom>,
-    pub(crate) declared: Declared,
-    /// See [`Parsed::end`].
-    pub(crate) end: (u32, u32),
     pub(crate) has_top_level_await: bool,
     /// True if some top-level `await` is unambiguous: `await a`, `for await`, `await using`. `await (a)` doesn't count,
     /// because in a script it calls a function named `await`.
     pub(crate) has_plain_top_level_await: bool,
+    /// True if `await` is a name somewhere outside every function, as in `var await`.
+    pub(crate) names_await_at_top_level: bool,
     /// `statementHasAwaitIdentifier`, as error recovery uses it. See `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
     /// True if the current top-level statement has an `await` that was parsed outside the await context, either in a
@@ -251,32 +290,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) recovery_hit_await: bool,
     /// True once the `reparseTopLevelAwait` reparse has run past the end of its statement. See `skip_to_element`.
     pub(crate) reparses_rest_of_file: bool,
-    /// While `reparses_rest_of_file` is set, the start of the previous statement.
-    pub(crate) reparsed_at: u32,
-    /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
-    /// `rescan_jsx_child`.
-    pub(crate) jsx_child_with_stale_token: u32,
-    /// The position of the `?` of the last optional parameter.
-    pub(crate) parameter_question_pos: u32,
-    /// See `private_name_before_in`. The position of the last one.
-    pub(crate) private_name_before_in: u32,
-    /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
-    pub(crate) not_arrows: Vec<u32>,
-    /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
-    /// position.
-    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
-    /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
-    pub(crate) not_type_arguments: Vec<(u32, u32)>,
-    /// The last `T?` node and its end.
-    pub(crate) last_nullable_type: (TypeNodeId, u32),
-    /// Number of speculative parses in progress.
-    speculations: u32,
     /// True if `report` was called during one of them.
     has_reported: bool,
-    /// The token where `fail` was last called, and its position.
-    failed_at: (T, u32),
-    /// `failed_at`, if that call is why the last `try_parse` rolled back.
-    pub(crate) was_abandoned_at: Option<(T, u32)>,
 }
 
 /// `isAnExternalModuleIndicatorNode`
@@ -325,6 +340,7 @@ struct Harvest<'a> {
     end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
+    names_await_at_top_level: bool,
 }
 
 pub(crate) fn run<'a>(
@@ -376,6 +392,8 @@ pub(crate) fn run<'a>(
     lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
+    let is_compiled_javascript = options.compiles && is_ecmascript;
+    lx.decodes_ill_formed_text = options.compiles;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {
@@ -393,6 +411,7 @@ pub(crate) fn run<'a>(
         end,
         has_top_level_await,
         has_plain_top_level_await,
+        names_await_at_top_level,
     } = match (is_general, options.attach_comments) {
         (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
         (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
@@ -419,14 +438,19 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
+    if !options.keeps_function_directives {
+        pure_calls::mark_pure_calls(&mut f, text);
+    }
     let names = &mut scratch.names;
     let source = text;
     let mut intern = |it: &[u8]| names.atom(crate::names::Text::not_in_source(source, it), atoms);
+    let pragma_error_kind = runtime_syntax::pragma_error_kind(&options, is_compiled_javascript);
     let errors = f.diagnostics.len();
     if !crate::pragmas::process_pragmas_into_fields(
         text,
         &leading_comments,
-        options.recovers,
+        pragma_error_kind,
+        options.compiles,
         &mut intern,
         &mut f,
     ) {
@@ -437,12 +461,13 @@ pub(crate) fn run<'a>(
         if options.dialect == Default::default() {
             f.diagnostics.shared_sort_by_key(|it| (it.start, it.code));
         }
-        f.has_parse_diagnostics = true;
+        f.has_parse_diagnostics |= pragma_error_kind == Some(DiagnosticKind::Parse);
     }
     f.mentioned.extend_from_slice(scratch.names.mentioned());
     Ok(Parsed {
         file: f,
         has_top_level_await,
+        names_await_at_top_level,
         end,
     })
 }
@@ -509,6 +534,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             end: (0, 0),
             has_top_level_await: false,
             has_plain_top_level_await: false,
+            names_await_at_top_level: false,
             has_await_in_statement: false,
             has_await_in_name: false,
             has_await_identifier: false,
@@ -541,6 +567,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.has_top_level_await {
             self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
         }
+        if self.lx.has_legacy_octal {
+            self.f.rare_syntax |= rare::LEGACY_OCTAL;
+        }
         self.note_odd_exports();
         *file = self.f;
         Harvest {
@@ -550,6 +579,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             end: self.end,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,
+            names_await_at_top_level: self.names_await_at_top_level,
         }
     }
 
@@ -569,6 +599,31 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline(always)]
     pub(crate) fn reads_jsdoc(&self) -> bool {
         GENERAL && self.reads_jsdoc
+    }
+
+    /// `Options::reads_module_statements_alone`, at the start of a statement. True if the statement is to be parsed. Otherwise
+    /// the text ends here, or is rejected.
+    #[inline(never)]
+    fn is_at_module_statement(&mut self) -> bool {
+        use skipped_blocks::{may_export_from_a_file, may_reach_beyond_the_module};
+        let src = self.lx.src;
+        let rest = match self.token() {
+            T::Import => return true,
+            T::Export => {
+                let rest = src.get(self.lx.end as usize..).unwrap_or_default();
+                if may_export_from_a_file(rest) {
+                    return true;
+                }
+                self.f.has_module_syntax = true;
+                rest
+            }
+            _ => src.get(self.pos() as usize..).unwrap_or_default(),
+        };
+        match self.f.has_module_syntax && !may_reach_beyond_the_module(rest) {
+            true => self.lx.stop(),
+            false => self.reject(Rejection::Unsupported),
+        }
+        false
     }
 
     /// `parseSourceFileWorker`
@@ -599,11 +654,24 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
+        let mut is_in_prologue = !self.options.is_json && self.options.part.is_none();
+        let mut has_module_declaration = false;
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
+            if !GENERAL
+                && !COMMENTS
+                && self.options.reads_module_statements_alone
+                && !self.is_at_module_statement()
+            {
+                break;
+            }
             let statement = match self.recovers() {
                 true => self.top_level_statement(),
                 false => self.statement(),
             };
+            if is_in_prologue {
+                is_in_prologue = self.take_directive(statement);
+            }
+            has_module_declaration |= self.is_module_declaration(statement);
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
@@ -619,6 +687,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
+        self.set_file_strictness(has_module_declaration);
         // A statement that was parsed twice is counted twice, so the flag only means "maybe".
         if self.module_statements.0 > self.module_statements.1 {
             self.f.rare_syntax |= rare::NESTED_MODULE_SYNTAX;
@@ -671,6 +740,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 .import_attributes
                 .shared_sort_unstable_by_key(|it| it.0);
         }
+        self.sort_runtime_side_tables();
     }
 
     // ───────────────────────────── tokens ─────────────────────────────
@@ -810,9 +880,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 },
                 _ => Vec::new(),
             };
-            match argument.is_empty() {
-                true => self.flag(DiagnosticKind::Grammar, code, (start, end), &[]),
-                false => self.flag(DiagnosticKind::Grammar, code, (start, end), &[&argument]),
+            let arguments = [argument.as_slice()];
+            let arguments = &arguments[..usize::from(!argument.is_empty())];
+            match self.lx.compiles() {
+                true => self.flag_early_error(code, (start, end), arguments),
+                false => self.flag(DiagnosticKind::Grammar, code, (start, end), arguments),
             }
         }
     }
@@ -987,6 +1059,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             lists: self.lists,
             class_depth: self.class_depth,
             has_top_level_await: self.has_top_level_await,
+            names_await_at_top_level: self.names_await_at_top_level,
             declared: self.declared.mark(),
             jsdoc,
             comments: self.comment_checkpoint(),
@@ -1001,6 +1074,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lists = to.lists;
         self.class_depth = to.class_depth;
         self.has_top_level_await = to.has_top_level_await;
+        self.names_await_at_top_level = to.names_await_at_top_level;
         self.declared.rollback(to.declared);
         if self.reads_jsdoc() {
             self.rollback_jsdoc(to);
@@ -1113,6 +1187,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline(never)]
     fn note_keyword_identifier(&mut self, atom: Atom, pos: u32) {
         self.f.keyword_identifier_positions.push(pos);
+        self.names_await_at_top_level |= atom == known::r#await && self.has_context(ctx::TOP_LEVEL);
         if !self.options.dialect.oxc {
             return;
         }
@@ -1127,7 +1202,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 (true, true) => 1262,
                 (true, false) => 1214,
             };
-            self.flag(DiagnosticKind::Grammar, code, (pos, pos + 5), &[]);
+            self.flag_early_error(code, (pos, pos + 5), &[]);
         }
     }
 

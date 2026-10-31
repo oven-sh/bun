@@ -3,8 +3,7 @@
 //! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle). Shared Win32
 //! POD typedefs/structs, kernel32 externs, and the TEB→PEB chain are
 //! re-exported from the tier-0 leaf `bun_windows_sys` (which has zero `bun_*`
-//! deps, so no cycle); only the `bun_core`-specific console consts and the
-//! `Zeroable` impls live here. All declarations are zero-cost FFI
+//! deps, so no cycle); only the `bun_core`-specific console consts live here. All declarations are zero-cost FFI
 //! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
 #![cfg(windows)]
 #![allow(non_snake_case)]
@@ -44,11 +43,6 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 pub use bun_windows_sys::{
     CURDIR, PEB, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
 };
-
-// SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
-// for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
-// `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
-unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` callers resolve.

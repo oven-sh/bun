@@ -33,29 +33,26 @@ struct DevServerSourceMapData {
 }
 
 unsafe extern "C" {
-    // The C++ accessors are read-only (`provider->source()` /
-    // `provider->sourceMapJSON()`). Taking `*const` avoids casting away const
-    // from the `&self` borrows below; any interior mutation lives behind the
-    // FFI boundary in C++-owned storage that Rust has no provenance over
-    // (these types are opaque ZST markers).
-    fn BakeSourceProvider__getSourceSlice(this: &BakeSourceProvider) -> bun_core::StringView<'_>;
-    fn BakeSourceProvider__getBunVM(this: &BakeSourceProvider) -> *mut core::ffi::c_void;
-    fn DevServerSourceProvider__getSourceSlice(
+    // The provider accessors only read.
+    safe fn BakeSourceProvider__getSourceSlice(
+        this: &BakeSourceProvider,
+    ) -> bun_core::StringView<'_>;
+    safe fn BakeSourceProvider__getBunVM(this: &BakeSourceProvider) -> *mut core::ffi::c_void;
+    safe fn DevServerSourceProvider__getSourceSlice(
         this: &DevServerSourceProvider,
     ) -> bun_core::StringView<'_>;
-    fn DevServerSourceProvider__getSourceMapJSON(
-        this: *const DevServerSourceProvider,
+    safe fn DevServerSourceProvider__getSourceMapJSON(
+        this: &DevServerSourceProvider,
     ) -> DevServerSourceMapData;
-    fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-    fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
+    safe fn BakeGlobalObject__isBakeGlobalObject(global: &JSGlobalObject) -> bool;
+    fn BakeGlobalObject__getPerThreadData(global: &JSGlobalObject) -> *mut c_void;
 }
 
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
 
     fn get_source_slice(&self) -> bun_core::StringView<'_> {
-        // SAFETY: opaque FFI handle.
-        unsafe { BakeSourceProvider__getSourceSlice(self) }
+        BakeSourceProvider__getSourceSlice(self)
     }
 
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -68,11 +65,10 @@ impl SourceProvider for BakeSourceProvider {
     fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
         // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
         // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
-        // SAFETY: opaque FFI handle; the provider does not outlive its VM.
+        // SAFETY: the provider does not outlive its VM, and the VM's `global` is live as long as the VM is.
         let global =
-            unsafe { (*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
-        // SAFETY: `global` is that VM's live JSGlobalObject.
-        if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
+            unsafe { &*(*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
+        if !BakeGlobalObject__isBakeGlobalObject(global) {
             return None;
         }
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
@@ -90,9 +86,7 @@ impl SourceProvider for BakeSourceProvider {
             // slice (which fails to parse as a map) rather than a disk fallback.
             return Some(b"");
         };
-        // The returned slice borrows `PerThread.bundled_outputs`, which lives
-        // for the bake build session and outlives this provider (the provider
-        // is created from a `bundled_outputs` entry).
+        // Borrows `PerThread.bundled_outputs`; `pt` is null once `PerThread` has dropped.
         Some(pt.bundled_outputs[idx.get() as usize].value.as_slice())
     }
 }
@@ -101,8 +95,7 @@ impl SourceProvider for DevServerSourceProvider {
     const HAS_SOURCE_MAP_JSON: bool = true;
 
     fn get_source_slice(&self) -> bun_core::StringView<'_> {
-        // SAFETY: opaque FFI handle.
-        unsafe { DevServerSourceProvider__getSourceSlice(self) }
+        DevServerSourceProvider__getSourceSlice(self)
     }
 
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -110,9 +103,7 @@ impl SourceProvider for DevServerSourceProvider {
     }
 
     fn get_source_map_json(&self) -> Option<&[u8]> {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does
-        // not write Rust-visible memory.
-        let d = unsafe { DevServerSourceProvider__getSourceMapJSON(self) };
+        let d = DevServerSourceProvider__getSourceMapJSON(self);
         if d.length == 0 {
             return None;
         }

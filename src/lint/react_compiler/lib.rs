@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod code_generation;
 mod compile;
 mod convert;
 mod eslint;

@@ -36,7 +36,7 @@ use bun_sys::FdExt as _;
 use bun_uws as uws;
 
 #[cfg(windows)]
-use bun_libuv_sys::UvStream as _;
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -247,6 +247,9 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 unsafe { uv::Pipe::close_and_destroy(pipe) };
                 return false;
             }
+            // A ref'd pipe keeps the loop alive for good: `on_before_exit` would never return.
+            // SAFETY: `pipe` is the live Box-allocated uv_pipe_t this channel now owns.
+            unsafe { (*pipe).unref() };
             return true;
         }
         #[cfg(not(windows))]
@@ -268,7 +271,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 
     /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
-    /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
+    /// `.ipc` extra-fd parent end, which is the coordinator's). Starts
     /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
     /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]

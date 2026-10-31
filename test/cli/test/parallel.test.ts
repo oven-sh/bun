@@ -1639,3 +1639,53 @@ test("--parallel: the channel to the coordinator does not keep a worker's event 
   expect(stderr).toContain("2 pass");
   expect(exitCode).toBe(0);
 });
+
+// On Windows the worker refs the loop for this wait, so the wait blocks.
+// On POSIX a worker polls in this wait (thousands of turns in each sample), so the test cannot pass there.
+test.skipIf(!isWindows)("--parallel: a worker blocks while it waits for the coordinator", async () => {
+  using dir = tempDir("parallel-worker-wait", {
+    "a.test.js": `
+      import { test } from "bun:test";
+      import { getEventLoopStats } from "bun:internal-for-testing";
+      import { appendFileSync } from "node:fs";
+      test("a", () => {
+        let last = getEventLoopStats().iteration;
+        // Left behind and unref'd: with --no-isolate it is the only script that runs while the worker waits.
+        // Each time it fires, it records the turns that the loop made since it last fired.
+        globalThis.leftover = setInterval(() => {
+          const now = getEventLoopStats().iteration;
+          appendFileSync(import.meta.dir + "/turns", now - last + "\\n");
+          last = now;
+        }, 1).unref();
+        // More than a pipe holds. The coordinator prints it before it answers, so it cannot answer until its output is read.
+        console.log(Buffer.alloc(1 << 20, "y").toString());
+      });`,
+    "b.test.js": `import { test } from "bun:test"; clearInterval(globalThis.leftover); test("b", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files, and waits for the coordinator between them.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", "--no-isolate"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Nothing reads the output of the coordinator until the timer has fired twenty times.
+    lazy: true,
+  });
+  let turns: number[] = [];
+  for (let i = 0; i < 400 && turns.length < 20 && proc.exitCode === null; i++) {
+    await Bun.sleep(25);
+    const recorded = await Bun.file(path.join(String(dir), "turns"))
+      .text()
+      .catch(() => "");
+    turns = recorded.split("\n").slice(0, -1).map(Number);
+  }
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A wait that blocks makes one turn for each time the timer fires. A wait that polls makes hundreds.
+  // The first samples can hold turns of the file itself.
+  expect(turns.length).toBeGreaterThanOrEqual(20);
+  expect(Math.max(...turns.slice(-5))).toBeLessThan(10);
+  // The summary is at the end, after 1 MiB of forwarded output.
+  expect(stderr.slice(-300)).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});

@@ -2718,30 +2718,6 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    /// One of the global folders: an entry of `NODE_PATH`, or of the list `Module._initPaths()` made.
-    fn load_from_global_folder(
-        &mut self,
-        dir: &[u8],
-        import_path: &[u8],
-        kind: ast::ImportKind,
-        out: &mut MatchResult,
-    ) -> bool {
-        let Some(abs_path) = self
-            .fs_ref()
-            .abs_buf_checked(&[dir, import_path], bufs!(node_modules_check))
-        else {
-            return false;
-        };
-        if let Some(debug) = self.debug_logs.as_mut() {
-            debug.add_note_fmt(format_args!(
-                "Checking for a package in the NODE_PATH directory \"{}\"",
-                bstr::BStr::new(abs_path)
-            ));
-        }
-        self.load_as_file_or_directory(abs_path, kind, out)
-            .is_success()
-    }
-
     pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],
@@ -3087,31 +3063,46 @@ impl<'a> Resolver<'a> {
 
         // try resolve from the global folders
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let found = if kind.is_common_js()
-            && let Some(paths) = self.node_module_paths.as_deref()
-        {
-            // BACKREF: only `Module._initPaths()` replaces the list, and no JavaScript runs during a resolve.
-            let paths = bun_ptr::RawSlice::new(paths);
-            paths
-                .slice()
-                .iter()
-                .any(|dir| self.load_from_global_folder(dir, import_path, kind, out))
-        } else {
-            let node_path: &[u8] = self
+        // BACKREF: only `Module._initPaths()` replaces the list, and no JavaScript runs during a resolve.
+        let listed = self
+            .node_module_paths
+            .as_deref()
+            .filter(|_| kind.is_common_js())
+            .map(bun_ptr::RawSlice::new);
+        let node_path: &[u8] = match listed {
+            Some(_) => b"",
+            None => self
                 .env_loader()
                 .and_then(|env| env.get(b"NODE_PATH"))
-                .unwrap_or(b"");
-            let delim = if cfg!(windows) { b';' } else { b':' };
-            node_path
-                .split(|&b| b == delim)
-                .filter(|s| !s.is_empty())
-                .any(|dir| self.load_from_global_folder(dir, import_path, kind, out))
+                .unwrap_or(b""),
         };
-        if found {
-            if let Some(d) = self.debug_logs.as_mut() {
-                d.decrease_indent();
+        let listed = listed.unwrap_or_default();
+        if !node_path.is_empty() || !listed.is_empty() {
+            let delim = if cfg!(windows) { b';' } else { b':' };
+            let node_path = node_path.split(|&b| b == delim).filter(|s| !s.is_empty());
+            for path in listed.iter().map(|dir| &**dir).chain(node_path) {
+                let Some(abs_path) = self
+                    .fs_ref()
+                    .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
+                else {
+                    continue;
+                };
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "Checking for a package in the NODE_PATH directory \"{}\"",
+                        bstr::BStr::new(abs_path)
+                    ));
+                }
+                if self
+                    .load_as_file_or_directory(abs_path, kind, out)
+                    .is_success()
+                {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return MatchStatus::Success;
+                }
             }
-            return MatchStatus::Success;
         }
 
         dir_info = source_dir_info;

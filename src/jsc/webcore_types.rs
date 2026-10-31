@@ -81,9 +81,12 @@ impl BlobContentType {
         }
     }
 
-    /// Heap-owned ASCII-lowercased copy of `slice`.
+    /// ASCII-lowercased copy of `slice`, heap-owned unless `slice` is empty.
     #[inline]
     pub fn from_lowercased(slice: &[u8]) -> Self {
+        if slice.is_empty() {
+            return Self::default();
+        }
         let mut buf = vec![0u8; slice.len()];
         bun_core::strings::copy_lowercase(slice, &mut buf);
         Self::Owned(std::sync::Arc::from(buf))

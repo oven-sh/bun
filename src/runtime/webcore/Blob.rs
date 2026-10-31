@@ -7,6 +7,7 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
@@ -4244,56 +4245,14 @@ fn write_file_with_empty_source_to_destination(
                     }
                 };
 
-            struct Wrapper {
-                promise: jsc::JSPromiseStrong,
-                store: RefPtr<Store>,
-                global: bun_ptr::BackRef<JSGlobalObject>,
-            }
-            impl Wrapper {
-                fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> JsResult<()> {
-                    // SAFETY: opaque_this was heap-allocated in the caller below.
-                    let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
-                    let global = this.global.get();
-                    match result {
-                        S3UploadResult::Success => {
-                            this.promise.resolve(global, JSValue::js_number(0.0))?
-                        }
-                        S3UploadResult::Failure(err) => {
-                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                &err,
-                                global,
-                                this.store.get_path(),
-                                this.promise.get(),
-                            );
-                            this.promise.reject(global, Ok(err_js))?;
-                        }
-                    }
-                    Ok(())
-                }
-            }
-
-            let promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = promise.value();
-            s3_client::upload(
-                &aws_options.credentials,
-                cx.context(),
-                s3.path(),
-                b"",
-                destination_blob.content_type_or_mime_type(),
-                aws_options.content_disposition.as_deref(),
-                aws_options.content_encoding.as_deref(),
-                aws_options.acl,
-                aws_options.storage_class,
-                aws_options.request_payer,
-                Wrapper::resolve,
-                bun_core::heap::into_raw(Box::new(Wrapper {
-                    promise,
-                    store: destination_store.clone(),
-                    global: bun_ptr::BackRef::new(cx.global()),
-                }))
-                .cast::<c_void>(),
-            )?;
-            return Ok(promise_value);
+            return put_bytes_to_s3(
+                cx,
+                destination_blob,
+                s3,
+                &aws_options,
+                Cow::Borrowed(b""),
+                destination_store.get_path(),
+            );
         }
         // Writing to a buffer-backed blob should be a type error,
         // making this unreachable. TODO: `{}` -> `unreachable`
@@ -4496,63 +4455,14 @@ pub(crate) fn write_file_with_source_destination(
                         .to_js());
                     }
                 } else {
-                    struct Wrapper {
-                        store: RefPtr<Store>,
-                        promise: jsc::JSPromiseStrong,
-                        global: bun_ptr::BackRef<JSGlobalObject>,
-                    }
-                    impl Wrapper {
-                        fn resolve(
-                            result: S3UploadResult,
-                            opaque_self: *mut c_void,
-                        ) -> JsResult<()> {
-                            // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
-                            let mut this =
-                                unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                            let global = this.global.get();
-                            match result {
-                                S3UploadResult::Success => {
-                                    this.promise.resolve(
-                                        global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
-                                    )?;
-                                }
-                                S3UploadResult::Failure(err) => {
-                                    let err_js =
-                                        s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                            &err,
-                                            global,
-                                            this.store.get_path(),
-                                            this.promise.get(),
-                                        );
-                                    this.promise.reject(global, Ok(err_js))?;
-                                }
-                            }
-                            Ok(())
-                        }
-                    }
-                    let promise = jsc::JSPromiseStrong::init(cx.global());
-                    let promise_value = promise.value();
-                    s3_client::upload(
-                        &aws_options.credentials,
-                        cx.context(),
-                        s3.path(),
-                        bytes.slice(),
-                        destination_blob.content_type_or_mime_type(),
-                        aws_options.content_disposition.as_deref(),
-                        aws_options.content_encoding.as_deref(),
-                        aws_options.acl,
-                        aws_options.storage_class,
-                        aws_options.request_payer,
-                        Wrapper::resolve,
-                        bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
-                            promise,
-                            global: bun_ptr::BackRef::new(cx.global()),
-                        }))
-                        .cast::<c_void>(),
-                    )?;
-                    return Ok(promise_value);
+                    return put_bytes_to_s3(
+                        cx,
+                        destination_blob,
+                        s3,
+                        &aws_options,
+                        Cow::Borrowed(bytes.slice()),
+                        source_store.get_path(),
+                    );
                 }
             }
             store::Data::File(_) | store::Data::S3(_) => {
@@ -4599,6 +4509,124 @@ pub(crate) fn write_file_with_source_destination(
     }
 
     unreachable!()
+}
+
+/// The single PUT of an S3 write whose bytes are in memory. A failure reports `path`.
+fn put_bytes_to_s3(
+    cx: &bun_jsc::JsThread<'_>,
+    destination_blob: &Blob,
+    s3: &store::S3,
+    aws_options: &s3_client::S3CredentialsWithOptions,
+    body: Cow<'_, [u8]>,
+    path: Option<&[u8]>,
+) -> JsResult<JSValue> {
+    struct Wrapper {
+        path: Option<Box<[u8]>>,
+        written: usize,
+        promise: jsc::JSPromiseStrong,
+        global: bun_ptr::BackRef<JSGlobalObject>,
+    }
+    impl Wrapper {
+        fn resolve(result: S3UploadResult, opaque_self: *mut c_void) -> JsResult<()> {
+            // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
+            let mut this = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+            let global = this.global.get();
+            match result {
+                S3UploadResult::Success => {
+                    this.promise
+                        .resolve(global, JSValue::js_number(this.written as f64))?;
+                }
+                S3UploadResult::Failure(err) => {
+                    let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                        &err,
+                        global,
+                        this.path.as_deref(),
+                        this.promise.get(),
+                    );
+                    this.promise.reject(global, Ok(err_js))?;
+                }
+            }
+            Ok(())
+        }
+    }
+    let promise = jsc::JSPromiseStrong::init(cx.global());
+    let promise_value = promise.value();
+    let written = body.len();
+    s3_client::upload(
+        &aws_options.credentials,
+        cx.context(),
+        s3.path(),
+        body,
+        destination_blob.content_type_or_mime_type(),
+        aws_options.content_disposition.as_deref(),
+        aws_options.content_encoding.as_deref(),
+        aws_options.acl,
+        aws_options.storage_class,
+        aws_options.request_payer,
+        Wrapper::resolve,
+        bun_core::heap::into_raw(Box::new(Wrapper {
+            path: path.map(Box::from),
+            written,
+            promise,
+            global: bun_ptr::BackRef::new(cx.global()),
+        }))
+        .cast::<c_void>(),
+    )?;
+    Ok(promise_value)
+}
+
+/// A copy of a buffer or of a primitive string that a single PUT can carry and that is not empty.
+fn copy_for_single_put(global: &JSGlobalObject, data: JSValue) -> JsResult<Option<Vec<u8>>> {
+    const MAX: usize = S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE;
+    // Only the length of a primitive string is the length of what gets encoded.
+    if data.is_string_literal() {
+        // A UTF-16 code unit is at most 3 bytes of UTF-8.
+        let units = data.get_length(global)?;
+        if units == 0 || units > (MAX / 3) as u64 {
+            return Ok(None);
+        }
+        return Ok(Some(data.to_bun_string(global)?.to_owned_slice()));
+    }
+    if !data.js_type_loose().is_array_buffer_like() {
+        return Ok(None);
+    }
+    let Some(buffer) = data.as_array_buffer(global) else {
+        return Ok(None);
+    };
+    let bytes = buffer.byte_slice();
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(bytes.to_vec()))
+}
+
+fn write_bytes_to_s3(
+    cx: &bun_jsc::JsThread<'_>,
+    destination_blob: &Blob,
+    body: Vec<u8>,
+    options: &WriteFileOptions,
+) -> JsResult<JSValue> {
+    let destination_store = destination_blob
+        .store()
+        .expect("infallible: store present")
+        .clone();
+    let s3 = destination_store.data.as_s3();
+    let aws_options = match s3.get_credentials_with_options(options.extra_options, cx.global()) {
+        Ok(o) => o,
+        Err(err) => {
+            return Ok(
+                JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js(),
+            );
+        }
+    };
+    put_bytes_to_s3(
+        cx,
+        destination_blob,
+        s3,
+        &aws_options,
+        Cow::Owned(body),
+        None,
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5003,6 +5031,12 @@ pub(crate) fn write_file_internal(
                 return Ok(body_used_rejection(cx.global()));
             }
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
+        }
+
+        if destination_blob.is_s3()
+            && let Some(body) = copy_for_single_put(cx.global(), data)?
+        {
+            return write_bytes_to_s3(cx, &destination_blob, body, &options);
         }
 
         break 'brk Blob::get::<false, false>(cx.global(), data)?;

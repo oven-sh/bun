@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_collections::{ByteVecExt, VecExt};
@@ -75,7 +76,7 @@ pub(crate) fn stat(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::HEAD,
-            body: b"",
+            body: Cow::Borrowed(b""),
             request_payer,
             ..Default::default()
         },
@@ -98,7 +99,7 @@ pub(crate) fn download(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::GET,
-            body: b"",
+            body: Cow::Borrowed(b""),
             request_payer,
             ..Default::default()
         },
@@ -141,7 +142,7 @@ pub(crate) fn download_slice(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::GET,
-            body: b"",
+            body: Cow::Borrowed(b""),
             range: range.map(Vec::into_boxed_slice),
             request_payer,
             ..Default::default()
@@ -165,7 +166,7 @@ pub(crate) fn delete(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::DELETE,
-            body: b"",
+            body: Cow::Borrowed(b""),
             request_payer,
             ..Default::default()
         },
@@ -373,7 +374,7 @@ pub(crate) fn upload(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
-    content: &[u8],
+    content: Cow<'_, [u8]>,
     content_type: Option<&[u8]>,
     content_disposition: Option<&[u8]>,
     content_encoding: Option<&[u8]>,

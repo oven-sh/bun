@@ -271,6 +271,15 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // The call sites of the frames below `startFunction`, which it only compares with the functions of the frames. A call site is an object of a class that has no entry.
+  b.static(cpp("FormatStackTraceForJS.cpp", "jsFunctionCaptureCallSites"), {
+    ...operandCodeOnly,
+    args: { frameLimit: b.any.optional, startFunction: b.any.optional },
+    returns: newArrayOf(b.object),
+    uses: { frameLimit: converted, startFunction: b.inspected },
+    reads: ["ObjectFields", "NamedProperties", ...externalState],
+    implementation: b.hostCall,
+  }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
   // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and

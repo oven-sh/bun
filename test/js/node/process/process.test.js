@@ -3,7 +3,21 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { existsSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  nodeExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
+import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -358,6 +372,250 @@ it("process.chdir() on root dir", () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+// Windows keeps a `\\?\` prefix in the working directory of a process that starts in, or changes into, a directory
+// spelled with one. Bun derives paths from that directory without the prefix. Node keeps the prefix in `process.cwd()`.
+// https://github.com/oven-sh/bun/issues/11953
+describe.skipIf(!isWindows)("a working directory spelled with the \\\\?\\ prefix", () => {
+  // What the OS names as the working directory, so that a case knows that its prefix arrived.
+  const osCwd = `
+    const osCwd = () => {
+      const { symbols } = require("bun:ffi").dlopen("kernel32.dll", {
+        GetCurrentDirectoryW: { args: ["u32", "ptr"], returns: "u32" },
+      });
+      const units = new Uint16Array(32768);
+      return String.fromCharCode(...units.subarray(0, symbols.GetCurrentDirectoryW(units.length, units)));
+    };
+  `;
+  // Each line derives a path from the working directory. A line that throws reports why.
+  const script = `
+    ${osCwd}
+    const out = {};
+    const report = async (name, read) => {
+      try {
+        out[name] = await read();
+      } catch (error) {
+        out[name] = "threw " + (error?.message ?? error);
+      }
+    };
+    await report("osCwd", osCwd);
+    await report("cwd", () => process.cwd());
+    await report("pathResolve", () => require("node:path").resolve());
+    await report("main", () => Bun.main);
+    await report("metaDir", () => import.meta.dir);
+    await report("resolveSync", () => Bun.resolveSync("./dep.ts", "."));
+    await report("import", async () => (await import("./dep.ts")).default);
+    await report("require", () => require("./dep.cjs"));
+    await report("worker", () => new Promise((resolve, reject) => {
+      const worker = new Worker("./worker.ts");
+      worker.onmessage = event => (worker.terminate(), resolve(event.data));
+      worker.onerror = event => reject(new Error(event.message));
+    }));
+    await report("shell", async () => (await Bun.$\`echo shell\`.text()).trim());
+    await report("child", () => Bun.spawnSync([process.execPath, "-p", "process.cwd()"]).stdout.toString().trim());
+    await report("preloaded", () => globalThis.preloaded ?? false);
+    console.log(JSON.stringify(out));
+  `;
+  const files = {
+    "dep.ts": `export default "dep.ts";`,
+    "dep.cjs": `module.exports = "dep.cjs";`,
+    "worker.ts": `postMessage("worker.ts");`,
+    "preload.ts": `globalThis.preloaded = true;`,
+    "entry.mjs": script,
+    "package.json": JSON.stringify({ name: "process-cwd-verbatim", scripts: { entry: `'${bunExe()}' entry.mjs` } }),
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import dep from "./dep.ts";
+      ${osCwd}
+      test("derives paths from the working directory", () => {
+        expect(dep).toBe("dep.ts");
+        console.log(JSON.stringify({ osCwd: osCwd(), cwd: process.cwd(), metaDir: import.meta.dir }));
+      });
+    `,
+    "elsewhere/keep": "",
+  };
+  const parse = text => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  };
+  async function run(cwd, args, env = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The administrative share of a drive names the same directories on the server `localhost`.
+  const share = dir => "\\\\localhost\\" + dir[0] + "$" + dir.slice(2);
+  const hasShare = isWindows && existsSync(share(tmpdir()));
+  // The volume of `dir` by its GUID, `\\?\Volume{...}\`: a spelling with no plain form.
+  function volume(dir) {
+    const { symbols } = dlopen("kernel32.dll", {
+      GetVolumeNameForVolumeMountPointW: { args: ["ptr", "ptr", "u32"], returns: "i32" },
+    });
+    const mountPoint = Uint16Array.from(dir.slice(0, 3) + "\0", unit => unit.charCodeAt(0));
+    const name = new Uint16Array(64);
+    if (!symbols.GetVolumeNameForVolumeMountPointW(mountPoint, name, name.length)) return null;
+    return String.fromCharCode(...name.subarray(0, name.indexOf(0))) + dir.slice(3);
+  }
+  const hasVolume = isWindows && volume(tmpdir()) !== null;
+
+  describe.each([
+    ["plain", dir => dir],
+    ["\\\\?\\", dir => "\\\\?\\" + dir],
+  ])("the %s spelling", (_, spell) => {
+    it.concurrent.each([
+      ["bun -e", "[eval]", {}, ["-e", script]],
+      ["bun --preload -e", "[eval]", { preloaded: true }, ["--preload", "./preload.ts", "-e", script]],
+      ["bun --cwd -e, from another directory", "[eval]", { elsewhere: true }, ["-e", script]],
+      ["bun run entry.mjs", "entry.mjs", {}, ["run", "entry.mjs"]],
+      // `bun run` starts the script in the directory as Bun names it.
+      ["bun run <script>", "entry.mjs", { startsPlain: true }, ["run", "--silent", "entry"]],
+    ])("%s", async (_, main, { preloaded = false, elsewhere = false, startsPlain = false }, args) => {
+      using dir = tempDir("process-cwd-verbatim", files);
+      const root = String(dir);
+      const { stdout, stderr, exitCode } = elsewhere
+        ? await run(join(root, "elsewhere"), ["--cwd", spell(root), ...args])
+        : await run(spell(root), args);
+      expect({ out: parse(stdout), stderr, exitCode }).toEqual({
+        out: {
+          osCwd: startsPlain ? root : spell(root),
+          cwd: root,
+          pathResolve: root,
+          main: join(root, main),
+          metaDir: root,
+          resolveSync: join(root, "dep.ts"),
+          import: "dep.ts",
+          require: "dep.cjs",
+          worker: "worker.ts",
+          shell: "shell",
+          child: root,
+          preloaded,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("bun test", async () => {
+      using dir = tempDir("process-cwd-verbatim-test", files);
+      const root = String(dir);
+      const { stdout, stderr, exitCode } = await run(spell(root), ["test"]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.stringContaining(JSON.stringify({ osCwd: spell(root), cwd: root, metaDir: root })),
+        stderr: expect.stringContaining(" 1 pass"),
+        exitCode: 0,
+      });
+    });
+  });
+
+  // `spellings` gives pairs: what `process.chdir()` gets, and what `process.cwd()` then gives.
+  async function expectChdir(spellings) {
+    using dir = tempDir("process-chdir-verbatim", {});
+    const root = String(dir);
+    const pairs = spellings(root);
+    const script = `
+      ${osCwd}
+      const out = [];
+      for (const to of JSON.parse(process.env.SPELLINGS)) {
+        process.chdir(to);
+        out.push({ os: osCwd(), cwd: process.cwd() });
+      }
+      console.log(JSON.stringify(out));
+    `;
+    const env = { ...bunEnv, SPELLINGS: JSON.stringify(pairs.map(([to]) => to)) };
+    const { stdout, stderr, exitCode } = await run(root, ["-e", script], env);
+    expect({ out: parse(stdout), stderr, exitCode }).toEqual({
+      out: pairs.map(([os, cwd]) => ({ os, cwd })),
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+  it.concurrent("process.chdir() into a drive, plain and with \\\\?\\", () =>
+    expectChdir(dir => [
+      [dir, dir],
+      ["\\\\?\\" + dir, dir],
+    ]),
+  );
+  it.concurrent.skipIf(!hasShare)("process.chdir() into a share, plain and with \\\\?\\UNC\\", () =>
+    expectChdir(dir => [
+      [share(dir), share(dir)],
+      ["\\\\?\\UNC\\" + share(dir).slice(2), share(dir)],
+    ]),
+  );
+  // A volume GUID has no plain spelling, so `process.cwd()` gives what the OS gives.
+  it.concurrent.skipIf(!hasVolume)("process.chdir() into a volume GUID", () =>
+    expectChdir(dir => [[volume(dir), volume(dir)]]),
+  );
+
+  // The target of a junction is absolute, so a relative one is joined to the working directory.
+  async function expectJunction(spell) {
+    using dir = tempDir("process-cwd-junction", {});
+    const root = String(dir);
+    const script = `
+      const fs = require("node:fs");
+      process.chdir(process.env.SPELLED);
+      fs.mkdirSync("sub/target", { recursive: true });
+      fs.writeFileSync("sub/target/file", "through the junction");
+      fs.symlinkSync("target", "sub/link", "junction");
+      console.log(fs.readFileSync("sub/link/file", "utf8"));
+    `;
+    const { stdout, stderr, exitCode } = await run(root, ["-e", script], { ...bunEnv, SPELLED: spell(root) });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "through the junction\n", stderr: "", exitCode: 0 });
+  }
+  it.concurrent.each([
+    ["plain", dir => dir],
+    ["\\\\?\\", dir => "\\\\?\\" + dir],
+  ])("fs.symlinkSync() makes a junction to a relative target from the %s spelling", (_, spell) =>
+    expectJunction(spell),
+  );
+  it.concurrent.skipIf(!hasVolume)("fs.symlinkSync() makes a junction to a relative target from a volume GUID", () =>
+    expectJunction(volume),
+  );
+
+  it.concurrent.skipIf(!hasShare).each([
+    ["plain", unc => unc],
+    ["\\\\?\\UNC\\", unc => "\\\\?\\UNC\\" + unc.slice(2)],
+  ])("process.cwd() of a process that starts in the %s spelling of a share", async (_, spell) => {
+    using dir = tempDir("process-cwd-share", {});
+    const unc = share(String(dir));
+    const script = `${osCwd}\nconsole.log(JSON.stringify({ os: osCwd(), cwd: process.cwd() }));`;
+    const { stdout, stderr, exitCode } = await run(spell(unc), ["-e", script]);
+    expect({ out: parse(stdout), stderr, exitCode }).toEqual({
+      out: { os: spell(unc), cwd: unc },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node.js gives the working directory as the OS gives it. Bun differs on purpose.
+  it.concurrent.skipIf(!nodeExe())("Node.js keeps the prefix in process.cwd() and path.resolve()", async () => {
+    using dir = tempDir("process-cwd-verbatim-node", {});
+    const root = String(dir);
+    const print = `console.log(JSON.stringify({ cwd: process.cwd(), pathResolve: require("node:path").resolve() }));`;
+    async function read(exe) {
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", print],
+        env: bunEnv,
+        cwd: "\\\\?\\" + root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: parse(stdout), stderr, exitCode };
+    }
+    expect({ node: await read(nodeExe()), bun: await read(bunExe()) }).toEqual({
+      node: {
+        out: { cwd: "\\\\?\\" + root, pathResolve: "\\\\?\\" + root },
+        stderr: expect.any(String),
+        exitCode: 0,
+      },
+      bun: { out: { cwd: root, pathResolve: root }, stderr: "", exitCode: 0 },
+    });
+  });
 });
 
 it("process.hrtime()", async () => {

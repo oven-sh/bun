@@ -88,8 +88,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     return requireTestModule(parentFilename);
   }
 
-  // To handle import/export cycles, the module object is in the map before the
-  // module loads. $requireCommonJS puts it there, and takes it out if the load fails.
+  // To handle import/export cycles, $requireCommonJS puts the module object into the map before it loads the module.
   const mod = $createCommonJSModule(id, {}, false, this);
 
   var out: JSCommonJSModule | RequiredESMNamespace | -1;

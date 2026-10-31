@@ -1435,9 +1435,7 @@ static NEVER_INLINE void evictFromRequireMapAndRethrow(Zig::GlobalObject* global
     JSC::Exception* exception = scope.exception();
     ASSERT(exception);
     bool terminated = vm.isTerminationException(exception);
-    // A program can outlive a termination: node:vm withdraws the one of a `timeout` or `breakOnSigint` run.
-    // A VM that is stopping needs no cleanup. The scope below throws a termination again only while the VM
-    // still has the request.
+    // node:vm withdraws the termination of a `timeout` or `breakOnSigint` run, and the scope below rethrows one only while the VM has the request.
     if (terminated && (keepWhenTerminated || !WebCore::clientData(vm)->scriptAllowed() || !vm.hasTerminationRequest()))
         return;
     {
@@ -1515,8 +1513,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     JSValue specifierValue = callframe->uncheckedArgument(0);
     // This is always a new JSCommonJSModule in its parent's Bun.ModuleGraph, so the cast cannot fail.
     JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
-    // The map that `overridableRequire` looked `resolvedId` up in. `this` can be any object there, so it is not
-    // always the map of `child`'s Bun.ModuleGraph.
+    // The map that `overridableRequire` looked `resolvedId` up in: `this` is any object there, so `child`'s graph does not always have it.
     JSMap* requireMap = uncheckedDowncast<JSMap>(callframe->uncheckedArgument(5));
 
     bool reachedFile = false;

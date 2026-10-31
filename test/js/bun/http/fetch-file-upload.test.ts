@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { readdirSync, readlinkSync, realpathSync, writeFileSync } from "fs";
+import { isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -220,6 +221,91 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
   });
+});
+
+// exists(), .size and structuredClone() stat the file. When that stat failed
+// because the file was not there yet, the handle kept a size of 0 and fetch()
+// sent it: status 200, Content-Length 0, no bytes.
+describe("a Bun.file() that was asked before its file existed uploads the file", () => {
+  const askers: Record<string, (file: ReturnType<typeof Bun.file>) => unknown> = {
+    "exists()": file => file.exists(),
+    ".size": file => file.size,
+    "structuredClone()": file => structuredClone(file),
+  };
+  // Under 32 KiB fetch() reads the file into memory. From 32 KiB on it uses sendfile where it can.
+  for (const fileSize of [1000, 64 * 1024]) {
+    for (const [asker, ask] of Object.entries(askers)) {
+      test.concurrent(`${asker}, then a file of ${fileSize} bytes`, async () => {
+        using dir = tempDir("fetch-file-asked-upload", {});
+        const p = join(String(dir), "f.txt");
+
+        const seen: { contentLength: string | null; contentType: string | null; received: number }[] = [];
+        await using server = Bun.serve({
+          port: 0,
+          development: false,
+          async fetch(req) {
+            seen.push({
+              contentLength: req.headers.get("content-length"),
+              contentType: req.headers.get("content-type"),
+              received: (await req.arrayBuffer()).byteLength,
+            });
+            return new Response("ok");
+          },
+        });
+
+        const asked = Bun.file(p);
+        await ask(asked);
+        writeFileSync(p, Buffer.alloc(fileSize, "a"));
+
+        // The second upload, from a handle that nothing asked, is the reference.
+        for (const body of [asked, Bun.file(p)]) {
+          const res = await fetch(server.url, { method: "POST", body });
+          expect(await res.text()).toBe("ok");
+        }
+        const [fromAsked, fromUnasked] = seen;
+        expect(fromUnasked).toEqual({
+          contentLength: String(fileSize),
+          contentType: "text/plain;charset=utf-8",
+          received: fileSize,
+        });
+        expect(fromAsked).toEqual(fromUnasked);
+
+        if (isLinux) {
+          // An upload of 0 bytes through sendfile left its descriptor for the file open.
+          const target = realpathSync(p);
+          const openOnFile = () =>
+            readdirSync("/proc/self/fd").filter(fd => {
+              try {
+                return readlinkSync(`/proc/self/fd/${fd}`) === target;
+              } catch {
+                return false;
+              }
+            });
+          // fetch() closes the descriptor when it drops the request. That can be one turn of the event loop after the response.
+          const deadline = performance.now() + 5000;
+          let open = openOnFile();
+          while (open.length > 0 && performance.now() < deadline) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            open = openOnFile();
+          }
+          expect(open).toEqual([]);
+        }
+
+        // A handle with a file behind it is a body, so GET refuses it. The asked handle passed as "no body".
+        expect(async () => {
+          await fetch(server.url, { method: "GET", body: asked });
+        }).toThrow("fetch() request with GET/HEAD method cannot have body.");
+
+        // An empty window that the caller asked for is still an empty body.
+        const res = await fetch(server.url, { method: "POST", body: asked.slice(0, 0) });
+        expect(await res.text()).toBe("ok");
+        expect({ contentLength: seen[2].contentLength, received: seen[2].received }).toEqual({
+          contentLength: "0",
+          received: 0,
+        });
+      });
+    }
+  }
 });
 
 test("missing file throws the expected error", async () => {

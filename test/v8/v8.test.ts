@@ -469,6 +469,58 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("can create Uint8Array/Uint32Array views with offset and length", async () => {
       await checkSameOutput("test_v8_typedarray");
     });
+    it("ArrayBuffer and SharedArrayBuffer report ByteLength() and Data() like V8", async () => {
+      await checkSameOutput("test_v8_arraybuffer_accessors");
+    });
+    it("ArrayBuffer::Detach() detaches the buffer and its views", async () => {
+      const output = await checkSameOutput("test_v8_arraybuffer_detach");
+      expect(output).toContain("ByteLength() after Detach() = 0");
+    });
+    // V8 aborts the process when an addon detaches a buffer that is not detachable, such as a
+    // WebAssembly.Memory buffer or a SharedArrayBuffer, and it has no pinned buffers, so this cannot
+    // be compared against Node. JSC detaches whatever it is asked to, so Bun has to leave these attached.
+    it("ArrayBuffer::Detach() leaves a buffer attached when it cannot be detached", async () => {
+      const expected = [
+        "====== WebAssembly.Memory buffer",
+        "ByteLength() before Detach() = 65536",
+        "ByteLength() after Detach() = 65536",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 65536 detached = false",
+        "still the memory's buffer = true",
+        "ByteLength() = 65536",
+        "Data() != nullptr = 1",
+        "Data()[0] = 42",
+        "Data()[1] = 0",
+        "Data()[2] = 0",
+        "Data()[3] = 0",
+        "Data() == GetBackingStore()->Data() = 1",
+        "====== SharedArrayBuffer",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 8",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 8 bytes = 1,2,3,4,5,6,7,8",
+        "====== ArrayBuffer that a threadpool job is reading",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 8",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 8 detached = false",
+        "bytes = 1,2,3,4,5,6,7,8",
+        "====== the same ArrayBuffer after the job",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 0",
+        "Data() != nullptr after Detach() = 0",
+        "byteLength = 0 detached = true",
+      ].join("\n");
+      const buildModes = [BuildMode.release, BuildMode.debug];
+      const outputs = await Promise.all(
+        buildModes.map(buildMode => runOn(Runtime.bun, buildMode, "test_v8_arraybuffer_detach_undetachable")),
+      );
+      for (const [i, output] of outputs.entries()) {
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildModes[i]]} mode`).toBe(
+          expected,
+        );
+      }
+    });
   });
 
   describe("Function::Call / NewInstance", () => {

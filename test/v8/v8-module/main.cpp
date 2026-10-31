@@ -1860,6 +1860,83 @@ void test_v8_typedarray(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// v8::ArrayBuffer::ByteLength, Data and Detach, and
+// v8::SharedArrayBuffer::ByteLength and Data. These return text for the JS
+// driver to print instead of writing it to stdout. Node makes a piped stdout
+// non-blocking once JS has written to it, so a write from here is dropped when
+// the pipe is full. The text never contains an address.
+static void return_description(const FunctionCallbackInfo<Value> &info,
+                               const std::string &description) {
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(info.GetIsolate(), description.c_str())
+          .ToLocalChecked());
+}
+
+// Also overwrites the last byte through Data(). The JS caller sees that only
+// if Data() is the buffer's own memory and not a copy.
+template <typename BufferType>
+static std::string describe_buffer_accessors(Local<BufferType> buffer) {
+  size_t length = buffer->ByteLength();
+  uint8_t *data = static_cast<uint8_t *>(buffer->Data());
+  std::string description = "ByteLength() = " + std::to_string(length);
+  description += "\nData() != nullptr = " + std::to_string(data != nullptr);
+  for (size_t i = 0; data != nullptr && i < length && i < 4; i++) {
+    description +=
+        "\nData()[" + std::to_string(i) + "] = " + std::to_string(data[i]);
+  }
+  if (data != nullptr && length > 0) {
+    data[length - 1] = 0xee;
+  }
+  return description;
+}
+
+void describe_array_buffer(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBuffer> buffer = info[0].As<ArrayBuffer>();
+  std::string description = describe_buffer_accessors(buffer);
+  description +=
+      "\nData() == GetBackingStore()->Data() = " +
+      std::to_string(buffer->Data() == buffer->GetBackingStore()->Data());
+  return_description(info, description);
+}
+
+void describe_shared_array_buffer(const FunctionCallbackInfo<Value> &info) {
+  return_description(
+      info, describe_buffer_accessors(info[0].As<SharedArrayBuffer>()));
+}
+
+// Reads a view the way uWebSockets.js does: Buffer()->Data() + ByteOffset().
+// Also overwrites the first byte of the view through that pointer.
+void describe_array_buffer_view_bytes(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBufferView> view = info[0].As<ArrayBufferView>();
+  Local<ArrayBuffer> buffer = view->Buffer();
+  size_t length = view->ByteLength();
+  size_t offset = view->ByteOffset();
+  uint8_t *data = static_cast<uint8_t *>(buffer->Data());
+  std::string description = "view ByteLength() = " + std::to_string(length);
+  description += "\nview ends within Buffer()->ByteLength() = " +
+                 std::to_string(offset + length <= buffer->ByteLength());
+  for (size_t i = 0; data != nullptr && i < length && i < 4; i++) {
+    description += "\n(Buffer()->Data() + ByteOffset())[" + std::to_string(i) +
+                   "] = " + std::to_string(data[offset + i]);
+  }
+  if (data != nullptr && length > 0) {
+    data[offset] = 0xdd;
+  }
+  return_description(info, description);
+}
+
+void detach_array_buffer(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBuffer> buffer = info[0].As<ArrayBuffer>();
+  std::string description =
+      "ByteLength() before Detach() = " + std::to_string(buffer->ByteLength());
+  buffer->Detach();
+  description +=
+      "\nByteLength() after Detach() = " + std::to_string(buffer->ByteLength());
+  description += "\nData() != nullptr after Detach() = " +
+                 std::to_string(buffer->Data() != nullptr);
+  return_description(info, description);
+}
+
 void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -2576,6 +2653,12 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_prototype_template);
   NODE_SET_METHOD(exports, "test_v8_arraybuffer", test_v8_arraybuffer);
   NODE_SET_METHOD(exports, "test_v8_typedarray", test_v8_typedarray);
+  NODE_SET_METHOD(exports, "describe_array_buffer", describe_array_buffer);
+  NODE_SET_METHOD(exports, "describe_shared_array_buffer",
+                  describe_shared_array_buffer);
+  NODE_SET_METHOD(exports, "describe_array_buffer_view_bytes",
+                  describe_array_buffer_view_bytes);
+  NODE_SET_METHOD(exports, "detach_array_buffer", detach_array_buffer);
   NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
   NODE_SET_METHOD(exports, "test_v8_function_new_instance",
                   test_v8_function_new_instance);

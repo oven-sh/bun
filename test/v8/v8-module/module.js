@@ -235,6 +235,168 @@ module.exports = debugMode => {
       console.log("protoMethod is own =", Object.prototype.hasOwnProperty.call(inst, "protoMethod"));
     },
 
+    test_v8_arraybuffer_accessors() {
+      const fill = buffer => {
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.length; i++) bytes[i] = i + 1;
+        return buffer;
+      };
+      // The native side writes 0xee to the last byte through Data(). Reading it back here shows
+      // that Data() is the buffer's own memory and not a copy.
+      const show = (description, buffer, describe) => {
+        console.log(`====== ${description}`);
+        console.log(describe(buffer));
+        if (buffer.byteLength > 0) console.log("last byte seen from JS =", new Uint8Array(buffer).at(-1));
+      };
+      const showArrayBuffer = (description, buffer) => show(description, buffer, nativeModule.describe_array_buffer);
+      const showShared = (description, buffer) => show(description, buffer, nativeModule.describe_shared_array_buffer);
+
+      showArrayBuffer("ArrayBuffer(8)", fill(new ArrayBuffer(8)));
+      showArrayBuffer("ArrayBuffer(0)", new ArrayBuffer(0));
+      const transferred = fill(new ArrayBuffer(8));
+      transferred.transfer();
+      showArrayBuffer("ArrayBuffer(8) detached by transfer()", transferred);
+      const resizable = fill(new ArrayBuffer(4, { maxByteLength: 16 }));
+      showArrayBuffer("resizable ArrayBuffer, 4 of 16 bytes", resizable);
+      resizable.resize(12);
+      showArrayBuffer("resizable ArrayBuffer grown to 12 bytes", resizable);
+      resizable.resize(0);
+      showArrayBuffer("resizable ArrayBuffer shrunk to 0 bytes", resizable);
+      const offsetView = new Uint8Array(fill(new ArrayBuffer(8)), 2, 4);
+      showArrayBuffer("the buffer of a Uint8Array over bytes 2..6 of an ArrayBuffer", offsetView.buffer);
+      const fromArray = new Uint8Array([5, 6, 7]);
+      showArrayBuffer("the buffer of a Uint8Array made from an array", fromArray.buffer);
+      console.log("last byte seen through the Uint8Array =", fromArray.at(-1));
+      showArrayBuffer("WebAssembly.Memory buffer", new WebAssembly.Memory({ initial: 1 }).buffer);
+
+      showShared("SharedArrayBuffer(8)", fill(new SharedArrayBuffer(8)));
+      showShared("SharedArrayBuffer(0)", new SharedArrayBuffer(0));
+      const growable = fill(new SharedArrayBuffer(4, { maxByteLength: 16 }));
+      showShared("growable SharedArrayBuffer, 4 of 16 bytes", growable);
+      growable.grow(8);
+      showShared("growable SharedArrayBuffer grown to 8 bytes", growable);
+      const sharedOffsetView = new Uint8Array(fill(new SharedArrayBuffer(8)), 4);
+      showShared("the buffer of a Uint8Array over bytes 4..8 of a SharedArrayBuffer", sharedOffsetView.buffer);
+
+      // The native side writes 0xdd to the first byte of the view.
+      const showView = (description, view) => {
+        console.log(`====== ${description}`);
+        console.log(nativeModule.describe_array_buffer_view_bytes(view));
+        if (view.byteLength > 0) {
+          console.log("first byte seen from JS =", new Uint8Array(view.buffer, view.byteOffset, 1)[0]);
+        }
+      };
+      showView("Uint8Array over bytes 2..6 of an ArrayBuffer", new Uint8Array(fill(new ArrayBuffer(8)), 2, 4));
+      showView("DataView over bytes 3..5 of an ArrayBuffer", new DataView(fill(new ArrayBuffer(8)), 3, 2));
+      showView("Uint8Array made from an array", new Uint8Array([5, 6, 7]));
+      showView("Uint16Array", new Uint16Array([0x0201, 0x0403]));
+      const large = new Uint8Array(2000);
+      large.set([9, 8, 7, 6]);
+      showView("Uint8Array(2000)", large);
+      showView("Buffer", Buffer.from("abcd"));
+      showView("Uint8Array over bytes 4..8 of a SharedArrayBuffer", new Uint8Array(fill(new SharedArrayBuffer(8)), 4));
+      showView(
+        "length-tracking Uint8Array from byte 2 of a resizable ArrayBuffer",
+        new Uint8Array(fill(new ArrayBuffer(6, { maxByteLength: 16 })), 2),
+      );
+      showView("empty Uint8Array", new Uint8Array(0));
+    },
+
+    test_v8_arraybuffer_detach() {
+      console.log("====== ArrayBuffer(8) with views");
+      const buffer = new ArrayBuffer(8);
+      const bytes = new Uint8Array(buffer);
+      bytes.set([1, 2, 3, 4, 5, 6, 7, 8]);
+      const tail = new Uint8Array(buffer, 2, 4);
+      const dataView = new DataView(buffer, 2, 4);
+      console.log(nativeModule.detach_array_buffer(buffer));
+      console.log("byteLength =", buffer.byteLength, "detached =", buffer.detached);
+      console.log("Uint8Array: length =", bytes.length, "byteOffset =", bytes.byteOffset, "[0] =", bytes[0]);
+      console.log("Uint8Array at offset 2: length =", tail.length, "byteOffset =", tail.byteOffset);
+      for (const [description, use] of [
+        ["DataView read", () => dataView.getUint8(0)],
+        ["new Uint8Array(buffer)", () => new Uint8Array(buffer)],
+        ["slice()", () => buffer.slice(0)],
+      ]) {
+        try {
+          use();
+          console.log(`${description}: did not throw`);
+        } catch (e) {
+          console.log(`${description}: threw ${e.constructor.name}`);
+        }
+      }
+      console.log(nativeModule.describe_array_buffer(buffer));
+
+      console.log("====== the same buffer again");
+      console.log(nativeModule.detach_array_buffer(buffer));
+      console.log("byteLength =", buffer.byteLength, "detached =", buffer.detached);
+
+      console.log("====== ArrayBuffer(0)");
+      const empty = new ArrayBuffer(0);
+      console.log(nativeModule.detach_array_buffer(empty));
+      console.log("detached =", empty.detached);
+
+      console.log("====== resizable ArrayBuffer");
+      const resizable = new ArrayBuffer(4, { maxByteLength: 16 });
+      const tracking = new Uint8Array(resizable);
+      console.log(nativeModule.detach_array_buffer(resizable));
+      console.log("byteLength =", resizable.byteLength, "maxByteLength =", resizable.maxByteLength);
+      console.log("detached =", resizable.detached, "resizable =", resizable.resizable);
+      console.log("length-tracking Uint8Array: length =", tracking.length);
+
+      console.log("====== ArrayBuffer that transfer() already detached");
+      const transferred = new ArrayBuffer(8);
+      transferred.transfer();
+      console.log(nativeModule.detach_array_buffer(transferred));
+      console.log("detached =", transferred.detached);
+
+      console.log("====== the buffer of a Uint8Array made from an array");
+      const fromArray = new Uint8Array([5, 6, 7]);
+      console.log(nativeModule.detach_array_buffer(fromArray.buffer));
+      console.log("Uint8Array: length =", fromArray.length, "[0] =", fromArray[0]);
+
+      console.log("====== the buffer of a Uint8Array(2000)");
+      const large = new Uint8Array(2000);
+      console.log(nativeModule.detach_array_buffer(large.buffer));
+      console.log("Uint8Array: length =", large.length, "[0] =", large[0]);
+    },
+
+    // Bun only. V8 aborts the process when an addon detaches a buffer that is not detachable, and
+    // it has no pinned buffers.
+    test_v8_arraybuffer_detach_undetachable() {
+      console.log("====== WebAssembly.Memory buffer");
+      const memory = new WebAssembly.Memory({ initial: 1 });
+      const memoryBuffer = memory.buffer;
+      new Uint8Array(memoryBuffer)[0] = 42;
+      console.log(nativeModule.detach_array_buffer(memoryBuffer));
+      console.log("byteLength =", memoryBuffer.byteLength, "detached =", memoryBuffer.detached);
+      console.log("still the memory's buffer =", memory.buffer === memoryBuffer);
+      console.log(nativeModule.describe_array_buffer(memoryBuffer));
+
+      console.log("====== SharedArrayBuffer");
+      const shared = new SharedArrayBuffer(8);
+      const sharedBytes = new Uint8Array(shared);
+      sharedBytes.set([1, 2, 3, 4, 5, 6, 7, 8]);
+      console.log(nativeModule.detach_array_buffer(shared));
+      console.log("byteLength =", shared.byteLength, "bytes =", sharedBytes.join(","));
+
+      // Bun pins the input of a threadpool zlib job until the job is done, because the pool
+      // thread reads it.
+      const buffer = new ArrayBuffer(8);
+      const bytes = new Uint8Array(buffer);
+      bytes.set([1, 2, 3, 4, 5, 6, 7, 8]);
+      require("node:zlib").deflate(bytes, error => {
+        if (error) throw error;
+        console.log("====== the same ArrayBuffer after the job");
+        console.log(nativeModule.detach_array_buffer(buffer));
+        console.log("byteLength =", buffer.byteLength, "detached =", buffer.detached);
+      });
+      console.log("====== ArrayBuffer that a threadpool job is reading");
+      console.log(nativeModule.detach_array_buffer(buffer));
+      console.log("byteLength =", buffer.byteLength, "detached =", buffer.detached);
+      console.log("bytes =", bytes.join(","));
+    },
+
     test_v8_return_value_from_inner_scope() {
       // The native functions invoke this after their inner handle scope closed,
       // while the callback is still on the stack, so the collection runs in the

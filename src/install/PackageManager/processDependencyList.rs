@@ -7,7 +7,9 @@ use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
-use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
+use crate::lockfile_real::package::{
+    Diff, Package, PackageColumns, ResolverContext, package_json_context,
+};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
@@ -235,17 +237,15 @@ impl PackageManager {
         source: &bun_ast::Source,
         resolver: &mut R,
     ) -> crate::Result<()> {
-        // SAFETY: `self` is a live `&mut PackageManager`; the callee
-        // split-borrows `self.lockfile` / `self.log` (separate
-        // allocations) alongside `self` for the call's duration.
-        unsafe {
-            package.parse_from_real_manager(
-                std::ptr::from_mut::<PackageManager>(self),
-                source,
-                resolver,
-                Features::NPM,
-            )
-        }
+        let log = self.log_mut();
+        package.parse(
+            &mut self.lockfile,
+            &mut package_json_context!(self),
+            log,
+            source,
+            resolver,
+            Features::NPM,
+        )
     }
 
     /// Parses the package.json of an extracted package and adds what its `file:` folders depend on.
@@ -530,7 +530,7 @@ impl PackageManager {
             // Errors in the package.json are reported when the package is added.
             let parsed = listed.package.parse(
                 &mut listed.lockfile,
-                self,
+                &mut self.package_json_context(),
                 &mut bun_ast::Log::init(),
                 &source,
                 &mut OnlyDependencies,

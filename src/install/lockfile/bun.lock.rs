@@ -17,9 +17,10 @@ use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
-    DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
+    DependencyID, Npm, Origin, PackageID, PackageNameHash, Repository, Resolution,
     TruncatedPackageNameHash,
     bin::{Bin, Tag as BinTag},
     dependency,
@@ -1799,7 +1800,7 @@ pub(crate) fn parse_into_binary_lockfile(
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    manager: Option<&PackageManager>,
+    options: Option<&PackageManagerOptions>,
 ) -> Result<(), ParseError> {
     let at_value = |key_loc| value_loc_of(source, key_loc);
     let at_item = |key_loc, index| item_loc(source, key_loc, index);
@@ -2450,9 +2451,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 };
 
                 // Use scope-specific registry if available, otherwise fall back to default
-                let configured_registry = manager
-                    .map_or(Npm::Registry::DEFAULT_URL.as_bytes(), |mgr| {
-                        mgr.scope_for_package_name(name_str).url.href()
+                let configured_registry = options
+                    .map_or(Npm::Registry::DEFAULT_URL.as_bytes(), |options| {
+                        options.scope_for_package_name(name_str).url.href()
                     });
                 if registry_str.is_empty() {
                     let url = ExtractTarball::build_url(
@@ -2786,8 +2787,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &[Dependency] = buffers.dependencies.as_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
-        let link_workspace_packages =
-            manager.is_none_or(|manager| manager.options.link_workspace_packages);
+        let link_workspace_packages = options.is_none_or(|options| options.link_workspace_packages);
         let workspace_paths = &lockfile.workspace_paths;
         let workspace_versions = &lockfile.workspace_versions;
         // Returns the workspace that a peer's range matches. `Package::parse` turns such a peer of

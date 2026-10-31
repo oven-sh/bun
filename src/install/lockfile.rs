@@ -593,34 +593,32 @@ impl Lockfile {
             || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
     }
 
-    pub fn load_from_cwd<const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+    pub(crate) fn load_from_cwd(
         &mut self,
-        manager: Option<&mut PackageManager>,
+        options: Option<&PackageManagerOptions>,
         log: &mut bun_ast::Log,
     ) -> LoadResult {
-        self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(Fd::cwd(), manager, log)
+        self.load_from_dir(Fd::cwd(), options, log)
     }
 
-    pub fn load_from_dir<const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+    /// Reads bun.lock or bun.lockb.
+    pub(crate) fn load_from_dir(
         &mut self,
         dir: Fd,
-        manager: Option<&mut PackageManager>,
+        options: Option<&PackageManagerOptions>,
         log: &mut bun_ast::Log,
     ) -> LoadResult {
-        let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
+        let result = self.read_from_dir(dir, options, log);
         if matches!(result, LoadResult::Ok(_)) {
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
         result
     }
 
-    /// Reads bun.lock or bun.lockb. If neither exists, reads another package manager's lockfile to
-    /// migrate from.
     fn read_from_dir(
         &mut self,
-        attempt_loading_from_other_lockfile: bool,
         dir: Fd,
-        manager: Option<&mut PackageManager>,
+        options: Option<&PackageManagerOptions>,
         log: &mut bun_ast::Log,
     ) -> LoadResult {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
@@ -639,9 +637,6 @@ impl Lockfile {
             }
         }
         let Some((file, lockfile_format)) = opened else {
-            if attempt_loading_from_other_lockfile && let Some(pm) = manager {
-                return migration::detect_and_load_other_lockfile(self, dir, pm, log);
-            }
             return LoadResult::NotFound;
         };
 
@@ -658,13 +653,9 @@ impl Lockfile {
                 Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format),
             };
 
-            if let Err(e) = TextLockfile::parse_into_binary_lockfile(
-                self,
-                parsed.root,
-                &source,
-                log,
-                manager.as_deref(),
-            ) {
+            if let Err(e) =
+                TextLockfile::parse_into_binary_lockfile(self, parsed.root, &source, log, options)
+            {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
@@ -680,12 +671,12 @@ impl Lockfile {
             });
         }
 
-        self.load_from_bytes(manager.as_deref(), buf, log)
+        self.load_from_bytes(options, buf, log)
     }
 
     pub fn load_from_bytes(
         &mut self,
-        pm: Option<&PackageManager>,
+        options: Option<&PackageManagerOptions>,
         buf: Vec<u8>,
         log: &mut bun_ast::Log,
     ) -> LoadResult {
@@ -702,8 +693,8 @@ impl Lockfile {
         self.package_extensions = Default::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
 
-        let link_workspace_packages = pm.is_none_or(|pm| pm.options.link_workspace_packages);
-        let load_result = match Serializer::load(self, &mut stream, log, pm) {
+        let link_workspace_packages = options.is_none_or(|options| options.link_workspace_packages);
+        let load_result = match Serializer::load(self, &mut stream, log, options) {
             Ok(r) => r,
             Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e, LockfileFormat::Binary),
         };
@@ -1738,45 +1729,38 @@ fn registry_tarball_url(
     url
 }
 
-impl Lockfile {
+impl PackageManager {
+    /// Completes `self.lockfile`.
     /// `fill_integrity`: yarn berry records a checksum of its own zip archive, not of the tarball.
     /// `only`: package-lock.json records this metadata for the other packages, so only these are
     /// completed.
     pub(crate) fn fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         &mut self,
-        manager: &mut PackageManager,
         update_os_cpu: bool,
         fill_integrity: bool,
         only: Option<&[PackageID]>,
+        backfill: migration::Backfill,
     ) -> Result<(), AllocError> {
-        // Manifests are fetched for `manager.lockfile`, but `bun why` and `bun pm diff` load into a
-        // different lockfile.
-        let detached =
-            fill_integrity && !core::ptr::eq(&raw const *self, &raw const *manager.lockfile);
-        if detached {
-            core::mem::swap(self, &mut *manager.lockfile);
-        }
-        let populated = populate_manifest_cache::populate_manifest_cache(
-            manager,
-            only.map_or(
-                populate_manifest_cache::Packages::All,
-                populate_manifest_cache::Packages::Exact,
-            ),
-        );
-        if detached {
-            core::mem::swap(self, &mut *manager.lockfile);
-        }
-        if populated.is_err() {
+        if backfill == migration::Backfill::Download
+            && populate_manifest_cache::populate_manifest_cache(
+                self,
+                only.map_or(
+                    populate_manifest_cache::Packages::All,
+                    populate_manifest_cache::Packages::Exact,
+                ),
+            )
+            .is_err()
+        {
             return Ok(());
         }
         // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
-        manager.network_dedupe_map.clear();
+        self.network_dedupe_map.clear();
 
-        let cache_ctx = manager.manifest_disk_cache_ctx();
-        // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager`.
-        let options = &manager.options;
-        let manifests = &mut manager.manifests;
-        let mut pkgs = self.packages.slice();
+        let cache_ctx = self.manifest_disk_cache_ctx();
+        let options = &self.options;
+        let manifests = &mut self.manifests;
+        let lockfile = &mut *self.lockfile;
+        let mut pkgs = lockfile.packages.slice();
         let len = pkgs.len();
         let mut added_by_extensions: Vec<(PackageID, PackageNameHash, bool)> = Vec::new();
 
@@ -1800,7 +1784,7 @@ impl Lockfile {
             {
                 continue;
             }
-            let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+            let pkg_name_str = pkg_name.slice(lockfile.buffers.string_bytes.as_slice());
             let scope = options.scope_for_package_name(pkg_name_str);
             let Some(manifest) = manifests.by_name_hash_allow_expired(
                 cache_ctx,
@@ -1820,7 +1804,7 @@ impl Lockfile {
 
             // The manifest's metadata is only used if the locked tarball is the one that it
             // describes.
-            let buf = self.buffers.string_bytes.as_slice();
+            let buf = lockfile.buffers.string_bytes.as_slice();
             let url = pkg_res.npm().url.slice(buf);
             let locked_integrity = pkg_metas[i].integrity;
             let is_from_registry = url.is_empty()
@@ -1845,7 +1829,7 @@ impl Lockfile {
 
             // pnpm-lock.yaml mixes the dependencies that `packageExtensions` added in with the
             // package's own. Anything the manifest doesn't declare came from an extension.
-            let extensions = &self.package_extensions;
+            let extensions = &lockfile.package_extensions;
             for (name_hash, is_peer) in
                 extensions.dependencies_added_to(pkg_name_hash, npm_ver, buf)
             {
@@ -1863,7 +1847,7 @@ impl Lockfile {
                 }
             }
 
-            let mut builder = string_builder!(self);
+            let mut builder = string_builder!(lockfile);
 
             let bin_extern_strings_count = pkg.package.bin.count(
                 &manifest.string_buf,
@@ -1873,7 +1857,7 @@ impl Lockfile {
 
             builder.allocate()?;
 
-            let extern_strings_list = &mut self.buffers.extern_strings;
+            let extern_strings_list = &mut lockfile.buffers.extern_strings;
             let start = extern_strings_list.len();
             let extern_strings_slice =
                 bun_core::vec::grow_default(extern_strings_list, bin_extern_strings_count as usize);
@@ -1913,7 +1897,8 @@ impl Lockfile {
                 pkg_meta.integrity = pkg.package.integrity;
             }
         }
-        self.record_migrated_package_extensions(manager.log_mut(), &added_by_extensions)
+        let log = self.log_mut();
+        (self.lockfile).record_migrated_package_extensions(log, &added_by_extensions)
     }
 }
 
@@ -1966,7 +1951,7 @@ impl<'a> Printer<'a> {
         // git's textconv hands over `<random>_bun.lockb`. `bun bun.lockb` also prints a bun.lock.
         let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path) {
             Ok(bytes) => lockfile.load_from_bytes(None, bytes, log),
-            Err(_) => lockfile.load_from_cwd::<false>(None, log),
+            Err(_) => lockfile.load_from_cwd(None, log),
         };
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {

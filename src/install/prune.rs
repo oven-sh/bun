@@ -613,21 +613,22 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let mut to_lockfile = Lockfile::default();
     let mut to_root = Package::default();
     let mut resolver: () = ();
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
-    let summary = unsafe {
-        let parsed = to_root.parse_with_json(
-            &mut to_lockfile,
-            &mut *pm,
-            log,
-            &source,
-            json,
-            &mut resolver,
-            Features::main(),
-        );
-        match parsed {
-            Ok(()) => {
-                let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
+    let parsed = to_root.parse_with_json(
+        &mut to_lockfile,
+        &mut manager.package_json_context(),
+        log,
+        &source,
+        json,
+        &mut resolver,
+        Features::main(),
+    );
+    let summary = match parsed {
+        Ok(()) => {
+            let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
+            let pm: *mut PackageManager = manager;
+            // SAFETY: `lockfile` is its own `Box` allocation, and `Diff::generate` never reaches
+            // it through `pm`.
+            unsafe {
                 let from_lockfile: *mut Lockfile = &raw mut *(*pm).lockfile;
                 Diff::generate(
                     &mut *pm,
@@ -640,8 +641,8 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
                     Some(&mut mapping[..]),
                 )
             }
-            Err(err) => Err(err),
         }
+        Err(err) => Err(err),
     };
     let summary = match summary {
         Ok(summary) => summary,
@@ -839,8 +840,8 @@ fn hoist_tree(
         resolutions: manager.lockfile.buffers.resolutions.clone(),
     };
     let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box`
-    // allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
+    // SAFETY: `lockfile` is its own `Box` allocation, and of the manager the Filter builder only
+    // reads `options` and `summary`.
     let result = unsafe {
         let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
         let log: *mut bun_ast::Log = (*pm).log;

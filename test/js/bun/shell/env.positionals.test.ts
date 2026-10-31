@@ -1,6 +1,6 @@
 import { $, spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import * as path from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -90,4 +90,21 @@ test("$ argv: standalone: non-ascii", async () => {
   expect(stdout).toBeDefined();
   const out = await stdout.text();
   expect(out.split("\n")).toEqual([script, "キ", "テテ", "ィ", "・", "ホ", "ワ", "イ", "ト", "", "キ0", ""]);
+});
+
+// bash and dash keep `"$2"` as one empty word when there is no second argument.
+test.concurrent.each([
+  ["standalone script", "quoted.bun.sh", `echo a "$1" "$2" $2 b\n`, ["run"]],
+  ["Bun.$", "quoted.js", 'await Bun.$`echo a "$2" "$3" $3 b`;\n', []],
+] as const)("a quoted positional that is not set is one empty word: %s", async (_, file, source, runArgs) => {
+  using dir = tempDir("shell-quoted-positional", { [file]: source });
+  await using proc = spawn({
+    cmd: [bunExe(), ...runArgs, path.join(String(dir), file), "x"],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a x  b\n", stderr: "", exitCode: 0 });
 });

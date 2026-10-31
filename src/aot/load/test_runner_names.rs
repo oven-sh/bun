@@ -14,8 +14,7 @@ use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 
 use crate::load::react_compiler::module_items::{
-    POSITION, finish_file, put_around_body, write_constant, write_import,
-    write_initialized_constant,
+    POSITION, finish_file, put_around_body, write_constant, write_declaration, write_import,
 };
 
 const MODULE: &[u8] = b"bun:test";
@@ -149,7 +148,7 @@ fn write_own_globals(file: &mut FileBuilder, names: &[(Atom, Atom, Atom)]) -> St
         let ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION);
         global = file.expr(ExprKind::As { expr: global, ty }, POSITION, POSITION);
     }
-    write_initialized_constant(file, pat, global)
+    write_declaration(file, pat, global)
 }
 
 pub(crate) fn import_used_names<'s>(

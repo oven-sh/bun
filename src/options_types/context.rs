@@ -514,6 +514,8 @@ pub struct TestOptions {
     pub globals: Option<TestGlobals>,
     /// `--react-compiler` or `[test] reactCompiler`.
     pub react_compiler: Option<ReactCompilerScope>,
+    /// `bun test --aot --aot-memory-limit=<size>`, in bytes.
+    pub aot_memory_limit: Option<u64>,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -653,6 +655,7 @@ impl Default for TestOptions {
             changed: None,
             shard: None,
             timings_files: Vec::new(),
+            aot_memory_limit: None,
             update_timings: false,
             environment: None,
             globals: None,

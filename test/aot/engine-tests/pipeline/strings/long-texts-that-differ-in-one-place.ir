@@ -159,5 +159,5 @@ function f4 name="looselySame" module=m0 position=392 flags=[IsChecked, HasExpli
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 287, patchpoints: 27, rare instructions: 40, polls: 3
+# CHECK-NEXT: instructions: 173, patchpoints: 22, rare instructions: 5, polls: 3
 # CHECK-NEXT: end of function f0

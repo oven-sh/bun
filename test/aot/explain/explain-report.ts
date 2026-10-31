@@ -24,6 +24,7 @@ export interface ExplainCause {
   calls: number;
   operators: number;
   fixedByThisAlone: number;
+  otherOrigins: { file: string; line: number; column: number }[];
   estimatedPercent: number;
   function: string;
   types: string[];

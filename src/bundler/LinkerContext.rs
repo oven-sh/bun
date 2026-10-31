@@ -4976,7 +4976,7 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
+        let mut pieces: Vec<OutputPiece> = Vec::new();
         // Note: `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
         // (each `OutputPiece` stores a raw `*const u8` into it). It is moved

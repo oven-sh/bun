@@ -188,6 +188,8 @@ export const define: Record<string, string> = {
   "CAN_LOAD_CODE_AT_RUN_TIME": "true",
   // `bun compile` replaces the value: false for a program that never names node:cluster.
   "CAN_BE_CLUSTER_WORKER": "true",
+  // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function.
+  "CAN_REPLACE_BUILT_INS": "true",
   // `bun compile` replaces the value: true where these files are compiled ahead of time.
   "IS_COMPILED_AHEAD_OF_TIME": "false",
 

@@ -32,6 +32,7 @@ export default b.declarations(
   ]),
   marked("HoldsLoader", [
     "%ModuleRequire%.cache",
+    "%ModuleRequirePrototype%.cache",
     "node:module._cache",
     "%ModuleObject%.require",
     "node:module.prototype.require",
@@ -39,6 +40,15 @@ export default b.declarations(
     "node:module._load",
     "node:module._resolveFilename",
   ]),
+  // import() of a graph, and the handlers under ".js" and the like: (module, filename) => ..
+  marked("ReadLoadsCodeByName", [
+    "Bun.ModuleGraph",
+    "%ModuleRequire%.extensions",
+    "%ModuleRequirePrototype%.extensions",
+    "node:module._extensions",
+  ]),
+  marked("IsResolverThatLoaderCalls", ["node:module._resolveFilename"]),
+  marked("IsRequireThatLoaderCalls", ["node:module.prototype.require"]),
   marked("IsSpy", [
     "bun:test.spyOn",
     "bun:test.jest.spyOn",
@@ -50,8 +60,37 @@ export default b.declarations(
   ]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("IsReplacedBySetter", ["self"]),
+  marked("AnswersNullAsItsPrototype", ["%ImportMeta%"]),
+  marked("HoldsPathOfMainModule", ["Bun.main"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
   marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
+  // console_print_runtime_object() in src/runtime/jsc_hooks.rs, and Buffer.prototype.inspect.
+  marked("InstancesArePrintedWithoutTheirGetters", [
+    "%BuildArtifact%.prototype",
+    "%BunRequest%.prototype",
+    "%Immediate%.prototype",
+    "%S3File%.prototype",
+    "%Timeout%.prototype",
+    "Blob.prototype",
+    "Buffer.prototype",
+    "BuildMessage.prototype",
+    "Bun.Archive.prototype",
+    "Bun.S3Client.prototype",
+    "File.prototype",
+    "Headers.prototype",
+    "Request.prototype",
+    "ResolveMessage.prototype",
+    "Response.prototype",
+  ]),
+  // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
+  marked("LoadsCodeWithoutJSAccess", [
+    "%NativeFunctions%.FfiBindTsLinkLibrary",
+    "%NativeFunctions%.FfiBindTsMakeFunction",
+    "%NativeFunctions%.FfiBindTsOpenLibrary",
+    "Bun.FFI.cfunction",
+    "Bun.FFI.dlopen",
+    "Bun.FFI.linkSymbols",
+  ]),
   marked("RunsWaitingJobs", [
     "%Expect%",
     "Bun.jest",
@@ -66,4 +105,7 @@ export default b.declarations(
   b.extend("Bun.FFI.dlopen", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
   b.extend("Bun.FFI.linkSymbols", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
   b.extend("Bun.FFI.cfunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
+  b.extend("%NativeFunctions%.FfiBindTsOpenLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
+  b.extend("%NativeFunctions%.FfiBindTsLinkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
+  b.extend("%NativeFunctions%.FfiBindTsMakeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
 );

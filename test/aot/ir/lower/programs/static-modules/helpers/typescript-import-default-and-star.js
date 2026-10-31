@@ -68,7 +68,7 @@ module.exports = () => "plain";
 
 // GENERATED: get ownKeys
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected] variableName="m"}, {type=undefined|null|number|string|symbol flags=[IsExpected] variableName="k"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

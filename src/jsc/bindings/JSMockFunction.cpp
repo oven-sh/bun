@@ -287,6 +287,15 @@ static bool isJSFunctionOrCompiledCallee(JSObject* object)
 JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject*, JSObject*);
 
 // Script never sees what putDirect() stores on a Proxy, or on a node:vm global for a key that the contextified object has.
+static bool isModuleNamespace(JSObject* object)
+{
+#if ENABLE(AOT)
+    if (JSC::AOT::isModuleNamespace(object))
+        return true;
+#endif
+    return object->inherits<JSModuleNamespaceObject>();
+}
+
 static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
 {
     if (!object->structure()->typeInfo().prohibitsPropertyCaching()) [[likely]]
@@ -974,12 +983,16 @@ private:
         bool isOpaque = attributes & SpyAttributeOpaque;
 
         if (attributes & SpyAttributeESModuleNamespace) {
-            auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target);
-            if (moduleNamespaceObject && original) {
-                ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
-                scope.release();
+            if (!original)
+                return;
+            ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
+            scope.release();
+            if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
-            }
+#if ENABLE(AOT)
+            else if (JSC::AOT::isModuleNamespace(target))
+                JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
+#endif
             return;
         }
 
@@ -3083,15 +3096,30 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
     if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable"_s));
+        String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.impl());
+        if (message.isNull())
+            message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
+        throwTypeError(globalObject, scope, message);
         return {};
     }
 
-    if (JSC::AOT::isModuleNamespace(object)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because module exports can't be replaced in a compiled executable"_s));
-        return {};
-    }
 #endif
+
+    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
+    auto replaceExport = [&](JSValue replacement) {
+        if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            return true;
+        }
+#if ENABLE(AOT)
+        if (JSC::AOT::isModuleNamespace(object)) {
+            if (!JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement))
+                throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because module exports can't be replaced in a compiled executable"_s));
+            return true;
+        }
+#endif
+        return false;
+    };
 
     // easymode: regular property or missing property
     if (isEasy) {
@@ -3111,8 +3139,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             }
         }
 
-        auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object);
-        if (moduleNamespaceObject && !hasValue) {
+        bool isNamespace = isModuleNamespace(object);
+        if (isNamespace && !hasValue) {
             throwTypeError(globalObject, scope, makeString("spyOn(target, prop) expects the module namespace object to export `"_s, propertyKeyForMessage(propertyKey), '`'));
             return {};
         }
@@ -3121,7 +3149,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
-        if (moduleNamespaceObject)
+        if (isNamespace)
             spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
         if (isOpaque)
             spyAttributes |= JSMockFunction::SpyAttributeOpaque;
@@ -3131,11 +3159,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             RETURN_IF_EXCEPTION(scope, {});
 
             ThroughLockOfBuiltins throughLock(vm, isOpaque);
-            if (moduleNamespaceObject) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
-            } else {
+            if (!replaceExport(mock))
                 putOwnPropertyStorage(globalObject, object, propertyKey, mock, attributes, isOpaque);
-            }
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
@@ -3149,11 +3174,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             RETURN_IF_EXCEPTION(scope, {});
 
             ThroughLockOfBuiltins throughLock(vm, isOpaque);
-            if (moduleNamespaceObject) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
-            } else {
+            if (!replaceExport(mock))
                 putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes | PropertyAttribute::Accessor, isOpaque);
-            }
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -3166,7 +3188,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         throwTypeError(globalObject, scope, makeString("spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKeyForMessage(propertyKey), '`'));
         return {};
     }
-    if (object->inherits<JSModuleNamespaceObject>()) {
+    if (isModuleNamespace(object)) {
         throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Get ? "getter"_s : "setter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` export because the exports of a module namespace object are not accessors"_s));
         return {};
     }

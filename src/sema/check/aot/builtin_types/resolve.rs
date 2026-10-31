@@ -1,6 +1,6 @@
 use super::{BuiltinTypeClass, BuiltinTypePath, BuiltinValueIndex, BuiltinValuePath, Denotation};
 use crate::atom::Atom;
-use crate::bind::{Decl, PatParent, ScopeId, SymFlags};
+use crate::bind::{Decl, FnOwner, PatParent, ScopeId, SymFlags};
 use crate::check::aot::answers::FunctionRef;
 use crate::hir::{
     ExprId, ExprKind, File, FileKind, Flags, FnBody, FnId, MemberId, MemberKind, PropKey, Span,
@@ -10,6 +10,7 @@ use crate::program::{FileId, Files, Sym};
 use crate::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry;
+use std::sync::OnceLock;
 
 type TypeClasses = FxHashMap<Sym, BuiltinTypeClass>;
 type EntityName = SmallVec<[Atom; 4]>;
@@ -41,12 +42,13 @@ pub(super) fn resolve_type_classes(
     classes
 }
 
-pub(super) fn collect_call_signatures(
+pub(super) fn collect_call_signatures<'a, 'b: 'a>(
     files: &Files<'_>,
-    values: &[BuiltinValuePath<'_>],
+    values: impl IntoIterator<Item = impl std::borrow::Borrow<BuiltinValuePath<'b>> + 'a>,
 ) -> FxHashMap<FunctionRef, BuiltinValueIndex> {
     let mut call_signatures = FxHashMap::default();
     for path in values {
+        let path = path.borrow();
         let Some(value) = find_symbol(files, path.module, path.names, SymFlags::VALUE) else {
             continue;
         };
@@ -58,6 +60,75 @@ pub(super) fn collect_call_signatures(
         }
     }
     call_signatures
+}
+
+/// The paths that `collect_call_signatures` can enter a signature for.
+pub(super) enum Claimants {
+    None,
+    /// A method is a declaration of the symbol that a table has under its name, and of no other.
+    Named(Atom),
+    Any,
+}
+
+pub(super) fn find_claimants(files: &Files<'_>, signature: FunctionRef) -> Claimants {
+    let FunctionRef { file, function } = signature;
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    match bound.fns[function.idx()].owner {
+        FnOwner::Stmt(_) if is_runtime_declaration(files, file, Decl::Fn(function)) => {
+            Claimants::None
+        }
+        FnOwner::Stmt(_) => Claimants::Any,
+        FnOwner::Member(member) => match hir[member].kind {
+            MemberKind::CallSignature => Claimants::Any,
+            MemberKind::Method => match bound.member_symbol[member.idx()].some() {
+                Some(symbol) => Claimants::Named(bound.symbol(symbol).name),
+                None => Claimants::None,
+            },
+            _ => Claimants::None,
+        },
+        FnOwner::None | FnOwner::Expr(_) | FnOwner::Type(_) => Claimants::None,
+    }
+}
+
+#[derive(Default)]
+struct MethodsOfName {
+    /// Indexes into the list of paths, in its order.
+    paths: SmallVec<[u32; 4]>,
+    signatures: OnceLock<FxHashMap<FunctionRef, BuiltinValueIndex>>,
+}
+
+pub(super) struct MethodsByName(FxHashMap<Atom, MethodsOfName>);
+
+impl MethodsByName {
+    pub(super) fn group(files: &Files<'_>, values: &[BuiltinValuePath<'_>]) -> MethodsByName {
+        let mut by_name: FxHashMap<Atom, MethodsOfName> = FxHashMap::default();
+        for (index, path) in (0u32..).zip(values) {
+            let last = path.names.last();
+            if let Some(name) = last.and_then(|name| files.atoms.lookup(name.as_bytes())) {
+                by_name.entry(name).or_default().paths.push(index);
+            }
+        }
+        MethodsByName(by_name)
+    }
+
+    pub(super) fn value_of(
+        &self,
+        files: &Files<'_>,
+        values: &[BuiltinValuePath<'_>],
+        name: Atom,
+        signature: FunctionRef,
+    ) -> Option<BuiltinValueIndex> {
+        let methods = self.0.get(&name)?;
+        let collect = || {
+            let paths = methods.paths.iter().map(|&index| values[index as usize]);
+            collect_call_signatures(files, paths)
+        };
+        methods
+            .signatures
+            .get_or_init(collect)
+            .get(&signature)
+            .copied()
+    }
 }
 
 fn find_symbol(

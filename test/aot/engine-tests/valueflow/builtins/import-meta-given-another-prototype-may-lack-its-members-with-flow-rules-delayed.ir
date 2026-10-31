@@ -1,0 +1,37 @@
+# Object.setPrototypeOf(import.meta, { resolve(x) { return x; }, url: 5 }); import.meta.resolve("./x.mjs"); import.meta.resolveSync("./x.mjs"); return import.meta.url
+# The host keeps what the table lists on import.meta on an object between it and Object.prototype. Another prototype takes all of that away: a read goes on to
+# the new prototype, and finds what stands there or nothing. So no callee is sure to be a function, and `url` is not sure to be a string
+# import-meta-given-another-prototype-may-lack-its-members.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules
+# RUN: valueflow-solve calls primitives
+# CHECK: f0 v10 -> primitive0 ImportMetaResolve f1
+# CHECK-NEXT: f0 v12 -> primitive0 ImportMetaResolveSync
+# RUN(APPLY): valueflow-apply
+# APPLY: AssumeType v8 provenType=undefined|f1|builtin(ImportMetaResolve)
+# APPLY: AssumeType v11 provenType=undefined|builtin(ImportMetaResolveSync)
+# APPLY: AssumeType v13 provenType=undefined|int|string
+
+module m0 path="/app/main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+layout L0 fields=[{key="resolve" declared={type=anything}}, {key="url" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectSetPrototypeOf
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    v3 = NewClosure function=f1
+    v4 = Integer integer=5
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Call v1, v0, v2, v6
+    v8 = PropGet v2 key="resolve"
+    v9 = String string="./x.mjs"
+    v10 = Call v8, v2, v9 calleeKey="resolve"
+    v11 = PropGet v2 key="resolveSync"
+    v12 = Call v11, v2, v9 calleeKey="resolveSync"
+    v13 = PropGet v2 key="url"
+    Return v13
+}
+function f1 name="resolve" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

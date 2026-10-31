@@ -75,6 +75,8 @@ public:
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
+    // `module.parent = 7`: from then on nobody asks the compiled program who required the file first.
+    bool m_isParentStored { false };
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;

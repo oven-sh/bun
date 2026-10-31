@@ -1,13 +1,14 @@
 // How the handlers of a small server are compiled depends on the handlers and on what they call, not on how much code there is
 // elsewhere in the program that seldom runs: the handlers are hot, and a body is parsed by the type it is given.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -84,13 +85,3 @@ test("the handlers of a server are hot beside 0, 20, 100 and 400 statements that
     }
   }
 });
-
-// TODO: what the handlers call is hot or warm by its share of the program, so two handlers differ by a few bytes.
-test.todo(
-  "every function of a server has the same size beside 0, 20, 100 and 400 statements that seldom run",
-  async () => {
-    const [alone, ...others] = await Promise.all([0, 20, 100, 400].map(compile));
-    expect(alone.functions.length).toBeGreaterThan(10);
-    for (const other of others) expect(other).toEqual(alone);
-  },
-);

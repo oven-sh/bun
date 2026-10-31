@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "BunCompiledModules.h"
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
@@ -806,6 +807,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+extern "C" SYSV_ABI double AOT__nanoseconds(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
@@ -1159,6 +1165,11 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        Bun::willStorePathOfMainModule(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return BunObject_setter_main(globalObject, encodedValue);
 }
 

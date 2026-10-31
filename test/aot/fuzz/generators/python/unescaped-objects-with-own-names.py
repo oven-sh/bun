@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""unescaped-objects-with-own-names.py <seed> [<functions>]: as non-escaping-objects.py, made so that a flow analysis can follow it to the end: each function has names, readers and writers OF ITS OWN, no try, no shared printer, nothing that throws: literals of numbers, strings, booleans, null and nested literals; stores of other kinds over them, members added, deleted, added again, spreads, Object.assign | keys | values | entries, arrays, Maps, closures, joins, loops, swaps, parameters, results. What is looked at is written out member by member by static names. Every line must be as plain Bun's."""
+"""unescaped-objects-with-own-names.py <seed> [<functions>]: Like non-escaping-objects.py, arranged so that a flow
+analysis can follow everything: each function has its own names, readers and writers, no try, no shared printer.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 150
 R = random.Random(seed)

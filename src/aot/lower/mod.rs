@@ -7,6 +7,7 @@ mod condition;
 mod context;
 mod control;
 mod convert;
+mod counted_places;
 mod data;
 mod decorators;
 mod dispose;
@@ -29,6 +30,7 @@ mod operator;
 mod parameters;
 mod pattern;
 mod positions;
+mod prepared;
 mod private_names;
 mod scope;
 mod statement;
@@ -49,12 +51,13 @@ use crate::ir::generated::MethodKind;
 use crate::ir::{FunctionId, FunctionKey};
 use crate::statistics::Counters;
 
-pub use self::context::{FileInputs, LoweringInputs, LoweringOptions, SourceKind};
+pub use self::context::{FileInputs, LoweringInputs, LoweringOptions, SourceKind, prepare_file};
 pub use self::fragment::{Fragment, ModuleFragment};
 #[cfg(test)]
 pub(crate) use self::layouts::late_answers;
 pub use self::layouts::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 pub use self::module::{LeftOutDeclarations, LibraryFunctions, collect_library_functions};
+pub use self::prepared::PreparedFiles;
 pub use self::transpiled::RuntimeTranspiler;
 
 pub(crate) use self::context::{FileLowering, FunctionLowering};
@@ -80,6 +83,7 @@ pub fn lower_file<'s>(
     checker: &mut Checker<'_, 's>,
     file: FileId,
 ) -> Option<LoweredFile> {
+    inputs.prepared.note_lowering(file);
     checker.with_queries(file, inputs.query_inputs(), |queries| {
         lower_with_queries(inputs, queries, file)
     })
@@ -91,7 +95,6 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
     file: FileId,
 ) -> Option<LoweredFile> {
     let mut lowering = FileLowering::new(inputs, queries, file);
-    lowering.refuse_chains_past_nesting_limit();
     lowering.refuse_invalid_regexp_literals();
     let roots = lowering.declare_module_roots();
     while let Some(function) = lowering.take_next_function() {
@@ -102,6 +105,7 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
         lowering.lower_function(function);
     }
     lowering.queries.note_idle();
+    lowering.collect_function_type_parameters();
     lowering.define_remaining_layouts();
     let module = lowering.finish_module(roots);
     lowering.define_signatures();

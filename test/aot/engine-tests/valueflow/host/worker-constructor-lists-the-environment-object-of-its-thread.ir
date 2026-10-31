@@ -8,7 +8,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65583 function=f1
+runtimefunction id=ProcessObjectInternalsWindowsEnv function=f1
 layout L0 fields=[{key="get" declared={type=anything}}, {key="getOwnPropertyDescriptor" declared={type=anything}}, {key="ownKeys" declared={type=anything}}, {key="set" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -21,7 +21,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = Construct v5, -, v4
     Return
 }
-function f1 name="windowsEnv" role=Library enclosingRuntimeFunction=65583 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="windowsEnv" role=Library enclosingRuntimeFunction=ProcessObjectInternalsWindowsEnv parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     v6 = NewClosure function=f2
     v7 = NewClosure function=f3

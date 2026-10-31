@@ -41,6 +41,49 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+/// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
+fn reads_as_path_of_tests(argument: &[u8]) -> bool {
+    bun_paths::is_absolute(argument)
+        || argument.starts_with(b"./")
+        || argument.starts_with(b"../")
+        || (cfg!(windows) && (argument.starts_with(b".\\") || argument.starts_with(b"..\\")))
+}
+
+/// `bun test --files-from <list>`. Every line is a path, never a filter. A list
+/// with no paths is an error: with no positionals `bun test` runs everything.
+fn append_test_files_from(list: &[u8], positionals: &mut Vec<Box<[u8]>>) {
+    let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), list) {
+        Ok(contents) => contents,
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: failed to read --files-from file <b>{}<r>: {}",
+                BStr::new(list),
+                err
+            );
+            Global::exit(1);
+        }
+    };
+    let before = positionals.len();
+    for line in strings::split(&contents, b"\n") {
+        let path = strings::trim(line, b" \t\r");
+        if path.is_empty() {
+            continue;
+        }
+        positionals.push(if reads_as_path_of_tests(path) {
+            path.into()
+        } else {
+            [b"./".as_slice(), path].concat().into()
+        });
+    }
+    if positionals.len() == before {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --files-from file <b>{}<r> lists no test files",
+            BStr::new(list)
+        );
+        Global::exit(1);
+    }
+}
+
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
@@ -185,10 +228,13 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
     ),
     parse_param!(
-        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only"
+        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only. <b>bun test<r> compiles it and runs the compiled code"
     ),
     parse_param!(
         "--aot-log-type-mismatches         Compile the program like bun compile, run it, and log every value that doesn't match its declared type"
+    ),
+    parse_param!(
+        "--aot-allow-code-from-disk        With --aot: let import() and require() load code from disk that wasn't compiled. The build takes longer"
     ),
     parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
@@ -346,6 +392,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--aot-huge-heap"),
     parse_param!("--aot-graph-fd <STR>"),
     parse_param!("--aot-checked <STR>"),
+    parse_param!("--aot-build-test-part <STR>"),
     parse_param!("--aot-decode-crash-report <STR>"),
     parse_param!("--aot-build-id"),
 ];
@@ -433,6 +480,10 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         ),
         (
             Long(b"aot-log-type-mismatches"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (
+            Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (Long(b"smol"), Nothing),
@@ -553,6 +604,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"aot-huge-heap"), Nothing),
         (Long(b"aot-graph-fd"), Nothing),
         (Long(b"aot-checked"), Nothing),
+        (Long(b"aot-build-test-part"), Nothing),
         (Long(b"aot-decode-crash-report"), Nothing),
         (Long(b"aot-build-id"), Nothing),
         (Long(b"main-fields"), Nothing),
@@ -694,7 +746,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"
         ),
         parse_param!(
-            "--aot-allow-code-from-disk       With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+            "--aot-allow-code-from-disk       With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower"
         ),
         parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
@@ -954,6 +1006,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."
     ),
     parse_param!(
+        "--files-from <STR>...            Read test file paths from a file, one per line, besides those on the command line. For lists longer than a command line may be."
+    ),
+    parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
     parse_param!(
@@ -970,6 +1025,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
+    ),
+    parse_param!(
+        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free. When given, a test file starts only where there is room for what --timings says it took."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1295,6 +1353,24 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
+    if cmd == CommandTag::TestCommand {
+        let typed = ctx.positionals.len();
+        for list in args.options(b"--files-from") {
+            append_test_files_from(list, &mut ctx.positionals);
+        }
+        // Beside a path every argument is a path, and one that leads nowhere is passed over: the listed files would run as if the filter were not there.
+        let (typed, listed) = ctx.positionals.split_at(typed);
+        if !listed.is_empty()
+            && let Some(filter) = typed.iter().skip(1).find(|it| !reads_as_path_of_tests(it))
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>{}<r> is a filter, and --files-from takes none beside it. For the file or folder of that name write <b>./{}<r>",
+                BStr::new(filter),
+                BStr::new(filter)
+            );
+            Global::exit(1);
+        }
+    }
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
@@ -2310,6 +2386,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
     }
     ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if let Some(text) = args.option(b"--aot-memory-limit") {
+        let Some(limit) = crate::cli::test::memory_of_job::parse(text) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --aot-memory-limit expects a size like 5GB or 4096MB, received \"{}\"",
+                BStr::new(text)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.aot_memory_limit = Some(limit);
+    }
     if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"

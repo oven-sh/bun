@@ -867,6 +867,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       : undefined,
     hasConstructor: construct !== null,
     construct: collectConstruction(type),
+    prototypeListsAllMembers: true,
   });
   const byName = (left: ClassMember, right: ClassMember) => compareBytes(left.name, right.name);
   const binding = pathOfConstructorBinding(type);
@@ -885,6 +886,11 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       { length: construct === null ? null : (construct.length ?? construct.requiredCount) },
     ),
     ...(prototypeBase === null ? [] : b.inherits(joinPath([path, "prototype"]), prototypeBase)),
+    // setup${name}ClassStructure() in bindgen-emit.ts puts these on the prototype beside the members of the schema, and nothing else.
+    ...["@@toStringTag", ...(type.prototypeBase === "Error" ? ["name"] : [])]
+      .map(member => pathOfMember(path, "proto", member))
+      .filter(member => !joins.writtenMembers.has(member))
+      .flatMap(member => b.method(member, b.property(b.string))),
     ...type.protoMembers
       .toSorted(byName)
       .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false)),
@@ -916,7 +922,7 @@ function collectBoundNamespace(
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
       ...b.extend(joinPath([path, fn.name]), {
-        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.name },
+        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.jsName },
       }),
     ]),
     ...b.static(binding, {
@@ -990,7 +996,7 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     if (!joins.nativeBindings.has(path)) continue;
     declarations.push(
       ...b.extend(path, {
-        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.name },
+        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.jsName },
       }),
     );
   }

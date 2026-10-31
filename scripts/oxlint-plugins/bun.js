@@ -290,13 +290,28 @@ function isUnlikelyMark(statement) {
   );
 }
 
+/** `("frames are native code");` or `("has no frames");` where `bun build --compile --aot` reads it: the first statement of a function. */
+function isFramesMark(statement) {
+  let { expression } = statement;
+  if (expression.type === "ParenthesizedExpression") expression = expression.expression;
+  const block = statement.parent;
+  return (
+    expression.type === "Literal" &&
+    (expression.value === "frames are native code" || expression.value === "has no frames") &&
+    block.type === "BlockStatement" &&
+    block.body[0] === statement &&
+    (block.parent.type === "FunctionDeclaration" || block.parent.type === "FunctionExpression")
+  );
+}
+
 const noUnusedExpressions = {
   meta: {
     type: "problem",
     docs: {
       description:
         "ESLint's `no-unused-expressions` with its default options, " +
-        'except that `"unlikely";` may be the first statement of an arm of an `if`.',
+        'except that `"unlikely";` may be the first statement of an arm of an `if`, ' +
+        'and `("frames are native code");` or `("has no frames");` the first statement of a function.',
     },
     messages: {
       unused: "Expected expression to be used",
@@ -306,7 +321,8 @@ const noUnusedExpressions = {
   create(context) {
     return {
       ExpressionStatement(node) {
-        if (typeof node.directive === "string" || !isOnlyAValue(node.expression) || isUnlikelyMark(node)) return;
+        if (typeof node.directive === "string" || !isOnlyAValue(node.expression)) return;
+        if (isUnlikelyMark(node) || isFramesMark(node)) return;
         context.report({ node, messageId: "unused" });
       },
     };

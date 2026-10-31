@@ -1,6 +1,8 @@
 # interface RecordO1 { firstO2?: number; neverNamedO3?: string; lastO4?: number }  made.firstO2 = 1; made[name] = "x"; made.lastO4 = 2
 # No code names neverNamedO3, so the field has no slot. A store that finds the name at run time keeps the property with the undeclared ones
 # FORM: AsRead
+# On Windows process.env is a proxy that the library makes, and this file has no library: nothing is known to lie there, and what comes behind the read is not reached.
+# REQUIRES: not-windows
 # RUN: plan-slots
 # CHECK: L0 CompiledObject {{*}}fields=2
 # CHECK-NEXT: "firstO2"

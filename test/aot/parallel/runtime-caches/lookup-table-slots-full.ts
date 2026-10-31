@@ -1,7 +1,7 @@
 // Untyped code reads, stores and creates fields of more typed objects than the lookup table has rows for. An access whose structure has no row takes the slow path and still gives the right answer.
-// COUNTER: LookupTableIsFull >= 1
-// COUNTER: LookupTableIsFull <= 20000
-// Flags: --aot-heat=none --aot-limit=lookup-table-bases:12
+// COUNTER: LookupTableBases >= 1
+// COUNTER: LookupTableBases <= 20000
+// Flags: --aot-heat=none --aot-limit=lookup-table-bases:4
 const turns: number = JSON.parse("25");
 const box: any[] = JSON.parse("[0]");
 function hidden(value: unknown): any { box[0] = value; return box[0]; }

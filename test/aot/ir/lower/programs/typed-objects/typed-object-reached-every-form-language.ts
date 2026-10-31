@@ -140,7 +140,7 @@ awaits(Promise.resolve(launder(p0)), async () => launder(p0)).then(() => console
 // CHECK-NEXT: Return v23
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=number site=[[w_10]]}] thisType={type=anything} parameters=[{type=number site=[[w_11]]}] results=[{type=number site=[[w_12]]}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=number site=[[w_10]] variableName="i"}] thisType={type=anything} parameters=[{type=number site=[[w_11]]}] results=[{type=number site=[[w_12]]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: number, v1: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

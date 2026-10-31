@@ -32,7 +32,7 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
                 junit.record_test_case(&test).expect("oom");
             }
         }
-        if let Some((name, message)) = file.unfinished {
+        if let Some((name, message)) = &file.unfinished {
             let unfinished = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),

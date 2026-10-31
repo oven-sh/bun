@@ -70,25 +70,29 @@ function f3 name="many" module=m0 position=650 flags=[HasExplicitName] length=1 
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0 storage=Frame
-# CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: false = Boolean @0:2 tail
+# CHECK-NEXT: v2: false = Upcast v1 castType=boolean|string @0:2 tail
+# CHECK-NEXT: Jump -> next b1(v2)
+# CHECK-NEXT: b1(v3: false|string ~ false):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v2: "o" = String string="o"
-# CHECK-NEXT: v3: bigint = BigInt digits="10"
-# CHECK-NEXT: v4: "undefined" = String string="undefined" @0:2 tail
-# CHECK-NEXT: v5: "null" = String string="null" @0:2 tail
-# CHECK-NEXT: v6: "true" = String string="true" @0:2 tail
-# CHECK-NEXT: v7: "false" = String string="false" @0:2 tail
-# CHECK-NEXT: v8: string = ToString v3 calledBuiltin=StringPrototypeConcat @0:2 tail
-# CHECK-NEXT: v9: string = Strcat v2, v4, v5, v6, v7, v8 @0:2 tail
-# CHECK-NEXT: v10: "<" = String string="<"
-# CHECK-NEXT: v11: "cd" = String string="cd"
-# CHECK-NEXT: v12: ":" = String string=":"
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=boolean @0:2 tail
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3(| 0) @0:2 tail
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v6: bigint = BigInt digits="10"
+# CHECK-NEXT: v7: string = ToString v6 calledBuiltin=StringPrototypeConcat @0:2 tail
+# CHECK-NEXT: v8: "oundefinednulltruefalse" = String string="oundefinednulltruefalse"
+# CHECK-NEXT: v9: string = Strcat v8, v7 [isLikelyKey] @0:2 tail
+# CHECK-NEXT: Jump -> next b4(v9) @0:2 tail
+# CHECK-NEXT: b3(v10: string):
+# CHECK-NEXT: Jump -> next b4(v10) @0:2 tail
+# CHECK-NEXT: b4(v11: string):
+# CHECK-NEXT: v12: string = Upcast v11 castType=boolean|string @0:2 tail
 # CHECK-NEXT: v13: 3 = Integer integer=3
 # CHECK-NEXT: v14: string = CallBuiltin -, v13 overload=String/0 accessSite=3
 # CHECK-NEXT: v15: ">" = String string=">"
-# CHECK-NEXT: v16: string = Strcat v10, v11, v12, v14, v15
-# CHECK-NEXT: v17: 3 = Integer integer=3
-# CHECK-NEXT: v18: anything ~ undefined|null|string = Call v0, -, v17 calleeName="four" accessSite=4 callees=[f1]
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: v16: "<cd:" = String string="<cd:"
+# CHECK-NEXT: v17: string = Strcat v16, v14, v15
+# CHECK-NEXT: v18: 3 = Integer integer=3
+# CHECK-NEXT: v19: anything ~ undefined|null|string = Call v0, -, v18 calleeName="four" accessSite=4 callees=[f1]
+# CHECK-NEXT: Jump -> next b1(v12)
 # CHECK-NEXT: }

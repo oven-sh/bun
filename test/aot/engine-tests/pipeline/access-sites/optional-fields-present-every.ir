@@ -94,57 +94,44 @@ function f3 name="conditional" module=m0 position=3100 flags=[IsChecked, HasExpl
 # CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
-# CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="built cwb"|"conditional, true" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="look"
 # CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=1}]} {
 # CHECK-NEXT: b0(v1: anything ~ undefined|null|number|symbol|bigint|L0):
 # CHECK-NEXT: v2: object = ToObject v1 calledBuiltin=ObjectKeys
 # CHECK-NEXT: v3: Array<string> = CallBuiltin -, v2 overload=ObjectKeys/0 accessSite=6
-# CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v5: i32 = StringBuilderCheckpoint v4
-# CHECK-NEXT: v6: boolean = TypeTest v1 testedType=undefined
-# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v7: buildercursor = StringBuilderReserve v4 size=128
-# CHECK-NEXT: Jump -> next b10(v7)
-# CHECK-NEXT: b2(v8: null|boolean|number|string|symbol|bigint|object ~ null|number|symbol|bigint|L0):
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=null
-# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v4 size=128
-# CHECK-NEXT: v11: buildercursor = JSONAppendToken v4, v10 jsonToken=Null
-# CHECK-NEXT: Jump -> next b10(v11)
-# CHECK-NEXT: b4(v12: boolean|number|string|symbol|bigint|object ~ number|symbol|bigint|L0):
-# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=object
-# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b8()
-# CHECK-NEXT: b5(v14: object ~ L0):
-# CHECK-NEXT: v15: boolean = ShapeTest v14 layouts=[L0]
-# CHECK-NEXT: Branch v15 -> taken b6(), notTaken b8()
+# CHECK-NEXT: v4: boolean = TypeTest v1 testedType=undefined
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b2(v5: null|boolean|number|string|symbol|bigint|object ~ null|number|symbol|bigint|L0):
+# CHECK-NEXT: v6: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v7: boolean = TypeTest v5 testedType=null
+# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v8: buildercursor = StringBuilderReserve v6 size=128
+# CHECK-NEXT: v9: buildercursor = JSONAppendToken v6, v8 jsonToken=Null
+# CHECK-NEXT: StringBuilderCommit v6, v9
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b4(v11: boolean|number|string|symbol|bigint|object ~ number|symbol|bigint|L0):
+# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=object
+# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v13: object ~ L0):
+# CHECK-NEXT: v14: boolean = ShapeTest v13 layouts=[L0]
+# CHECK-NEXT: Branch v14 -> taken b6(), notTaken b8()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v16: int[0, 2] = CallDirect v14, v4 function=f6 calledBuiltin=JSONStringify
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: int[0, 2] = CallDirect v13, v6, v15 function=f6 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v16 cases=[1] -> case b7(), otherwise b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v17: buildercursor = StringBuilderReserve v4 size=128
-# CHECK-NEXT: Jump -> next b9(v17)
+# CHECK-NEXT: v17: string = StringBuilderFinish v6
+# CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v18: buildercursor = StringBuilderReserve v4 size=128
-# CHECK-NEXT: Jump -> next b9(v18)
-# CHECK-NEXT: b9(v19: buildercursor):
-# CHECK-NEXT: Jump -> next b10(v19)
-# CHECK-NEXT: b10(v20: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v4, v20
-# CHECK-NEXT: v22: i32 = StringBuilderCheckpoint v4
-# CHECK-NEXT: v23: boolean = StrictEq v5, v22
-# CHECK-NEXT: Branch v23 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v4
-# CHECK-NEXT: v25: undefined = Undefined
-# CHECK-NEXT: v26: undefined|string = CallBuiltin -, v1, v25 overload=JSONStringify/0 accessSite=8
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v27: string = StringBuilderFinish v4
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v28: undefined = Undefined
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: StringBuilderDiscard v6
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: v20: undefined|string = CallBuiltin -, v1, v19 overload=JSONStringify/0 accessSite=8
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }

@@ -3,6 +3,88 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
+const heapSnapshotCleanupFixture = `
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { Session } from 'node:inspector/promises';
+import { Session as CallbackSession } from 'node:inspector';
+import path from 'node:path';
+import { writeHeapSnapshot } from 'node:v8';
+const mode = process.argv[1];
+const url = await new Promise((resolve, reject) => {
+  process.once('message', resolve);
+  process.once('disconnect', () => reject(new Error('parent disconnected before inspector URL')));
+});
+const socket = new WebSocket(url);
+const pending = new Map();
+let nextId = 1;
+let closing = false;
+const fail = error => {
+  for (const request of pending.values()) request.reject(error);
+  pending.clear();
+};
+socket.onmessage = event => {
+  const message = JSON.parse(event.data);
+  const request = pending.get(message.id);
+  if (request) {
+    pending.delete(message.id);
+    request.resolve(message);
+  }
+};
+socket.onerror = () => fail(new Error('inspector socket failed'));
+socket.onclose = () => { if (!closing) fail(new Error('inspector socket closed')); };
+const post = (method, params) => new Promise((resolve, reject) => {
+  if (socket.readyState !== WebSocket.OPEN) return reject(new Error('inspector is not connected'));
+  const id = nextId++;
+  pending.set(id, { resolve, reject });
+  socket.send(JSON.stringify({ id, method, params }));
+});
+const actor = mode === 'callback' ? new CallbackSession() : new Session();
+try {
+  await new Promise((resolve, reject) => {
+    socket.addEventListener('open', resolve, { once: true });
+    socket.addEventListener('error', () => reject(new Error('inspector connection failed')), { once: true });
+    socket.addEventListener('close', () => reject(new Error('inspector closed before connecting')), { once: true });
+  });
+  actor.connect();
+  globalThis.snapshotCleanupMarker = 'inspector-snapshot-cleanup-marker';
+  const snapshot = JSON.parse(readFileSync(writeHeapSnapshot(path.join(process.cwd(), 'capture.heapsnapshot')), 'utf8'));
+  const fields = snapshot.snapshot.meta.node_fields;
+  const stride = fields.length;
+  const nameIndex = fields.indexOf('name');
+  const idIndex = fields.indexOf('id');
+  const typeIndex = fields.indexOf('type');
+  const stringType = snapshot.snapshot.meta.node_types[typeIndex].indexOf('string');
+  let heapObjectId;
+  for (let offset = 0; offset < snapshot.nodes.length; offset += stride) {
+    if (snapshot.nodes[offset + typeIndex] === stringType && snapshot.strings[snapshot.nodes[offset + nameIndex]] === globalThis.snapshotCleanupMarker) {
+      // BunV8HeapSnapshotBuilder reserves IDs 1 and 2 for synthetic roots.
+      heapObjectId = snapshot.nodes[offset + idIndex] - 2;
+      break;
+    }
+  }
+  assert(Number.isInteger(heapObjectId) && heapObjectId > 0, 'snapshot did not contain the marker');
+  const before = await post('Heap.getPreview', { heapObjectId });
+  assert.equal(before.error, undefined, JSON.stringify(before));
+  assert.equal(before.result.string, globalThis.snapshotCleanupMarker);
+  actor.disconnect();
+  // Keep the native observer attached: detaching it could itself clear the snapshot.
+  const after = await post('Heap.getPreview', { heapObjectId });
+  assert.deepEqual(after.error, {
+    code: -32000,
+    message: 'No heap snapshot',
+    data: [{ code: -32000, message: 'No heap snapshot' }],
+  });
+  assert.equal(globalThis.snapshotCleanupMarker, 'inspector-snapshot-cleanup-marker');
+  console.log(JSON.stringify({ mode, trackedBefore: true, snapshotCleared: true, observerConnected: socket.readyState === WebSocket.OPEN }));
+} finally {
+  actor.disconnect();
+  closing = true;
+  socket.close();
+  process.disconnect();
+}
+`;
+
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
 // through node:vm, then takePreciseCoverage.
@@ -217,6 +299,39 @@ describe("node:inspector", () => {
       expect(error.message).toContain("not connected");
     });
   });
+
+  test.concurrent.each(["callback", "promises"])(
+    "Session.disconnect() releases native snapshot metadata (%s)",
+    async mode => {
+      using directory = tempDir("inspector-heap-snapshot-cleanup", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--inspect=127.0.0.1:0", "-e", heapSnapshotCleanupFixture, mode],
+        env: bunEnv,
+        cwd: String(directory),
+        ipc() {},
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderrPromise = (async () => {
+        let stderr = "";
+        let sent = false;
+        for await (const chunk of proc.stderr) {
+          stderr += new TextDecoder().decode(chunk);
+          const url = stderr.match(/ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/)?.[0];
+          if (url && !sent) {
+            sent = true;
+            proc.send(url);
+          }
+        }
+        return stderr;
+      })();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), stderrPromise, proc.exited]);
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({ mode, trackedBefore: true, snapshotCleared: true, observerConnected: true }) + "\n",
+        exitCode: 0,
+      });
+    },
+  );
 
   describe("Profiler", () => {
     let session: inspector.Session;

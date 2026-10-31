@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Disallows the usage of `React.Children`, as it is considered a bad practice.
 pub struct NoReactChildren;
 
-const NO_REACT_CHILDREN: Message = Message::new("", "`React.Children` should not be used.");
+const NO_REACT_CHILDREN: &Message = &Message::new("", "`React.Children` should not be used.");
 
 impl Rule for NoReactChildren {
     const META: Meta = Meta::oxlint(Plugin::React, "no-react-children", Kind::Suggestion);

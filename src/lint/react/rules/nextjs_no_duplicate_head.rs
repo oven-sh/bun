@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevent duplicate usage of `<Head>` in `pages/_document.js`.
 pub struct NoDuplicateHead;
 
-const NO_DUPLICATE_HEAD: Message = Message::new("", "Do not include multiple instances of `<Head/>`");
+const NO_DUPLICATE_HEAD: &Message = &Message::new("", "Do not include multiple instances of `<Head/>`");
 
 impl Rule for NoDuplicateHead {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-duplicate-head", Kind::Problem);

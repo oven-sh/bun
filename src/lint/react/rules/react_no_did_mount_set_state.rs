@@ -19,7 +19,7 @@ struct Method {
     names: &'static [&'static str],
     /// upstream treats a private name like the plain name.
     private_names: &'static [&'static str],
-    oxlint: Message,
+    oxlint: &'static Message,
     oxlint_requires_jsx: bool,
 }
 
@@ -28,26 +28,26 @@ const METHODS: [Method; 3] = [
         rule: "no-did-mount-set-state",
         names: &["componentDidMount"],
         private_names: &["#componentDidMount"],
-        oxlint: Message::new("", "Do not use `setState` in `componentDidMount`."),
+        oxlint: &Message::new("", "Do not use `setState` in `componentDidMount`."),
         oxlint_requires_jsx: true,
     },
     Method {
         rule: "no-did-update-set-state",
         names: &["componentDidUpdate"],
         private_names: &["#componentDidUpdate"],
-        oxlint: Message::new("", "Do not use `setState` in `componentDidUpdate`."),
+        oxlint: &Message::new("", "Do not use `setState` in `componentDidUpdate`."),
         oxlint_requires_jsx: false,
     },
     Method {
         rule: "no-will-update-set-state",
         names: &["componentWillUpdate", "UNSAFE_componentWillUpdate"],
         private_names: &["#componentWillUpdate", "#UNSAFE_componentWillUpdate"],
-        oxlint: Message::new("", "Do not use `setState` in `componentWillUpdate`."),
+        oxlint: &Message::new("", "Do not use `setState` in `componentWillUpdate`."),
         oxlint_requires_jsx: true,
     },
 ];
 
-const NO_SET_STATE: Message = Message::new("noSetState", "Do not use setState in {{name}}");
+const NO_SET_STATE: &Message = &Message::new("noSetState", "Do not use setState in {{name}}");
 
 #[derive(Default)]
 pub struct State<'a> {

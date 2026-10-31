@@ -2199,7 +2199,19 @@ declare module "bun:test" {
       mockRestore(): void;
       mockImplementation(fn: T): this;
       mockImplementationOnce(fn: T): this;
-      withImplementation(fn: T, callback: () => Promise<unknown>): Promise<void>;
+      /**
+       * Uses `fn` as the implementation of the mock until the value that `callback` returns settles, then puts the
+       * previous implementation back.
+       *
+       * `callback` returns a promise, or any other object with a `then()` method. The `then()` of an object that is
+       * not a promise is called once, after `withImplementation()` returns. Await the returned promise to continue
+       * after the previous implementation is back.
+       */
+      withImplementation(fn: T, callback: () => { then(...args: any[]): unknown }): Promise<void>;
+      /**
+       * Uses `fn` as the implementation of the mock while `callback` runs, then puts the previous implementation
+       * back. If `callback` throws, `fn` stays the implementation.
+       */
       withImplementation(fn: T, callback: () => void): void;
       mockName(name: string): this;
       mockReturnThis(): this;

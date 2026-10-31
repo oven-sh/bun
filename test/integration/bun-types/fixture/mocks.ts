@@ -29,3 +29,18 @@ jest.fn<() => string>().mockResolvedValue("24");
 jest.fn().mockClear();
 jest.fn().mockReset();
 jest.fn().mockRejectedValueOnce(new Error());
+
+// withImplementation() returns a promise when its callback returns a promise or any other object with a then() method.
+declare const promiseLike: PromiseLike<void>;
+const minimalThenable = {
+  then(resolve: () => void) {
+    resolve();
+  },
+};
+const temporarilyMocked = jest.fn<() => string>();
+const temporary = () => "temporary";
+expectType(temporarilyMocked.withImplementation(temporary, async () => {})).is<Promise<void>>();
+expectType(temporarilyMocked.withImplementation(temporary, () => promiseLike)).is<Promise<void>>();
+expectType(temporarilyMocked.withImplementation(temporary, () => minimalThenable)).is<Promise<void>>();
+expectType(temporarilyMocked.withImplementation(temporary, () => {})).is<void>();
+expectType(temporarilyMocked.withImplementation(temporary, () => ({ then: 42 }))).is<void>();

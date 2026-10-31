@@ -709,8 +709,14 @@ export function splitIntoFiles(text: string, extension: string) {
       const all = [...imported, ...callbacks];
       return [...(all.length ? [`import type { ${all.join(", ")} } from "${toMain}";`] : []), ...texts, ""].join("\n");
     };
-    const erased = (typed: string) =>
-      isTypeScript ? new Bun.Transpiler({ loader: "ts" }).transformSync(typed) : typed;
+    // The printer writes an escape as the character that it stands for. Programs are stored one byte a character, so in a text of ASCII the escape is written again.
+    const erased = (typed: string) => {
+      if (!isTypeScript) return typed;
+      const text = new Bun.Transpiler({ loader: "ts" }).transformSync(typed);
+      return /[^\x00-\x7f]/.test(typed)
+        ? text
+        : text.replace(/[^\x00-\x7f]/g, character => "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"));
+    };
     // The code comes out of a module, which is strict: `arguments` does not follow the parameters, and `this` of a plain call is undefined.
     const asCommonJs = (code: string) =>
       '"use strict";\n' +

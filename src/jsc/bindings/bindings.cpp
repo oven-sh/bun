@@ -143,6 +143,8 @@
 #include "JavaScriptCore/AOTJSONHooks.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "JSCryptoKey.h"
+#include "JSKeyObject.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -1407,6 +1409,23 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
+// A KeyObject or CryptoKey keeps its key in an internal slot and has no own properties
+// either. Own properties are still compared afterwards, like node does.
+static bool keyObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    auto* key1 = dynamicDowncast<Bun::JSKeyObject>(o1);
+    auto* key2 = dynamicDowncast<Bun::JSKeyObject>(o2);
+    if (key1 || key2)
+        return key1 && key2 && key1->handle().equals(key2->handle()).value_or(false);
+
+    auto* cryptoKey1 = dynamicDowncast<JSCryptoKey>(o1);
+    auto* cryptoKey2 = dynamicDowncast<JSCryptoKey>(o2);
+    if (cryptoKey1 || cryptoKey2)
+        return cryptoKey1 && cryptoKey2 && Bun::KeyObject::cryptoKeysEqual(cryptoKey1->wrapped(), cryptoKey2->wrapped());
+
+    return true;
+}
+
 struct DeepEqualsMode {
     bool isStrict;
     bool enableAsymmetricMatchers;
@@ -2176,6 +2195,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
             if (temporalEqual.has_value())
                 return temporalEqual;
+
+            if (!keyObjectsDequal(obj1, obj2))
+                return false;
 
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
@@ -4766,6 +4788,9 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
+    if (auto* name = JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(arg1), arg2 }))
+        return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, JSC::PropertyName(name)));
+
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(arg1), arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
@@ -5695,8 +5720,11 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     bool listsCompiledObject = false;
     auto canWalkQuickly = [&](JSC::JSObject* walkedObject) {
         listsCompiledObject = false;
+        // The prototype of a compiled class gets its members when somebody first looks at them, and is an ordinary object from then on. It is judged as that object.
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, walkedObject);
+        structure = walkedObject->structure();
         if (!JSC::AOT::PropertyWalk::isCompiledObject(walkedObject))
-            return canPerformFastPropertyEnumerationForIterationBun(walkedObject->structure());
+            return canPerformFastPropertyEnumerationForIterationBun(structure);
         propertiesOfCompiledObject.shrink(0);
         valuesOfCompiledObject.clear();
         bool hasUnderscoreProto = false;

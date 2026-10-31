@@ -1,10 +1,10 @@
 // RegExp literals, and the string methods that take a RegExp or a string.
 // CALLS+ literal NewRegExpLiteral
-// CALLS- literal ConstructInternalFunction
+// CALLS- literal CallInternalFunction
 // CALLS+ constants NewRegExpLiteral
 // CALLS+ fromSources operationAOTNewRegExp
-// CALLS+ fromBoth ConstructInternalFunction2
-// CALLS+ vowels StringReplaceRegExpString
+// CALLS+ fromBoth CallInternalFunction\.Construct\.n2
+// CALLS+ vowels operationAOTStringReplaceRegExp
 // CALLS+ shout operationAOTStringReplaceRegExp
 // CALLS+ swap operationAOTStringReplaceString
 // CALLS+ words operationAOTStringSplitRegExp

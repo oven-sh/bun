@@ -5,8 +5,7 @@ use super::call_site;
 use super::intrinsic::has_spread;
 use super::written_operands::find_locked_builtin;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::table::{self, Mutability};
-use crate::ir::{TypeTable, ValueId};
+use crate::ir::{Edge, Opcode, TypeTable, ValueId};
 use crate::lower::expression::{Tail, TailCast};
 use crate::lower::{FileLowering, FunctionLowering};
 
@@ -57,9 +56,8 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return None;
         };
-        let is_fixed = table::entry(method).mutability == Mutability::AlwaysLocked;
         let is_method = matches!(site.chain, Chain::No) && self.queries.atom_bytes(written) == name;
-        (is_fixed && is_method).then_some(receiver)
+        (self.is_fixed_method(method) && is_method).then_some(receiver)
     }
 
     // An arrow function has no `arguments`: it sees what its parameters name.
@@ -112,6 +110,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
     }
 
+    fn emit_maker_of_receiver_at(
+        &mut self,
+        call: ExprId,
+        maker: BuiltinId,
+        this: ValueId,
+        operands: &[ValueId],
+        tail: Tail<'_>,
+    ) -> ValueId {
+        let callee = call_site(self.file, call).callee;
+        self.set_position(self.file.last_mapped_position(callee));
+        let made = self.emit_locked_call(maker, Some(this), operands);
+        let Tail::Yes { casts } = tail else {
+            self.set_position(self.file.hir[call].pos);
+            return self.claim_call_result(call, made);
+        };
+        let cast = TailCast {
+            position: self.call_result_position(call),
+            outer: casts,
+        };
+        self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
+    }
+
     // `Array(-1)` throws where it is written, before what stands behind it is evaluated.
     fn lower_checked_length(&mut self, construction: ExprId, length: ExprId) -> ValueId {
         let length = self.lower_operand_of_question(construction, length);
@@ -137,7 +157,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             [items, mapper] => (items, Some(*mapper)),
             _ => return None,
         };
-        let length = self.file.find_written_length(items)?;
+        let Some(length) = self.file.find_written_length(items) else {
+            return match mapper {
+                None => Some(self.lower_copy_by_array_from(call, items, tail)),
+                Some(_) => None,
+            };
+        };
         self.emit_locked_builtin(BuiltinId::ArrayFrom);
         let length = self.lower_expression(length);
         let Some(mapper) = mapper else {
@@ -170,6 +195,58 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(join);
         self.continue_in(join);
         Some(self.builder.read_variable(result))
+    }
+
+    // `Array.from(list)` of a list with its own names is `[...list]`: a hole reads as undefined in both. One that has lost or replaced its iterator is not, and neither is anything but a list.
+    fn lower_copy_by_array_from(&mut self, call: ExprId, items: ExprId, tail: Tail<'_>) -> ValueId {
+        self.emit_locked_builtin(BuiltinId::ArrayFrom);
+        // `Array.from(new Set(list))`: what was made just here has the iterator of its class.
+        let made = self.file.skip_type_syntax(items);
+        let is_new_collection = match self.file.hir[made].kind {
+            ExprKind::New(site) => matches!(
+                find_locked_builtin(self.file, self.file.hir[site].callee),
+                Some(BuiltinId::Set | BuiltinId::Map)
+            ),
+            _ => false,
+        };
+        let value = self.lower_expression(items);
+        if is_new_collection {
+            let position = self.file.first_position(items);
+            self.set_position(position);
+            let copy = self.builder.new_array(TypeTable::ANYTHING, &[], &[]);
+            self.builder.append_spread(copy, value);
+            self.builder.record_position(position);
+            self.set_position(self.file.hir[call].pos);
+            return self.claim_call_result(call, copy);
+        }
+        self.set_position(self.file.first_position(items));
+        let is_pristine = self
+            .builder
+            .emit(Opcode::IsPristineArray, &[value.to_word()]);
+        let (taken, not_taken) = (self.create_block(), self.create_block());
+        self.builder
+            .branch(is_pristine, Edge::to(taken), Edge::to(not_taken));
+        self.builder.seal(taken);
+        self.builder.seal(not_taken);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        self.builder.switch_to(taken);
+        let position = self.file.first_position(items);
+        self.set_position(position);
+        let copy = self.builder.new_array(TypeTable::ANYTHING, &[], &[]);
+        self.builder.append_spread(copy, value);
+        self.builder.record_position(position);
+        self.set_position(self.file.hir[call].pos);
+        let copy = self.claim_call_result(call, copy);
+        self.builder.write_variable(result, copy);
+        self.jump(join);
+        self.builder.switch_to(not_taken);
+        let this = self.emit_builtin_itself(BuiltinId::Array);
+        let made = self.emit_maker_of_receiver_at(call, BuiltinId::ArrayFrom, this, &[value], tail);
+        self.builder.write_variable(result, made);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     // Array(n).fill(value)

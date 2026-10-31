@@ -24,6 +24,15 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
+// This thread's BoringSSL error queue. An API that returns with entries on it makes the next unrelated failure that
+// reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns its entries, oldest first.
+export const putBoringSSLErrorForTesting: () => void = $newCppFunction("NodeTLS.cpp", "putBoringSSLErrorForTesting", 0);
+export const takeBoringSSLErrorQueueForTesting: () => string[] = $newCppFunction(
+  "NodeTLS.cpp",
+  "takeBoringSSLErrorQueueForTesting",
+  0,
+);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(
@@ -359,8 +368,7 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 export const Dequeue = require("internal/fifo");
 
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
-// non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
-// so the node edge cases are handled here.
+// non-strings are undefined; the node edge cases are handled here.
 const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(
   "node_util_binding.bind.ts",
   "normalizeEncoding",
@@ -370,7 +378,6 @@ function nodeNormalizeEncoding(enc: unknown) {
   if (enc == null) return "utf8";
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
-  if (lower === "utf-16le") return "utf16le";
   // The Rust map also accepts Buffer-only names node's normalizeEncoding rejects.
   if (lower === "buffer" || lower === "utf16-le") return undefined;
   return rustNormalizeEncoding(enc);

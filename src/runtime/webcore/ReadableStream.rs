@@ -875,7 +875,9 @@ pub struct NewSource<C: SourceContext> {
     /// stream settles every read its script is waiting on.
     pub reader_context: Cell<Option<jsc::ContextId>>,
     /// Armed while this is the source of a stream script of a `Bun.ModuleGraph` was given: what it
-    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph.
+    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph. The same
+    /// for a test file under `bun test --isolate`: a read that never ends would keep its buffer,
+    /// and with it the file's whole realm, for the rest of the run.
     pub abort_handle: jsc::AbortHandle,
 }
 
@@ -1216,7 +1218,7 @@ impl<C: SourceContext> NewSource<C> {
         out_value.ensure_still_alive();
         if self.this_jsvalue.get().is_empty() {
             self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
-            if let Some(context) = cx.vm().as_graph_context(cx.context()) {
+            if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
                 unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };

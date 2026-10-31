@@ -239,7 +239,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f10 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f10 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
     Jump -> next b1()
   b1():
@@ -280,7 +280,7 @@ function f10 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasA
     Jump -> next b9()
   b9():
     v31 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v32 = Call v31, v0, v2, v14
+    v32 = Call v31, v0, v2, v14 [isDoneInPlace]
     Return v32
   b10():
     Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b11(), case b11(), case b12(), case b13(), case b14(), case b15(), otherwise b16()
@@ -330,10 +330,10 @@ function f10 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasA
     Jump -> next b23()
   b23():
     v56 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v57 = Call v56, v0, v2, v39
+    v57 = Call v56, v0, v2, v39 [isDoneInPlace]
     ReturnCall v57
 }
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Array{contents=anything} module=m1
 data d2 root=Array{contents=anything} module=m1
-runtimefunction id=12 function=f10
+runtimefunction id=FunctionPrototypeCall function=f10

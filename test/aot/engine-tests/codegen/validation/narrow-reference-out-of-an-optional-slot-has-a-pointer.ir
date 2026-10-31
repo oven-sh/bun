@@ -1,7 +1,7 @@
 # type Point = { x: number; y: number; label?: string }   function weigh(point: Point, weight: number) { return { weight, ...point } }   function withoutLabel(point: Point) { const { label, ...rest } = point; return rest }
 # A typed object keeps most references in 32 bits. Where compiled code holds such a reference over a place where the collector can run, the pointer to the cell stands beside it
 # FORM: AsRead
-# OPTIONS: references=narrow check=validate-reference-guards
+# OPTIONS: references=narrow check=validate-reference-guards disable=flow:LiteralValues
 # RUN: compile
 # STATISTIC: NarrowReferenceGuards >= 1
 # CHECK: image not empty

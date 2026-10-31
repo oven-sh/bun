@@ -17,7 +17,7 @@ import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import { parseArgs } from "util";
 import { measureCommand } from "../analysis-scaling/measure-check";
-import { idiomsAgainstTheJit } from "./measure-idioms";
+import { idiomsAgainstTheJit, runsOfReading } from "./measure-idioms";
 
 const { values: options } = parseArgs({
   options: {
@@ -86,9 +86,10 @@ function differsBySwitchesAlone(a: Uint8Array, b: Uint8Array) {
 
 async function cost(executable: string, turns: number, warmUp: number) {
   const run = (turns: number) => measureCommand(folder, ["/usr/bin/time", "-f", "peak %M", executable], 900_000, { ...environment, AOT_PERF_TURNS: String(turns), AOT_PERF_WARM_UP_TURNS: String(warmUp) });
-  const short = await run(turns >> 2);
-  const long = await run(turns);
-  return { instructions: Math.max(0.5, (long.instructions! - short.instructions!) / (turns - (turns >> 2))), peakMegabytes: Number(/^peak (\d+)$/m.exec(long.stderr)?.[1]) / 1024, printed: long.stdout };
+  const runs = runsOfReading(turns);
+  const short = await run(runs.short);
+  const long = await run(runs.long);
+  return { instructions: Math.max(0.5, (long.instructions! - short.instructions!) / (runs.long - runs.short)), peakMegabytes: Number(/^peak (\d+)$/m.exec(long.stderr)?.[1]) / 1024, printed: long.stdout };
 }
 
 const rows: string[][] = [];

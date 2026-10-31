@@ -10,7 +10,7 @@ use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
-    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
+    CodepointIterator, Cursor, NewCodePointIterator,
     contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
@@ -99,10 +99,8 @@ pub mod unicode {
         pub bytes: &'a [u8],
     }
     pub type CodepointIterator<'a> = NewCodePointIterator<'a>;
-    pub type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a>;
 
     impl<'a> NewCodePointIterator<'a> {
-        pub const ZERO_VALUE: CodePoint = -1;
         pub fn init(bytes: &'a [u8]) -> Self {
             Self { bytes }
         }

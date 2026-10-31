@@ -405,7 +405,7 @@ impl ShellArgs {
 pub(crate) type ShellResult<T> = Result<T, ShellErr>;
 
 impl Interpreter {
-    /// Lex `src` (ASCII or Unicode), build a `Parser`, and return the root
+    /// Lex `src`, build a `Parser`, and return the root
     /// `ast::Script`. Tokens and AST nodes are bump-allocated into `arena`.
     ///
     /// On lex error, `out_lex_err` is populated and `ParseError::Lex` returned
@@ -419,16 +419,10 @@ impl Interpreter {
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
-        use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
-        let lex_result = if bun_core::is_all_ascii(src) {
-            let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
-        } else {
-            let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
-        };
+        use crate::shell::shell_body::{Lexer, ParseError, Parser};
+        let mut lexer = Lexer::new(arena, src, jsstrings_to_escape, jsobjs_len);
+        lexer.lex().map_err(crate::Error::from)?;
+        let lex_result = lexer.get_result();
         if !lex_result.errors.is_empty() {
             *out_lex_result = Some(lex_result);
             return Err(ParseError::Lex.into());

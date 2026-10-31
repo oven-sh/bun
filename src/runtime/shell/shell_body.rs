@@ -29,8 +29,8 @@ pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub(crate) use bun_shell_parser::parse::{
-    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
-    LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
+    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, Lexer,
+    ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
 };
 
@@ -706,20 +706,11 @@ pub(crate) mod testing_apis {
         )?;
 
         let jsobjs_len: u32 = u32::try_from(marked_argument_buffer.size()).expect("int cast");
-        let lex_result = 'brk: {
-            if strings::is_all_ascii(&script[..]) {
-                let mut lexer = LexerAscii::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
-                if let Err(err) = lexer.lex() {
-                    return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
-                }
-                break 'brk lexer.get_result();
-            }
-            let mut lexer = LexerUnicode::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
-            if let Err(err) = lexer.lex() {
-                return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
-            }
-            lexer.get_result()
-        };
+        let mut lexer = Lexer::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
+        if let Err(err) = lexer.lex() {
+            return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
+        }
+        let lex_result = lexer.get_result();
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);

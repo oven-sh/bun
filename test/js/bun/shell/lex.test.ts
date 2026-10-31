@@ -1,5 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import { createTestBuilder, redirect } from "./util";
 const { lex } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -704,6 +706,118 @@ describe("lex shell", () => {
     const result = lex`echo foo \`ls\``;
 
     expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  // The lexer reads bytes, and every byte of a non-ASCII character has its high bit set. Each case names a byte
+  // that is shell syntax without that bit, in a place where a reader that drops the bit goes wrong.
+  test.each([
+    [
+      "in a word (à is C3 A0, and 0x20 is a space)",
+      "déjà vu",
+      [{ Text: "déjà" }, { Delimit: {} }, { Text: "vu" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "before `#`, which starts a comment only after whitespace",
+      "à#b",
+      [{ Text: "à#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "at the start (£ is C2 A3, and 0x23 is `#`)",
+      "£ x",
+      [{ Text: "£" }, { Delimit: {} }, { Text: "x" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "É is C3 89 and Ê is C3 8A (0x09 is a tab, 0x0A is a newline)",
+      "aÉb aÊb",
+      [{ Text: "aÉb" }, { Delimit: {} }, { Text: "aÊb" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "in quotes (ç is C3 A7, â is C3 A2, and 0x27 and 0x22 are the quotes)",
+      `'é ç' "ç â"`,
+      [{ SingleQuotedText: "é ç" }, { Delimit: {} }, { DoubleQuotedText: "ç â" }, { Eof: {} }],
+    ],
+    ["after a backslash", "\\é a\\à", [{ Text: "é" }, { Delimit: {} }, { Text: "aà" }, { Delimit: {} }, { Eof: {} }]],
+    [
+      // In double quotes a backslash escapes only a few characters, a backtick and a backslash among them.
+      "after a backslash in double quotes (ก starts with E0 and ܐ with DC, 0x60 is a backtick, 0x5C is a backslash)",
+      `"\\ก" "\\ܐ"`,
+      [{ DoubleQuotedText: "\\ก" }, { Delimit: {} }, { DoubleQuotedText: "\\ܐ" }, { Eof: {} }],
+    ],
+    [
+      "after `$` and after a variable name",
+      "$é $FOOé",
+      [{ Text: "$" }, { Text: "é" }, { Delimit: {} }, { Var: "FOO" }, { Text: "é" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "before a redirect (² is C2 B2, and 0x32 is `2`)",
+      "²> f",
+      [
+        { Text: "²" },
+        { Delimit: {} },
+        { Redirect: redirect({ stdout: true }) },
+        { Text: "f" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "around a brace group (ì is C3 AC, and 0x2C is a comma)",
+      "é{à,ì}û",
+      [
+        { Text: "é" },
+        { BraceBegin: {} },
+        { Text: "à" },
+        { Comma: {} },
+        { Text: "ì" },
+        { BraceEnd: {} },
+        { Text: "û" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "4 bytes",
+      `😀 '😀' "😀" \\😀`,
+      [
+        { Text: "😀" },
+        { Delimit: {} },
+        { SingleQuotedText: "😀" },
+        { Delimit: {} },
+        { DoubleQuotedText: "😀" },
+        { Delimit: {} },
+        { Text: "😀" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+  ])("non-ASCII text: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  // The script text of `$` comes from JS strings, so a script file is what gives the lexer bytes that are not UTF-8.
+  // The lexer decoded each code point of such a script and wrote it again: 0xFF came out as C3 BF, 0xC3 as EF BF BD.
+  test("script text keeps bytes that are not UTF-8", async () => {
+    using dir = tempDir("shell-lex-bytes", {
+      // Plain, single-quoted, double-quoted, in a word that brace-expands, and as the value of a variable.
+      // "latin1" writes each \xNN as one byte.
+      "script.sh": Buffer.from(
+        `echo x\xffy; echo 'q\xc3'; echo "d\xe2\x82"; echo {\xff,a}; K=\xff; echo "[$K]"\n`,
+        "latin1",
+      ),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "script.sh")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    // One character for each byte of stdout. bash 5.2 prints the same bytes for this file.
+    expect({ stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode }).toEqual({
+      stdout: "x\xffy\nq\xc3\nd\xe2\x82\n\xff a\n[\xff]\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Where the lexer puts `Delimit` when a word's last part is not plain text

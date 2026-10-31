@@ -10,9 +10,6 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_core::{StackCheck, String as BunString, strings};
 
-// `strings::Cursor` aliased as `CodepointCursor` for readability.
-type CodepointCursor = strings::Cursor;
-
 bun_core::define_scoped_log!(log, SHELL, hidden);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr, Clone, Copy, PartialEq, Eq)]
@@ -2094,9 +2091,6 @@ impl Token {
 
 // ───────────────────────────── Lexer ─────────────────────────────
 
-pub type LexerAscii<'bump> = Lexer<'bump, { StringEncoding::Ascii }>;
-pub type LexerUnicode<'bump> = Lexer<'bump, { StringEncoding::Wtf8 }>;
-
 #[derive(Clone, Copy)]
 pub struct LexResult<'bump> {
     pub errors: &'bump [LexError],
@@ -2128,12 +2122,6 @@ const MAX_SUBSHELL_DEPTH: u32 = 128;
 pub const LEX_JS_OBJREF_PREFIX: &[u8] = b"\x08__bun_";
 pub const LEX_JS_STRING_PREFIX: &[u8] = b"\x08__bunstr_";
 pub const LEX_JS_REF_TERMINATOR: u8 = SPECIAL_JS_CHAR;
-
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum StringEncoding {
-    Ascii,
-    Wtf8,
-}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum LexerError {
@@ -2169,15 +2157,15 @@ enum AddDelimiter {
 }
 
 #[derive(Clone, Copy)]
-struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
-    chars: ShellCharIter<'bump, ENCODING>,
+struct BacktrackSnapshot<'bump> {
+    chars: ShellCharIter<'bump>,
     j: u32,
     word_start: u32,
     delimit_quote: bool,
 }
 
-pub struct Lexer<'bump, const ENCODING: StringEncoding> {
-    pub(crate) chars: ShellCharIter<'bump, ENCODING>,
+pub struct Lexer<'bump> {
+    pub(crate) chars: ShellCharIter<'bump>,
 
     /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
     /// Anytime a word is added, this needs to be updated
@@ -2208,7 +2196,7 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub(crate) jsobjs_len: u32,
 }
 
-impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
+impl<'bump> Lexer<'bump> {
     pub fn new(
         bump: &'bump Bump,
         src: &'bump [u8],
@@ -2216,7 +2204,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         jsobjs_len: u32,
     ) -> Self {
         Self {
-            chars: ShellCharIter::<ENCODING>::init(src),
+            chars: ShellCharIter::init(src),
             tokens: bun_alloc::ArenaVec::new_in(bump),
             strpool: bun_alloc::ArenaVec::new_in(bump),
             errors: bun_alloc::ArenaVec::new_in(bump),
@@ -2295,7 +2283,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.delimit_quote = sublexer.delimit_quote;
     }
 
-    fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
+    fn make_snapshot(&self) -> BacktrackSnapshot<'bump> {
         // explicit `'bump` so the snapshot borrows the arena, not
         // `&self` — otherwise holding a snapshot would freeze the lexer.
         BacktrackSnapshot {
@@ -2306,7 +2294,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn backtrack(&mut self, snap: &BacktrackSnapshot<'bump, ENCODING>) {
+    fn backtrack(&mut self, snap: &BacktrackSnapshot<'bump>) {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;
@@ -2329,40 +2317,28 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // overruns the test timeout. This block mirrors what the slow path
             // would do for any byte NOT in SPECIAL_CHARS_TABLE: append to
             // strpool and advance, with no state change.
-            if ENCODING == StringEncoding::Ascii && self.chars.state == CharState::Normal {
-                let scan: Option<(&'bump [u8], usize, usize)> = match &self.chars.src {
-                    Src::Ascii(a) => {
-                        let bytes = a.bytes;
-                        let start = a.i;
-                        let mut i = start;
-                        while i < bytes.len() && !SPECIAL_CHARS_TABLE.is_set(bytes[i] as usize) {
-                            i += 1;
-                        }
-                        if i > start {
-                            Some((bytes, start, i))
-                        } else {
-                            None
-                        }
-                    }
-                    Src::Unicode(_) => None,
-                };
-                if let Some((bytes, start, i)) = scan {
+            if self.chars.state == CharState::Normal {
+                let bytes = self.chars.bytes;
+                let start = self.chars.i;
+                let mut i = start;
+                while i < bytes.len() && !SPECIAL_CHARS_TABLE.is_set(bytes[i] as usize) {
+                    i += 1;
+                }
+                if i > start {
                     let run = &bytes[start..i];
                     self.strpool.extend_from_slice(run);
                     self.j += (i - start) as u32;
-                    if let Src::Ascii(a) = &mut self.chars.src {
-                        a.i = i;
-                    }
+                    self.chars.i = i;
                     // Keep prev/current consistent with what per-char eat()
                     // would have left behind (read by `#` whitespace check
                     // and is_immediately_escaped_quote).
                     let last = InputChar {
-                        char: u32::from(run[run.len() - 1] & 0x7F),
+                        char: u32::from(run[run.len() - 1]),
                         escaped: false,
                     };
                     if run.len() >= 2 {
                         self.chars.prev = Some(InputChar {
-                            char: u32::from(run[run.len() - 2] & 0x7F),
+                            char: u32::from(run[run.len() - 2]),
                             escaped: false,
                         });
                     } else {
@@ -2516,7 +2492,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             let whitespace_preceding = if let Some(prev) = self.chars.prev {
-                                ShellCharIter::<ENCODING>::is_whitespace(prev)
+                                ShellCharIter::is_whitespace(prev)
                             } else {
                                 true
                             };
@@ -2894,29 +2870,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn append_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
-        if ENCODING == StringEncoding::Ascii {
-            // ENCODING==Ascii guarantees char < 256
-            self.strpool.push(u8::try_from(char).expect("int cast"));
-            self.j += 1;
-        } else {
-            if char <= 0x7F {
-                // guarded by char <= 0x7F
-                self.strpool.push(u8::try_from(char).expect("int cast"));
-                self.j += 1;
-                return Ok(());
-            } else {
-                self.append_unicode_char_to_str_pool(char)?;
-            }
-        }
-        Ok(())
-    }
-
-    #[cold]
-    fn append_unicode_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
-        let mut bytes = [0u8; 4];
-        let n = bun_core::encode_wtf8_rune(&mut bytes, char);
-        self.j += n as u32;
-        self.strpool.extend_from_slice(&bytes[..n]);
+        // `char` is a byte: one that `ShellCharIter` read, or ASCII that the lexer writes itself.
+        self.strpool.push(u8::try_from(char).expect("int cast"));
+        self.j += 1;
         Ok(())
     }
 
@@ -3228,24 +3184,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         prev_ascii_char: Option<u8>,
         cur_ascii_char: u8,
     ) {
-        if ENCODING == StringEncoding::Ascii {
-            self.chars.src.set_ascii_i(new_idx);
-            if let Some(pc) = prev_ascii_char {
-                self.chars.prev = Some(InputChar {
-                    char: pc as u32,
-                    escaped: false,
-                });
-            }
-            self.chars.current = Some(InputChar {
-                char: cur_ascii_char as u32,
-                escaped: false,
-            });
-            return;
-        }
-        // Set the cursor to decode the codepoint at new_idx.
-        // Use width=0 so that nextCursor (which computes pos = width + i)
-        // starts reading from exactly new_idx.
-        self.chars.src.set_unicode_cursor(new_idx);
+        self.chars.i = new_idx;
         if let Some(pc) = prev_ascii_char {
             self.chars.prev = Some(InputChar {
                 char: pc as u32,
@@ -3337,7 +3276,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
             // Bump the cursor
             let new_idx = self.chars.cursor_pos() + i;
-            let prev_ascii_char: Option<u8> = Some(digit_buf[digit_buf_count as usize - 1] & 0x7F);
+            let prev_ascii_char: Option<u8> = Some(digit_buf[digit_buf_count as usize - 1]);
             let cur_ascii_char: u8 = LEX_JS_REF_TERMINATOR;
             self.bump_cursor_ascii(new_idx, prev_ascii_char, cur_ascii_char);
 
@@ -3472,137 +3411,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 }
 
-// ───────────────────────────── ShellCharIter / Src ─────────────────────────────
+// ───────────────────────────── ShellCharIter ─────────────────────────────
 
-/// Unified InputChar — one struct for both encodings;
-/// CodepointType is u32 in both (ascii values fit in u7).
-// TODO(perf): if the packed-u8 layout matters for perf, specialize via const generic.
+/// A byte of the script and whether a backslash came before it.
 #[derive(Clone, Copy)]
 pub struct InputChar {
     pub(crate) char: u32,
     pub(crate) escaped: bool,
-}
-
-#[derive(Clone, Copy)]
-pub struct SrcAscii<'a> {
-    pub(crate) bytes: &'a [u8],
-    pub(crate) i: usize,
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub(crate) struct SrcAsciiIndexValue(u8); // packed: char:7 + escaped:1
-
-impl SrcAsciiIndexValue {
-    #[inline]
-    fn char(self) -> u8 {
-        self.0 & 0x7F
-    }
-}
-
-impl<'a> SrcAscii<'a> {
-    fn init(bytes: &'a [u8]) -> Self {
-        Self { bytes, i: 0 }
-    }
-
-    #[inline]
-    fn index(&self) -> Option<SrcAsciiIndexValue> {
-        if self.i >= self.bytes.len() {
-            return None;
-        }
-        Some(SrcAsciiIndexValue(self.bytes[self.i] & 0x7F))
-        // `& 0x7F` truncates to 7 bits; callers
-        // must guarantee ASCII input.
-    }
-
-    #[inline]
-    fn index_next(&self) -> Option<SrcAsciiIndexValue> {
-        if self.i + 1 >= self.bytes.len() {
-            return None;
-        }
-        Some(SrcAsciiIndexValue(self.bytes[self.i + 1] & 0x7F))
-    }
-
-    #[inline]
-    fn eat(&mut self, escaped: bool) {
-        self.i += 1 + (escaped as u32) as usize;
-    }
-}
-
-type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
-
-// `NewCodePointIterator` lacks
-// `Clone`/`Copy`, so store the underlying `&[u8]` instead and rebuild the
-// iterator on demand — keeps `SrcUnicode` (and thus `BacktrackSnapshot`)
-// `Copy`.
-#[derive(Clone, Copy)]
-pub struct SrcUnicode<'a> {
-    pub(crate) bytes: &'a [u8],
-    pub(crate) cursor: CodepointCursor,
-    pub(crate) next_cursor: CodepointCursor,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SrcUnicodeIndexValue {
-    pub char: u32,
-}
-
-impl<'a> SrcUnicode<'a> {
-    fn advance(bytes: &'a [u8], cursor: &mut CodepointCursor) {
-        let iter = CodepointIterator::init(bytes);
-        if !iter.next(cursor) {
-            // This will make `i > sourceBytes.len` so the condition in `index` will fail
-            cursor.i = u32::try_from(bytes.len() + 1).expect("int cast");
-            cursor.width = 1;
-            cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-    }
-
-    fn init(bytes: &'a [u8]) -> Self {
-        let mut cursor = CodepointCursor::default();
-        Self::advance(bytes, &mut cursor);
-        let mut next_cursor = cursor;
-        Self::advance(bytes, &mut next_cursor);
-        Self {
-            bytes,
-            cursor,
-            next_cursor,
-        }
-    }
-
-    #[inline]
-    fn index(&self) -> Option<SrcUnicodeIndexValue> {
-        if self.cursor.width as usize + self.cursor.i as usize > self.bytes.len() {
-            return None;
-        }
-        Some(SrcUnicodeIndexValue {
-            char: self.cursor.c as u32,
-        })
-    }
-
-    #[inline]
-    fn index_next(&self) -> Option<SrcUnicodeIndexValue> {
-        if self.next_cursor.width as usize + self.next_cursor.i as usize > self.bytes.len() {
-            return None;
-        }
-        Some(SrcUnicodeIndexValue {
-            char: self.next_cursor.c as u32,
-        })
-    }
-
-    #[inline]
-    fn eat(&mut self, escaped: bool) {
-        if escaped {
-            // eat two codepoints
-            Self::advance(self.bytes, &mut self.next_cursor);
-            self.cursor = self.next_cursor;
-            Self::advance(self.bytes, &mut self.next_cursor);
-        } else {
-            // eat one codepoint
-            self.cursor = self.next_cursor;
-            Self::advance(self.bytes, &mut self.next_cursor);
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3612,99 +3427,45 @@ pub enum CharState {
     Double,
 }
 
+/// Reads the script one byte at a time. All shell syntax is ASCII, and no byte of a multi-byte UTF-8 sequence is
+/// ASCII, so the lexer never decodes: a byte that is not syntax is text, and text is copied as it is.
 #[derive(Clone, Copy)]
-pub enum Src<'a> {
-    Ascii(SrcAscii<'a>),
-    Unicode(SrcUnicode<'a>),
-}
-
-impl<'a> Src<'a> {
-    fn set_ascii_i(&mut self, new_idx: usize) {
-        if let Src::Ascii(a) = self {
-            a.i = new_idx;
-        }
-    }
-    fn set_unicode_cursor(&mut self, new_idx: usize) {
-        if let Src::Unicode(u) = self {
-            u.cursor = CodepointCursor {
-                i: u32::try_from(new_idx).expect("int cast"),
-                c: 0,
-                width: 0,
-            };
-            SrcUnicode::advance(u.bytes, &mut u.cursor);
-            u.next_cursor = u.cursor;
-            SrcUnicode::advance(u.bytes, &mut u.next_cursor);
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct ShellCharIter<'a, const ENCODING: StringEncoding> {
-    pub(crate) src: Src<'a>,
+pub struct ShellCharIter<'a> {
+    pub(crate) bytes: &'a [u8],
+    pub(crate) i: usize,
     pub(crate) state: CharState,
     pub(crate) prev: Option<InputChar>,
     pub(crate) current: Option<InputChar>,
 }
 
-impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
+impl<'a> ShellCharIter<'a> {
     pub(crate) fn is_whitespace(char: InputChar) -> bool {
         matches!(char.char, c if c == u32::from(b'\t') || c == u32::from(b'\r') || c == u32::from(b'\n') || c == u32::from(b' '))
     }
 
     pub(crate) fn init(bytes: &'a [u8]) -> Self {
-        let src = if ENCODING == StringEncoding::Ascii {
-            Src::Ascii(SrcAscii::init(bytes))
-        } else {
-            Src::Unicode(SrcUnicode::init(bytes))
-        };
         Self {
-            src,
+            bytes,
+            i: 0,
             state: CharState::Normal,
             prev: None,
             current: None,
         }
     }
 
-    pub(crate) fn src_bytes(&self) -> &'a [u8] {
-        match &self.src {
-            Src::Ascii(a) => a.bytes,
-            Src::Unicode(u) => u.bytes,
-        }
-    }
-
     pub(crate) fn src_bytes_at_cursor(&self) -> &'a [u8] {
-        let bytes = self.src_bytes();
-        match &self.src {
-            Src::Ascii(a) => {
-                if a.i >= bytes.len() {
-                    return b"";
-                }
-                &bytes[a.i..]
-            }
-            Src::Unicode(u) => {
-                if u.cursor.i as usize >= bytes.len() {
-                    return b"";
-                }
-                &bytes[u.cursor.i as usize..]
-            }
-        }
+        self.bytes.get(self.i..).unwrap_or(b"")
     }
 
     pub(crate) fn cursor_pos(&self) -> usize {
-        match &self.src {
-            Src::Ascii(a) => a.i,
-            Src::Unicode(u) => u.cursor.i as usize,
-        }
+        self.i
     }
 
     pub(crate) fn eat(&mut self) -> Option<InputChar> {
         if let Some(result) = self.read_char() {
             self.prev = self.current;
             self.current = Some(result);
-            match &mut self.src {
-                Src::Ascii(a) => a.eat(result.escaped),
-                Src::Unicode(u) => u.eat(result.escaped),
-            }
+            self.i += 1 + usize::from(result.escaped);
             return Some(result);
         }
         None
@@ -3715,10 +3476,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
     }
 
     pub(crate) fn read_char(&mut self) -> Option<InputChar> {
-        let mut char: u32 = match &self.src {
-            Src::Ascii(a) => a.index()?.char() as u32,
-            Src::Unicode(u) => u.index()?.char,
-        };
+        let mut char = u32::from(*self.bytes.get(self.i)?);
         if char != u32::from(b'\\') || self.state == CharState::Single {
             return Some(InputChar {
                 char,
@@ -3727,19 +3485,12 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
         }
 
         // Handle backslash
+        let peeked = u32::from(*self.bytes.get(self.i + 1)?);
         match self.state {
             CharState::Normal => {
-                let peeked = match &self.src {
-                    Src::Ascii(a) => a.index_next().map(|v| v.char() as u32),
-                    Src::Unicode(u) => u.index_next().map(|v| v.char),
-                }?;
                 char = peeked;
             }
             CharState::Double => {
-                let peeked = match &self.src {
-                    Src::Ascii(a) => a.index_next().map(|v| v.char() as u32),
-                    Src::Unicode(u) => u.index_next().map(|v| v.char),
-                }?;
                 match peeked {
                     // Backslash only applies to these characters
                     c if c == u32::from(b'$')
@@ -3777,46 +3528,6 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
 /// - _
 /// - 0-9 (but can't be first char)
 pub(crate) fn is_valid_var_name(var_name: &[u8]) -> bool {
-    if is_all_ascii(var_name) {
-        return is_valid_var_name_ascii(var_name);
-    }
-
-    if var_name.is_empty() {
-        return false;
-    }
-    let iter = CodepointIterator::init(var_name);
-    let mut cursor = CodepointCursor::default();
-
-    if !iter.next(&mut cursor) {
-        return false;
-    }
-
-    // `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
-    // ASCII-range matches below; negative sentinel never matches anyway.
-    match cursor.c as u32 {
-        c if c == u32::from(b'=') || (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-            return false;
-        }
-        c if (u32::from(b'a')..=u32::from(b'z')).contains(&c)
-            || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
-            || c == u32::from(b'_') => {}
-        _ => return false,
-    }
-
-    while iter.next(&mut cursor) {
-        match cursor.c as u32 {
-            c if (u32::from(b'0')..=u32::from(b'9')).contains(&c)
-                || (u32::from(b'a')..=u32::from(b'z')).contains(&c)
-                || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
-                || c == u32::from(b'_') => {}
-            _ => return false,
-        }
-    }
-
-    true
-}
-
-fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
     if var_name.is_empty() {
         return false;
     }
@@ -3843,20 +3554,7 @@ fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
 // the lower-tier parser crate omits it.
 
 pub(crate) fn has_eq_sign(str: &[u8]) -> Option<u32> {
-    if is_all_ascii(str) {
-        return strings::index_of_char(str, b'=');
-    }
-
-    // TODO actually i think that this can also use the simd stuff
-    let iter = CodepointIterator::init(str);
-    let mut cursor = CodepointCursor::default();
-    while iter.next(&mut cursor) {
-        if cursor.c as u32 == u32::from(b'=') {
-            return Some(cursor.i);
-        }
-    }
-
-    None
+    strings::index_of_char(str, b'=')
 }
 
 #[inline]

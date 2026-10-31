@@ -1655,17 +1655,9 @@ impl Error {
     // Deferred / toDeferred / toJSWithSyscall / toJSWithSyscallAndHostname
     // aliases deleted — live in bun_runtime::dns_jsc (extension trait).
 
-    /// The status `dns.lookup` and `dns.lookupService` report, whichever
-    /// backend produced it.
-    ///
-    /// Node's `lookup` and `lookupService` go through getaddrinfo(3) and
-    /// getnameinfo(3) and report `EAI_NODATA` and `EAI_NONAME` as `ENOTFOUND`
-    /// (lib/internal/errors.js, `dnsException`). The c-ares backend
-    /// (`ares_getaddrinfo`, `ares_getnameinfo`) answers the same question with
-    /// its own statuses: `ENODATA` for a name without records of the wanted
-    /// type, `EBADNAME` for a name getaddrinfo(3) rejects with `EAI_NONAME`.
-    /// `resolve*`, `query*` and `reverse` do not go through here: Node reports
-    /// their c-ares status as is (`ENODATA`, `EBADNAME`).
+    /// The fold Node's `dnsException` applies to getaddrinfo(3) and
+    /// getnameinfo(3) statuses (`dns.lookup`, `dns.lookupService`). `resolve*`
+    /// and `reverse` report the c-ares status as is.
     pub fn for_lookup(self) -> Error {
         match self {
             Error::ENODATA | Error::ENONAME | Error::EBADNAME => Error::ENOTFOUND,
@@ -1673,14 +1665,13 @@ impl Error {
         }
     }
 
-    /// [`Error::get`] for the status of `ares_getaddrinfo` or
-    /// `ares_getnameinfo`, folded by [`Error::for_lookup`].
+    /// [`Error::get`] folded by [`Error::for_lookup`].
     pub fn get_for_lookup(rc: i32) -> Option<Error> {
         Self::get(rc).map(Error::for_lookup)
     }
 
-    /// The status of getaddrinfo(3) (libuv's `UV_EAI_*` on Windows, `EAI_*`
-    /// elsewhere), folded by [`Error::for_lookup`].
+    /// A getaddrinfo(3) status (`UV_EAI_*` on Windows), folded by
+    /// [`Error::for_lookup`].
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
@@ -1844,9 +1835,7 @@ impl Error {
         }
     }
 
-    /// The c-ares status as is, the way Node's `cares_wrap.cc`
-    /// (`ToErrorCodeString`) reports it for `resolve*`, `query*` and `reverse`.
-    /// A getaddrinfo-style caller folds it with [`Error::for_lookup`].
+    /// The c-ares status as is. Lookup callers fold it with [`Error::for_lookup`].
     pub fn get(rc: i32) -> Option<Error> {
         if rc == 0 {
             return None;

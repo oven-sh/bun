@@ -253,8 +253,13 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         JSC::EnsureStillAliveScope jsFunctionProtector(jsFunction);
 
         // Do this before invocation to avoid reentrancy issues.
-        if (registeredListener->isOnce())
+        if (registeredListener->isOnce()) {
+            // An emit from inside an earlier listener already ran it.
+            if (registeredListener->hasFired()) [[unlikely]]
+                continue;
+            registeredListener->markAsFired();
             removeListener(eventType, *registeredListener);
+        }
 
         if (!jsFunction) [[unlikely]]
             continue;

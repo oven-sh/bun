@@ -108,10 +108,10 @@ export class HMRModule {
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
-   * Unused for CJS
+   * For CJS, `importsSync` stores the first list.
    */
   imports: HMRModule[] | any[] | null = null;
-  /** Assignned by an ESM module's load function immediately.
+  /** Assigned by a module's load function immediately, when the module has import statements.
    * HTML files do not emit a store to this field */
   updateImport: ((exports: any) => void)[] | null = null;
   /** When calling `import.meta.hot.dispose` */
@@ -152,6 +152,27 @@ export class HMRModule {
       }
       throw e;
     }
+  }
+
+  /** Lowered from the `import` statements of a CommonJS module, which has no dependency list. */
+  importsSync(ids: Id[]) {
+    const list: HMRModule[] = [];
+    for (const id of ids) {
+      try {
+        list.push(loadModuleSync(id, false, this));
+      } catch (e) {
+        if (e instanceof AsyncImportError) {
+          throw new Error(
+            `Cannot import "${id}" in "${this.id}" because "${e.asyncId}" uses top-level await, but "${this.id}" is a CommonJS module and loads its imports synchronously.`,
+          );
+        }
+        throw e;
+      }
+    }
+    const namespaces = list.map(getEsmExports);
+    // The load function assigns `updateImport` right after this returns, so the two lists always match.
+    this.imports = list;
+    return namespaces;
   }
 
   /** Lowered from `.e_import` (import(id)) */
@@ -355,6 +376,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
+      // It was stale, and is again: a later `import` that can wait for it evaluates it.
+      if (mod) mod.state = State.Stale;
       throw new AsyncImportError(id);
     }
     if (!mod) {
@@ -379,6 +402,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
+    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     try {
       load(mod);
     } catch (e) {
@@ -389,6 +413,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     mod.imports = depsList;
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
+    // A module in an import cycle with this one read `null` for this namespace.
+    if (shouldPatchImporters) patchImporters(mod);
     mod.state = State.Loaded;
   }
 
@@ -592,7 +618,10 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 }
 
 function getEsmExports(m: HMRModule) {
-  return m.esm ? m.exports : (m.exports ??= toESM(m.cjs.exports));
+  if (m.esm || m.exports) return m.exports;
+  const view = toESM(m.cjs.exports);
+  // A CommonJS module that still runs can replace `module.exports`, so its view is not kept yet.
+  return m.state === State.Pending ? view : (m.exports = view);
 }
 
 type HotAcceptFunction = (esmExports?: any | void) => void;
@@ -818,7 +847,7 @@ function patchImporters(mod: HMRModule) {
   const { importers } = mod;
   const exports = getEsmExports(mod);
   for (const importer of importers) {
-    if (!importer.esm || !importer.updateImport) continue;
+    if (!importer.updateImport) continue;
     const index = importer.imports!.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
     importer.updateImport![index](exports);

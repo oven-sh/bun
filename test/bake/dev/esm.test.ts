@@ -326,6 +326,212 @@ devTest("importer tracking survives flipping a module from ESM to CJS", {
     await c.expectMessage("leaf 2", "index run 3");
   },
 });
+devTest("a module keeps its imports when it changes between ESM and module.exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./flip.js";
+      import.meta.hot.accept();
+    `,
+    "flip.js": `
+      import { a } from "./a.js";
+      import { b } from "./b.js";
+      console.log("esm " + a + b);
+      globalThis.read = () => a + b;
+    `,
+    // Each accepts its own updates, so an update runs no other module again.
+    "a.js": `
+      export const a = "a1";
+      import.meta.hot.accept();
+    `,
+    "b.js": `
+      export const b = "b1";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("esm a1b1");
+    await dev.write(
+      "flip.js",
+      `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log("cjs " + a + b);
+        globalThis.read = () => a + b;
+        module.exports = {};
+      `,
+    );
+    await c.expectMessage("cjs a1b1");
+    await dev.patch("a.js", { find: "a1", replace: "a2" });
+    await dev.patch("b.js", { find: "b1", replace: "b2" });
+    expect(await c.js<string>`read()`).toBe("a2b2");
+    // The same imports in the other order.
+    await dev.write(
+      "flip.js",
+      `
+        import { b } from "./b.js";
+        import { a } from "./a.js";
+        console.log("cjs " + a + b);
+        globalThis.read = () => a + b;
+        module.exports = {};
+      `,
+    );
+    await c.expectMessage("cjs a2b2");
+    await dev.patch("a.js", { find: "a2", replace: "a3" });
+    expect(await c.js<string>`read()`).toBe("a3b2");
+    await dev.write(
+      "flip.js",
+      `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log("esm " + a + b);
+        globalThis.read = () => a + b;
+      `,
+    );
+    await c.expectMessage("esm a3b2");
+    await dev.patch("b.js", { find: "b2", replace: "b3" });
+    expect(await c.js<string>`read()`).toBe("a3b3");
+  },
+});
+devTest("require of an ES module with an import cycle", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const { readBoth } = require("./a.js");
+      console.log(readBoth());
+    `,
+    "a.js": `
+      import { b, readA } from "./b.js";
+      export const a = "a";
+      export function readBoth() {
+        return [b, readA()];
+      }
+    `,
+    "b.js": `
+      import { a } from "./a.js";
+      export const b = "b";
+      export function readA() {
+        return a;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage(["b", "a"]);
+  },
+});
+devTest("an entry point with an import that checks module.hot", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./dep.js";
+      console.log(value);
+      if (module.hot) module.hot.accept();
+    `,
+    "dep.js": `
+      export const value = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage(1);
+  },
+});
+devTest("a file with module.exports cannot import a module with top level await", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const attempt = async load => {
+        try {
+          await load();
+          console.log("FAIL");
+        } catch (e) {
+          console.log(e.message);
+        }
+      };
+      await attempt(() => import("./direct.js"));
+      await attempt(() => import("./indirect.js"));
+    `,
+    "direct.js": `
+      import { value } from "./async.js";
+      console.log("FAIL");
+      module.exports = { value };
+    `,
+    "indirect.js": `
+      import { value } from "./middle.js";
+      console.log("FAIL");
+      module.exports = { value };
+    `,
+    "middle.js": `
+      export { value } from "./async.js";
+    `,
+    "async.js": `
+      export const value = await 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage(
+      `Cannot import "async.js" in "direct.js" because "async.js" uses top-level await, but "direct.js" is a CommonJS module and loads its imports synchronously.`,
+      `Cannot import "middle.js" in "indirect.js" because "async.js" uses top-level await, but "indirect.js" is a CommonJS module and loads its imports synchronously.`,
+    );
+  },
+});
+devTest("a module with top level await loads after a file with module.exports could not import it", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const results = [];
+      const attempt = async load => {
+        try {
+          results.push((await load()).value);
+        } catch (e) {
+          results.push(e.message);
+        }
+      };
+      await attempt(() => import("./async.js"));
+      await attempt(() => import("./mixed.js"));
+      await attempt(() => import("./async.js"));
+      console.log(results);
+    `,
+    // Its first load fails before its body runs, so the next load evaluates it again.
+    "async.js": `
+      import value from "./throws-once.cjs";
+      export { value };
+      await 0;
+    `,
+    "throws-once.cjs": `
+      if (!globalThis.threwOnce) {
+        globalThis.threwOnce = true;
+        throw new Error("once");
+      }
+      module.exports = 1;
+    `,
+    "mixed.js": `
+      import { value } from "./async.js";
+      module.exports = { value };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage([
+      "once",
+      `Cannot import "async.js" in "mixed.js" because "async.js" uses top-level await, but "mixed.js" is a CommonJS module and loads its imports synchronously.`,
+      1,
+    ]);
+  },
+});
 devTest("cannot require a module with top level await", {
   // TODO: after the module-loader rewrite the dev server's /_bun/report_error
   // handler can hang (never responds), so the client overlay never mounts and

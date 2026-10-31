@@ -1728,6 +1728,297 @@ describe("bundler", () => {
       stdout: "div x hi",
     },
   });
+  // The classic JSX transform calls the factory. A factory that is a member of a
+  // CommonJS import is a method call, so it passes `module.exports` as `this`.
+  const thisReadingJsxLib = {
+    "/lib.cjs": /* js */ `
+      exports.h = function (type) {
+        return this.make(type);
+      };
+      exports.make = function (type) {
+        return "made:" + type;
+      };
+      exports.Fragment = "frag";
+    `,
+  };
+  const jsxFactoryImports: Record<string, { prelude: string; files?: Record<string, string> }> = {
+    DefaultImport: { prelude: `import lib from "./lib.cjs";` },
+    DefaultAsImport: { prelude: `import { default as lib } from "./lib.cjs";` },
+    StarImport: { prelude: `import * as lib from "./lib.cjs";` },
+    ReExportedNamespace: {
+      prelude: `import { lib } from "./barrel.js";`,
+      files: { "/barrel.js": `export * as lib from "./lib.cjs";` },
+    },
+    ExportStarAsDefault: {
+      prelude: `import lib from "./barrel.js";`,
+      files: { "/barrel.js": `export * as default from "./lib.cjs";` },
+    },
+    StarImportThroughExportStar: {
+      prelude: `import * as lib from "./barrel.js";`,
+      files: { "/barrel.js": `export * from "./lib.cjs";` },
+    },
+  };
+  for (const [name, { prelude, files }] of Object.entries(jsxFactoryImports)) {
+    itBundled(`cjs2esm/${name}JsxFactoryKeepsThis`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          ${prelude}
+          console.log(<div />, <></>);
+        `,
+        ...files,
+        ...thisReadingJsxLib,
+      },
+      jsx: {
+        runtime: "classic",
+        factory: "lib.h",
+        fragment: "lib.Fragment",
+      },
+      cjs2esm: true,
+      run: {
+        stdout: "made:div made:frag",
+      },
+    });
+  }
+  itBundled("cjs2esm/DefaultImportJsxFactoryKeepsThisCli", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import lib from "./lib.cjs";
+        console.log(<div />);
+      `,
+      ...thisReadingJsxLib,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "lib.h",
+    },
+    backend: "cli",
+    cjs2esm: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('exports_lib.h("div", null)');
+    },
+    run: {
+      stdout: "made:div",
+    },
+  });
+  itBundled("cjs2esm/DefaultImportJsxPragmaFactoryKeepsThis", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /** @jsxRuntime classic */
+        /** @jsx lib.h */
+        import lib from "./lib.cjs";
+        console.log(<div />);
+      `,
+      ...thisReadingJsxLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "made:div",
+    },
+  });
+  // The default factory, `React.createElement`. `require("react")` is an import
+  // too: `react` is one of the packages whose `require()` the bundler unwraps.
+  const reactImports = {
+    DefaultImport: `import React from "react";`,
+    Require: `const React = require("react");`,
+  };
+  for (const [name, prelude] of Object.entries(reactImports)) {
+    itBundled(`cjs2esm/${name}JsxDefaultFactoryKeepsThis`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          ${prelude}
+          console.log(<div />);
+        `,
+        "/node_modules/react/package.json": /* json */ `
+          { "name": "react", "version": "19.0.0", "main": "index.js" }
+        `,
+        "/node_modules/react/index.js": /* js */ `
+          exports.createElement = function (type) {
+            return this.build(type);
+          };
+          exports.build = function (type) {
+            return "built:" + type;
+          };
+        `,
+      },
+      jsx: {
+        runtime: "classic",
+      },
+      cjs2esm: true,
+      run: {
+        stdout: "built:div",
+      },
+    });
+  }
+  // The entry of the package picks a file by `NODE_ENV`, as `react/index.js`
+  // does. `--minify-syntax` removes the dead branch, and only then is the
+  // picked file lifted.
+  const nodeEnvSwitchImports = {
+    DefaultImport: `import lib from "lib";`,
+    StarImport: `import * as lib from "lib";`,
+  };
+  for (const [name, prelude] of Object.entries(nodeEnvSwitchImports)) {
+    itBundled(`cjs2esm/${name}JsxFactoryKeepsThisNodeEnvMinifySyntax`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          ${prelude}
+          console.log(<div />, <></>);
+        `,
+        "/node_modules/lib/index.js": /* js */ `
+          if (process.env.NODE_ENV === 'production') {
+            module.exports = require('./library.prod.js')
+          } else {
+            module.exports = require('./library.dev.js')
+          }
+        `,
+        "/node_modules/lib/library.prod.js": thisReadingJsxLib["/lib.cjs"],
+        "/node_modules/lib/library.dev.js": /* js */ `
+          exports.h = function () {
+            return "FAILED";
+          };
+        `,
+      },
+      jsx: {
+        runtime: "classic",
+        factory: "lib.h",
+        fragment: "lib.Fragment",
+      },
+      cjs2esm: true,
+      minifySyntax: true,
+      env: {
+        NODE_ENV: "production",
+      },
+      run: {
+        stdout: "made:div made:frag",
+      },
+    });
+  }
+  // `--minify-syntax` moves the single-use local into the `return` and visits
+  // the call that the element became a second time.
+  itBundled("cjs2esm/DefaultImportJsxFactoryKeepsThisInlinedLocalMinifySyntax", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import lib from "./lib.cjs";
+        function f(c) {
+          const el = <div />;
+          return c ? el : null;
+        }
+        console.log(f(true));
+      `,
+      ...thisReadingJsxLib,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "lib.h",
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('exports_lib.h("div", null) : null');
+    },
+    run: {
+      stdout: "made:div",
+    },
+  });
+  itBundled("cjs2esm/JsxFactoryKeepsThisSplitting", {
+    files: {
+      "/a.jsx": /* jsx */ `
+        import lib from "./lib.cjs";
+        console.log("a", <div />, <></>);
+      `,
+      "/b.jsx": /* jsx */ `
+        import * as lib from "./lib.cjs";
+        console.log("b", <span />);
+      `,
+      ...thisReadingJsxLib,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "lib.h",
+      fragment: "lib.Fragment",
+    },
+    entryPoints: ["/a.jsx", "/b.jsx"],
+    outdir: "/out",
+    splitting: true,
+    run: [
+      { file: "/out/a.js", stdout: "a made:div made:frag" },
+      { file: "/out/b.js", stdout: "b made:span" },
+    ],
+  });
+  // Only the last member of the factory is the callee. `ns.default` is
+  // `module.exports`, and the namespace object has no `default` property, so
+  // `ns.default` must not stay a property access.
+  itBundled("cjs2esm/StarImportJsxFactoryThroughDefaultKeepsThis", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as ns from "./lib.cjs";
+        console.log(<div />);
+      `,
+      ...thisReadingJsxLib,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "ns.default.h",
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "made:div",
+    },
+  });
+  // The fragment is an argument of the call, not a callee. It binds directly,
+  // even when its value can read `this`.
+  itBundled("cjs2esm/DefaultImportJsxFragmentBindsDirectly", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import lib from "./lib.cjs";
+        console.log(<></>);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.h = function (type) {
+          return "type:" + typeof type;
+        };
+        exports.Fragment = function () {
+          return this;
+        };
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "lib.h",
+      fragment: "lib.Fragment",
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("exports_lib");
+    },
+    run: {
+      stdout: "type:function",
+    },
+  });
+  // JSX in the CommonJS file itself, with a factory on its own `exports`.
+  itBundled("cjs2esm/SelfJsxFactoryKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import { el } from "./lib.jsx";
+        console.log(el);
+      `,
+      "/lib.jsx": /* jsx */ `
+        exports.h = function (type) {
+          return this.make(type);
+        };
+        exports.make = function (type) {
+          return "made:" + type;
+        };
+        exports.el = <div />;
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "exports.h",
+    },
+    run: {
+      stdout: "made:div",
+    },
+  });
   itBundled("cjs2esm/DefaultImportSplitting", {
     files: {
       "/a.js": /* js */ `

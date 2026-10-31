@@ -65,8 +65,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 
     fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> js_ast::Expr {
-        self.p
-            .jsx_classic_member_expression(loc, |jsx| &jsx.factory)
+        self.p.jsx_classic_factory(loc)
     }
 
     fn jsx_import_kind(&self, ref_: js_ast::Ref) -> Option<bun_react_compiler::JsxImportKind> {

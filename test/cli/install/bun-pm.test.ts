@@ -4,6 +4,8 @@ import { chmod, copyFile, exists, link, mkdir, rm, symlink, writeFile } from "fs
 import {
   bunEnv,
   bunExe,
+  canMount,
+  type DirectoryTree,
   bunEnv as env,
   isLinux,
   isWindows,
@@ -14,8 +16,18 @@ import {
   tmpdirSync,
   unprivilegedSpawnOptions,
 } from "harness";
-import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { basename, join } from "path";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, normalize, relative } from "path";
 import { TestRegistry } from "registry";
 import {
   dummyAfterAll,
@@ -26,6 +38,7 @@ import {
   package_dir,
   requested,
   root_url,
+  setGithubRepository,
   setHandler,
 } from "./dummy.registry";
 
@@ -2252,6 +2265,421 @@ describe.concurrent("bun pm cache prune", () => {
     });
     expect(await readdirSorted(join(proj, "looks-like@1.0.0@@@1"))).toEqual(["index.js"]);
   });
+
+  test("removes a scope or index directory that is empty, and keeps one that still has an entry", async () => {
+    using dir = tempDir("pm-cache-prune-empty-directories", {
+      "package.json": JSON.stringify({ name: "cache-prune-empty-directories" }),
+      cache: {
+        "@empty": {},
+        "gone-pkg": {},
+        "live-pkg@1.0.0@@@1": { "index.js": "live" },
+        "live-pkg@2.0.0@@@1": {},
+        "live-pkg": {},
+        // Neither a package nor an index directory, so a prune never removes it.
+        "@other": { ".staging": {} },
+      },
+    });
+    const cache = join(String(dir), "cache");
+    for (const version of ["1.0.0@@@1", "2.0.0@@@1"]) {
+      symlinkSync(join(cache, `live-pkg@${version}`), join(cache, "live-pkg", version), isWindows ? "junction" : "dir");
+    }
+    // Its index link is now a dangling link.
+    rmSync(join(cache, "live-pkg@2.0.0@@@1"), { recursive: true });
+    const nothingToPrune = {
+      stdout: "Done! Checked 1 package, none older than 30 days (nothing to prune)\n",
+      stderr: "",
+      exitCode: 0,
+    };
+
+    expect(await prune(String(dir), cache, "--dry-run")).toEqual(nothingToPrune);
+    expect(await readdirSorted(cache)).toEqual(["@empty", "@other", "gone-pkg", "live-pkg", "live-pkg@1.0.0@@@1"]);
+    expect(await readdirSorted(join(cache, "live-pkg"))).toEqual(["1.0.0@@@1", "2.0.0@@@1"]);
+
+    expect(await prune(String(dir), cache)).toEqual(nothingToPrune);
+    expect(await readdirSorted(cache)).toEqual(["@other", "live-pkg", "live-pkg@1.0.0@@@1"]);
+    expect(await readdirSorted(join(cache, "live-pkg"))).toEqual(["1.0.0@@@1"]);
+    expect(await readdirSorted(join(cache, "@other"))).toEqual([".staging"]);
+  });
+
+  type Fixture = {
+    /** Added to a cache in which nothing is old enough to prune. */
+    extra?: DirectoryTree;
+    /** Index links, `<index directory>/<link>`, each with the package directory that it is a link to. */
+    links?: Record<string, string>;
+    /** Packages to make old enough to prune. */
+    old?: string[];
+    /** The cache is not at the path where it was filled, so the target of every index link is missing. */
+    moved?: boolean;
+  };
+
+  /**
+   * Three packages, and what `fixture` adds. A prune keeps every scope and index directory of the three:
+   * `@solo` for its package, `@kept` for its index directory, `@scope` for both. POSIX only.
+   */
+  function freshCache(name: string, { extra = {}, links = {}, old = [], moved = false }: Fixture) {
+    const dir = tempDir(name, {
+      "package.json": JSON.stringify({ name }),
+      "home/.keep": "",
+      "tmp/.keep": "",
+      filled: {
+        "new-pkg@2.0.0@@@1": { "index.js": "new" },
+        "new-pkg": {},
+        "@scope": { "new-scoped@1.0.0@@@1": { "index.js": "scoped" }, "new-scoped": {} },
+        "@solo": { "solo-pkg@1.0.0@@@1": { "index.js": "solo" } },
+        "@kept": { "kept-index": { "not-a-link": "" } },
+        ...extra,
+      },
+    });
+    const filled = join(String(dir), "filled");
+    links = {
+      "new-pkg/2.0.0@@@1": "new-pkg@2.0.0@@@1",
+      "@scope/new-scoped/1.0.0@@@1": "@scope/new-scoped@1.0.0@@@1",
+      ...links,
+    };
+    // Bun writes the target of an index link as an absolute path.
+    for (const [link, target] of Object.entries(links)) symlinkSync(join(filled, target), join(filled, link), "dir");
+    const cache = moved ? join(String(dir), "moved") : filled;
+    if (moved) renameSync(filled, cache);
+    return {
+      dir: String(dir),
+      cache,
+      before: tree(cache),
+      /** To list a package directory is to use it, so call this after the last listing. */
+      age() {
+        for (const pkg of old) utimesSync(join(cache, pkg), daysAgo(40), daysAgo(40));
+      },
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+  const tree = (cache: string) => readdirSync(cache, { recursive: true }).sort();
+  const keptAll = "Done! Checked 3 packages, none older than 30 days (nothing to prune)\n";
+
+  // An npm package of this link would be `<index directory>@<link>`, which is too long for a file name here.
+  test.skipIf(isWindows)("removes a dangling index link whose name does not fit in the name of a package", async () => {
+    const index = Buffer.alloc(200, "a").toString();
+    const link = `owner-repo-${Buffer.alloc(48, "0").toString()}@@@1`;
+    using box = freshCache("pm-cache-prune-long-name", {
+      extra: { [index]: {} },
+      links: { [`${index}/${link}`]: `@GH@${link}` },
+    });
+
+    expect(await prune(box.dir, box.cache)).toEqual({ stdout: keptAll, stderr: "", exitCode: 0 });
+    expect(tree(box.cache)).toEqual(box.before.filter(entry => !entry.startsWith(index)));
+  });
+
+  // Bun may not remove a directory on a read-only mount (EROFS) or in a directory without write
+  // permission (EACCES). rmdir(2) gives that answer before it looks at whether the directory is empty.
+  describe("a cache that cannot be written to", () => {
+    type Cell = Fixture & {
+      title: string;
+      args?: string[];
+      /** From the cache root, the directories that get mode 555 in the second group. */
+      locked?: string[];
+      /** What the run cannot delete. */
+      failed?: string[];
+      /** What the run deletes. */
+      deleted?: string[];
+      stdout?: string;
+    };
+    const danglingLink = { extra: { "lost-pkg": {} }, links: { "lost-pkg/1.0.0@@@1": "lost-pkg@1.0.0@@@1" } };
+    const cells: Cell[] = [
+      { title: "a scope and an index directory that are not empty are kept without an error" },
+      {
+        title: "an empty index directory that cannot be removed is an error",
+        extra: { "gone-pkg": {} },
+        failed: ["gone-pkg"],
+      },
+      {
+        title: "an empty scope directory that cannot be removed is an error",
+        extra: { "@empty": {} },
+        failed: ["@empty/"],
+      },
+      {
+        title: "an empty index directory in a scope that cannot be removed is one error, and its scope is none",
+        extra: { "@only": { "gone-pkg": {} } },
+        locked: [".", "@only"],
+        failed: ["@only/gone-pkg"],
+      },
+      {
+        // The package is locked too: macOS empties a directory before it finds that it cannot remove it.
+        title: "an old package that cannot be deleted is one error, and its scope is none",
+        extra: { "@old": { "old-pkg@1.0.0@@@1": { "index.js": "old" } } },
+        old: ["@old/old-pkg@1.0.0@@@1"],
+        locked: [".", "@old", "@old/old-pkg@1.0.0@@@1"],
+        failed: ["@old/old-pkg@1.0.0@@@1"],
+      },
+      {
+        title: "a dangling index link that cannot be removed is one error, and its index directory is none",
+        ...danglingLink,
+        locked: [".", "lost-pkg"],
+        failed: ["lost-pkg/1.0.0@@@1"],
+      },
+      {
+        title: "--dry-run does not try to remove an empty scope or index directory",
+        extra: { "@empty": {}, "gone-pkg": {} },
+        args: ["--dry-run"],
+      },
+      {
+        // A link for each name that bun gives one: after an npm package, a GitHub package and a tarball.
+        title: "the index links of a cache that is not at the path where it was filled are kept without an error",
+        moved: true,
+        extra: {
+          "@GH@owner-repo-abc1234@@@1": { "index.js": "github" },
+          "@T@0123456789abcdef@@@1": { "index.js": "tarball" },
+          "github-pkg": {},
+          "tarball-pkg": {},
+          "@github": { "scoped-pkg": {} },
+        },
+        links: {
+          "github-pkg/owner-repo-abc1234@@@1": "@GH@owner-repo-abc1234@@@1",
+          "tarball-pkg/@T@0123456789abcdef@@@1": "@T@0123456789abcdef@@@1",
+          "@github/scoped-pkg/owner-repo-abc1234@@@1": "@GH@owner-repo-abc1234@@@1",
+        },
+        stdout: "Done! Checked 5 packages, none older than 30 days (nothing to prune)\n",
+      },
+    ];
+
+    function outcome({ failed = [], stdout }: Cell, errno: string) {
+      return {
+        stdout:
+          stdout ??
+          (failed.length === 0 ? keptAll : `Removed 0 packages older than 30 days (0 KB), ${failed.length} failed\n`),
+        stderr: failed.map(name => `${errno}: Could not delete ${name} (unlink)\n`).join(""),
+        exitCode: failed.length === 0 ? 0 : 1,
+      };
+    }
+
+    test.skipIf(!canMount()).each(cells)("a read-only mount: $title", async cell => {
+      using box = freshCache("pm-cache-prune-read-only-mount", cell);
+      box.age();
+
+      await using proc = Bun.spawn({
+        cmd: [
+          "unshare",
+          "-Urm",
+          "/bin/sh",
+          "-c",
+          `set -e
+mount -o bind "$BUN_INSTALL_CACHE_DIR" "$BUN_INSTALL_CACHE_DIR"
+mount -o remount,bind,ro "$BUN_INSTALL_CACHE_DIR"
+exec "$BUN" pm cache prune "$@"`,
+          "sh",
+          ...(cell.args ?? []),
+        ],
+        cwd: box.dir,
+        env: { ...env, BUN: bunExe(), BUN_INSTALL_CACHE_DIR: box.cache },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual(outcome(cell, "EROFS: Read-only file system"));
+      expect(tree(box.cache)).toEqual(box.before);
+    });
+
+    const withoutWritePermission: Cell[] = [
+      ...cells,
+      {
+        title:
+          "a scope directory without write permission, in a cache that can be written to, is kept without an error",
+        locked: ["@scope"],
+      },
+      {
+        title: "a dangling index link is removed, and its index directory that cannot be removed is an error",
+        ...danglingLink,
+        failed: ["lost-pkg"],
+        deleted: ["lost-pkg/1.0.0@@@1"],
+      },
+      {
+        title:
+          "a dangling index link is removed, and its index directory that still has a link is kept without an error",
+        links: { "new-pkg/1.0.0@@@1": "new-pkg@1.0.0@@@1" },
+        deleted: ["new-pkg/1.0.0@@@1"],
+      },
+      {
+        title: "an old package is deleted, and its scope that still has a package is kept without an error",
+        extra: {
+          "@mixed": { "old-pkg@1.0.0@@@1": { "index.js": "old" }, "fresh-pkg@1.0.0@@@1": { "index.js": "fresh" } },
+        },
+        old: ["@mixed/old-pkg@1.0.0@@@1"],
+        deleted: ["@mixed/old-pkg@1.0.0@@@1", "@mixed/old-pkg@1.0.0@@@1/index.js"],
+        stdout: "Removed 1 package older than 30 days (3 bytes)\n",
+      },
+    ];
+    // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+    test.serial.skipIf(isWindows).each(withoutWritePermission)(
+      "directories without write permission: $title",
+      async cell => {
+        using box = freshCache("pm-cache-prune-no-write-permission", cell);
+        using unprivileged = unprivilegedSpawnOptions(box.dir);
+        box.age();
+        const locked = (cell.locked ?? ["."]).map(path => join(box.cache, path));
+        using _unlock = { [Symbol.dispose]: () => locked.forEach(path => chmodSync(path, 0o755)) };
+        locked.forEach(path => chmodSync(path, 0o555));
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "pm", "cache", "prune", ...(cell.args ?? [])],
+          cwd: box.dir,
+          env: cacheEnv(box.dir, { BUN_INSTALL_CACHE_DIR: box.cache }),
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout, stderr, exitCode }).toEqual(outcome(cell, "EACCES: Permission denied"));
+        expect(tree(box.cache)).toEqual(box.before.filter(entry => !cell.deleted?.includes(entry)));
+      },
+    );
+  });
+
+  const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+
+  // An LD_PRELOAD library stands in for the other process. When bun has read the last entry of the
+  // directory $PRUNE_RACE_DIR, the library removes the entry $PRUNE_RACE_REMOVE from it ("." is the
+  // directory itself) or adds the entry $PRUNE_RACE_ADD to it, and says so on stderr.
+  describe.skipIf(!cc)("another process changes a directory after the prune read it", () => {
+    const source = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// bun reads a directory with syscall(SYS_getdents64, ...). The read that returns 0 ends the listing.
+long syscall(long nr, ...) {
+  static long (*next)(long, ...);
+  static int done;
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next) next = dlsym(RTLD_NEXT, "syscall");
+  long rc = next(nr, a1, a2, a3, a4, a5, a6);
+  const char *dir = getenv("PRUNE_RACE_DIR");
+  if (nr != SYS_getdents64 || rc != 0 || done || !dir) return rc;
+
+  char link[64], path[PATH_MAX];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", (int)a1);
+  ssize_t n = readlink(link, path, sizeof path - 1);
+  if (n <= 0) return rc;
+  path[n] = 0;
+  if (strcmp(path, dir) != 0) return rc;
+  done = 1;
+
+  const char *gone = getenv("PRUNE_RACE_REMOVE"), *added = getenv("PRUNE_RACE_ADD");
+  if (!gone && !added) return rc;
+  int failed;
+  if (added) failed = symlinkat("nowhere", (int)a1, added);
+  else if (strcmp(gone, ".") == 0) failed = rmdir(dir);
+  else if ((failed = unlinkat((int)a1, gone, 0)) != 0) failed = unlinkat((int)a1, gone, AT_REMOVEDIR);
+  dprintf(2, "prune-race: %s %s%s\\n", added ? "added" : "removed", added ? added : gone, failed ? " FAILED" : "");
+  return rc;
+}
+`;
+    let shimDir: ReturnType<typeof tempDir> | undefined;
+    // A C compiler on a busy CI machine can take longer than the default hook timeout.
+    beforeAll(async () => {
+      if (!cc) return;
+      shimDir = tempDir("pm-cache-prune-race-shim", { "shim.c": source });
+      await using compile = Bun.spawn({
+        cmd: [cc, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+        cwd: String(shimDir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
+      if (exitCode !== 0) throw new Error(`failed to compile the shim:\n${out}${err}`);
+    }, 30_000);
+    afterAll(() => shimDir?.[Symbol.dispose]());
+
+    type Race = Fixture & {
+      title: string;
+      /** The directory that the other process changes, from the cache root. */
+      dir: string;
+      remove?: string;
+      add?: string;
+      /** What is not in the cache after the run, and what is new in it. */
+      gone?: string[];
+      added?: string[];
+    };
+    const emptyIndexInScope = { extra: { "@only": { "gone-pkg": {} } } };
+
+    const races: Race[] = [
+      {
+        title: "a scope directory is removed before the prune opens it",
+        extra: { "@gone": {} },
+        dir: "",
+        remove: "@gone",
+        gone: ["@gone"],
+      },
+      {
+        title: "an index directory is removed before the prune opens it, and its scope goes in the same run",
+        ...emptyIndexInScope,
+        dir: "@only",
+        remove: "gone-pkg",
+        gone: ["@only", "@only/gone-pkg"],
+      },
+      {
+        title: "a package is removed before the prune checks it, and its scope goes in the same run",
+        extra: { "@only": { "gone-pkg@1.0.0@@@1": {} } },
+        dir: "@only",
+        remove: "gone-pkg@1.0.0@@@1",
+        gone: ["@only", "@only/gone-pkg@1.0.0@@@1"],
+      },
+      {
+        title: "a dangling index link is removed before the prune removes it, and its scope goes in the same run",
+        extra: { "@only": { "lost-pkg": {} } },
+        links: { "@only/lost-pkg/1.0.0@@@1": "@only/lost-pkg@1.0.0@@@1" },
+        dir: "@only/lost-pkg",
+        remove: "1.0.0@@@1",
+        gone: ["@only", "@only/lost-pkg", "@only/lost-pkg/1.0.0@@@1"],
+      },
+      {
+        title: "an empty index directory is removed before the prune removes it, and its scope goes in the same run",
+        ...emptyIndexInScope,
+        dir: "@only/gone-pkg",
+        remove: ".",
+        gone: ["@only", "@only/gone-pkg"],
+      },
+      {
+        title: "an entry is added to an empty index directory before the prune removes it, and the directory is kept",
+        ...emptyIndexInScope,
+        dir: "@only/gone-pkg",
+        add: "1.0.0@@@1",
+        added: ["@only/gone-pkg/1.0.0@@@1"],
+      },
+    ];
+    test.each(races)("$title", async race => {
+      using box = freshCache("pm-cache-prune-race", race);
+
+      const result = await pmCache(["prune"], box.dir, {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: box.cache,
+        LD_PRELOAD: [join(String(shimDir), "shim.so"), env.LD_PRELOAD].filter(Boolean).join(":"),
+        PRUNE_RACE_DIR: join(box.cache, race.dir),
+        PRUNE_RACE_REMOVE: race.remove,
+        PRUNE_RACE_ADD: race.add,
+      });
+
+      expect(result).toEqual({
+        stdout: keptAll,
+        stderr: `prune-race: ${race.add ? `added ${race.add}` : `removed ${race.remove}`}\n`,
+        exitCode: 0,
+      });
+      expect(tree(box.cache)).toEqual(
+        [...box.before.filter(entry => !race.gone?.includes(entry)), ...(race.added ?? [])].sort(),
+      );
+    });
+  });
 });
 
 describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cache %s", action => {
@@ -2391,6 +2819,64 @@ it("bun pm cache prune removes packages that bun install cached and doesn't touc
   rmSync(join(package_dir, "node_modules"), { recursive: true });
   await install();
   expect(tarballs()).toBe(4);
+});
+
+// The target of an index link is the absolute path of the package, so it is missing for a cache that is
+// reached at another path: a directory that was renamed, or a volume that a container mounts elsewhere.
+it("bun pm cache prune keeps the index links that bun install wrote when the cache is at another path", async () => {
+  setHandler(dummyRegistry([]));
+  await setGithubRepository("owner", "repo", "abc1234", [""], {
+    "package.json": JSON.stringify({ name: "github-dep", version: "1.0.0" }),
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "bar": "0.0.2",
+        "@scope/bar": "0.0.2",
+        "github-dep": "owner/repo",
+        "no-deps": "file:./no-deps-1.0.0.tgz",
+      },
+    }),
+  );
+  cpSync(
+    join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"),
+    join(package_dir, "no-deps-1.0.0.tgz"),
+  );
+  // dummyBeforeEach writes `cache = false`, which sends packages to node_modules/.cache.
+  await writeFile(join(package_dir, "bunfig.toml"), `[install]\nregistry = "${root_url}/"\n`);
+  const filled = join(package_dir, "filled-cache");
+  const moved = join(package_dir, "moved-cache");
+
+  await using install = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_INSTALL_CACHE_DIR: filled, GITHUB_API_URL: root_url },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("4 packages installed");
+  expect(exitCode).toBe(0);
+
+  const indexLinks = (cache: string) =>
+    readdirSync(cache, { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isSymbolicLink())
+      .map(entry => relative(cache, join(entry.parentPath, entry.name)))
+      .sort();
+  const links = indexLinks(filled);
+  expect(links.map(link => dirname(link))).toEqual(["@scope/bar", "bar", "github-dep", "no-deps"].map(normalize));
+
+  renameSync(filled, moved);
+  expect(await pmCache(["prune"], package_dir, { ...env, BUN_INSTALL_CACHE_DIR: moved })).toEqual({
+    stdout: "Done! Checked 4 packages, none older than 30 days (nothing to prune)\n",
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(indexLinks(moved)).toEqual(links);
 });
 
 // The cache directory setting (the first one set of $BUN_INSTALL_CACHE_DIR, --cache-dir,

@@ -5488,9 +5488,7 @@ describe.concurrent("socket open() callback throw", () => {
 
 describe.concurrent("connect() failure promise settlement", () => {
   it("a synchronous unix connect failure rejects the promise and fires connectError", async () => {
-    // Runs in a child with a relative unix path: an absolute tempdir path can
-    // exceed sun_path (104 bytes on macOS), where the usockets long-path
-    // fallback reports ENAMETOOLONG/EINVAL instead of the ENOENT this pins.
+    // Runs in a child so the relative unix path resolves against a fresh cwd.
     using dir = tempDir("socket-sync-connect-fail", {});
     await using proc = Bun.spawn({
       cmd: [

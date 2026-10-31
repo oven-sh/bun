@@ -1469,9 +1469,10 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(dirname_buf, path, dirname_len);
             dirname_buf[dirname_len] = 0;
 
+            // Keep open()'s errno (ENOENT, ENOTDIR, EACCES): it is the same
+            // error bind/connect would report for a path that fits sun_path.
             int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY, 0700);
             if (socket_dir_fd == -1) {
-                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
@@ -1522,9 +1523,11 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(dirname_buf, path, dirname_len);
             dirname_buf[dirname_len] = 0;
 
-            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_RDONLY | O_DIRECTORY);
+            // O_SEARCH needs only search permission on the directory, like the
+            // path walk bind/connect do for a path that fits sun_path. Keep
+            // open()'s errno (ENOENT, ENOTDIR, EACCES) for the same reason.
+            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_SEARCH | O_DIRECTORY);
             if (socket_dir_fd == -1) {
-                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
@@ -1581,9 +1584,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
-        /* The path could not be expressed as a sockaddr_un (the basename
-         * exceeds sun_path even with the dirfd workaround); surface the errno
-         * so the caller can report something better than a codeless failure. */
+        /* The path could not be expressed as a sockaddr_un, or its parent
+         * directory could not be opened; surface the errno so the caller can
+         * report something better than a codeless failure. */
         if (error && errno) *error = errno;
         return LIBUS_SOCKET_ERROR;
     }
@@ -1591,8 +1594,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
+            int saved_errno = errno;
             close(dirfd_workaround_for_unix_path_len);
-            errno = ENAMETOOLONG;
+            errno = saved_errno;
+            if (error && errno) *error = errno;
             return LIBUS_SOCKET_ERROR;
         }
     }
@@ -2087,8 +2092,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
+            int saved_errno = errno;
             close(dirfd_workaround_for_unix_path_len);
-            errno = ENAMETOOLONG;
+            errno = saved_errno;
             return LIBUS_SOCKET_ERROR;
         }
     }

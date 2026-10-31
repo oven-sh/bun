@@ -298,7 +298,8 @@ function requiredImports(cfg: Config): string[] {
   if (!cfg.hardened) return [];
   return [
     "__stack_chk_fail",
-    ...(cfg.abi === "gnu" && cfg.release && !cfg.asan ? ["__memcpy_chk", "__snprintf_chk"] : []),
+    // Copies with known bounds inline even with _FORTIFY_SOURCE=2; formatted output retains its checked call.
+    ...(cfg.abi === "gnu" && cfg.release && !cfg.asan ? ["__snprintf_chk"] : []),
   ];
 }
 

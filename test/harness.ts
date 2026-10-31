@@ -1986,7 +1986,9 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   if (!glibcVersion) {
     return false;
   }
-  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
+  // glibc reports two parts ("2.39"), which is not a semver version: satisfies() answers false for it.
+  const semver = /^\d+\.\d+$/.test(glibcVersion) ? `${glibcVersion}.0` : glibcVersion;
+  return Bun.semver.satisfies(semver, `>=${version}`);
 }
 
 let macOSVersion: string | undefined;

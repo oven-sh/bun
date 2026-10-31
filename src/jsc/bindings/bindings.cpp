@@ -5398,6 +5398,7 @@ enum class BuiltinNamesMap : uint8_t {
     // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
     internal,
     sharedFd,
+    spawnSyncOutput,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5476,6 +5477,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::sharedFd: {
         return clientData->builtinNames().sharedFdPrivateName();
+    }
+    case BuiltinNamesMap::spawnSyncOutput: {
+        return clientData->builtinNames().spawnSyncOutputPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();

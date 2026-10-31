@@ -184,6 +184,7 @@ using namespace JSC;
     macro(sharedFd) \
     macro(signal) \
     macro(size) \
+    macro(spawnSyncOutput) \
     macro(specifier) \
     macro(start) \
     macro(status) \

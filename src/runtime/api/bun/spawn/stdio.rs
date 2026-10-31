@@ -191,6 +191,10 @@ impl Stdio {
         if i == 0 && matches!(self, Self::Pipe) {
             *self = Self::Ignore;
         }
+        // A sync spawn has no IPC channel: the slot is a plain pipe (a Windows IPC pipe has its own framing).
+        if i >= 3 && matches!(self, Self::Ipc) {
+            *self = Self::Pipe;
+        }
     }
 
     /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);

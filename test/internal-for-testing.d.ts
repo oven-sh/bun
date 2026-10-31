@@ -6,5 +6,6 @@ declare function $newCppFunction<T = (...args: any) => any>(filename: string, sy
 declare function $bindgen<T = (...args: any) => any>(filename: string, name: string): T;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
 declare function $ERR_IPC_ONE_PIPE(): Error;
+declare function $ERR_IPC_SYNC_FORK(): Error;
 declare function $webStreamClosedPromise(stream: ReadableStream | WritableStream): Promise<void>;
 declare function $inheritsWritableStream(value: unknown): value is WritableStream;

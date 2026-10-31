@@ -20,6 +20,7 @@ import {
 } from "harness";
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
+import { spawnWithStdioFiles, type SpawnStdioOptions } from "./stdio-fd-slots-helpers";
 
 let tmp: string;
 
@@ -2069,6 +2070,109 @@ describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
       expect(result.exitCode).toBe(0);
     },
   );
+});
+
+// A number in a stdio slot names a file descriptor of the parent, and 0, 1 and 2 are file
+// descriptors like any other: the child gets that fd at that slot, as it does in node.
+// https://github.com/oven-sh/bun/issues/7845
+describe("fd 0, 1 or 2 of the parent at another stdio slot", () => {
+  // The spawn options, then what spawnWithStdioFiles must return for them.
+  type Expected = { reaches: (number | null)[]; exitCode: number; stdin: unknown; stdout: unknown; stderr: unknown };
+  type Cases = [options: SpawnStdioOptions, expected: Expected][];
+
+  // What the parent gets for Bun.file(fd) at the slot of the same number. On POSIX the slot is
+  // "inherit", which reports nothing. On Windows Stdio::extract_blob compares a libuv fd with the
+  // handle of the process's own stdio, which never match, so the slot reports the fd.
+  const ownSlotFile = (fd: number) => (isWindows ? fd : "undefined");
+
+  const asNumberAndAsBunFile: Cases = [
+    [{ stdio: [0, 0, 0] }, { reaches: [0, 0, 0], exitCode: 0, stdin: "undefined", stdout: 0, stderr: 0 }],
+    [
+      { stdio: ["Bun.file(0)", "Bun.file(0)", "Bun.file(0)"] },
+      { reaches: [0, 0, 0], exitCode: 0, stdin: ownSlotFile(0), stdout: 0, stderr: 0 },
+    ],
+    [{ stdio: [1, 2, 0] }, { reaches: [1, 2, 0], exitCode: 0, stdin: 1, stdout: 2, stderr: 0 }],
+    [
+      { stdio: ["Bun.file(1)", "Bun.file(2)", "Bun.file(0)"] },
+      { reaches: [1, 2, 0], exitCode: 0, stdin: 1, stdout: 2, stderr: 0 },
+    ],
+    [
+      { stdio: ["Bun.file(0)", "Bun.file(1)", "Bun.file(2)"] },
+      { reaches: [0, 1, 2], exitCode: 0, stdin: ownSlotFile(0), stdout: ownSlotFile(1), stderr: ownSlotFile(2) },
+    ],
+  ];
+  const inStdioArray: Cases = [
+    [{ stdio: [1, 1, 1] }, { reaches: [1, 1, 1], exitCode: 0, stdin: 1, stdout: "undefined", stderr: 1 }],
+    [{ stdio: [2, 0, 0] }, { reaches: [2, 0, 0], exitCode: 0, stdin: 2, stdout: 0, stderr: 0 }],
+    [
+      { stdio: ["ignore", "inherit", "inherit", 0] },
+      { reaches: [null, 1, 2, 0], exitCode: 0, stdin: "undefined", stdout: "undefined", stderr: "undefined" },
+    ],
+    [
+      { stdio: ["ignore", "inherit", "inherit", 0, 1, 2] },
+      { reaches: [null, 1, 2, 0, 1, 2], exitCode: 0, stdin: "undefined", stdout: "undefined", stderr: "undefined" },
+    ],
+  ];
+  const asOption: Cases = [
+    [
+      { stdin: 1, stdout: 0, stderr: 0 },
+      { reaches: [1, 0, 0], exitCode: 0, stdin: 1, stdout: 0, stderr: 0 },
+    ],
+    [
+      { stdin: 2, stdout: "inherit", stderr: "inherit" },
+      { reaches: [2, 1, 2], exitCode: 0, stdin: 2, stdout: "undefined", stderr: "undefined" },
+    ],
+  ];
+
+  // Not concurrent: each case is a chain of bun processes, and in a debug build these six at
+  // once, next to the concurrent tests of this file, take more than the default timeout.
+  describe.each(["Bun.spawn", "Bun.spawnSync"])("%s", api => {
+    it.each([
+      ["a number and Bun.file(fd) name the same fd", asNumberAndAsBunFile],
+      ["in the stdio array, also at an extra slot", inStdioArray],
+      ["as the stdin, stdout or stderr option", asOption],
+    ])("%s", async (_, cases) => {
+      const { rows, stillOpen } = await spawnWithStdioFiles(
+        api,
+        cases.map(([options]) => options),
+      );
+      // Bun.spawnSync has no stdin to report.
+      expect(rows).toEqual(cases.map(([, { stdin, ...rest }]) => (api === "Bun.spawn" ? { stdin, ...rest } : rest)));
+      expect(stillOpen).toEqual([true, true, true]);
+    });
+  });
+
+  it.concurrent("fd 1 at stdin when fd 1 is a pipe", async () => {
+    const result = await runInFreshProcess(`
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(0, 'wrote to fd 0')"],
+        stdio: [1, "ignore", "ignore"],
+      });
+      process.exitCode = await proc.exited;
+    `);
+    expect(result).toEqual({ stdout: "wrote to fd 0", stderr: "", exitCode: 0 });
+  });
+
+  // On Windows .stdio has no fd for such a slot: spawn_process_windows records
+  // WindowsStdioResult::Unavailable for every extra slot that is not a pipe.
+  it.concurrent.skipIf(isWindows)("Subprocess.stdio reports a parent fd at an extra slot", async () => {
+    const result = await runInFreshProcess(`
+      const zero = Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: ["ignore", "ignore", "inherit", 0] });
+      // Only 0, 1 and 2 mean "inherit" at the slot of their own number. Any other fd is reported there too.
+      const fd = require("fs").openSync("/dev/null", "r");
+      const own = Bun.spawn({
+        cmd: [process.execPath, "-e", "0"],
+        stdio: ["ignore", "ignore", "inherit", ...Array(fd - 3).fill("ignore"), fd],
+      });
+      console.log(JSON.stringify({ fd0AtSlot3: zero.stdio, fdAtItsOwnSlot: own.stdio[fd] === fd }));
+      process.exitCode = (await zero.exited) || (await own.exited);
+    `);
+    expect(result).toEqual({
+      stdout: '{"fd0AtSlot3":[null,null,null,0],"fdAtItsOwnSlot":true}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // A descriptor gets the lowest free number, which is 0, 1 or 2 once user code has closed one of

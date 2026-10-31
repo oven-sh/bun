@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -348,5 +348,50 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
       exitCode: 0,
       signalCode: null,
     });
+  });
+});
+
+// A transpile on the thread pool resolves a macro import, and the resolver then reads the registered extensions. The
+// macro is missing so that it tries all of them, and its call ends a long file so that the list has changed by then.
+test.skipIf(!isASAN)("Module._extensions can change while an import() is transpiled on another thread", async () => {
+  using dir = tempDir("require-extensions-in-flight", {
+    "uses-a-macro.ts": [
+      `import { macro } from "./no-such-macro" with { type: "macro" };`,
+      ...Array.from({ length: 5_000 }, (_, i) => `export function f${i}(x: number) { return x + ${i}; }`),
+      `export const value = macro();`,
+    ].join("\n"),
+    "main.cjs": `
+      const Module = require("node:module");
+      Module._extensions[".first"] = () => {};
+      let settled = false;
+      import("./uses-a-macro.ts")
+        .then(
+          () => console.log("loaded"),
+          error => console.log(error.errors[0].message),
+        )
+        .finally(() => (settled = true));
+      // Each change makes the resolver free the list that it had.
+      (function change(add) {
+        if (settled) return;
+        if (add) Module._extensions[".second"] = () => {};
+        else delete Module._extensions[".second"];
+        setImmediate(change, !add);
+      })(true);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    // Without symbols the report of a bad read is printed at once, so the process aborts before the import() settles.
+    // The leak check needs symbols for its suppressions, and this test is not about leaks.
+    env: { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0:detect_leaks=0` },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: 'Macro "./no-such-macro" not found\n',
+    stderr: "",
+    exitCode: 0,
   });
 });

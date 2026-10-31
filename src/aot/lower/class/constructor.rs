@@ -28,6 +28,11 @@ impl FileLowering<'_, '_, '_, '_> {
         } else {
             header.name = name;
             header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
+            // `export default class {}` has the name `default` from the start, as `export default function () {}` has.
+            let is_declaration = matches!(self.bound.class_owner[class.idx()], ClassOwner::Stmt(_));
+            if is_declaration && self.is_default_export_name_its_own(node.start) {
+                header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
+            }
         }
         let end = match self.bound.class_owner[class.idx()] {
             ClassOwner::Expr(expression) => hir[expression].end,

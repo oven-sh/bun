@@ -1536,3 +1536,79 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
 });
+
+// JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
+// "starDefault". The name of the class or function is "default", as in node.
+it("an anonymous default export and its instances inspect as default", async () => {
+  using dir = tempDir("inspect-export-default", {
+    "class.mjs": `export default class {}`,
+    "explicit-constructor.mjs": `export default class { constructor() { this.a = 1; } }`,
+    "class-expression.mjs": `export default (class {});`,
+    "subclass.mjs": `
+      export class Base {}
+      export default class extends Base {}
+    `,
+    "number.mjs": `export default class extends Number {}`,
+    "boolean.mjs": `export default class extends Boolean {}`,
+    "arrow.mjs": `export default () => {};`,
+    // A class that is really named starDefault keeps its name.
+    "named-star-default.mjs": `export default class starDefault {}`,
+    "main.mjs": `
+      import { SourceTextModule } from "node:vm";
+      import Class from "./class.mjs";
+      import ExplicitConstructor from "./explicit-constructor.mjs";
+      import ClassExpression from "./class-expression.mjs";
+      import Subclass from "./subclass.mjs";
+      import Num from "./number.mjs";
+      import Bool from "./boolean.mjs";
+      import arrow from "./arrow.mjs";
+      import StarDefault from "./named-star-default.mjs";
+
+      // The text of a SourceTextModule reaches JavaScriptCore as it is written.
+      const declaration = new SourceTextModule("export default function () {}");
+      await declaration.link(() => {});
+      await declaration.evaluate();
+
+      console.log(Class, Subclass, arrow, declaration.namespace.default);
+      console.log({ $$typeof: Symbol.for("react.element"), type: Class, props: {}, key: null });
+      console.log(new Class());
+      console.log({ instance: new Class() });
+      console.log(new ExplicitConstructor());
+      console.log(new ClassExpression());
+      console.log(new Num(1));
+      console.log(new Bool(true));
+      console.log(Class.prototype);
+      class Sub extends Class {}
+      console.log(new Sub());
+      console.log(StarDefault, new StarDefault());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toMatchInlineSnapshot(`
+    "[class default] [class default extends Base] [Function: default] [Function: default]
+    <default />
+    default {}
+    {
+      instance: default {},
+    }
+    default {
+      a: 1,
+    }
+    default {}
+    [Number (default): 1]
+    [Boolean (default): true]
+    default {}
+    Sub {}
+    [class starDefault] starDefault {}
+    "
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

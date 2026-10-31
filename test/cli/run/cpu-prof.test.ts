@@ -228,6 +228,86 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The DFG inlines the default export into caller(). A frame of an inlined function has no function
+  // object, so the profiler names it from its code. JavaScriptCore binds an anonymous default export
+  // to the private name `*default*`, whose text is "starDefault". The name of the function is "default".
+  test("names an inlined anonymous default export default", async () => {
+    const files = {
+      "inlined.mjs": `export default work => work() + 1;`,
+      "main.mjs": `
+        import { noInline, numberOfDFGCompiles } from "bun:jsc";
+        import inlined from "./inlined.mjs";
+
+        function work() {
+          let sum = 0;
+          for (let i = 0; i < 1000; i++) sum += i % 7;
+          return sum;
+        }
+        noInline(work);
+
+        function caller() {
+          return inlined(work) + 1;
+        }
+        noInline(caller);
+
+        while (numberOfDFGCompiles(caller) === 0) caller();
+        const end = performance.now() + 100;
+        while (performance.now() < end) caller();
+      `,
+    };
+
+    async function profileOfOneRun() {
+      using dir = tempDir("cpu-prof-default-export", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+
+      const written = readdirSync(String(dir));
+      const profile = JSON.parse(
+        readFileSync(
+          join(
+            String(dir),
+            written.find(f => f.endsWith(".cpuprofile"))!,
+          ),
+          "utf-8",
+        ),
+      );
+      const markdown = readFileSync(
+        join(
+          String(dir),
+          written.find(f => f.endsWith(".md"))!,
+        ),
+        "utf-8",
+      );
+
+      const nodes = new Map<number, any>(profile.nodes.map((node: any) => [node.id, node]));
+      const callersOfWork = new Set<string>();
+      for (const node of profile.nodes) {
+        for (const child of node.children ?? []) {
+          if (nodes.get(child).callFrame.functionName === "work") callersOfWork.add(node.callFrame.functionName);
+        }
+      }
+      return {
+        callersOfWork: [...callersOfWork],
+        markdown: ["`default`", "`starDefault`"].filter(name => markdown.includes(name)),
+        exitCode,
+      };
+    }
+
+    // The profiler can miss work() in one window of 100 ms (see the comment at the top of this file).
+    // A run that has a sample in work() decides.
+    let result = await profileOfOneRun();
+    for (let run = 1; run < 5 && result.exitCode === 0 && result.callersOfWork.length === 0; run++) {
+      result = await profileOfOneRun();
+    }
+    expect(result).toEqual({ callersOfWork: ["default"], markdown: ["`default`"], exitCode: 0 });
+  });
+
   test("--cpu-prof-md generates markdown format profile", async () => {
     using dir = tempDir("cpu-prof-md", {
       "test.js": `

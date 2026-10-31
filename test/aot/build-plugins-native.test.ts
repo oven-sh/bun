@@ -182,24 +182,29 @@ console.log(JSON.stringify({ ...built, told }));
     };
   }
 
-  async function buildAndRun(program: string, how: "plain" | "aot") {
-    const executable = join(program, how);
-    const build = await spawned([bunExe(), "build.ts", executable, how], program, bunEnv);
+  async function build(program: string, how: "plain" | "aot") {
+    const build = await spawned([bunExe(), "build.ts", join(program, how), how], program, bunEnv);
     let answer: { success: boolean; messages: string[]; outputs: string[]; told: string[][] } | undefined;
     try {
       answer = JSON.parse(build.stdout.slice(build.stdout.lastIndexOf("\n", build.stdout.length - 2) + 1));
     } catch {}
     // A build that answers and then ends with anything but 0 has died too.
-    if (!answer || build.exitCode !== 0) return { how, died: build };
-    if (!answer.success) return { how, ...answer };
+    return !answer || build.exitCode !== 0 ? { how, died: build } : { how, ...answer };
+  }
+
+  async function run(program: string, built: Awaited<ReturnType<typeof build>>) {
+    if (!("success" in built) || !built.success) return built;
     // An executable that was built with `aot` ends where it would interpret.
-    const env = how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv;
-    return { how, ...answer, ...(await spawned([executable], program, env)) };
+    const env = built.how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv;
+    return { ...built, ...(await spawned([join(program, built.how)], program, env)) };
   }
 
   async function bothWays(program: Case[]) {
     using dir = tempDir("aot-build-plugins-native", { ...filesOf(program), "build.ts": buildScript(program) });
-    return [await buildAndRun(String(dir), "plain"), await buildAndRun(String(dir), "aot")];
+    const builds = [await build(String(dir), "plain"), await build(String(dir), "aot")];
+    // The two executables start side by side. macOS on x64 checks an executable that it has not seen before it starts it, for
+    // 1 s and more, and one executable of the machine after the other: started in turn, the two wait in that line twice.
+    return await Promise.all(builds.map(built => run(String(dir), built)));
   }
 
   /** What the build of a program and its run yield for one of its cases. */

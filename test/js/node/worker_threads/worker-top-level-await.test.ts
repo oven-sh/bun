@@ -107,7 +107,7 @@ test.concurrent("an unsettled top-level await names the stalled await in a warni
   });
 });
 
-// The worker used to poll for ever here, until terminate(). Nothing behind the preload can load: the worker fails like one whose preload is not found.
+// The worker used to poll for ever here, until terminate(). The preload fails like one that throws: its error is the worker's error.
 test.concurrent("a preload that cannot finish is the worker's error", async () => {
   const stalled = "await new Promise(() => {});";
   expect(
@@ -117,7 +117,7 @@ test.concurrent("a preload that cannot finish is the worker's error", async () =
       "worker.mjs": `console.log("worker runs");\n`,
     }),
   ).toEqual({
-    stdout: `error: BuildMessage: Detected unsettled top-level await at file://<dir>/preload.mjs:1\n${stalled}\n^\nexit 1\n`,
+    stdout: `error: Detected unsettled top-level await at file://<dir>/preload.mjs:1\n${stalled}\n^\nexit 1\n`,
     stderr: "",
     exitCode: 0,
     signalCode: null,

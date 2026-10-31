@@ -764,7 +764,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
 /// `JSModuleLoader.import` throwing returns a rejected promise.
-/// A preload that nothing can settle anymore returns `error.UnsettledPreload`.
+/// A preload that nothing can settle anymore returns a promise rejected with that as its error.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -912,17 +912,18 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // protected JSC heap cell.
         let waited = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise), when_idle) };
         if waited == Err(bun_jsc::Unsettled::Idle) {
-            // Nothing is left that could settle this preload, so nothing behind it can load: an error, like a preload that is not found.
+            // Nothing is left that could settle this preload. It fails with that as its error, like a preload that throws, and its stalled modules get the error: none of them goes on later.
             // SAFETY: per fn contract.
-            let report = unsafe {
-                (*vm).describe_unsettled_module_graph(module_name.to_utf8().slice(), b"")
-            };
-            // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by `VirtualMachine::init`.
-            if let Some(log) = unsafe { &*vm }.log {
-                // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                unsafe { &mut *log.as_ptr() }.add_error(None, bun_ast::Loc::EMPTY, report);
-            }
-            return Err(bun_jsc::CrateError::UnsettledPreload);
+            let vm = unsafe { &mut *vm };
+            let global = JSGlobalObject::opaque_ref(global);
+            let name = module_name.to_utf8();
+            let report = vm.describe_unsettled_module_graph(name.slice(), b"");
+            let error = global.create_error_instance(format_args!("{}", bstr::BStr::new(&report)));
+            vm.reject_unsettled_module_graph(name.slice(), error);
+            let rejected = JSInternalPromise::rejected_promise(global, error);
+            // The caller reports the error, so don't also report it as an unhandled rejection.
+            rejected.set_handled();
+            return Ok(ptr::from_mut(rejected));
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.

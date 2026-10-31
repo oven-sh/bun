@@ -499,6 +499,39 @@ devTest("browser console forwarding strips terminal control bytes", {
   },
 });
 
+// https://github.com/oven-sh/bun/issues/22569
+devTest("browser console forwarding prints the named properties of an array with no elements", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("array-probe", Object.assign([], { total: 7001 }), Object.assign([5], { total: 7001 }), []);
+    `,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          console: true,
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("array-probe");
+    const line = await dev.output.waitForLine(/\[browser\].*array-probe/);
+    expect(line.input).toContain("array-probe [ total: 7001 ] [ 5, total: 7001 ] []");
+  },
+});
+
 devTest("error report endpoint tolerates a browser url whose normalized origin is longer than the input", {
   framework: minimalFramework,
   files: {

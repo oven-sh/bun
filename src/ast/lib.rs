@@ -1410,6 +1410,45 @@ impl Log {
         })
     }
 
+    #[inline]
+    fn add_resolve_error_with_level<const IS_ERR: bool>(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        args: fmt::Arguments<'_>,
+        specifier_arg: &[u8],
+        import_kind: ImportKind,
+        err: crate::Error,
+        notes: Box<[Data]>,
+    ) {
+        let text = alloc_print(args);
+        // TODO: fix this. this is stupid, the specifier should be returned by
+        // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
+        // `specifier_arg` explicitly.
+        let specifier = BabyString::r#in(&text, specifier_arg);
+        if IS_ERR {
+            self.errors += 1;
+        } else {
+            self.warnings += 1;
+        }
+
+        let data = self.tracked_range_data(source, r, text);
+
+        let msg = Msg {
+            kind: if IS_ERR { Kind::Err } else { Kind::Warn },
+            data,
+            notes,
+            metadata: Metadata::Resolve(MetadataResolve {
+                specifier,
+                import_kind,
+                err,
+            }),
+            ..Default::default()
+        };
+
+        self.add_msg(msg)
+    }
+
     #[cold]
     pub fn add_resolve_error(
         &mut self,
@@ -1420,27 +1459,15 @@ impl Log {
         import_kind: ImportKind,
         err: crate::Error,
     ) {
-        let text = alloc_print(args);
-        // TODO: fix this. this is stupid, the specifier should be returned by
-        // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
-        // `specifier_arg` explicitly.
-        let specifier = BabyString::r#in(&text, specifier_arg);
-        self.errors += 1;
-
-        let data = self.tracked_range_data(source, r, text);
-
-        let msg = Msg {
-            kind: Kind::Err,
-            data,
-            metadata: Metadata::Resolve(MetadataResolve {
-                specifier,
-                import_kind,
-                err,
-            }),
-            ..Default::default()
-        };
-
-        self.add_msg(msg)
+        self.add_resolve_error_with_level::<true>(
+            source,
+            r,
+            args,
+            specifier_arg,
+            import_kind,
+            err,
+            Box::default(),
+        )
     }
 
     #[cold]
@@ -1459,6 +1486,31 @@ impl Log {
             specifier_arg,
             import_kind,
             crate::Error::ModuleNotFound,
+        )
+    }
+
+    /// A lookup that failed without failing the build. `notes` say what happens instead.
+    #[cold]
+    pub fn add_resolve_warning_with_notes(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        notes: Box<[Data]>,
+        args: fmt::Arguments<'_>,
+        specifier_arg: &[u8],
+        import_kind: ImportKind,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        self.add_resolve_error_with_level::<false>(
+            source,
+            r,
+            args,
+            specifier_arg,
+            import_kind,
+            crate::Error::ModuleNotFound,
+            notes,
         )
     }
 

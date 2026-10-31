@@ -226,4 +226,20 @@ describe("bundler", () => {
     backend: "cli",
     allowUnresolved: ["./locales/*.json"],
   });
+
+  // 17. By default a require.resolve() of a package name that does not resolve is kept with
+  // a warning. An allowUnresolved list keeps it a build error.
+  itBundled("allow-unresolved/RejectsUnresolvedLiteralRequireResolve", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.find = () => require.resolve("does-not-exist");
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    allowUnresolved: [],
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist"`],
+    },
+  });
 });

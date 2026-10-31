@@ -3,7 +3,7 @@ import { decodeSerializedError } from "bake/error-serialization.ts";
 import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv as env, isPosix, tempDir, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tempDir, tmpdirSync } from "harness";
 import path, { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -72,7 +72,7 @@ class BunFrontendDevServerSession extends InspectorSession {
   }
 }
 
-describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
+describe("BunFrontendDevServer inspector protocol", () => {
   let devServerProcess: Subprocess<"ignore", "pipe", "pipe">;
   let serverUrl: URL;
   let session: BunFrontendDevServerSession;

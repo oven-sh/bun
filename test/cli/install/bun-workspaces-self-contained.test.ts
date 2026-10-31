@@ -129,13 +129,13 @@ describe.each([
     expect(existsSync(join(desktopNm, "@barn", "moo", "package.json"))).toBeTrue();
     expect(readlinkSync(join(desktopNm, "shared"))).toContain("shared");
     // … as real files, not hardlinks into the cache
-    if (!isWindows) {
-      expect(lstatSync(join(desktopNm, "bar")).isSymbolicLink()).toBeFalse();
-      expect(lstatSync(join(desktopNm, "bar", "package.json")).isSymbolicLink()).toBeFalse();
-      expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
-      // control: the root's copy of the same package *is* hardlinked from the cache
-      expect(statSync(join(package_dir, "node_modules", "bar", "package.json")).nlink).toBeGreaterThan(1);
-    }
+
+    expect(lstatSync(join(desktopNm, "bar")).isSymbolicLink()).toBeFalse();
+    expect(lstatSync(join(desktopNm, "bar", "package.json")).isSymbolicLink()).toBeFalse();
+    expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
+    // control: the root's copy of the same package *is* hardlinked from the cache
+    expect(statSync(join(package_dir, "node_modules", "bar", "package.json")).nlink).toBeGreaterThan(1);
+
     // even though `bar` also exists at the root for the root package / other workspaces
     expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();
     // the other workspace hoists as usual
@@ -155,9 +155,8 @@ describe.each([
     expect(again.err).not.toContain("error:");
     expect(again.code).toBe(0);
     expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
-    if (!isWindows) {
-      expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
-    }
+
+    expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
   });
 });
 

@@ -203,7 +203,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     }
   });
 
-  describe.skipIf(isWindows)("a bunfig.toml that is a symlink", () => {
+  describe("a bunfig.toml that is a symlink", () => {
     const project = { "project/.git/HEAD": "ref: refs/heads/main\n", "project/a.js": "a;\n" };
 
     test("isn't written if it points outside the repository", async () => {

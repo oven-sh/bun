@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isLinux, isWindows, tempDir } from "harness";
+import { isLinux, tempDir } from "harness";
 import { once } from "node:events";
 import { existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 // - close() DOES unlink the socket file it created
 // Bun previously had this inverted (unlinked before bind, leaked on close).
 
-describe.skipIf(isWindows)("unix domain socket unlink", () => {
+describe("unix domain socket unlink", () => {
   test("Bun.listen removes the socket file on stop()", () => {
     using dir = tempDir("uds-unlink-listen", {});
     const sock = join(String(dir), "a.sock");

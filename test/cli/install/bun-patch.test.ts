@@ -1070,10 +1070,9 @@ describe.concurrent.each([
     const repo = join(String(dir), "gitrepo");
     // The checkout in the cache has the symlinks, and the copies in node_modules don't. That used to end up in the
     // patch as `deleted file mode 120000`, which no install can apply.
-    if (!isWindows) {
-      symlinkSync("index.js", join(repo, "main.js"));
-      symlinkSync("v2", join(repo, "docs", "latest"));
-    }
+
+    symlinkSync("index.js", join(repo, "main.js"));
+    symlinkSync("v2", join(repo, "docs", "latest"));
 
     // keep git away from the machine's global/system config (autocrlf, gpgsign)
     const gitEnv = { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(String(dir), "no-gitconfig") };

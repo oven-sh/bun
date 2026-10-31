@@ -245,50 +245,47 @@ function packagejson() {
 // swaps against the walker; the file behind the symlink must survive every
 // time. The legitimate case (real directories that are not swapped in time)
 // is exercised by the same loop: those entries are simply deleted.
-test.skipIf(process.platform === "win32")(
-  "recursive rm does not follow a directory entry replaced by a symlink during deletion",
-  async () => {
-    const ENTRIES = 64;
-    const FILLER = 8;
-    const ITERATIONS = 10;
+test("recursive rm does not follow a directory entry replaced by a symlink during deletion", async () => {
+  const ENTRIES = 64;
+  const FILLER = 8;
+  const ITERATIONS = 10;
 
-    for (let iter = 0; iter < ITERATIONS; iter++) {
-      const files: Record<string, string> = {
-        "victim/keep.txt": "important",
-        "stash/.keep": "",
-      };
-      for (let i = 0; i < ENTRIES; i++) {
-        for (let j = 0; j < FILLER; j++) {
-          files[`target/d${i}/f${j}.txt`] = "";
-        }
+  for (let iter = 0; iter < ITERATIONS; iter++) {
+    const files: Record<string, string> = {
+      "victim/keep.txt": "important",
+      "stash/.keep": "",
+    };
+    for (let i = 0; i < ENTRIES; i++) {
+      for (let j = 0; j < FILLER; j++) {
+        files[`target/d${i}/f${j}.txt`] = "";
       }
-      await using root = tempDir(`rm-swap-${iter}`, files);
-      const victimDir = path.join(root, "victim");
-      const victimFile = path.join(victimDir, "keep.txt");
-      const target = path.join(root, "target");
-
-      // Start the recursive delete on the worker pool, then immediately
-      // replace each subdirectory with a symlink pointing at the victim
-      // directory while the walk is in flight.
-      const running = ($`rm -rf ${target}`.nothrow().quiet() as any).run();
-      for (let i = 0; i < ENTRIES; i++) {
-        const entry = path.join(target, `d${i}`);
-        try {
-          renameSync(entry, path.join(root, "stash", `d${i}`));
-          symlinkSync(victimDir, entry);
-        } catch {
-          // The walker may have already deleted this entry; that's fine.
-        }
-      }
-      await running;
-
-      // The contents of the directory behind the symlink must never be
-      // deleted, no matter when the swap landed relative to the walk.
-      expect(existsSync(victimFile)).toBeTrue();
-      expect(existsSync(victimDir)).toBeTrue();
     }
-  },
-);
+    await using root = tempDir(`rm-swap-${iter}`, files);
+    const victimDir = path.join(root, "victim");
+    const victimFile = path.join(victimDir, "keep.txt");
+    const target = path.join(root, "target");
+
+    // Start the recursive delete on the worker pool, then immediately
+    // replace each subdirectory with a symlink pointing at the victim
+    // directory while the walk is in flight.
+    const running = ($`rm -rf ${target}`.nothrow().quiet() as any).run();
+    for (let i = 0; i < ENTRIES; i++) {
+      const entry = path.join(target, `d${i}`);
+      try {
+        renameSync(entry, path.join(root, "stash", `d${i}`));
+        symlinkSync(victimDir, entry);
+      } catch {
+        // The walker may have already deleted this entry; that's fine.
+      }
+    }
+    await running;
+
+    // The contents of the directory behind the symlink must never be
+    // deleted, no matter when the swap landed relative to the walk.
+    expect(existsSync(victimFile)).toBeTrue();
+    expect(existsSync(victimDir)).toBeTrue();
+  }
+});
 
 // The recursive walk joined every entry onto its directory's path inside a
 // fixed-size path buffer on the worker thread, so a tree deeper than PATH_MAX
@@ -383,45 +380,42 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-test.skipIf(process.platform === "win32")(
-  "relative operands are resolved against the shell cwd, not the process cwd",
-  async () => {
-    using dir = tempDir("rm-shell-cwd", {
-      "work/file.txt": "content",
-      "work/sub/inner.txt": "content",
-      "keep.txt": "keep",
-    });
-    const base = String(dir);
-    const shellCwd = path.join(base, "work");
+test("relative operands are resolved against the shell cwd, not the process cwd", async () => {
+  using dir = tempDir("rm-shell-cwd", {
+    "work/file.txt": "content",
+    "work/sub/inner.txt": "content",
+    "keep.txt": "keep",
+  });
+  const base = String(dir);
+  const shellCwd = path.join(base, "work");
 
-    const fixture = /* ts */ `
+  const fixture = /* ts */ `
       import { $ } from "bun";
       const shellCwd = process.env.SHELL_CWD!;
       const { exitCode, stderr } = await $\`rm -rf .\`.cwd(shellCwd).quiet().nothrow();
       console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, SHELL_CWD: shellCwd },
-      cwd: "/",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const result = JSON.parse(stdout.trim());
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toMatch(/^rm: \.: /);
-    if (process.platform === "linux") {
-      // Only Linux permits unlinking "." out from under itself; macOS returns
-      // before iterating, so its children survive there.
-      expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
-      expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
-    }
-    expect(existsSync(path.join(base, "work"))).toBeTrue();
-    expect(existsSync(path.join(base, "keep.txt"))).toBeTrue();
-    expect(exitCode).toBe(0);
-  },
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, SHELL_CWD: shellCwd },
+    cwd: "/",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim());
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toMatch(/^rm: \.: /);
+  if (process.platform === "linux") {
+    // Only Linux permits unlinking "." out from under itself; macOS returns
+    // before iterating, so its children survive there.
+    expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
+    expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
+  }
+  expect(existsSync(path.join(base, "work"))).toBeTrue();
+  expect(existsSync(path.join(base, "keep.txt"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});
 
 // The preserve-root check resolved every operand through the fixed-size
 // thread-local path buffers (1024 bytes for normalizing, 4096 for joining),

@@ -5556,7 +5556,7 @@ describe("tls.connect() attaches onConnectEnd to 'end' exactly once", () => {
     });
   });
 
-  it.skipIf(process.platform === "win32")("tls.connect({ path })", async () => {
+  it("tls.connect({ path })", async () => {
     using dir = tempDir("tls-connect-path", {});
     const path = join(String(dir), "tls.sock");
     await withTLSServer({ path }, async () => {

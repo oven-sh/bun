@@ -139,7 +139,7 @@ test.skipIf(!isASAN || isWindows)(
 
 // Reading `.stdin` after the child has already exited should still return
 // the FileSink (not `undefined`) — the fix must not regress this.
-test.skipIf(!isPosix)("reading .stdin after child exit still returns a FileSink", async () => {
+test("reading .stdin after child exit still returns a FileSink", async () => {
   const p = Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   await p.exited;
   const stdin = p.stdin;

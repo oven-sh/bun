@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readdirSync, statSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/40111
@@ -10,7 +10,7 @@ import { join } from "path";
 // EACCES, failing the build. The temp file must carry owner read/write
 // permission from creation. Skipped on macOS: the clonefile() fast path
 // copies the executable's 0755 mode and never reaches the open() under test.
-test.skipIf(isWindows || isMacOS)("compile temp file is not created with mode 000", async () => {
+test.skipIf(isMacOS)("compile temp file is not created with mode 000", async () => {
   using dir = tempDir("issue-40111", {
     "index.ts": `console.log("hello");`,
   });

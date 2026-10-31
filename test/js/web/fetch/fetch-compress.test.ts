@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 
@@ -271,7 +271,7 @@ describe("fetch compress option", () => {
   // A Bun.file() body large enough to qualify for the sendfile fast path
   // (≥32 KiB, plain http, no proxy, non-Windows) must still be compressed
   // when compress is explicitly set — the sendfile heuristic must not win.
-  test.skipIf(isWindows)("Bun.file() body large enough for sendfile is still compressed", async () => {
+  test("Bun.file() body large enough for sendfile is still compressed", async () => {
     using server = makeServer();
     const big = Buffer.alloc(64 * 1024, "abcdefghij").toString();
     using dir = tempDir("fetch-compress-sendfile", { "body.txt": big });

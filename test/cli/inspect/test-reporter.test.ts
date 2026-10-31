@@ -1,6 +1,6 @@
 import { Subprocess, spawn, write } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -165,7 +165,7 @@ class TestReporterSession extends InspectorSession {
   }
 }
 
-describe.if(isPosix)("TestReporter inspector protocol", () => {
+describe("TestReporter inspector protocol", () => {
   let proc: Subprocess<"ignore", "pipe", "pipe"> | undefined;
   let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
 

@@ -64,7 +64,7 @@ describe.concurrent("cat (builtin) sharing one stdin reader", () => {
 
 describe.concurrent("cat (builtin) after a read error", () => {
   // A directory opens but cannot be read. Linux reports that while the read starts.
-  test.skipIf(isWindows).each([
+  test.each([
     ["cat . || echo failed", false, "failed\n"],
     ["true | cat . || echo failed", true, "failed\n"],
     ["cat . | cat . || echo failed", false, "failed\n"],

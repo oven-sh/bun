@@ -796,7 +796,7 @@ describe.concurrent(".env that is not a regular file", () => {
     expect(script.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("unix socket behind a symlink", async () => {
+  test("unix socket behind a symlink", async () => {
     using dir = tempDir("dotenv-sock", files);
     using listener = Bun.listen({
       unix: path.join(String(dir), "sock"),

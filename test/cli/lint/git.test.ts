@@ -290,7 +290,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     await commit(join(root, "inner"));
     write(root, "inner/a.js", before);
     await git(join(root, "inner"), "add", "-A");
-    if (!isWindows) symlinkSync("a.js", join(root, "link.js"));
+    symlinkSync("a.js", join(root, "link.js"));
     write(root, "b.js", before);
     await git(root, "add", "-A");
 
@@ -444,7 +444,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(await git(root, "show", ":sub/bad.js")).toBe("\n" + before);
   });
 
-  test.skipIf(isWindows)("works in a pre-commit hook, on the index of that commit", async () => {
+  test("works in a pre-commit hook, on the index of that commit", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy });
     const { root } = repo;
     const hook = join(root, ".git/hooks/pre-commit");
@@ -463,7 +463,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(await git(root, "status", "--porcelain")).toBe("");
   });
 
-  test.skipIf(isWindows)("git never runs programs named in the repository's config", async () => {
+  test("git never runs programs named in the repository's config", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy, ".gitattributes": "*.js diff=mine\n" });
     const { root } = repo;
     const program = join(root, "program.sh");
@@ -643,33 +643,25 @@ describe.concurrent("bun lint --staged reads the staged version of a partly stag
       expect(exitCode).toBe(1);
     });
 
-    test.skipIf(isWindows)(
-      "for a file passed through a symlinked path, and a package.json with a byte order mark",
-      async () => {
-        const module = {
-          "package.json": '\uFEFF{ "type": "module" }',
-          "tsconfig.json": '{ "compilerOptions": { "module": "nodenext", "lib": ["es2015"], "types": [] } }',
-        };
-        using repo = await repository({ ...module, "a.ts": tidy });
-        const { root } = repo;
-        write(root, "a.ts", "export async function f(a: number) {\n  await a;\n  return import.meta;\n}\n");
-        write(root, "package.json", module["package.json"] + "\n");
-        await git(root, "add", "-A");
-        write(root, "a.ts", tidy);
-        write(root, "package.json", module["package.json"]);
-        using links = tempDir("bun-lint-git-link", {});
-        symlinkSync(root, join(String(links), "link"));
-        const { stdout, exitCode } = await bun(root, [
-          "lint",
-          "--staged",
-          ...flags,
-          join(String(links), "link", "a.ts"),
-        ]);
-        expect(stdout).toContain("a.ts:2:3: ");
-        expect(stdout).toMatch(/^1 problem$/m);
-        expect(exitCode).toBe(1);
-      },
-    );
+    test("for a file passed through a symlinked path, and a package.json with a byte order mark", async () => {
+      const module = {
+        "package.json": '\uFEFF{ "type": "module" }',
+        "tsconfig.json": '{ "compilerOptions": { "module": "nodenext", "lib": ["es2015"], "types": [] } }',
+      };
+      using repo = await repository({ ...module, "a.ts": tidy });
+      const { root } = repo;
+      write(root, "a.ts", "export async function f(a: number) {\n  await a;\n  return import.meta;\n}\n");
+      write(root, "package.json", module["package.json"] + "\n");
+      await git(root, "add", "-A");
+      write(root, "a.ts", tidy);
+      write(root, "package.json", module["package.json"]);
+      using links = tempDir("bun-lint-git-link", {});
+      symlinkSync(root, join(String(links), "link"));
+      const { stdout, exitCode } = await bun(root, ["lint", "--staged", ...flags, join(String(links), "link", "a.ts")]);
+      expect(stdout).toContain("a.ts:2:3: ");
+      expect(stdout).toMatch(/^1 problem$/m);
+      expect(exitCode).toBe(1);
+    });
   });
 
   test("for a file that no tsconfig.json includes", async () => {
@@ -797,7 +789,7 @@ describe.concurrent("bun lint --staged lints what will be committed", () => {
     expect(await git(repo.root, "show", ":gone.js")).toBe(before);
   });
 
-  test.skipIf(isWindows)("a staged file that was replaced by a symlink on disk is linted", async () => {
+  test("a staged file that was replaced by a symlink on disk is linted", async () => {
     using repo = await repository({ "target.js": clean });
     write(repo.root, "f.js", broken);
     await git(repo.root, "add", "-A");
@@ -946,20 +938,17 @@ test.concurrent("bun lint --staged reads a conflicted file from disk", async () 
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows).concurrent.each(commands)(
-  "bun %s --staged skips a file that is staged as a symlink",
-  async command => {
-    using repo = await repository({ "target.js": tidy, "a.js": tidy, "b.js": tidy });
-    const { root } = repo;
-    rmSync(join(root, "a.js"));
-    symlinkSync("target.js", join(root, "a.js"));
-    write(root, "b.js", before);
-    await git(root, "add", "-A");
-    rmSync(join(root, "a.js"));
-    write(root, "a.js", tidy);
-    expect(await selected(root, root, [command, "--staged"])).toEqual(["b.js"]);
-  },
-);
+test.concurrent.each(commands)("bun %s --staged skips a file that is staged as a symlink", async command => {
+  using repo = await repository({ "target.js": tidy, "a.js": tidy, "b.js": tidy });
+  const { root } = repo;
+  rmSync(join(root, "a.js"));
+  symlinkSync("target.js", join(root, "a.js"));
+  write(root, "b.js", before);
+  await git(root, "add", "-A");
+  rmSync(join(root, "a.js"));
+  write(root, "a.js", tidy);
+  expect(await selected(root, root, [command, "--staged"])).toEqual(["b.js"]);
+});
 
 test.concurrent("bun fmt --staged doesn't count a file it skips", async () => {
   using repo = await repository({ "partly.js": tidy, "whole.js": tidy, "tidy.js": tidy });

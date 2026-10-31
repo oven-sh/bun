@@ -1900,7 +1900,7 @@ describe.concurrent("bun pm cache rm", () => {
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.serial.skipIf(isWindows)("a cache directory in a read-only parent is emptied", async () => {
+  test.serial("a cache directory in a read-only parent is emptied", async () => {
     using dir = tempDir("pm-cache-rm-read-only-parent", {
       ...sideFiles,
       ...projectFiles,

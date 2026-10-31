@@ -12,14 +12,10 @@
 // ~9× per link() call.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-// collectContinuously is very slow under Windows + ASAN in CI; the code path
-// is identical on Linux/macOS, so skip Windows to keep duration reasonable.
-test.skipIf(isWindows)(
-  "vm.SourceTextModule link() m_resolveCache survives concurrent GC",
-  async () => {
-    const fixture = `
+test("vm.SourceTextModule link() m_resolveCache survives concurrent GC", async () => {
+  const fixture = `
       const vm = require("node:vm");
 
       const N = 500;
@@ -49,27 +45,25 @@ test.skipIf(isWindows)(
       });
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: {
-        ...bunEnv,
-        BUN_JSC_collectContinuously: "1",
-        BUN_JSC_useGenerationalGC: "0",
-      },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      BUN_JSC_collectContinuously: "1",
+      BUN_JSC_useGenerationalGC: "0",
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Debug/ASAN builds print a "WARNING: ASAN interferes with JSC signal
-    // handlers…" banner to stderr at startup; stdout === "ok" + exit 0 is the
-    // real signal — a mid-rehash visit aborts before either.
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-    void stderr;
-  },
-  120_000,
-);
+  // Debug/ASAN builds print a "WARNING: ASAN interferes with JSC signal
+  // handlers…" banner to stderr at startup; stdout === "ok" + exit 0 is the
+  // real signal — a mid-rehash visit aborts before either.
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  void stderr;
+}, 120_000);
 
 // computeErrorInfoWrapperToString (src/jsc/bindings/FormatStackTraceForJS.cpp,
 // installed via vm.setOnComputeErrorInfo) runs from ErrorInstance::
@@ -139,31 +133,27 @@ function evaluationErrorFixture(iterations: number) {
     `;
 }
 
-test.skipIf(isWindows)(
-  "vm.SourceTextModule evaluation error survives a concurrent-GC stack-trace finalizer",
-  async () => {
-    using dir = tempDir("vm-module-eval-error-gc", { "fixture.mjs": evaluationErrorFixture(60) });
+test("vm.SourceTextModule evaluation error survives a concurrent-GC stack-trace finalizer", async () => {
+  using dir = tempDir("vm-module-eval-error-gc", { "fixture.mjs": evaluationErrorFixture(60) });
 
-    async function run() {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "--experimental-vm-modules", "fixture.mjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim(), stderr, exitCode };
-    }
+  async function run() {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "--experimental-vm-modules", "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
 
-    for (let i = 0; i < 4; i++) {
-      const { stdout, stderr, exitCode } = await run();
-      expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-      void stderr;
-    }
-  },
-  120_000,
-);
+  for (let i = 0; i < 4; i++) {
+    const { stdout, stderr, exitCode } = await run();
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+    void stderr;
+  }
+}, 120_000);
 
 // The finalizer now sets the mutator's pending exception aside with a
 // SuspendExceptionScope. That scope restores the slot blindly on exit, so a
@@ -177,13 +167,11 @@ test.skipIf(isWindows)(
 // Run the GC-churn fixture inside a Worker and terminate it mid-run, 20 times.
 // Every run of the build with the suspend scope but without the deferral
 // asserted; this guards that pairing rather than the original crash (it passes
-// on a build with neither). Windows: same reason as above.
-test.skipIf(isWindows)(
-  "terminate() while the stack-trace finalizer runs keeps the exception and trap state in sync",
-  async () => {
-    using dir = tempDir("vm-module-eval-error-gc-terminate", {
-      "fixture.mjs": evaluationErrorFixture(600),
-      "stress.mjs": `
+// on a build with neither).
+test("terminate() while the stack-trace finalizer runs keeps the exception and trap state in sync", async () => {
+  using dir = tempDir("vm-module-eval-error-gc-terminate", {
+    "fixture.mjs": evaluationErrorFixture(600),
+    "stress.mjs": `
         import { readFileSync } from "node:fs";
         const src = readFileSync(new URL("./fixture.mjs", import.meta.url), "utf8");
         const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
@@ -199,18 +187,16 @@ test.skipIf(isWindows)(
         }
         console.log("ok");
       `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "--experimental-vm-modules", "stress.mjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-    void stderr;
-  },
-  120_000,
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "--experimental-vm-modules", "stress.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  void stderr;
+}, 120_000);

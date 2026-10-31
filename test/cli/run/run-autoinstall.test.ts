@@ -2555,7 +2555,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { cwd: "elsewhere", args: ["../app/src/deep/index.js"] })).toEqual(refused(configured));
   });
 
-  test.serial.skipIf(isWindows).each([
+  test.serial.each([
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
     ["bunfig.toml", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
@@ -2578,7 +2578,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files)).toEqual(refused(unreadable));
   });
 
-  test.serial.skipIf(isWindows).each([
+  test.serial.each([
     ["the user's bunfig", "home/.bunfig.toml"],
     ["the user's .npmrc", "home/.npmrc"],
     ["the project's .npmrc", "app/.npmrc"],

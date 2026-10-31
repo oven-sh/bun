@@ -13,7 +13,7 @@
 // Response unconsumed, force a synchronous sweep.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 const fixture = /* js */ `
   const net = require("node:net");
@@ -83,9 +83,7 @@ const fixture = /* js */ `
   console.log("ok");
 `;
 
-// collectContinuously is slow under Windows CI and the code path is identical
-// across platforms; the assertion this guards is platform-independent.
-describe.skipIf(isWindows)("fetch Response Weak finalizer during GC sweep", () => {
+describe("fetch Response Weak finalizer during GC sweep", () => {
   test("dropping an unconsumed streaming-upload Response does not touch JSCells in the finalizer", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],

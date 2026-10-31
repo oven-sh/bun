@@ -1122,7 +1122,7 @@ describe("apply", () => {
       ["a new file in a directory the patch creates", creation("newdir/new.txt"), "newdir/new.txt"],
     ];
 
-    describe.if(process.platform !== "win32")("symlinks", () => {
+    describe("symlinks", () => {
       async function link(root: string) {
         await fs.symlink(join(root, "outside.txt"), join(root, "pkg", "link"));
         await fs.symlink(join(root, "outside"), join(root, "pkg", "evildir"));
@@ -1334,7 +1334,7 @@ describe("makeDiff", () => {
   });
 
   // The old folder is a git checkout in the cache, the new one a copy of it that left the links out.
-  test.skipIf(process.platform === "win32")("leaves out the symlinks that only the old folder has", async () => {
+  test("leaves out the symlinks that only the old folder has", async () => {
     await using tempdir = tempDir("patch-make-diff-links", {
       "a/a.txt": "one\n",
       "a/m.txt": "one\n",

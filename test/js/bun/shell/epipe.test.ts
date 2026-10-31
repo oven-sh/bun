@@ -1,10 +1,10 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-describe.if(isPosix)("IOWriter epipe", () => {
+describe("IOWriter epipe", () => {
   TestBuilder.command`yes | head`
     .exitCode(0)
     .stdout("y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n")
@@ -40,7 +40,7 @@ describe.concurrent("a pipeline stage whose reader exits without reading", () =>
   });
 
   // These two finish at their first failed chunk, with more chunks queued behind it.
-  test.if(isPosix).each([
+  test.each([
     ["builtin cat", "await $`head -c 1048576 /dev/zero | cat | true`.quiet();"],
     [
       "relayed subprocess output",

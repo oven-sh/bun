@@ -3073,7 +3073,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   // One at a time, so that the third script to start is the one that fails. Two have finished and aren't run again, and
   // one hasn't started.
-  test.skipIf(isWindows).each([
+  test.each([
     { title: "preinstall", script: "preinstall", args: [] },
     { title: "install", script: "install", args: [] },
     { title: "postinstall", script: "postinstall", args: [] },
@@ -3103,7 +3103,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     expect(await install("third.txt", 100, ...args)).toEqual({ errors: [], ran: [], exitCode: 0 });
   });
 
-  test.skipIf(isWindows)("all at the same time: every script runs in the end", async () => {
+  test("all at the same time: every script runs in the end", async () => {
     const { ctx, install } = await setup("postinstall");
     using _ = ctx;
 
@@ -3166,7 +3166,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   // The root's `dep` is a different package. With the hoisted linker, each parent has its own copy, and the first one
   // fails before the walk reaches the last.
-  test.skipIf(isWindows)("copies that the failed install hadn't reached", async () => {
+  test("copies that the failed install hadn't reached", async () => {
     const parents = Array.from({ length: 40 }, (_, i) => `parent-${i}`);
     using ctx = await setupScriptPackages(linker, {
       scripted: { scripts: { postinstall: `echo ran >> "$RUNS" && test -z "$FAIL"` } },

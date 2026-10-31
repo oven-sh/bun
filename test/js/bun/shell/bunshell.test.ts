@@ -2052,7 +2052,7 @@ describe("deno_task", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/11305
-  test.todoIf(isWindows)("stacktrace", async () => {
+  test("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
     const code = /* ts */ `import { $ } from 'bun'
 
@@ -3392,60 +3392,57 @@ test("redirect target buffer stays attached while a builtin command is running",
   expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });
 
-test.skipIf(isWindows)(
-  "output redirect buffer for an external command is detachable as soon as the command settles",
-  async () => {
-    // `> ${buf}` for an external command is pinned until the child's stdout
-    // reaches EOF. Here `sh` prints and exits at once while a background
-    // grandchild inherits the stdout pipe and holds it open until the gated
-    // fetch below is answered. The process exit and the stderr EOF are then
-    // processed long before the stdout EOF, so the stdout reader is the
-    // callback that settles the promise. The code after `await` must already
-    // see the buffer unpinned: a `transfer()` detaches it instead of copying.
-    const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
-    const gate = Promise.withResolvers<void>();
-    const grandchildStarted = Promise.withResolvers<void>();
-    await using server = Bun.serve({
-      port: 0,
-      async fetch() {
-        grandchildStarted.resolve();
-        await gate.promise;
-        return new Response("ok");
-      },
-    });
-    const grandchildCode = `await fetch(${JSON.stringify(String(server.url))})`;
-    const promise = $`sh -c ${'"$0" -e "$1" 2>/dev/null & echo hi'} ${BUN} ${grandchildCode} > ${buffer}`
-      .env(bunEnv)
-      .nothrow();
-    const running = promise.then(o => o);
-    // By the time the request arrives, `sh` has exited and the grandchild is
-    // the only holder of the stdout pipe. If the command settles first, the
-    // grandchild never held it: fail with the shell's output instead of
-    // waiting on the gate until the test times out.
-    await Promise.race([
-      grandchildStarted.promise,
-      running.then(r => {
-        throw new Error(`command settled before the grandchild connected (exit ${r.exitCode}): ${r.stderr}`);
-      }),
-    ]);
+test("output redirect buffer for an external command is detachable as soon as the command settles", async () => {
+  // `> ${buf}` for an external command is pinned until the child's stdout
+  // reaches EOF. Here `sh` prints and exits at once while a background
+  // grandchild inherits the stdout pipe and holds it open until the gated
+  // fetch below is answered. The process exit and the stderr EOF are then
+  // processed long before the stdout EOF, so the stdout reader is the
+  // callback that settles the promise. The code after `await` must already
+  // see the buffer unpinned: a `transfer()` detaches it instead of copying.
+  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const gate = Promise.withResolvers<void>();
+  const grandchildStarted = Promise.withResolvers<void>();
+  await using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      grandchildStarted.resolve();
+      await gate.promise;
+      return new Response("ok");
+    },
+  });
+  const grandchildCode = `await fetch(${JSON.stringify(String(server.url))})`;
+  const promise = $`sh -c ${'"$0" -e "$1" 2>/dev/null & echo hi'} ${BUN} ${grandchildCode} > ${buffer}`
+    .env(bunEnv)
+    .nothrow();
+  const running = promise.then(o => o);
+  // By the time the request arrives, `sh` has exited and the grandchild is
+  // the only holder of the stdout pipe. If the command settles first, the
+  // grandchild never held it: fail with the shell's output instead of
+  // waiting on the gate until the test times out.
+  await Promise.race([
+    grandchildStarted.promise,
+    running.then(r => {
+      throw new Error(`command settled before the grandchild connected (exit ${r.exitCode}): ${r.stderr}`);
+    }),
+  ]);
 
-    // The grandchild still holds stdout, so the buffer is pinned: a detach
-    // attempt copies instead (or throws).
-    try {
-      buffer.buffer.transfer();
-    } catch {}
-    const detachedWhileOpen = buffer.buffer.detached;
-    gate.resolve();
-    expect(detachedWhileOpen).toBe(false);
-
-    const result = await running;
-    expect(stringifyBuffer(buffer)).toEqual("hi\n");
-
+  // The grandchild still holds stdout, so the buffer is pinned: a detach
+  // attempt copies instead (or throws).
+  try {
     buffer.buffer.transfer();
-    expect(buffer.buffer.detached).toBe(true);
-    expect(result.exitCode).toBe(0);
-  },
-);
+  } catch {}
+  const detachedWhileOpen = buffer.buffer.detached;
+  gate.resolve();
+  expect(detachedWhileOpen).toBe(false);
+
+  const result = await running;
+  expect(stringifyBuffer(buffer)).toEqual("hi\n");
+
+  buffer.buffer.transfer();
+  expect(buffer.buffer.detached).toBe(true);
+  expect(result.exitCode).toBe(0);
+});
 
 test("a builtin stops writing to a redirect target that was resized to 0", async () => {
   const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
@@ -3465,7 +3462,7 @@ test("a builtin stops writing to a redirect target that was resized to 0", async
 });
 
 describe.each(["> ", "2>&1 "])("an external command with a `%s${buf}` redirect", redirect => {
-  test.skipIf(isWindows)("drops the output that arrives after the target was resized to 0", async () => {
+  test("drops the output that arrives after the target was resized to 0", async () => {
     const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
     const buffer = new Uint8Array(ab);
     const gate = Promise.withResolvers<void>();
@@ -3592,7 +3589,7 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
-describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
+describe("stdin redirect whose pipe outlives the command's process", () => {
   // `< ${input}` is pumped into the child over a pipe. A command finishes once
   // its exit code and the stdin, stdout and stderr closes are all in, and the
   // four arrive as separate event-loop callbacks. Here the child hands its

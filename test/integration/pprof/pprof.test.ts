@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, canBuildNodeAddons, isBroken, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isBroken, isMusl, tempDir } from "harness";
 import { join } from "node:path";
 
 // pprof (google/pprof-nodejs) ships no prebuilds: its nan addon is compiled
 // from source with node-gyp, the same way test/v8 builds its module. Unlike
 // @datadog/pprof, it drives v8::CpuProfiler through the title-keyed
 // StartProfiling()/StopProfiling() overloads and CpuProfile::GetTitle()
-// (#19678). The source build is skipped on Windows; test/v8 covers those
-// overloads on every platform.
-describe.skipIf(!canBuildNodeAddons() || isWindows).todoIf(isBroken && isMusl)("pprof", () => {
+// (#19678).
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("pprof", () => {
   test("time.profile() returns a profile with samples", async () => {
     using dir = tempDir("pprof", {
       "package.json": JSON.stringify({

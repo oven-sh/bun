@@ -371,7 +371,7 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
 // a FIFO nobody has written to yet (node:fs reads that way), so its duration is
 // entirely the test's to decide — no timing thresholds. Debug builds also name
 // what the wait is waiting for.
-describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
+describe("terminate() waits for work that cannot be cancelled", () => {
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});
     const fifo = path.join(String(dir), "fifo");

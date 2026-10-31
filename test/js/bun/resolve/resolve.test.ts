@@ -299,7 +299,7 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
-it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path buffer until it is normalized", () => {
+it("resolves an absolute specifier that is longer than a path buffer until it is normalized", () => {
   using dir = tempDir("resolve-long-specifier", { "index.js": "" });
   expect(Bun.resolveSync(`${dir}${Buffer.alloc(5000, "/").toString()}index.js`, String(dir))).toBe(
     join(String(dir), "index.js"),
@@ -469,7 +469,7 @@ describe("When CJS and ESM are mixed", () => {
 // The "browser" map resolver copied the normalized input path into a 512-byte
 // threadlocal buffer without a bounds check. Paths inside deep directory trees
 // can easily exceed 512 bytes while still being well under MAX_PATH_BYTES.
-it.skipIf(isWindows)("browser map resolution handles relative paths longer than 512 bytes", async () => {
+it("browser map resolution handles relative paths longer than 512 bytes", async () => {
   // Build a nested relative path longer than 512 bytes. Each component stays
   // well under NAME_MAX and the absolute path stays well under MAX_PATH_BYTES.
   const segments: string[] = [];
@@ -2010,7 +2010,7 @@ it.skipIf(isWindows)("runs a script from a working directory nested 256 director
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("reports a resolution error for an absolute specifier of the maximum path length", async () => {
+it("reports a resolution error for an absolute specifier of the maximum path length", async () => {
   using dir = tempDir("resolver-max-length-specifier", {
     "package.json": JSON.stringify({ name: "host" }),
   });

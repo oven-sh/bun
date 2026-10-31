@@ -335,15 +335,13 @@ describe("Bun.Terminal", () => {
     // write() on a full PTY holds that lock until the master's owner (the
     // very JS thread calling setRawMode) reads the master, freezing the
     // whole runtime.
-    test.skipIf(isWindows)(
-      "does not deadlock while the child is blocked writing to a full PTY",
-      async () => {
-        using dir = tempDir("terminal-setrawmode-deadlock", {});
-        const pidFile = join(String(dir), "child.pid");
-        // The child floods the PTY and blocks in write(). The sync spin keeps
-        // the event loop from reading the master, so the PTY buffer is still
-        // full (and the child still blocked) when setRawMode runs.
-        const script = `
+    test("does not deadlock while the child is blocked writing to a full PTY", async () => {
+      using dir = tempDir("terminal-setrawmode-deadlock", {});
+      const pidFile = join(String(dir), "child.pid");
+      // The child floods the PTY and blocks in write(). The sync spin keeps
+      // the event loop from reading the master, so the PTY buffer is still
+      // full (and the child still blocked) when setRawMode runs.
+      const script = `
           const fs = require("node:fs");
           const proc = Bun.spawn(["head", "-c", "200000", "/dev/zero"], {
             terminal: { cols: 80, rows: 24, data() {} },
@@ -357,44 +355,42 @@ describe("Bun.Terminal", () => {
           await proc.exited;
           process.exit(0);
         `;
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env: { ...bunEnv, PID_FILE: pidFile },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, PID_FILE: pidFile },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-        // Watchdog, not a wait-for-time: on a broken build the spawned bun
-        // never exits on its own, and SIGKILL alone cannot reap it (the
-        // kernel retries the blocked termios ioctl with the signal pending
-        // until the PTY child dies). Kill the child's process group first to
-        // release the ioctl so the process can actually die.
-        let setRawModeDeadlocked = false;
-        const watchdog = setTimeout(() => {
-          setRawModeDeadlocked = true;
-          try {
-            const childPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-            if (childPid > 0) {
-              // The PTY child is a session leader (setsid), so its pid is its
-              // process group id: kill the whole group.
-              process.kill(-childPid, "SIGKILL");
-            }
-          } catch {}
-          proc.kill("SIGKILL");
-        }, 10_000);
+      // Watchdog, not a wait-for-time: on a broken build the spawned bun
+      // never exits on its own, and SIGKILL alone cannot reap it (the
+      // kernel retries the blocked termios ioctl with the signal pending
+      // until the PTY child dies). Kill the child's process group first to
+      // release the ioctl so the process can actually die.
+      let setRawModeDeadlocked = false;
+      const watchdog = setTimeout(() => {
+        setRawModeDeadlocked = true;
+        try {
+          const childPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+          if (childPid > 0) {
+            // The PTY child is a session leader (setsid), so its pid is its
+            // process group id: kill the whole group.
+            process.kill(-childPid, "SIGKILL");
+          }
+        } catch {}
+        proc.kill("SIGKILL");
+      }, 10_000);
 
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]).finally(() => clearTimeout(watchdog));
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]).finally(() => clearTimeout(watchdog));
 
-        expect(setRawModeDeadlocked).toBe(false);
-        expect(stdout).toBe("RETURNED\n");
-        expect(exitCode).toBe(0);
-      },
-      20_000,
-    );
+      expect(setRawModeDeadlocked).toBe(false);
+      expect(stdout).toBe("RETURNED\n");
+      expect(exitCode).toBe(0);
+    }, 20_000);
   });
 
   describe("termios flags", () => {
@@ -1654,7 +1650,7 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   // If it got that far before the parent's kqueue watch (ESRCH), the parent used to block in wait4() on the
   // thread that reads the pty, forever. The worker and the garbage slow the parent down into that window.
   const limit = isDebug || isASAN ? 60_000 : 20_000;
-  test.skipIf(isWindows)(
+  test(
     "a pty child that exits before the parent watches it is still reaped",
     async () => {
       using dir = tempDir("pty-early-exit", {

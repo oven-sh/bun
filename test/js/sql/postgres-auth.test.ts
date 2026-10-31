@@ -5,7 +5,7 @@
 
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, tls as harnessTls, isWindows, tempDir } from "harness";
+import { describeWithContainer, tls as harnessTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
@@ -600,7 +600,7 @@ describe.concurrent("scripted server", () => {
     });
   });
 
-  test.skipIf(isWindows)("require, a unix socket: refused, and nothing is sent", async () => {
+  test("require, a unix socket: refused, and nothing is sent", async () => {
     using dir = tempDir("postgres-auth", {});
     const socketPath = path.join(String(dir), "s");
     const answer = Promise.withResolvers<number>();

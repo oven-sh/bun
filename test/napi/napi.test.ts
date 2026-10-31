@@ -2022,7 +2022,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option
   // Bun.spawnSync reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free
   // list empty, so what it allocates from there on takes the slow path, whatever ran before.
-  it.skipIf(isWindows)("async work queued by a finalizer during Bun.spawnSync keeps the event loop alive", async () => {
+  it("async work queued by a finalizer during Bun.spawnSync keeps the event loop alive", async () => {
     const code = `
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
       // In a frame of its own: an object left in a register of this one would outlive the drop.
@@ -2063,10 +2063,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   // The other way around: the ref a finalizer gave up was taken off the loop being waited on, so the thread's loop
   // kept it and the process never exited.
-  it.skipIf(isWindows)(
-    "a threadsafe function unref'd by a finalizer during Bun.spawnSync lets go of the event loop",
-    async () => {
-      const code = `
+  it("a threadsafe function unref'd by a finalizer during Bun.spawnSync lets go of the event loop", async () => {
+    const code = `
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
       (() => { globalThis.held = Array.from({ length: 3 }, () => addon.makeThreadsafeFunction()); })();
       let finalizedBeforeDrop;
@@ -2082,20 +2080,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       });
       console.log(JSON.stringify({ finalizedBeforeDrop, finalizedDuringCall: addon.finalized() }));
     `;
-      await using proc = spawn({
-        cmd: [bunExe(), "-e", code],
-        env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 3 }),
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 3 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC

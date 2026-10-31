@@ -1,10 +1,10 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/18239
-test.skipIf(isWindows)("TTY stdin buffering should work correctly", async () => {
+test("TTY stdin buffering should work correctly", async () => {
   const dataGeneratorPath = join(import.meta.dir, "data-generator.sh");
   const fixturePath = join(import.meta.dir, "18239.fixture.ts");
 

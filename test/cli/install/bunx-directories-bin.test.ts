@@ -49,7 +49,7 @@ const rejected: [label: string, value: (dir: string) => string, picked: string][
 ];
 
 for (const [label, value, picked] of rejected) {
-  test.concurrent.skipIf(isWindows)(`bunx ignores a directories.bin that is ${label}`, async () => {
+  test.concurrent(`bunx ignores a directories.bin that is ${label}`, async () => {
     using dir = tempDir("bunx-directories-bin-rejected", {
       "package.json": JSON.stringify({ name: "app", dependencies: { tool: "file:./tool" } }),
       "tool/package.json": "",

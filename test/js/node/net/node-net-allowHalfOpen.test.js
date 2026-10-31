@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunRun, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
+import { bunRun, nodeExe, tempDir, tempDirWithFiles } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -117,7 +117,7 @@ test("allowHalfOpen: false should work on client-side", async () => {
 
 // A paused allowHalfOpen socket whose AF_UNIX peer writes a tail and closes (EPOLLHUP while paused) must keep
 // the tail for resume() and then deliver data, end and close once each; the paused window must not spin the loop.
-test.skipIf(isWindows)("allowHalfOpen: paused socket whose unix peer closed delivers its tail on resume", async () => {
+test("allowHalfOpen: paused socket whose unix peer closed delivers its tail on resume", async () => {
   using dir = tempDir("net-paused-unix-hangup", {});
   const result = await bunRun(join(import.meta.dir, "node-net-paused-unix-hangup-fixture.js"), {
     SOCK: join(String(dir), "p.sock"),

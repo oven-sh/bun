@@ -125,7 +125,7 @@ describe("spawnSync", () => {
 // same path. Each case makes the child hold 4 GiB of zeros (the read buffer
 // doubles to 8 GiB on the way), so the cases run one at a time, in a child
 // process, with a long timeout, and only on machines with room.
-describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at the Buffer length limit", () => {
+describe.skipIf(totalmem() < 16 * 1024 ** 3)("spawnSync output at the Buffer length limit", () => {
   async function captureZeros(size: number) {
     await using proc = Bun.spawn({
       cmd: [

@@ -147,26 +147,23 @@ describe("path.resolve", () => {
     });
   });
 
-  test.skipIf(isWindows)(
-    "win32 drive-relative input resolves when the working directory is the filesystem root",
-    async () => {
-      const script = `const p = require("path");
+  test("win32 drive-relative input resolves when the working directory is the filesystem root", async () => {
+    const script = `const p = require("path");
       console.log(JSON.stringify([
         p.win32.resolve("C:foo"),
         p.win32.resolve("C:"),
       ]));`;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        cwd: "/",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.trim()).toBe(JSON.stringify(["C:\\foo", "C:\\"]));
-      expect(exitCode).toBe(0);
-    },
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(["C:\\foo", "C:\\"]));
+    expect(exitCode).toBe(0);
+  });
 
   test.skipIf(!isWindows)("win32 drive-relative input on another drive resolves against that drive's root", () => {
     const drive = process.cwd()[0].toUpperCase() === "Z" ? "Y:" : "Z:";

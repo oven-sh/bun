@@ -23,7 +23,7 @@ test.skipIf(isWindows)("writing > send buffer size doesn't block the main thread
   }
 });
 
-test.skipIf(isWindows)("writing > send buffer size (with a variable) doesn't block the main thread", async () => {
+test("writing > send buffer size (with a variable) doesn't block the main thread", async () => {
   const expected = Buffer.alloc(1024 * 1024, "bun!").toString();
   const result = await $`echo ${expected} | ${Bun.which("cat")}`.text();
 

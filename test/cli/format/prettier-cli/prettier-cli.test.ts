@@ -4,7 +4,7 @@
 // input. `bun fmt` writes unless told otherwise, so Prettier was given `--write` where the command line only prints.
 // `cases.json` is written by `test/cli/lint/oracle/driver/prettier-fixtures.mjs --record`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
@@ -25,7 +25,7 @@ describe.concurrent("bun fmt behaves like Prettier", () => {
     const links = Object.entries(files).filter(([, file]) => typeof file !== "string") as [string, { link: string }][];
     // Links, or a name that Windows doesn't allow.
     const needsPosix = links.length > 0 || Object.keys(files).some(name => /[<>:"|?*\\]/.test(name));
-    test.skipIf(isWindows && needsPosix)(`${it.test}: ${it.directory} $ ${it.args.join(" ")}`, async () => {
+    test(`${it.test}: ${it.directory} $ ${it.args.join(" ")}`, async () => {
       const texts = Object.entries(files).filter(([, file]) => typeof file === "string") as [string, string][];
       using dir = tempDir("prettier-cli", Object.fromEntries(texts.map(([name, text]) => [`${top}/${name}`, text])));
       for (const [name, { link }] of links) symlinkSync(link, join(String(dir), top, name));

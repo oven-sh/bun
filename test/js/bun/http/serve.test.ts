@@ -15,7 +15,6 @@ import {
   isIPv4,
   isIPv6,
   isLinux,
-  isPosix,
   isWindows,
   libcPathForDlopen,
   MAX_PATH_BYTES,
@@ -2948,7 +2947,7 @@ describe("server.requestIP", () => {
     });
   });
 
-  it.if(isPosix)("server.requestIP (unix)", async () => {
+  it("server.requestIP (unix)", async () => {
     const unix = join(tmpdirSync(), "serve.sock");
     using server = Bun.serve({
       unix,
@@ -3962,7 +3961,7 @@ it("only serves /bun:info to loopback clients in development mode", async () => 
   expect(externalRes.status).toBe(200);
 });
 
-it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {
+it("serves /bun:info over a unix socket in development mode", async () => {
   using dir = tempDir("info", {});
   const unix = join(String(dir), "bun-info.sock");
   using server = Bun.serve({

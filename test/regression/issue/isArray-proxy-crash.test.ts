@@ -47,7 +47,7 @@ describe("isArray + Proxy crash fixes", () => {
     expect(accesses).toContain("1");
   });
 
-  test.skipIf(process.platform === "win32")("process.setgroups throws TypeError for Proxy (no crash)", () => {
+  test("process.setgroups throws TypeError for Proxy (no crash)", () => {
     // Node.js also rejects Proxy here (with a native assertion). We throw a TypeError.
     expect(() => process.setgroups!(new Proxy([], {}))).toThrow(TypeError);
   });

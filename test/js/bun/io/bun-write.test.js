@@ -544,7 +544,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   // must terminate on EOF, not on the stat-derived budget.
   // Bun.spawn({stdin:"pipe"}) hands the child a socketpair, not a FIFO, so
   // run the pipeline under sh to get real kernel pipes on fd 0/1.
-  it.skipIf(isWindows)("Bun.write(Bun.stdout, Bun.stdin) copies the whole pipe (> 4096 bytes)", async () => {
+  it("Bun.write(Bun.stdout, Bun.stdin) copies the whole pipe (> 4096 bytes)", async () => {
     const size = 1024 * 1024;
     const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.stdin)))`;
 

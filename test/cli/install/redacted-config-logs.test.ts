@@ -1,6 +1,6 @@
 import { iniInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, hostedGitRepository, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, hostedGitRepository, tempDir } from "harness";
 import { join } from "path";
 
 test("registry url password is sent as Basic auth and left out of request error output", async () => {
@@ -1221,7 +1221,7 @@ describe.concurrent("the userinfo of a git URL is masked as a whole", () => {
   });
 
   // git names the URL it wants a password for, and bun passes on what git says.
-  test.skipIf(isWindows)("git's own output", async () => {
+  test("git's own output", async () => {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1242,7 +1242,7 @@ describe.concurrent("the userinfo of a git URL is masked as a whole", () => {
   });
 
   // When no form of the URL can be cloned, each is named above what git said of it.
-  test.skipIf(isWindows)("every form of a URL that cannot be cloned", async () => {
+  test("every form of a URL that cannot be cloned", async () => {
     const url = (scheme: string, userinfo: string) => `${scheme}://${userinfo}@example.com/org/lib.git`;
     await using server = Bun.serve({
       port: 0,

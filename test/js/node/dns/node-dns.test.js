@@ -144,7 +144,7 @@ async function withCompressedAnswerServer(type, rdata, fn) {
   }
 }
 
-test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
+test("dns.resolveSrv accepts compressed target in RDATA", async () => {
   // priority=10, weight=50, port=80, target = "srv" + pointer to QNAME.
   // After decompression the target is srv.<query-name>.
   const rdata = ptr => Buffer.concat([Buffer.from([0x00, 0x0a, 0x00, 0x32, 0x00, 0x50, 0x03, 0x73, 0x72, 0x76]), ptr]);
@@ -267,7 +267,7 @@ test("dns.resolveCaa (caa.socketify.dev)", () => {
   return promise;
 });
 
-test.skipIf(isWindows)("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
+test("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
   const socket = dgram.createSocket("udp4");
   try {
     socket.on("message", (query, rinfo) => {

@@ -2704,7 +2704,7 @@ describe("streamed input pacing", () => {
   // Regular-file reads are synchronous on POSIX, so reading ahead of the
   // consumer would show up as `transform()` itself reading (and buffering the
   // rewrite of) the entire file. Sparse files keep these cheap.
-  describe.skipIf(isWindows)("large sparse file", () => {
+  describe("large sparse file", () => {
     // 5 GiB: a body size that does not fit lol_html's `u32::MAX` memory limit.
     it.concurrent.each([256 * 1024 * 1024, 5 * 1024 * 1024 * 1024])(
       "of %d bytes: transform() does not read ahead",

@@ -770,108 +770,104 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
   }
 });
 
-it.skipIf(isWindows)(
-  "rejects symlink targets that climb through other symlinks from the same archive (.bun-tag write stays inside the package)",
-  async () => {
-    // A tarball can ship symlinks whose targets each normalize to a path
-    // inside the package (`l1 -> .`, `l2 -> l1/..`, `l3 -> l2/..`, ...).
-    // Lexically every hop is "safe", but the kernel resolves each link before
-    // applying `..`, so each hop climbs one directory until it clamps at `/`.
-    // A final `.bun-tag -> lN/<absolute path minus leading slash>` entry then
-    // makes the post-extraction `.bun-tag` marker write (O_CREAT|O_TRUNC) land
-    // on an arbitrary file. The extractor must reject symlink targets with a
-    // `..` component that follows a named component, and must not follow a
-    // pre-existing `.bun-tag` when writing the marker.
-    const victimPath = join(systemTmpDir, `bun-tag-victim-${Math.random().toString(36).slice(2, 10)}.txt`);
-    await writeFile(victimPath, "original-content");
+it("rejects symlink targets that climb through other symlinks from the same archive (.bun-tag write stays inside the package)", async () => {
+  // A tarball can ship symlinks whose targets each normalize to a path
+  // inside the package (`l1 -> .`, `l2 -> l1/..`, `l3 -> l2/..`, ...).
+  // Lexically every hop is "safe", but the kernel resolves each link before
+  // applying `..`, so each hop climbs one directory until it clamps at `/`.
+  // A final `.bun-tag -> lN/<absolute path minus leading slash>` entry then
+  // makes the post-extraction `.bun-tag` marker write (O_CREAT|O_TRUNC) land
+  // on an arbitrary file. The extractor must reject symlink targets with a
+  // `..` component that follows a named component, and must not follow a
+  // pre-existing `.bun-tag` when writing the marker.
+  const victimPath = join(systemTmpDir, `bun-tag-victim-${Math.random().toString(36).slice(2, 10)}.txt`);
+  await writeFile(victimPath, "original-content");
 
-    const chainLength = 30;
-    const entries: Parameters<typeof createTarball>[0] = [
-      { name: "test-package/", type: "dir" },
-      {
-        name: "test-package/package.json",
-        type: "file",
-        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
-      },
-      { name: "test-package/l1", type: "symlink", linkname: "." },
-    ];
-    for (let i = 2; i <= chainLength; i++) {
-      // Normalizes to "" (inside the package), but resolves one directory
-      // above wherever l(i-1) resolves to.
-      entries.push({ name: `test-package/l${i}`, type: "symlink", linkname: `l${i - 1}/..` });
-    }
-    // After `chainLength` hops the chain is clamped at `/`, so this resolves to
-    // the absolute victim path while still normalizing to a path inside the
-    // package directory.
-    entries.push({
-      name: "test-package/.bun-tag",
-      type: "symlink",
-      linkname: `l${chainLength}/${victimPath.replace(/^\/+/, "")}`,
-    });
-    const tarball = createTarball(entries);
+  const chainLength = 30;
+  const entries: Parameters<typeof createTarball>[0] = [
+    { name: "test-package/", type: "dir" },
+    {
+      name: "test-package/package.json",
+      type: "file",
+      content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+    },
+    { name: "test-package/l1", type: "symlink", linkname: "." },
+  ];
+  for (let i = 2; i <= chainLength; i++) {
+    // Normalizes to "" (inside the package), but resolves one directory
+    // above wherever l(i-1) resolves to.
+    entries.push({ name: `test-package/l${i}`, type: "symlink", linkname: `l${i - 1}/..` });
+  }
+  // After `chainLength` hops the chain is clamped at `/`, so this resolves to
+  // the absolute victim path while still normalizing to a path inside the
+  // package directory.
+  entries.push({
+    name: "test-package/.bun-tag",
+    type: "symlink",
+    linkname: `l${chainLength}/${victimPath.replace(/^\/+/, "")}`,
+  });
+  const tarball = createTarball(entries);
 
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
-          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
-        }
-        if (url.pathname.includes("/repos/")) {
-          return Response.json({ default_branch: "main" });
-        }
-        return new Response("Not Found", { status: 404 });
-      },
-    });
-
-    try {
-      using dir = tempDir("bun-tag-symlink-chain-test", {});
-      const installDir = String(dir);
-
-      await writeFile(
-        join(installDir, "package.json"),
-        JSON.stringify({
-          name: "test-app",
-          version: "1.0.0",
-          dependencies: { "test-package": "github:user/repo#main" },
-        }),
-      );
-
-      const proc = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: installDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...env,
-          GITHUB_API_URL: `http://localhost:${server.port}`,
-          BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
-        },
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // The file outside the extraction directory must be untouched: same
-      // content, not truncated, not replaced with the github tag string.
-      expect(await Bun.file(victimPath).text()).toBe("original-content");
-
-      // The legitimate package contents are still installed.
-      const pkgDir = join(installDir, "node_modules", "test-package");
-      await access(join(pkgDir, "package.json"));
-
-      if (exitCode !== 0) {
-        console.error("Install failed with exit code:", exitCode);
-        console.error("stdout:", stdout);
-        console.error("stderr:", stderr);
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
+        return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
       }
-      expect(exitCode).toBe(0);
-    } finally {
-      server.stop();
-      await rm(victimPath, { force: true });
+      if (url.pathname.includes("/repos/")) {
+        return Response.json({ default_branch: "main" });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  try {
+    using dir = tempDir("bun-tag-symlink-chain-test", {});
+    const installDir = String(dir);
+
+    await writeFile(
+      join(installDir, "package.json"),
+      JSON.stringify({
+        name: "test-app",
+        version: "1.0.0",
+        dependencies: { "test-package": "github:user/repo#main" },
+      }),
+    );
+
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        GITHUB_API_URL: `http://localhost:${server.port}`,
+        BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+      },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The file outside the extraction directory must be untouched: same
+    // content, not truncated, not replaced with the github tag string.
+    expect(await Bun.file(victimPath).text()).toBe("original-content");
+
+    // The legitimate package contents are still installed.
+    const pkgDir = join(installDir, "node_modules", "test-package");
+    await access(join(pkgDir, "package.json"));
+
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
     }
-  },
-  60000,
-);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.stop();
+    await rm(victimPath, { force: true });
+  }
+}, 60000);
 
 it.skipIf(isWindows)(
   "does not change permissions of a file reached through a symlinked bin target",
@@ -1076,7 +1072,7 @@ it.skipIf(isWindows)(
 // The cache folder and the bun.lock entry of a `github:` package are named after the root
 // directory of its tarball: the first component of the first entry's path, whatever that
 // entry is. A tarball with a Content-Length and a chunked one go through different readers.
-describe.concurrent.skipIf(isWindows)("the root directory of a GitHub tarball", () => {
+describe.concurrent("the root directory of a GitHub tarball", () => {
   const readers = ["buffered", "streaming"] as const;
 
   async function install(reader: (typeof readers)[number], root: string, first: string[] = []) {
@@ -1305,7 +1301,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
   });
 
   // People do link the project's own `node_modules` (a Docker volume, Nix, Bazel).
-  it.skipIf(isWindows)("still installs through a link at the project's own node_modules", async () => {
+  it("still installs through a link at the project's own node_modules", async () => {
     using root = tempDir("nm-root", {});
     const volume = join(String(root), "volume");
     const repo = join(String(root), "repo");
@@ -1367,7 +1363,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
   });
 
   // `lodash` is found installed through the link before `zod` is written.
-  it.skipIf(isWindows)("keeps what's behind a workspace's link when one package changes", async () => {
+  it("keeps what's behind a workspace's link when one package changes", async () => {
     using root = tempDir("nm-member-change", {});
     const repo = await workspaceWithNestedDep(String(root));
     for (const major of [1, 2, 3]) {
@@ -1399,7 +1395,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(isWindows)("keeps a workspace member's link when it replaces the isolated linker's tree", async () => {
+  it("keeps a workspace member's link when it replaces the isolated linker's tree", async () => {
     using root = tempDir("nm-member-switch", {});
     const repo = await workspaceWithNestedDep(String(root));
     expect((await runBun(repo, ["install", "--ignore-scripts", "--linker", "isolated"])).exitCode).toBe(0);
@@ -1512,7 +1508,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
 
   // The links are planted after the install, so only `bun remove` itself is between its deletes and the victim. It
   // deletes the leftover `@scope/<name>` and the dangling links in `.bin`.
-  it.skipIf(isWindows)("bun remove does not delete through node_modules/@scope or .bin", async () => {
+  it("bun remove does not delete through node_modules/@scope or .bin", async () => {
     using dir = tempDir("nm-remove-planted", {
       "package.json": JSON.stringify({
         name: "remove-scope-symlink-app",
@@ -1792,7 +1788,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
   }
 
   // People do link the project's own `node_modules` (a Docker volume, Nix, Bazel).
-  it.skipIf(isWindows)("still installs through a link at the project's own node_modules", async () => {
+  it("still installs through a link at the project's own node_modules", async () => {
     using root = tempDir("nm-root", {});
     const volume = join(String(root), "volume");
     await mkdir(volume);

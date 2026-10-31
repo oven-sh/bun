@@ -350,9 +350,7 @@ test("Bun.which does not look in the current directory for bins", async () => {
   });
   process.chdir(String(dir));
   try {
-    if (!isWindows) {
-      await $`chmod +x ./some_program_name`;
-    }
+    await $`chmod +x ./some_program_name`;
 
     expect(which("some_program_name")).toBe(null);
     expect((await $`some_program_name`).exitCode).not.toBe(0);
@@ -371,10 +369,8 @@ test("Bun.which does look in the current directory when given a path with a slas
   });
   process.chdir(String(dir));
   try {
-    if (!isWindows) {
-      await $`chmod +x ./some_program_name`;
-      await $`chmod +x ./folder/other_app`;
-    }
+    await $`chmod +x ./some_program_name`;
+    await $`chmod +x ./folder/other_app`;
 
     const suffix = isWindows ? ".cmd" : "";
 
@@ -398,9 +394,7 @@ test("Bun.which can find executables in a non-ascii directory", async () => {
 
   process.chdir(String(dir));
   try {
-    if (!isWindows) {
-      await $`chmod +x ./some_program_name`;
-    }
+    await $`chmod +x ./some_program_name`;
 
     const suffix = isWindows ? ".cmd" : "";
     expect(which("./some_program_name")).toBe(join(dir, "some_program_name" + suffix));

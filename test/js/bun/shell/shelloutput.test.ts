@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { totalmem } from "os";
 
 describe("ShellOutput + ShellError", () => {
@@ -33,7 +33,7 @@ describe("ShellOutput + ShellError", () => {
 // callback) had never carried an error. This is the only way to exercise it. The
 // child holds 4 GiB of zeros (8 GiB while its buffer grows), so this runs in a
 // child process, with a long timeout, and only on machines with room.
-describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("stdout at the Buffer length limit", () => {
+describe.skipIf(totalmem() < 16 * 1024 ** 3)("stdout at the Buffer length limit", () => {
   test("a capture of 2^32 + 1 bytes rejects with the RangeError that new ArrayBuffer(2 ** 32 + 1) throws", async () => {
     await using proc = Bun.spawn({
       cmd: [

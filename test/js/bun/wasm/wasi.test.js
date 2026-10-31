@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 import { WASI } from "node:wasi";
@@ -117,10 +117,9 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   });
   const root = String(dir);
   const sandbox = path.join(root, "sandbox");
-  if (!isWindows) {
-    // a symlink that already exists inside the preopen and points outside of it
-    fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
-  }
+
+  // a symlink that already exists inside the preopen and points outside of it
+  fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
 
   const wasi = new WASI({ preopens: { "/": sandbox } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
@@ -146,14 +145,13 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   expect(fs.existsSync(path.join(root, "secret.txt"))).toBe(true);
 
   // (3) a pre-placed symlink inside the preopen that points outside of it
-  if (!isWindows) {
-    len = writePath("escape");
-    expect(wasi.wasiImport.path_filestat_get(preopenFd, 1, pathPtr, len, statBufPtr)).toBe(WASI_ENOTCAPABLE);
-    expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr)).toBe(
-      WASI_ENOTCAPABLE,
-    );
-    expect(wasi.FD_MAP.has(4)).toBe(false);
-  }
+
+  len = writePath("escape");
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 1, pathPtr, len, statBufPtr)).toBe(WASI_ENOTCAPABLE);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr)).toBe(
+    WASI_ENOTCAPABLE,
+  );
+  expect(wasi.FD_MAP.has(4)).toBe(false);
 
   // a path that stays inside the preopen still works
   len = writePath("inside.txt");

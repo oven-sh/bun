@@ -521,20 +521,17 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    // A file name can have at most 255 bytes. On Windows the path would also be too long.
-    test.skipIf(isWindows)(
-      "can have the longest possible name, and is still replaced rather than written in place",
-      async () => {
-        const name = `${Buffer.alloc(252, "a")}.ts`;
-        using dir = tempDir("bun-format", { [name]: ugly });
-        const before = statSync(join(String(dir), name)).ino;
-        const { exitCode } = await write(String(dir), []);
-        expect(read(String(dir), name)).toBe(formatted);
-        expect(statSync(join(String(dir), name)).ino).not.toBe(before);
-        expect(readdirSync(String(dir))).toEqual([name]);
-        expect(exitCode).toBe(0);
-      },
-    );
+    // A file name can have at most 255 bytes.
+    test("can have the longest possible name, and is still replaced rather than written in place", async () => {
+      const name = `${Buffer.alloc(252, "a")}.ts`;
+      using dir = tempDir("bun-format", { [name]: ugly });
+      const before = statSync(join(String(dir), name)).ino;
+      const { exitCode } = await write(String(dir), []);
+      expect(read(String(dir), name)).toBe(formatted);
+      expect(statSync(join(String(dir), name)).ino).not.toBe(before);
+      expect(readdirSync(String(dir))).toEqual([name]);
+      expect(exitCode).toBe(0);
+    });
 
     // For example in a container with a user's project mounted into it.
     test.skipIf(!isRoot)("keeps its owner if root formats it", async () => {
@@ -552,7 +549,7 @@ describe.concurrent("bun fmt", () => {
     });
 
     // Prettier doesn't need write access to the directory.
-    test.skipIf(isWindows || isRoot)("can be in a read-only directory", async () => {
+    test.skipIf(isRoot)("can be in a read-only directory", async () => {
       using dir = tempDir("bun-format", { "src/a.js": ugly });
       chmodSync(join(String(dir), "src"), 0o555);
       try {
@@ -5731,15 +5728,12 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
-  test.skipIf(isWindows)(
-    "/dev/null works as an ignore file without patterns and as a configuration without options",
-    async () => {
-      const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
-      expect(await different(files, ["."])).toEqual([]);
-      expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
-      expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
-    },
-  );
+  test("/dev/null works as an ignore file without patterns and as a configuration without options", async () => {
+    const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
+    expect(await different(files, ["."])).toEqual([]);
+    expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
+    expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
+  });
 
   // This means "never break a line". Prettier accepts every integer from 0 up, and Infinity.
   test.each([
@@ -6162,7 +6156,7 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a named pipe whose name ends in .js is skipped, like in Prettier", async () => {
+  test("a named pipe whose name ends in .js is skipped, like in Prettier", async () => {
     const before = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0);
     expect(await different({ "a.js": ugly }, [], { before })).toEqual(["a.js"]);
   });
@@ -6634,7 +6628,7 @@ exports.format = async text => "by Prettier";
     // A case's guard used to be printed without a stack check, so the stack overflowed at depths between the printer's
     // limit and the parser's. The threads that format files have stack to spare, so this uses the main thread with half
     // of its usual stack.
-    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091])(
+    test.skipIf(isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091])(
       "Flow's match with %d nested guards, on a 4 MB stack",
       async depth => {
         using dir = tempDir("bun-format-small-stack", {});

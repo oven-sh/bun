@@ -126,7 +126,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test.todoIf(isCI || isWindows)("dev server", async () => {
+      test.todoIf(isCI)("dev server", async () => {
         console.log({ dir });
         await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,
@@ -193,7 +193,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test.todoIf(isCI || isWindows)("dev server", async () => {
+      test.todoIf(isCI)("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,
@@ -259,7 +259,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test.todoIf(isCI || isWindows)("dev server", async () => {
+      test.todoIf(isCI)("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,

@@ -4299,9 +4299,8 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   const nestedPkgJson = join(packageDir, "packages", "pkg1", "node_modules", "no-deps", "package.json");
   await install("hardlink");
   expect(readJson(nestedPkgJson)).toEqual({ name: "no-deps", version: "2.0.0" });
-  if (!isWindows) {
-    expect(statSync(nestedPkgJson).nlink).toBeGreaterThan(1);
-  }
+
+  expect(statSync(nestedPkgJson).nlink).toBeGreaterThan(1);
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await install("copyfile");
@@ -4311,10 +4310,9 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
     name: "no-deps",
     version: "1.0.0",
   });
-  if (!isWindows) {
-    // a new file, not the cache file's inode
-    expect(statSync(nestedPkgJson).nlink).toBe(1);
-  }
+
+  // a new file, not the cache file's inode
+  expect(statSync(nestedPkgJson).nlink).toBe(1);
 
   const cacheDir = join(packageDir, ".bun-cache");
   const cached = (await readdirSorted(cacheDir)).filter(name => name.startsWith("no-deps@2.0.0@"));
@@ -4324,8 +4322,7 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
 });
 
 for (const linker of ["hoisted", "isolated"]) {
-  // symlinkSync to a directory needs Developer Mode or elevation on Windows.
-  test.concurrent.skipIf(isWindows)(`workspace globs match a symlinked member directory (${linker})`, async () => {
+  test.concurrent(`workspace globs match a symlinked member directory (${linker})`, async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     // Its own version of no-deps is installed in its own node_modules, behind the link.
@@ -4378,7 +4375,7 @@ for (const [link, target] of [
   ["packages/s", "real/deeper/s"],
   ["packages", "real/deeper"],
 ]) {
-  test.concurrent.skipIf(isWindows)(`isolated: a member finds its dependencies when ${link} is a symlink`, async () => {
+  test.concurrent(`isolated: a member finds its dependencies when ${link} is a symlink`, async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -4572,7 +4569,7 @@ describe("a workspace outside the project", () => {
   });
 });
 
-describe.skipIf(isWindows)("in a workspace that's a link to a folder somewhere else", () => {
+describe("in a workspace that's a link to a folder somewhere else", () => {
   /** `cwd` and `pwd` are relative to the directory that holds `repo` and `other`. */
   async function install(cwd: string, pwd: string) {
     using ctx = await setupTest();
@@ -4747,7 +4744,7 @@ describe.skipIf(isWindows)("in a workspace that's a link to a folder somewhere e
   });
 });
 
-test.concurrent.skipIf(isWindows)("`**` in a workspace glob does not go through a symlinked directory", async () => {
+test.concurrent("`**` in a workspace glob does not go through a symlinked directory", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -5034,7 +5031,7 @@ describe("links of a renamed or removed workspace", () => {
 // the isolated linker looped forever. On POSIX a symlinked root package.json
 // made workspace discovery run in the symlink target's directory.
 describe("aliased project root", () => {
-  test.concurrent.skipIf(isWindows)("workspaces install when the root package.json is a symlink", async () => {
+  test.concurrent("workspaces install when the root package.json is a symlink", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([

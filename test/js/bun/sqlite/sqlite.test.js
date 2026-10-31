@@ -2533,10 +2533,9 @@ it("can continue to use existing statements after database has been GC'd", async
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);
-  if (!isWindows) {
-    // on Windows, FinalizationRegistry is more flaky than on POSIX.
-    expect(called).toBe(true);
-  }
+
+  // on Windows, FinalizationRegistry is more flaky than on POSIX.
+  expect(called).toBe(true);
 });
 
 it("statements should be disposable", () => {

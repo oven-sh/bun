@@ -55,7 +55,7 @@ test.concurrent("which searches $PATH for bare names and the shell cwd for ./ na
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("which with an absolute path at the platform path length limit reports not found", async () => {
+test("which with an absolute path at the platform path length limit reports not found", async () => {
   const fixture = /* ts */ `
     import { $ } from "bun";
     const max = process.platform === "linux" ? 4096 : 1024;

@@ -1336,7 +1336,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
     });
 
-    test.skipIf(isWindows)("a directory by file descriptor", async () => {
+    test("a directory by file descriptor", async () => {
       const fd = openSync(directory(), "r");
       try {
         expect({
@@ -1348,7 +1348,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       }
     });
 
-    test.skipIf(isWindows)("a file descriptor that is not open", async () => {
+    test("a file descriptor that is not open", async () => {
       expect(await codes(Bun.file(1_000_000))).toEqual(["EBADF", "EBADF"]);
     });
   });

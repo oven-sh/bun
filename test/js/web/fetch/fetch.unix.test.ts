@@ -219,7 +219,7 @@ it("works with node:http", async () => {
   await Promise.all(promises);
 });
 
-it.skipIf(isWindows)("reuses the connection (keep-alive)", async () => {
+it("reuses the connection (keep-alive)", async () => {
   function makeServer() {
     let connections = 0;
     const heads: string[] = [];
@@ -279,7 +279,7 @@ it.skipIf(isWindows)("reuses the connection (keep-alive)", async () => {
   }
 });
 
-it.skipIf(isWindows)("a unix request never consults the proxy environment", async () => {
+it("a unix request never consults the proxy environment", async () => {
   using dir = tempDir("fetch-unix-proxy-env", {});
   const sockPath = join(String(dir), "proxy-env.sock");
   const heads: string[] = [];
@@ -323,7 +323,7 @@ it.skipIf(isWindows)("a unix request never consults the proxy environment", asyn
   }
 });
 
-it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
+it("keep-alive pool is keyed by socket path", async () => {
   function makeServer(name: string) {
     let connections = 0;
     const srv = createServer(sock => {
@@ -414,7 +414,7 @@ it.skipIf(isWindows)("a relative socket path is resolved against the cwd at fetc
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the handshake verified", async () => {
+it("TLS over a unix socket is only reused for the hostname the handshake verified", async () => {
   using dir = tempDir("fetch-unix-tls", { "ca.pem": tls.cert });
   // The harness cert is valid for "localhost". A pooled connection verified
   // for it must not serve a request to a different hostname over the same
@@ -475,7 +475,7 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("TLS over a unix socket honors tls.ca", async () => {
+it("TLS over a unix socket honors tls.ca", async () => {
   using dir = tempDir("fetch-unix-tls-ca", {});
   const unix = join(String(dir), "tls.sock");
   let connections = 0;
@@ -505,7 +505,7 @@ it.skipIf(isWindows)("TLS over a unix socket honors tls.ca", async () => {
   }
 });
 
-it.skipIf(isWindows)("unix keep-alive entries are not evicted by TCP pool pressure", async () => {
+it("unix keep-alive entries are not evicted by TCP pool pressure", async () => {
   function makeServer() {
     let connections = 0;
     const srv = createServer(sock => {

@@ -101,7 +101,7 @@ const unsupportedSignals = (["SIGSTKFLT", "SIGPWR"] as const).filter(name => !(n
 
 const quiet: { stdio: ["ignore", "ignore", "ignore"] } = { stdio: ["ignore", "ignore", "ignore"] };
 
-describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers", () => {
+describe.concurrent("signal names map to the OS's own numbers", () => {
   describe.each(platformSignals)("%s", name => {
     const number: number = constants.signals[name];
 

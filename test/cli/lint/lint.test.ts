@@ -1419,7 +1419,7 @@ describe.concurrent("bun lint", () => {
       });
     });
 
-    test.skipIf(isWindows)("a named pipe whose name ends in .js is skipped", async () => {
+    test("a named pipe whose name ends in .js is skipped", async () => {
       const { stdout, exitCode } = await lint({ "eslint.config.js": basic, "a.js": bad }, ["-f", "unix", "."], {
         before: dir => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0),
       });
@@ -1429,7 +1429,7 @@ describe.concurrent("bun lint", () => {
     });
 
     // Opening a pipe like this blocks until a writer opens it.
-    test.skipIf(isWindows).each([".gitignore", ".git/info/exclude", ".eslintignore", "package.json"])(
+    test.each([".gitignore", ".git/info/exclude", ".eslintignore", "package.json"])(
       "doesn't hang when %s is a link to a named pipe without a writer",
       async name => {
         const { raw } = await lint({ "project/a.js": bad, "project/.git/info/a": "" }, ["-f", "json", "."], {
@@ -7256,18 +7256,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
 
     // ESLint doesn't print a report in that case.
-    test.skipIf(process.getuid?.() === 0 || isWindows)(
-      "still prints the report if a file can't be written",
-      async () => {
-        const files = { "eslint.config.js": basic, "a.js": "var a = 1;\nexport { a };\n", "b.js": "debugger;\n" };
-        const before = (dir: string) => chmodSync(join(dir, "a.js"), 0o444);
-        const result = await lint(files, ["--fix", "-f", "unix", "a.js", "b.js"], { reads: ["a.js"], before });
-        expect(result.files["a.js"]).toBe(files["a.js"]);
-        expect(result.stdout).toContain("[Error/no-debugger]");
-        expect(result.stderr).toMatch(/Cannot write .*a\.js: (EACCES|EPERM)/);
-        expect(result.exitCode).toBe(2);
-      },
-    );
+    test.skipIf(process.getuid?.() === 0)("still prints the report if a file can't be written", async () => {
+      const files = { "eslint.config.js": basic, "a.js": "var a = 1;\nexport { a };\n", "b.js": "debugger;\n" };
+      const before = (dir: string) => chmodSync(join(dir, "a.js"), 0o444);
+      const result = await lint(files, ["--fix", "-f", "unix", "a.js", "b.js"], { reads: ["a.js"], before });
+      expect(result.files["a.js"]).toBe(files["a.js"]);
+      expect(result.stdout).toContain("[Error/no-debugger]");
+      expect(result.stderr).toMatch(/Cannot write .*a\.js: (EACCES|EPERM)/);
+      expect(result.exitCode).toBe(2);
+    });
 
     const files = { "eslint.config.js": basic, "a.js": bad, "b.js": "export const b = 1;\n" };
 
@@ -7989,7 +7986,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.files).toEqual({ "a.js": `\uFEFF${bad}` });
     });
 
-    test.skipIf(isWindows)("writes through a symlink instead of replacing it", async () => {
+    test("writes through a symlink instead of replacing it", async () => {
       const result = await lint(files, ["--fix", "link.js"], {
         reads: ["a.js", "link.js"],
         before: dir => symlinkSync("a.js", join(dir, "link.js")),
@@ -8098,7 +8095,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
 
       // ESLint doesn't need write access to the directory.
-      test.skipIf(isWindows || isRoot)("fixes a file in a read-only directory", async () => {
+      test.skipIf(isRoot)("fixes a file in a read-only directory", async () => {
         using dir = tempDir("bun-lint", { "eslint.config.js": files["eslint.config.js"], "src/a.js": files["a.js"] });
         chmodSync(join(String(dir), "src"), 0o555);
         try {
@@ -8582,7 +8579,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       const prunes = flag === "--prune-suppressions";
       const missingFileError = prunes ? "The suppressions file does not exist" : symlinkError;
 
-      test.skipIf(isWindows)("refuses to write through a symlink that points outside the repository", async () => {
+      test("refuses to write through a symlink that points outside the repository", async () => {
         const options = { cwd: "project", before: link("project/f", "outside/f"), reads: ["outside/f"], mayFail: true };
         const [toFile, toNothing] = await Promise.all([
           lint({ ...tree, "outside/f": before }, flags("f"), options),
@@ -8632,7 +8629,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(result.exitCode).toBe(exitCode);
       });
 
-      test.skipIf(isWindows)("writes through a symlink that points inside the repository and keeps it", async () => {
+      test("writes through a symlink that points inside the repository and keeps it", async () => {
         using dir = tempDir("bun-lint", { ...tree, [prunes ? "project/real/f" : "project/real/other"]: before });
         link("project/f", "project/real/f")(String(dir));
         const result = await run(join(String(dir), "project"), flags("f"));
@@ -8642,7 +8639,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
     });
 
-    test.skipIf(isWindows)("refuses the default suppressions file if it links outside the repository", async () => {
+    test("refuses the default suppressions file if it links outside the repository", async () => {
       const name = "eslint-suppressions.json";
       const options = {
         cwd: "project",

@@ -413,7 +413,7 @@ describe("ipc mode advanced", () => {
     },
   );
 
-  it.concurrent.skipIf(isWindows)(
+  it.concurrent(
     "closes the channel as soon as a frame header declares a length that's too long to deserialize",
     async () => {
       const header = `write(Buffer.from([0x02, 0x01, 0x00, 0x01, 0x00]));`;

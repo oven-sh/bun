@@ -7608,7 +7608,7 @@ pub mod bv2_impl {
                         };
                         adopted = matches!(added, Ok(bun_watcher::FdOwnership::Watcher));
                     }
-                    // A file that's already watched keeps its first descriptor.
+                    // Only kqueue adopts the descriptor, and only the first one of a file.
                     if !adopted && parse_result.watcher_data.owns_fd {
                         let _ = bun_sys::close(fd);
                     }

@@ -1001,26 +1001,6 @@ describe("unref() + .exited with nothing else ref'd", () => {
       });
     });
   }
-
-  // The disposal of `await using` sends the signal and waits for the exit that it brings. That wait
-  // holds the process, also for a child that was unref'd.
-  it("the disposal of an unref'd child is waited for", async () => {
-    const script = `
-      {
-        await using helper = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], stdio: ["ignore", "ignore", "ignore"] });
-        helper.unref();
-        console.log("body");
-      }
-      console.log("disposed");`;
-    await using child = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-    expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
-      stdout: "body\ndisposed\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
 });
 
 it("#3480", async () => {

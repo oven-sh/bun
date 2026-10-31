@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use std::io::Write as _;
 
 use crate::virtual_machine::{ExitHandler, MAIN_FILE_NAME, MAX_SOURCE_LINE_LENGTH, VirtualMachine};
-use crate::{JSGlobalObject, JSInternalPromise, ModuleLoader};
+use crate::{JSGlobalObject, JSInternalPromise, JSValue, ModuleLoader};
 
 unsafe extern "C" {
     /// `--no-warnings`, which `bun_runtime` sets while it reads the command line.
@@ -21,6 +21,12 @@ unsafe extern "C" {
             column: i32,
         ),
     ) -> usize;
+    /// ModuleLoader.cpp: ends the evaluation of each of those modules, and of the modules that wait for them, with `error`.
+    safe fn Bun__rejectStalledTopLevelAwait(
+        global: &JSGlobalObject,
+        root_key: &bun_core::StringView<'_>,
+        error: JSValue,
+    );
 }
 
 struct Stalled {
@@ -164,6 +170,15 @@ impl VirtualMachine {
             }
         }
         report
+    }
+
+    /// Gives up, with `error`, the modules that `describe_unsettled_module_graph` names for `root_key`: the graph is rejected, and a module of it does not go on when its promise settles later.
+    pub fn reject_unsettled_module_graph(&mut self, root_key: &[u8], error: JSValue) {
+        Bun__rejectStalledTopLevelAwait(
+            self.global(),
+            &bun_core::StringView::from_bytes(root_key),
+            error,
+        );
     }
 
     /// A file URL for a path, as Node names a module. `[eval]` and `[stdin]` are no files: they keep their names.

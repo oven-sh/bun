@@ -1707,15 +1707,18 @@ impl Run<'_> {
                 while promise.status() == PromiseStatus::Pending
                     && (global.has_jobs_for_checkpoint() || vm.is_event_loop_alive())
                 {
+                    let mut loop_was_alive = false;
                     loop {
                         vm.tick();
                         if vm.is_event_loop_alive() {
                             vm.auto_tick_active();
+                            loop_was_alive = true;
                         } else if !global.has_jobs_for_checkpoint() {
                             break;
                         }
                     }
-                    if vm.unhandled_error_counter != 0 {
+                    // As in Node, 'beforeExit' comes again only behind work of the loop.
+                    if !loop_was_alive || vm.unhandled_error_counter != 0 {
                         break;
                     }
                     vm.on_before_exit();

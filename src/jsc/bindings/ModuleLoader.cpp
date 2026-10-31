@@ -1078,14 +1078,47 @@ static bool positionOfStalledAwait(JSC::JSGlobalObject* globalObject, JSC::Abstr
     return true;
 }
 
-// Calls `callback` for each module that keeps the evaluation of `rootKey`'s graph from finishing because it is suspended on its own top-level await: a walk of the static imports in source order that stops at such a module, like V8's GetStalledTopLevelAwaitMessage. 0: no module of the graph is suspended on an await (it did not load that far, or its modules are compiled ahead of time).
-extern "C" size_t Bun__forEachStalledTopLevelAwait(Zig::GlobalObject* globalObject, const BunString* rootKey, void* context, void (*callback)(void* context, const BunString* url, int32_t line, int32_t column))
+// Calls `visit` for each module that keeps the evaluation of `rootKey`'s graph from finishing because it is suspended on its own top-level await: a walk of the static imports in source order that stops at such a module, like V8's GetStalledTopLevelAwaitMessage.
+template<typename Visit>
+static void forEachStalledModule(Zig::GlobalObject* globalObject, const BunString* rootKey, const Visit& visit)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* loader = globalObject->moduleLoader();
-    size_t found = 0;
+    auto* root = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, rootKey->toWTFString(BunString::ZeroCopy)));
+    if (!root)
+        return;
+    WTF::HashSet<JSC::AbstractModuleRecord*> visited;
+    WTF::Vector<JSC::AbstractModuleRecord*, 16> worklist;
+    if (auto* record = root->record())
+        worklist.append(record);
+    while (!worklist.isEmpty()) {
+        JSC::AbstractModuleRecord* record = worklist.takeLast();
+        if (!visited.add(record).isNewEntry)
+            continue;
+        if (isStalledOnOwnAwait(record)) {
+            visit(record);
+            continue;
+        }
+        // Last request first, so that the first one is the next to be taken.
+        const auto& loaded = record->loadedModules();
+        const auto& requests = record->requestedModules();
+        for (size_t i = requests.size(); i--;) {
+            JSC::AbstractModuleRecord* dependency = record->prelinkedRequestedModule(requests[i]);
+            if (!dependency) {
+                auto iter = loaded.find(JSC::ModuleMapKey { requests[i].m_specifier.impl(), requests[i].type() });
+                if (iter != loaded.end())
+                    dependency = iter->value.m_module.get();
+            }
+            if (dependency)
+                worklist.append(dependency);
+        }
+    }
+}
 
-    auto report = [&](JSC::AbstractModuleRecord* record) {
+// Calls `callback` for each module that `forEachStalledModule` finds, with the place of its `await`. 0: no module of the graph is suspended on an await (it did not load that far, or its modules are compiled ahead of time).
+extern "C" size_t Bun__forEachStalledTopLevelAwait(Zig::GlobalObject* globalObject, const BunString* rootKey, void* context, void (*callback)(void* context, const BunString* url, int32_t line, int32_t column))
+{
+    size_t found = 0;
+    forEachStalledModule(globalObject, rootKey, [&](JSC::AbstractModuleRecord* record) {
         WTF::String url = record->moduleKey().string();
         JSC::LineColumn lineColumn;
         if (!positionOfStalledAwait(globalObject, record, lineColumn, url))
@@ -1093,37 +1126,19 @@ extern "C" size_t Bun__forEachStalledTopLevelAwait(Zig::GlobalObject* globalObje
         BunString bunURL = Bun::toString(url);
         callback(context, &bunURL, static_cast<int32_t>(lineColumn.line), static_cast<int32_t>(lineColumn.column));
         found++;
-    };
-
-    if (auto* root = loader->registryEntry(JSC::Identifier::fromString(vm, rootKey->toWTFString(BunString::ZeroCopy)))) {
-        WTF::HashSet<JSC::AbstractModuleRecord*> visited;
-        WTF::Vector<JSC::AbstractModuleRecord*, 16> worklist;
-        if (auto* record = root->record())
-            worklist.append(record);
-        while (!worklist.isEmpty()) {
-            JSC::AbstractModuleRecord* record = worklist.takeLast();
-            if (!visited.add(record).isNewEntry)
-                continue;
-            if (isStalledOnOwnAwait(record)) {
-                report(record);
-                continue;
-            }
-            // Last request first, so that the first one is the next to be taken.
-            const auto& loaded = record->loadedModules();
-            const auto& requests = record->requestedModules();
-            for (size_t i = requests.size(); i--;) {
-                JSC::AbstractModuleRecord* dependency = record->prelinkedRequestedModule(requests[i]);
-                if (!dependency) {
-                    auto iter = loaded.find(JSC::ModuleMapKey { requests[i].m_specifier.impl(), requests[i].type() });
-                    if (iter != loaded.end())
-                        dependency = iter->value.m_module.get();
-                }
-                if (dependency)
-                    worklist.append(dependency);
-            }
-        }
-    }
+    });
     return found;
+}
+
+// Ends the evaluation of each module that `forEachStalledModule` finds with `error`, and with it that of the modules that wait for one of them (AsyncModuleExecutionRejected). A record with an error never runs its body again: what settles the awaited promise later resumes nothing.
+extern "C" void Bun__rejectStalledTopLevelAwait(Zig::GlobalObject* globalObject, const BunString* rootKey, JSC::EncodedJSValue error)
+{
+    WTF::Vector<JSC::CyclicModuleRecord*, 4> stalled;
+    forEachStalledModule(globalObject, rootKey, [&](JSC::AbstractModuleRecord* record) {
+        stalled.append(uncheckedDowncast<JSC::CyclicModuleRecord>(record));
+    });
+    for (auto* record : stalled)
+        record->asyncExecutionRejected(globalObject, JSC::JSValue::decode(error));
 }
 
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin

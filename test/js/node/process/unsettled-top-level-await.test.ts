@@ -313,7 +313,8 @@ ${dead}
   });
 
   test("work that is unref'd does not keep the wait alive", async () => {
-    const source = `await new Promise(resolve => setTimeout(() => { console.log("timer"); resolve(); }, 20).unref());`;
+    // A minute: the timer is not due while the program ends.
+    const source = `await new Promise(resolve => setTimeout(() => { console.log("timer"); resolve(); }, 60_000).unref());`;
     expect(await run({ "a.mjs": `${source}\nconsole.log("after");\n` }, ["a.mjs"])).toEqual({
       stdout: "",
       stderr: warning("a.mjs", 1, source),
@@ -575,11 +576,13 @@ describe.concurrent("an unsettled top-level await in other kinds of entry", () =
 
 // The wait ends on what ends the run loop: nothing queued and nothing ref'd. So a top-level await gives up exactly where
 // a then() on the same promise is never called, and waits wherever that then() is called.
+// Work that is unref'd is not due while the program ends: its timers take a minute, and its child runs until its stdin ends.
 describe.concurrent("a top-level await gives up where then() on the same promise is never called", () => {
   const child = `Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"] })`;
+  const running = `Bun.spawn({ cmd: [process.execPath, "-e", "process.stdin.resume()"], stdio: ["pipe", "ignore", "ignore"] })`;
   test.each([
     ["a timer", "", `new Promise(resolve => setTimeout(resolve, 20))`, true],
-    ["a timer that is unref'd", "", `new Promise(resolve => setTimeout(resolve, 20).unref())`, false],
+    ["a timer that is unref'd", "", `new Promise(resolve => setTimeout(resolve, 60_000).unref())`, false],
     ["an immediate", "", `new Promise(resolve => setImmediate(resolve))`, true],
     ["an immediate that is unref'd", "", `new Promise(resolve => setImmediate(resolve).unref())`, false],
     [
@@ -597,17 +600,17 @@ describe.concurrent("a top-level await gives up where then() on the same promise
       true,
     ],
     ["a child process", `const child = ${child};`, `child.exited`, true],
-    ["a child process that is unref'd", `const child = ${child};\nchild.unref();`, `child.exited`, false],
+    ["a child process that is unref'd", `const child = ${running};\nchild.unref();`, `child.exited`, false],
     [
       "AbortSignal.timeout()",
       "",
-      `new Promise(resolve => AbortSignal.timeout(20).addEventListener("abort", resolve))`,
+      `new Promise(resolve => AbortSignal.timeout(60_000).addEventListener("abort", resolve))`,
       false,
     ],
     [
       "Atomics.waitAsync() with a timeout",
       "",
-      `Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20).value`,
+      `Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000).value`,
       false,
     ],
     ["a listener for a signal", "", `new Promise(resolve => process.on("SIGINT", resolve))`, false],

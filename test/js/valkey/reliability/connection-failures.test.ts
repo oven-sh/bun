@@ -2005,6 +2005,7 @@ describe("Valkey: Recovering After fail()", () => {
 
   // A connected client that is idle keeps nothing alive. A top-level await that only its close can
   // settle has nothing left to wait for: a warning and exit code 13.
+  // An idle timeout of a minute: the close is not due while the program ends.
   test("an idle client does not keep a top-level await alive", async () => {
     const fake = helloServer();
     const port = await fake.listen();
@@ -2014,7 +2015,7 @@ describe("Valkey: Recovering After fail()", () => {
           bunExe(),
           "-e",
           `
-          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 0, idleTimeout: 50, autoReconnect: false });
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 0, idleTimeout: 60_000, autoReconnect: false });
           const closed = Promise.withResolvers();
           client.onclose = err => closed.resolve(err);
           await client.connect();

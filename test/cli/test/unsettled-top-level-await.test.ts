@@ -47,24 +47,52 @@ for (const isolate of [[], ["--isolate"]]) {
   );
 }
 
-// Unref'd work can settle the await of a file after the file failed. The file is over by then: the rest of it does
-// not run under a later file.
-for (const isolate of [[], ["--isolate"]]) {
-  test.concurrent(`a file that failed does not go on under a later file (${isolate[0] ?? "one global"})`, async () => {
+// Unref'd work can settle the await of a file after the file failed. Here the file waits for a request to its server,
+// which is unref'd, and a later file sends that request. The file is over by then: the rest of it does not run under
+// the later file. Under --isolate the server is closed with the realm of its file, and the request fails.
+const waitsForARequest = `import { writeFileSync } from "node:fs";
+const { promise, resolve } = Promise.withResolvers<void>();
+const server = Bun.serve({
+  port: 0,
+  fetch() {
+    resolve();
+    return new Response("settled");
+  },
+});
+server.unref();
+writeFileSync("url", server.url.href);
+await promise;
+`;
+const sendsTheRequest = (then = "") => `import { test } from "bun:test";
+import { readFileSync } from "node:fs";
+test("sends the request", async () => {
+  await fetch(readFileSync("url", "utf8")).then(
+    response => response.text(),
+    () => {},
+  );${then}
+});
+`;
+const lineOfAwait = (source: string) => source.split("\n").indexOf("await promise;") + 1;
+
+// `--aot` runs the files as compiled code. A compiled module is suspended in a frame of machine code, and the rejection
+// of its record does not reach that frame: with one global the rest of the file still runs. It has no bytecode that
+// says where it is suspended either, so the error names the file without a line.
+for (const args of [[], ["--isolate"], ["--aot"]]) {
+  const isCompiled = args[0] === "--aot";
+  const declare = isCompiled ? test.todo : test.concurrent;
+  declare(`a file that failed does not go on under a later file (${args[0] ?? "one global"})`, async () => {
     const a = `import { beforeEach, test } from "bun:test";
-await new Promise(resolve => setTimeout(resolve, 20).unref());
-console.log("a goes on");
+${waitsForARequest}console.log("a goes on");
 beforeEach(() => console.log("a hook of a"));
 test("late", () => {});
 `;
-    const b = `import { test } from "bun:test";
-test("runs while the timer of a fires", async () => {
-  await new Promise(resolve => setTimeout(resolve, 200));
-});
-`;
-    expect(await run({ "a.test.ts": a, "b.test.ts": b }, [...isolate, "./a.test.ts", "./b.test.ts"])).toEqual({
+    expect(
+      await run({ "a.test.ts": a, "b.test.ts": sendsTheRequest() }, [...args, "./a.test.ts", "./b.test.ts"]),
+    ).toEqual({
       stdout: "",
-      located: ["error: Detected unsettled top-level await at file://<dir>/a.test.ts:2"],
+      located: [
+        `error: Detected unsettled top-level await at file://<dir>/a.test.ts${isCompiled ? "" : `:${lineOfAwait(a)}`}`,
+      ],
       summary: ["1 pass", "1 fail", "1 error"],
       exitCode: 1,
       signalCode: null,
@@ -80,16 +108,12 @@ console.log("a goes on");
 test("late", () => {});
 `;
   const helper = `import { beforeEach } from "bun:test";
-await new Promise(resolve => setTimeout(resolve, 20).unref());
-console.log("helper goes on");
+${waitsForARequest}console.log("helper goes on");
 beforeEach(() => console.log("a hook of helper"));
 `;
-  const b = `import { test } from "bun:test";
-test("runs while the timer of helper fires", async () => {
-  await new Promise(resolve => setTimeout(resolve, 200));
-});
-`;
-  expect(await run({ "a.test.ts": a, "helper.ts": helper, "b.test.ts": b }, ["./a.test.ts", "./b.test.ts"])).toEqual({
+  expect(
+    await run({ "a.test.ts": a, "helper.ts": helper, "b.test.ts": sendsTheRequest() }, ["./a.test.ts", "./b.test.ts"]),
+  ).toEqual({
     stdout: "",
     located: ["error: Detected unsettled top-level await at file://<dir>/a.test.ts:2"],
     summary: ["1 pass", "1 fail", "1 error"],
@@ -98,21 +122,17 @@ test("runs while the timer of helper fires", async () => {
   });
 });
 
-// The module that was given up on has failed for good, so a later file that imports it fails with the same error.
+// The module that was given up on has failed for good. A later file settles its await and then imports it: the
+// import fails with the same error.
 test.concurrent("a later file that imports the module that was given up on fails too", async () => {
-  const setup = `await new Promise(resolve => setTimeout(resolve, 20).unref());
-console.log("setup goes on");
-`;
-  const importer = `import "./setup.ts";\n${passing}`;
-  expect(
-    await run({ "a.test.ts": importer, "b.test.ts": importer, "setup.ts": setup }, ["./a.test.ts", "./b.test.ts"]),
-  ).toEqual({
+  const setup = `${waitsForARequest}console.log("setup goes on");\n`;
+  const a = `import "./setup.ts";\n${passing}`;
+  const b = sendsTheRequest(`\n  await import("./setup.ts");`);
+  const error = `error: Detected unsettled top-level await at file://<dir>/setup.ts:${lineOfAwait(setup)}`;
+  expect(await run({ "a.test.ts": a, "b.test.ts": b, "setup.ts": setup }, ["./a.test.ts", "./b.test.ts"])).toEqual({
     stdout: "",
-    located: [
-      "error: Detected unsettled top-level await at file://<dir>/setup.ts:1",
-      "error: Detected unsettled top-level await at file://<dir>/setup.ts:1",
-    ],
-    summary: ["0 pass", "2 fail", "2 errors"],
+    located: [error, error],
+    summary: ["0 pass", "2 fail", "1 error"],
     exitCode: 1,
     signalCode: null,
   });

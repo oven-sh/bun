@@ -348,9 +348,10 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
 
 // The timer of a timeout signal is unref'd, as in Node. A program that only waits for the signal has
 // nothing left to wait for: at the top level of the entry that is an unsettled top-level await.
+// A minute: the signal is not due while the program ends.
 test("AbortSignal.timeout() does not keep the process alive for a top-level await", async () => {
   const src = `
-    const signal = AbortSignal.timeout(20);
+    const signal = AbortSignal.timeout(60_000);
     await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
     console.log("aborted");
   `;

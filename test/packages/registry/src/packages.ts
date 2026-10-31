@@ -318,12 +318,13 @@ export class Packages {
           throw new RegistryError(403, `${name.name} cannot be republished until 24 hours have passed.`);
         }
       }
-      if (
-        (existing && own(existing.document.versions, key)) ||
-        existing?.unpublished.has(key) ||
-        removed?.versions.has(key)
-      ) {
+      if (existing !== null && own(existing.document.versions, key)) {
         throw new RegistryError(403, `You cannot publish over the previously published versions: ${key}.`);
+      }
+      // registry.npmjs.org has another status and other words for a version number that was unpublished, alone
+      // (npm/cli#5058) or with the whole package (npm/cli#8194).
+      if (existing?.unpublished.has(key) || removed?.versions.has(key)) {
+        throw new RegistryError(400, `Cannot publish over previously published version "${key}".`);
       }
 
       const access = body.access ?? null;

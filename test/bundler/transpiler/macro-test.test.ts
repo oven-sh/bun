@@ -171,6 +171,74 @@ test("the `assert { type: 'macro' }` spelling works for every form of import", a
   });
 });
 
+// The builtin is the macro path that is exactly `bun`. A path that only ends in `bun`, or only
+// starts with it, is a module to load.
+describe.concurrent("a macro module that is only named `bun` is not taken for the `bun` builtin", () => {
+  const who = (name: string) => `export function who() {\n  return ${JSON.stringify(name)};\n}\n`;
+  const files = {
+    // The builtin has an `escapeHTML` too.
+    "bun.ts": who("./bun.ts") + `export function escapeHTML() {\n  return "not the builtin";\n}\n`,
+    "scripts/bun": who("./scripts/bun"),
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./macro": "./bun.js" } }),
+    "node_modules/pkg/bun.js": who("pkg/bun.js"),
+    "node_modules/@scope/bun/package.json": JSON.stringify({ name: "@scope/bun", main: "./index.js" }),
+    "node_modules/@scope/bun/index.js": who("@scope/bun"),
+    // With a trailing slash, `bun/` is the package in node_modules.
+    "node_modules/bun/package.json": JSON.stringify({ name: "bun", main: "./index.js" }),
+    "node_modules/bun/index.js": who("bun/"),
+    // An imports map is a second way to reach the builtin.
+    "package.json": JSON.stringify({ name: "macro-module-named-bun", imports: { "#builtin": "bun" } }),
+    "index.ts": [
+      `import { who as file, escapeHTML as sameName } from "./bun.ts" with { type: "macro" };`,
+      `import { who as noExtension } from "./scripts/bun" with { type: "macro" };`,
+      `import { who as exportsTarget } from "pkg/macro" with { type: "macro" };`,
+      `import { who as scoped } from "@scope/bun" with { type: "macro" };`,
+      `import { who as trailingSlash } from "bun/" with { type: "macro" };`,
+      `import { escapeHTML as builtin } from "bun" with { type: "macro" };`,
+      `import { escapeHTML as mapped } from "#builtin" with { type: "macro" };`,
+      `console.log(JSON.stringify([file(), sameName("<a>"), noExtension(), exportsTarget(), scoped(), trailingSlash(), builtin("<b>"), mapped("<c>")]));`,
+      ``,
+    ].join("\n"),
+  };
+  const values = [
+    "./bun.ts",
+    "not the builtin",
+    "./scripts/bun",
+    "pkg/bun.js",
+    "@scope/bun",
+    "bun/",
+    "&lt;b&gt;",
+    "&lt;c&gt;",
+  ];
+
+  async function run(...args: string[]) {
+    using dir = tempDir("macro-module-named-bun", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds print "[macro] call <name>" to stdout before the program's own output.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+
+  test("bun run", async () => {
+    expect(await run("run", "index.ts")).toEqual({ lastLine: JSON.stringify(values), stderr: "", exitCode: 0 });
+  });
+
+  // Here the macro path of a package is the specifier as written: `@scope/bun`, `bun/`.
+  test("bun build --packages=external", async () => {
+    expect(await run("build", "--target=bun", "--packages=external", "./index.ts")).toEqual({
+      lastLine: `console.log(JSON.stringify([${values.map(value => JSON.stringify(value)).join(", ")}]));`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
 // an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.

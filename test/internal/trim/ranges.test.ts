@@ -981,8 +981,10 @@ describe("xxh3", () => {
     let seed = 12345;
     for (const length of [...Array(300).keys(), 511, 512, 513, 1023, 1024, 1025, 2047, 2048, 2049, 5000, 100000]) {
       const bytes = Buffer.alloc(length);
+      // Math.imul keeps the state exact: the plain product passes 2^53 and loses its low bits.
+      // The high byte is taken because bit k of an LCG repeats every 2^(k+1) draws.
       for (let index = 0; index < length; index++)
-        bytes[index] = (seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 255;
+        bytes[index] = (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 23;
       expect({ length, hash: xxh3(bytes) }).toEqual({ length, hash: BigInt(Bun.hash.xxHash3(bytes)) });
     }
   });

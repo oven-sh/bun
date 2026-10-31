@@ -93,6 +93,22 @@ describe("ML-KEM", () => {
   });
 });
 
+// Node validates the JWK before a private-key consumer asks whether it holds
+// private key material, so for a public-only JWK a malformed "pub" wins.
+describe("public-only AKP JWK given to a private-key consumer", () => {
+  test.each(["ml-dsa-44", "ml-kem-768"] as const)("%s", type => {
+    const jwk = generateKeyPairSync(type as any).publicKey.export({ format: "jwk" }) as Record<string, string>;
+    const malformed = { ...jwk, pub: Buffer.from(jwk.pub, "base64url").subarray(1).toString("base64url") };
+    const invalidKey = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK AKP key" });
+
+    expect(() => createPrivateKey({ key: jwk, format: "jwk" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "JWK does not contain private key material" }),
+    );
+    expect(() => createPrivateKey({ key: malformed, format: "jwk" })).toThrow(invalidKey);
+    expect(() => sign(undefined, Buffer.from("data"), { key: malformed, format: "jwk" })).toThrow(invalidKey);
+  });
+});
+
 describe("encrypted PKCS#8", () => {
   for (const [name, type] of [
     ["ml_dsa_44_private_encrypted.pem", "ml-dsa-44"],

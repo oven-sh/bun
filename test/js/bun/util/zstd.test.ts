@@ -1606,27 +1606,32 @@ describe("the output is that of zstd 1.5.7", () => {
     `);
   });
 
-  it("where the rows of a dictionary have candidates and those of the input have none", () => {
-    // Noise of so many bits. What follows the dictionary has pieces of it, and of itself, among the noise.
-    const withPieces = (bits: number) => {
-      let x = 5;
-      const next = () => {
-        x ^= x << 13;
-        x ^= x >>> 17;
-        x ^= x << 5;
-        return (x >>>= 0);
-      };
-      const all = Buffer.alloc(42_000);
-      for (let at = 0; at < all.length;) {
-        for (let n = 4 + (next() % 24); n > 0; n--) all[at++] = next() >>> (32 - bits);
-        if (at < 30_000) continue;
-        const from = next() % 4 ? next() % 29_000 : 30_000 + (next() % (at - 30_000 + 1));
-        const length = 4 + (next() % 12);
-        all.copyWithin(at, from, from + length);
-        at += length;
-      }
-      return all;
+  /**
+   * Noise of so many bits. What follows the dictionary, which is the first 30,000 bytes, has pieces of it and of itself
+   * among the noise, three of the one for one of the other.
+   */
+  const withPieces = (bits: number, shortest = 4, longest = 15, mostlyOfTheDictionary = true) => {
+    let x = 5;
+    const next = () => {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      return (x >>>= 0);
     };
+    const all = Buffer.alloc(42_000);
+    for (let at = 0; at < all.length;) {
+      for (let n = 4 + (next() % 24); n > 0; n--) all[at++] = next() >>> (32 - bits);
+      if (at < 30_000) continue;
+      const ofTheDictionary = next() % 4 !== 0 ? mostlyOfTheDictionary : !mostlyOfTheDictionary;
+      const from = ofTheDictionary ? next() % 29_000 : 30_000 + (next() % (at - 30_000 + 1));
+      const length = shortest + (next() % (longest - shortest + 1));
+      all.copyWithin(at, from, from + length);
+      at += length;
+    }
+    return all;
+  };
+
+  it("where the rows of a dictionary have candidates and those of the input have none", () => {
     // Rows of 16 entries up to level 8, then of 32 and of 64.
     const digests = (all: Buffer) =>
       [5, 6, 7, 9, 10].map(n =>
@@ -1646,6 +1651,39 @@ describe("the output is that of zstd 1.5.7", () => {
         "4685 d7691fb52ce63095",
         "4623 2532b3477d8a5f2d",
         "4624 856abd3827ed1af8",
+      ],
+    ]);
+  });
+
+  it("where there are literals before a match in the trees of a dictionary that is searched in place", () => {
+    // Few trees and few steps down them, so that it counts how many are left for the dictionary.
+    const crowded = (n: number) => ({ ...level(n), [c.ZSTD_c_hashLog]: 10, [c.ZSTD_c_searchLog]: 2 });
+    // From level 16 on, the tables of the dictionary are copied for more than 8 KB.
+    const digests = (all: Buffer) =>
+      [level(13), level(16), level(19), crowded(13), crowded(16)].map(params =>
+        digest(zlib.zstdCompressSync(all.subarray(30_000, 38_000), { params, dictionary: all.subarray(0, 30_000) })),
+      );
+    expect([withPieces(6, 3, 6, false), withPieces(5, 4, 15, false), withPieces(5, 3, 6, false)].map(digests)).toEqual([
+      [
+        "5719 406ca55e1f7a8e51",
+        "5723 638b7b1d34f5e7e4",
+        "5723 638b7b1d34f5e7e4",
+        "5775 e3985bd1b7f3cc06",
+        "5777 f4d41a4a3fe9753d",
+      ],
+      [
+        "4036 957012d8fbbad463",
+        "4032 4a494ca0f71ad17d",
+        "4032 4a494ca0f71ad17d",
+        "4216 9e7fdaed4122c373",
+        "4205 a05cfe9758c76e6c",
+      ],
+      [
+        "4895 2d4708a58b44a327",
+        "4897 1f4aad7c4526b8fd",
+        "4897 1f4aad7c4526b8fd",
+        "4919 5671cafb2cb68402",
+        "4917 92674bc1d6487eb",
       ],
     ]);
   });

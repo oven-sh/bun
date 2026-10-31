@@ -1542,6 +1542,21 @@ impl<'a> DictTree<'a> {
         Ok(root)
     }
 
+    /// [`Self::root`] with the hint before it is known whether there is a root, which is as good as random where there
+    /// are few matches.
+    #[inline(always)]
+    pub(crate) fn root_at_once(dms: DictMatchState<'_>, hash: usize) -> Result<u32> {
+        let root = dms.ms.hash_table.at(hash)?;
+        let (bt, _) = dms.ms.chain_table.as_chunks();
+        bt_prefetch(bt, root);
+        prefetch_read(
+            dms.buf.as_ptr().wrapping_add(dms.pos_of(root)),
+            Locality::L1,
+        );
+        let is_root = root > dms.ms.window.low_limit;
+        Ok(if is_root { root } else { 0 })
+    }
+
     /// [`Near::compare`] for a match in the dictionary, for what [`Near::compare_chunks_with`] leaves. A match that
     /// reaches the end of the dictionary goes on at the start of the current segment.
     #[cold]

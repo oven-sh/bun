@@ -1,6 +1,6 @@
 //! `zstd_opt.c`: the `btopt`, `btultra` and `btultra2` strategies, which look for the cheapest parse.
 
-use core::hint::cold_path;
+use core::hint::{Locality, cold_path, prefetch_read};
 use core::mem;
 
 use super::hist;
@@ -883,26 +883,63 @@ impl<'a> Trees<'a> {
     fn skip_matchless(
         &mut self,
         matches: &mut [Match],
+        ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        self.skip_matchless_generic(matches, ip, limit, rep, false)
+    }
+
+    /// [`Self::skip_matchless`] where a dictionary is searched in place.
+    #[inline(never)]
+    fn skip_matchless_in_place(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        self.skip_matchless_generic(matches, ip, limit, rep, true)
+    }
+
+    /// `in_place` is not a const parameter: an instance of a generic function is compiled apart from the rest of this
+    /// file, after which [`Self::search_dms`] takes 2% longer on short records.
+    #[inline(always)]
+    fn skip_matchless_generic(
+        &mut self,
+        matches: &mut [Match],
         mut ip: u32,
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
+        in_place: bool,
     ) -> Result<(u32, u32)> {
         let near = self.input.near;
         let dict_limit = self.input.dict_limit;
         let min_match = self.min_match;
         // No repeat offset leads before the current segment, from `ip` on.
         if ip.wrapping_add(dict_limit) != self.next_to_update
-            || self.dms.is_some()
+            || (!in_place && self.dms.is_some())
             || rep.iter().any(|rep_offset| *rep_offset > ip)
         {
             return Ok((ip, 0));
         }
+        let dict = if in_place { self.dms } else { None };
+        let dict = dict.map(|dms| (dms, self.hasher.with_log(dms.ms.c_params.hash_log)));
 
         while ip < limit
             && let Some(bytes) = near.read64(ip)
         {
             let curr = ip.wrapping_add(dict_limit);
-            let match_low = self.lowest_match_index(curr).max(1);
+            let mut dict_root = 0;
+            if let Some((dms, hasher)) = dict {
+                if let Some(next) = near.read64(ip + 1) {
+                    let slot = dms.ms.hash_table.as_ptr().wrapping_add(hasher.hash(next));
+                    prefetch_read(slot, Locality::L1);
+                }
+                dict_root = DictTree::root_at_once(dms, hasher.hash(bytes))?;
+            }
+            let window_low = self.lowest_match_index(curr);
+            let match_low = window_low.max(1);
             let starts_alike = |pos: u32, min_match: u32| {
                 let there = near.read32(pos);
                 there.is_none_or(|there| minmatch_differs(there, bytes as u32, min_match) == 0)
@@ -921,7 +958,20 @@ impl<'a> Trees<'a> {
             }
 
             let mut found = Found::new(0, min_match - 1, curr);
-            self.tree_matches(matches, ip, bytes, match_low, &mut found)?;
+            let nb_compares = self.tree_matches(matches, ip, bytes, match_low, &mut found)?;
+            if dict_root != 0 && nb_compares != 0 {
+                // A copy, so that `found` need not be in memory: 1 to 2% where there are no matches.
+                let mut with_dict = found;
+                self.search_dms(
+                    matches,
+                    ip,
+                    dict_root,
+                    window_low,
+                    nb_compares,
+                    &mut with_dict,
+                )?;
+                found = with_dict;
+            }
             if found.mnum != 0 {
                 self.next_to_update = found.match_end_idx.wrapping_sub(8);
                 return Ok((ip, found.mnum));
@@ -1255,7 +1305,7 @@ fn try_lengths(
     }
 }
 
-/// `ZSTD_compressBlock_opt_generic`
+/// `ZSTD_compressBlock_opt_generic`. `in_place` is whether there may be a dictionary to search in place.
 #[inline(always)]
 fn compress_block_opt_generic(
     ms: &mut MatchState,
@@ -1264,6 +1314,7 @@ fn compress_block_opt_generic(
     src: &BlockSrc<'_>,
     opt_level: i32,
     dict_mode: DictMode,
+    in_place: bool,
 ) -> Result<usize> {
     // The match finders borrow the rest of `ms`.
     let mut opt_state = mem::replace(&mut ms.opt, OptState::new());
@@ -1279,6 +1330,7 @@ fn compress_block_opt_generic(
         src,
         opt_level,
         dict_mode,
+        in_place,
     );
     opt_state.match_table = match_table;
     opt_state.price_table = price_table;
@@ -1298,6 +1350,7 @@ fn parse_block(
     src: &BlockSrc<'_>,
     opt_level: i32,
     dict_mode: DictMode,
+    in_place: bool,
 ) -> Result<usize> {
     let buf = src.buf;
     let istart = src.start;
@@ -1353,7 +1406,11 @@ fn parse_block(
                 if ip != anchor && opt_ldm.is_over() {
                     let first = (ip - prefix_start) as u32;
                     let limit = (ilimit - prefix_start) as u32;
-                    let (stop, found) = trees.skip_matchless(matches, first, limit, rep)?;
+                    let (stop, found) = if in_place {
+                        trees.skip_matchless_in_place(matches, first, limit, rep)?
+                    } else {
+                        trees.skip_matchless(matches, first, limit, rep)?
+                    };
                     ip += (stop - first) as usize;
                     if ip >= ilimit {
                         break 'series;
@@ -1652,6 +1709,7 @@ fn parse_block(
 }
 
 /// `ZSTD_compressBlock_opt0`
+#[inline(never)]
 fn compress_block_opt0(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -1659,7 +1717,20 @@ fn compress_block_opt0(
     src: &BlockSrc<'_>,
     dict_mode: DictMode,
 ) -> Result<usize> {
-    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode)
+    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, false)
+}
+
+/// [`compress_block_opt0`] with [`Trees::skip_matchless_in_place`]. A copy: one parser that chooses between the two takes
+/// 0.4 to 1.4% longer on most data without a dictionary.
+#[inline(never)]
+fn compress_block_opt0_in_place(
+    ms: &mut MatchState,
+    seq_store: &mut SeqStore,
+    rep: &mut [u32; ZSTD_REP_NUM],
+    src: &BlockSrc<'_>,
+    dict_mode: DictMode,
+) -> Result<usize> {
+    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, true)
 }
 
 /// `ZSTD_compressBlock_opt2`
@@ -1670,7 +1741,19 @@ fn compress_block_opt2(
     src: &BlockSrc<'_>,
     dict_mode: DictMode,
 ) -> Result<usize> {
-    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode)
+    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, false)
+}
+
+/// [`compress_block_opt2`], likewise.
+#[inline(never)]
+fn compress_block_opt2_in_place(
+    ms: &mut MatchState,
+    seq_store: &mut SeqStore,
+    rep: &mut [u32; ZSTD_REP_NUM],
+    src: &BlockSrc<'_>,
+    dict_mode: DictMode,
+) -> Result<usize> {
+    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, true)
 }
 
 /// `ZSTD_initStats_ultra`: a first pass over the block, only to have better statistics to start from. It has to be the
@@ -1735,11 +1818,16 @@ pub(crate) fn compress_block_opt(
     strategy: Strategy,
     dict_mode: DictMode,
 ) -> Result<usize> {
+    let in_place = src.dms.is_some();
     match (strategy, dict_mode) {
         (Strategy::BtUltra2, DictMode::NoDict) => compress_block_btultra2(ms, seq_store, rep, src),
+        (Strategy::BtUltra | Strategy::BtUltra2, _) if in_place => {
+            compress_block_opt2_in_place(ms, seq_store, rep, src, dict_mode)
+        }
         (Strategy::BtUltra | Strategy::BtUltra2, _) => {
             compress_block_opt2(ms, seq_store, rep, src, dict_mode)
         }
+        _ if in_place => compress_block_opt0_in_place(ms, seq_store, rep, src, dict_mode),
         _ => compress_block_opt0(ms, seq_store, rep, src, dict_mode),
     }
 }

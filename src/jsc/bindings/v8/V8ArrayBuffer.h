@@ -18,9 +18,18 @@ enum class BackingStoreInitializationMode { kZeroInitialized,
 
 namespace shim {
 
+// Storage for an object that an addon frees with its own `::operator delete`, as V8's headers do for a v8::BackingStore.
+// On Linux that ends in libc's free(), so there it is libc's malloc() and not Bun's operator new (mimalloc's, or a sanitizer's).
+void* allocateForAddonDelete(size_t size) RETURNS_NONNULL;
+// Frees that storage as the addon would, for a store that Bun destroys itself.
+void freeWithAddonAllocator(void* storage);
+
 // The object actually allocated and returned as a v8::BackingStore* / std::shared_ptr<BackingStore>.
 // v8::BackingStore methods reinterpret_cast `this` to this layout.
 struct BackingStoreImpl {
+    void* operator new(size_t size) { return allocateForAddonDelete(size); }
+    void operator delete(void* storage) { freeWithAddonAllocator(storage); }
+
     // ArrayBuffer::GetBackingStore(): the buffer this store stands for.
     RefPtr<JSC::ArrayBuffer> buffer;
     // A store that stands for no buffer: memory an addon owns.
@@ -32,6 +41,9 @@ struct BackingStoreImpl {
 
 class BackingStore {
 public:
+    // Releases what the store holds, not its storage: whoever destroys the store frees that, an addon's `delete` or Bun.
+    BUN_EXPORT ~BackingStore();
+
     BUN_EXPORT void* Data() const;
 
 private:

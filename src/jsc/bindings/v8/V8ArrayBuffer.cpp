@@ -8,12 +8,60 @@
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 #include <JavaScriptCore/TypedArrayController.h>
 
+#if OS(LINUX)
+#include <dlfcn.h>
+
+extern "C" [[noreturn]] void Bun__outOfMemory();
+#endif
+
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::ArrayBuffer)
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::ArrayBufferView)
 ASSERT_V8_ENUM_MATCHES(BackingStoreInitializationMode, kZeroInitialized)
 ASSERT_V8_ENUM_MATCHES(BackingStoreInitializationMode, kUninitialized)
 
 namespace v8 {
+
+namespace shim {
+
+static_assert(alignof(BackingStoreImpl) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__, "an addon's ::operator delete(void*) takes no alignment");
+
+void* allocateForAddonDelete(size_t size)
+{
+#if OS(LINUX)
+    // A direct call binds to this executable's own malloc: mimalloc's, or the sanitizer's. That one is not exported, so
+    // dlsym() finds the one that an addon's free() pairs with: libc's, or a preloaded allocator's.
+    using Malloc = void* (*)(size_t);
+    static const Malloc addonMalloc = reinterpret_cast<Malloc>(dlsym(RTLD_DEFAULT, "malloc"));
+    RELEASE_ASSERT(addonMalloc, "v8: dlsym() finds no malloc");
+    void* storage = addonMalloc(size);
+    if (!storage) [[unlikely]]
+        Bun__outOfMemory();
+    return storage;
+#else
+    // Elsewhere an addon's operator delete pairs with Bun's operator new: macOS binds the addon to the operators that this
+    // executable exports (MimallocOverrideDarwin.cpp), and on Windows and FreeBSD both sides use the same heap.
+    return ::operator new(size);
+#endif
+}
+
+void freeWithAddonAllocator(void* storage)
+{
+#if OS(LINUX)
+    using Free = void (*)(void*);
+    static const Free addonFree = reinterpret_cast<Free>(dlsym(RTLD_DEFAULT, "free"));
+    RELEASE_ASSERT(addonFree, "v8: dlsym() finds no free");
+    addonFree(storage);
+#else
+    ::operator delete(storage);
+#endif
+}
+
+} // namespace shim
+
+BackingStore::~BackingStore()
+{
+    std::destroy_at(reinterpret_cast<shim::BackingStoreImpl*>(this));
+}
 
 void* BackingStore::Data() const
 {
@@ -71,9 +119,11 @@ std::shared_ptr<BackingStore> ArrayBuffer::GetBackingStore()
     RefPtr<JSC::ArrayBuffer> impl = jsBuffer ? jsBuffer->impl() : nullptr;
 
     auto* backing = new shim::BackingStoreImpl { WTF::move(impl) };
-    return std::shared_ptr<BackingStore>(
-        reinterpret_cast<BackingStore*>(backing),
-        [](BackingStore* p) { delete reinterpret_cast<shim::BackingStoreImpl*>(p); });
+    // An addon never deletes this store itself: the deleter of its shared_ptr is Bun's, and does both halves of a `delete`.
+    return std::shared_ptr<BackingStore>(reinterpret_cast<BackingStore*>(backing), [](BackingStore* store) {
+        store->~BackingStore();
+        shim::freeWithAddonAllocator(store);
+    });
 }
 
 Local<ArrayBuffer> ArrayBufferView::Buffer()

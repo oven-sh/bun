@@ -1,12 +1,17 @@
-// Error.captureStackTrace() defines `stack` on a frozen array as on any object. Its elements and its length stay read-only.
+// Error.captureStackTrace() refuses a frozen array as it refuses any object that takes no new property. The array stays as it was.
 const target = Object.freeze([1, 2, 3]);
-Error.captureStackTrace(target);
 function attempt(label, run) {
   try {
     console.log(label + ":", run());
   } catch (error) {
     console.log(label + ": throws", error.constructor.name);
   }
+}
+try {
+  Error.captureStackTrace(target);
+  console.log("captured");
+} catch (error) {
+  console.log("capture: throws", error.constructor.name, error.message);
 }
 attempt("keys", () => Reflect.ownKeys(target).join());
 attempt("stack", () => typeof target.stack);

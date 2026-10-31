@@ -1,4 +1,4 @@
-// Error.captureStackTrace defines "stack" on an object that is closed, so the object is no longer frozen or sealed.
+// Error.captureStackTrace refuses an object that is closed: it throws, and the object stays frozen or sealed.
 const target = {};
 Object.freeze(target);
 
@@ -20,7 +20,7 @@ attempt("capture", () => Error.captureStackTrace(target));
 attempt("another property", () => {
   const key = Reflect.ownKeys(target).find(key => key !== "stack");
   const found = Object.getOwnPropertyDescriptor(target, key);
-  return [key, found.writable, found.configurable].join("/");
+  return found ? [key, found.writable, found.configurable].join("/") : "none";
 });
 attempt("store", () => {
   target.stack = "stored";

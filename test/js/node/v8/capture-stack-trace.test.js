@@ -3,6 +3,8 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import * as pathNamespace from "node:path";
+import vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -2116,6 +2118,244 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   ]);
   const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
   expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
+});
+
+// Like V8, Error.captureStackTrace refuses a target before it captures a frame: one that is not extensible, even if it has a
+// `stack`, then one whose `stack` is not configurable. The main realm has Bun's function, a node:vm context has the engine's.
+const NOT_EXTENSIBLE = "Cannot define property stack, object is not extensible";
+const NOT_CONFIGURABLE = "Cannot redefine property: stack";
+const captureStackTraceOf = {
+  "the main realm": Error.captureStackTrace,
+  "a node:vm context": vm.runInNewContext("Error.captureStackTrace"),
+};
+const realms = Object.keys(captureStackTraceOf);
+// The engine's function refuses nothing yet: it returns, and a target that is not a Proxy gets the `stack`. oven-sh/WebKit#962
+// makes it refuse. These rows pass with a WebKit that has that change: take `failing` out then.
+const refusalTestOf = { "the main realm": test, "a node:vm context": test.failing };
+function testRefusal(name, body) {
+  for (const realm of realms) refusalTestOf[realm](name.replace("%s", realm), () => body(realm));
+}
+
+// The TypeError of a node:vm context is not the TypeError of this realm.
+function thrownBy(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return `${error.constructor.name}: ${error.message}`;
+  }
+  return "nothing";
+}
+
+function readError() {
+  const error = new Error("read");
+  expect(error.stack).toBeString();
+  return error;
+}
+
+const stackTargets = {
+  "an object": () => ({ a: 1 }),
+  "an object with a stack": () => ({ stack: "mine" }),
+  "an instance": () => new (class Holder {})(),
+  "an array": () => [1, 2],
+  "a function": () => function () {},
+  "an unread Error": () => new Error("unread"),
+  "a read Error": readError,
+};
+const locks = [Object.preventExtensions, Object.seal, Object.freeze];
+// Two from one place: the stacks of two such Errors are the same text.
+const twins = create => [0, 1].map(() => create());
+// An Error gets originalLine and originalColumn when a read formats its stack, and not when a collection does.
+const keysOf = target =>
+  Reflect.ownKeys(target).filter(
+    key => !(target instanceof Error) || (key !== "originalLine" && key !== "originalColumn"),
+  );
+
+testRefusal("Error.captureStackTrace of %s refuses a target that is not extensible", realm => {
+  const capture = captureStackTraceOf[realm];
+  function capturedHere(target) {
+    capture(target);
+  }
+
+  const state = target => [Object.isExtensible(target), Object.isSealed(target), Object.isFrozen(target)];
+  for (const lock of locks) {
+    for (const [kind, create] of Object.entries(stackTargets)) {
+      // Listing the keys of an Error reads its stack, so what to expect comes from a twin.
+      const [target, twin] = twins(() => lock(create()));
+      expect([lock.name, kind, thrownBy(() => capturedHere(target))]).toEqual([
+        lock.name,
+        kind,
+        `TypeError: ${NOT_EXTENSIBLE}`,
+      ]);
+      expect(keysOf(target)).toEqual(keysOf(twin));
+      expect(state(target)).toEqual(state(twin));
+      // An Error keeps the stack of the place that made it.
+      expect(target.stack).toBe(twin.stack);
+
+      // A target that an earlier capture gave a `stack` keeps that one.
+      const captured = create();
+      capturedHere(captured);
+      lock(captured);
+      expect([lock.name, kind, thrownBy(() => capture(captured))]).toEqual([
+        lock.name,
+        kind,
+        `TypeError: ${NOT_EXTENSIBLE}`,
+      ]);
+      expect(captured.stack).toContain("capturedHere");
+    }
+  }
+
+  // A module namespace object never takes a new property.
+  expect(thrownBy(() => capture(pathNamespace))).toBe(`TypeError: ${NOT_EXTENSIBLE}`);
+  expect(Object.getOwnPropertyNames(pathNamespace)).not.toContain("stack");
+});
+
+testRefusal("the program of the report: Error.captureStackTrace of %s", realm => {
+  const capture = captureStackTraceOf[realm];
+  const rows = [];
+  for (const make of [
+    () => Object.preventExtensions({ a: 1 }),
+    () => Object.freeze({ a: 1 }),
+    () => Object.preventExtensions(new Error("x")),
+  ]) {
+    const o = make();
+    const keys = keysOf(make());
+    try {
+      capture(o);
+      rows.push([Reflect.ownKeys(o).join(), Object.isExtensible(o)]);
+    } catch (e) {
+      rows.push(["threw", e.constructor.name, e.message, keysOf(o).join() === keys.join()]);
+    }
+  }
+  expect(rows).toEqual(Array(3).fill(["threw", "TypeError", NOT_EXTENSIBLE, true]));
+});
+
+testRefusal("Error.captureStackTrace of %s refuses a target whose stack is not configurable", realm => {
+  const capture = captureStackTraceOf[realm];
+  const lockedStacks = {
+    "read-only": { value: "mine", writable: false, enumerable: false, configurable: false },
+    "writable": { value: "mine", writable: true, enumerable: true, configurable: false },
+    "an accessor": { get: () => "mine", set: undefined, enumerable: false, configurable: false },
+  };
+  const limit = Error.stackTraceLimit;
+  const errorWithoutFrame = () => {
+    Error.stackTraceLimit = 0;
+    try {
+      return new Error("no frame");
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+  };
+  // An Error without a frame never reads its stack: it stays as an unread one.
+  const targets = { ...stackTargets, "an Error without a frame": errorWithoutFrame };
+  for (const [stackKind, descriptor] of Object.entries(lockedStacks)) {
+    for (const [kind, create] of Object.entries(targets)) {
+      const target = Object.defineProperty(create(), "stack", descriptor);
+      expect([stackKind, kind, thrownBy(() => capture(target))]).toEqual([
+        stackKind,
+        kind,
+        `TypeError: ${NOT_CONFIGURABLE}`,
+      ]);
+      expect(Object.getOwnPropertyDescriptor(target, "stack")).toEqual(descriptor);
+      expect(target.stack).toBe("mine");
+    }
+  }
+
+  // Not extensible comes first, as in V8.
+  const both = Object.preventExtensions(Object.defineProperty({}, "stack", lockedStacks["read-only"]));
+  expect(thrownBy(() => capture(both))).toBe(`TypeError: ${NOT_EXTENSIBLE}`);
+
+  // Bun gives these two no `stack` of their own, so a define that names no `configurable` makes one that is not configurable.
+  // In Node each has a configurable `stack` from the start, the define keeps it so, and the capture succeeds.
+  for (const create of [errorWithoutFrame, () => new DOMException("no stack of its own")]) {
+    const target = Object.defineProperty(create(), "stack", { value: "mine" });
+    expect(thrownBy(() => capture(target))).toBe(`TypeError: ${NOT_CONFIGURABLE}`);
+    expect(target.stack).toBe("mine");
+  }
+});
+
+testRefusal("Error.captureStackTrace of %s takes no Proxy and runs none of its traps", realm => {
+  const capture = captureStackTraceOf[realm];
+  const message = {
+    "the main realm": "invalid_argument",
+    "a node:vm context": "captureStackTrace expects the first argument to be an object",
+  }[realm];
+  const traps = [];
+  const handler = new Proxy(
+    {},
+    {
+      get(_, trap) {
+        traps.push(trap);
+      },
+    },
+  );
+  const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+  revoke();
+  const proxied = [{}, Object.freeze({}), new Error("proxied"), function () {}];
+  for (const proxy of [...proxied.map(target => new Proxy(target, handler)), revoked]) {
+    expect(thrownBy(() => capture(proxy))).toBe(`TypeError: ${message}`);
+  }
+  expect(traps).toEqual([]);
+  expect(proxied.filter(target => !(target instanceof Error)).map(target => Object.hasOwn(target, "stack"))).toEqual([
+    false,
+    false,
+    false,
+  ]);
+});
+
+test.each(realms)("Error.captureStackTrace of %s still defines stack on a target that takes it", realm => {
+  const capture = captureStackTraceOf[realm];
+  function capturedHere(target) {
+    capture(target);
+  }
+  function capturedAgain(target) {
+    capture(target);
+  }
+  for (const [kind, create] of Object.entries(stackTargets)) {
+    const target = create();
+    capturedHere(target);
+    expect([kind, target.stack.includes("capturedHere")]).toEqual([kind, true]);
+    const { enumerable, configurable } = Object.getOwnPropertyDescriptor(target, "stack");
+    expect({ enumerable, configurable }).toEqual({ enumerable: false, configurable: true });
+    expect(Object.isExtensible(target)).toBe(true);
+
+    // A second capture replaces the first.
+    capturedAgain(target);
+    expect([kind, target.stack.includes("capturedAgain")]).toEqual([kind, true]);
+
+    // So it does when nothing read the `stack` of the first.
+    const unread = create();
+    capturedHere(unread);
+    capturedAgain(unread);
+    expect([kind, unread.stack.includes("capturedAgain")]).toEqual([kind, true]);
+  }
+
+  // A configurable stack is replaced, also one that is read-only.
+  for (const create of Object.values(stackTargets)) {
+    const target = Object.defineProperty(create(), "stack", { value: "mine", writable: false, configurable: true });
+    capturedHere(target);
+    expect(target.stack).toContain("capturedHere");
+    expect(Object.getOwnPropertyDescriptor(target, "stack").writable).not.toBe(false);
+  }
+
+  // globalThis answers for the global object behind it, which is extensible.
+  expect(thrownBy(() => capture(globalThis))).toBe("nothing");
+});
+
+test("Error.captureStackTrace captures nothing and calls no Error.prepareStackTrace for a target it refuses", () => {
+  const prepareStackTrace = mock(() => "prepared");
+  Error.prepareStackTrace = prepareStackTrace;
+  const [unread, twin] = twins(() => new Error("unread"));
+  const refused = [
+    Object.freeze({}),
+    Object.preventExtensions(unread),
+    Object.defineProperty({}, "stack", { value: "mine", configurable: false }),
+    new Proxy({}, {}),
+  ];
+  for (const target of refused) expect(() => Error.captureStackTrace(target)).toThrow(TypeError);
+  expect(prepareStackTrace).not.toHaveBeenCalled();
+  // The unread Error still has the frames it was made with.
+  Error.prepareStackTrace = origPrepareStackTrace;
+  expect(unread.stack).toBe(twin.stack);
 });
 
 test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {

@@ -863,6 +863,20 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+// The Structure answers, unless the class overrides isExtensible(). Of those classes only a Proxy runs a trap: the caller refuses it first.
+static ALWAYS_INLINE bool isExtensibleWithoutTrap(JSC::JSObject* object)
+{
+    JSC::Structure* structure = object->structure();
+    if (structure->typeInfo().overridesIsExtensible()) [[unlikely]]
+        return object->methodTable()->isExtensible(object, structure->globalObject());
+    return structure->isStructureExtensible();
+}
+
+static JSC::EncodedJSValue throwStackIsNotConfigurable(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+    return JSC::throwVMTypeError(globalObject, scope, "Cannot redefine property: stack"_s);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -870,13 +884,37 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
-    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
+    // A WebAssembly GC object can't get a property and its Structure has no global object. A store to a Proxy lands on its own cell. V8 rejects both.
+    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType || objectArg.asCell()->type() == JSC::JSType::ProxyObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
+
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject);
+    bool isUnreadError = instance && !instance->hasMaterializedErrorInfo();
+
+    // putDirect() checks nothing. V8 refuses a target before it captures a frame: one that is not extensible, even if it has a `stack`, then one whose `stack` is not configurable.
+    JSC::Structure* structure = errorObject->structure();
+    // A built-in object that a compiled executable closed is left to the store: putDirectOrThrow() throws what an assignment to it does.
+    if (structure->isNonExtensibleOrHasNonConfigurableProperties() && (!structure->hasImmutableProperties() || structure->hasFrozenElementsInPlace())) {
+        if (!isExtensibleWithoutTrap(errorObject)) [[unlikely]]
+            return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Cannot define property stack, object is not extensible"_s);
+        unsigned attributes = 0;
+        if (!isUnreadError && errorObject->getDirect(vm, vm.propertyNames->stack, attributes) && (attributes & JSC::PropertyAttribute::DontDelete)) [[unlikely]]
+            return throwStackIsNotConfigurable(lexicalGlobalObject, scope);
+    }
+
+    // Like V8, an unread Error gets its accessor before the frames are captured. The delete of the `stack` it has is also the test, with no second lookup.
+    if (isUnreadError) {
+        DeletePropertySlot slot;
+        bool isDeleted = JSObject::deleteProperty(instance, globalObject, vm.propertyNames->stack, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isDeleted) [[unlikely]]
+            return throwStackIsNotConfigurable(lexicalGlobalObject, scope);
+        instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+    }
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (stackTraceLimit == 0) {
@@ -887,8 +925,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
-        if (instance->hasMaterializedErrorInfo()) {
+    if (instance) {
+        if (!isUnreadError) {
             // Error info was already materialized (e.g. .stack was previously accessed).
             // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
             // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
@@ -903,16 +941,6 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
             instance->setStackFrames(vm, WTF::move(stackTrace));
-
-            {
-                const auto& propertyName = vm.propertyNames->stack;
-                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-                DeletePropertySlot slot;
-                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
-            }
-            RETURN_IF_EXCEPTION(scope, {});
-
-            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
         OrdinalNumber line;

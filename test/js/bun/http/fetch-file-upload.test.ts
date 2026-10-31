@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -219,6 +219,48 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
+  });
+});
+
+// An fd-backed body is dup()ed before it is read. On Windows a descriptor that
+// is not open used to be reported as EMFILE: it maps to INVALID_HANDLE_VALUE,
+// which DuplicateHandle accepts as the current-process pseudo handle.
+describe.concurrent("Bun.file(fd) body whose descriptor is not open", () => {
+  const dupSyscall = isWindows ? "dup" : "fcntl";
+
+  test("descriptor that was never opened rejects with EBADF", async () => {
+    const fd = 1 << 20;
+    const promise = fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(fd) });
+    // The body fails before anything is connected.
+    expect(Bun.peek.status(promise)).toBe("rejected");
+    await expect(promise).rejects.toMatchObject({ code: "EBADF", syscall: dupSyscall, fd });
+  });
+
+  test("descriptor that was closed rejects with EBADF", async () => {
+    // A fresh process, so nothing can reuse the number between close and fetch.
+    using dir = tempDir("fetch-closed-fd-body", { "upload.txt": "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { openSync, closeSync } = require("fs");
+        const fd = openSync("upload.txt", "r");
+        closeSync(fd);
+        fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(fd) }).then(
+          () => console.log(JSON.stringify({ resolved: true })),
+          err => console.log(JSON.stringify({ code: err.code, syscall: err.syscall, fdMatches: err.fd === fd })),
+        );
+        `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ code: "EBADF", syscall: dupSyscall, fdMatches: true });
+    expect(exitCode).toBe(0);
   });
 });
 

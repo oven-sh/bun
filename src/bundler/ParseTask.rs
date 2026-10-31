@@ -749,6 +749,8 @@ pub mod parse_worker {
 
     /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
     /// prints per output format, so `--bytecode` (CommonJS) can compile it.
+    /// A `.node` file of a split build calls a `require` of its chunk: `generate_code_for_lazy_export`
+    /// for Bun, `LinkerContext::makes_require_for_asset` for Node.js.
     fn require_embedded_asset(unique_key: &[u8]) -> Expr {
         let import_path = Expr::init(
             E::String {

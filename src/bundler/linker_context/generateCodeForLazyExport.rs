@@ -13,7 +13,8 @@ use bun_js_parser::js_lexer;
 
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
 use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
-use crate::{Index, IndexInt, LinkerContext};
+use crate::options::Loader;
+use crate::{Index, IndexInt, LinkerContext, WrapKind};
 use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
@@ -421,9 +422,28 @@ pub(crate) fn generate_code_for_lazy_export(
 
     // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
     // output, so the part that holds the call must import it.
-    let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
+    let mut calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;
+    if calls_runtime_require
+        && requires_asset_from_import_meta(this, source_index)
+        && let ExprData::ECall(mut call) = expr.data
+    {
+        let loc = call.target.loc;
+        call.target = Expr::init(
+            E::Dot {
+                target: Expr::init(E::ImportMeta {}, loc),
+                name: b"require".as_slice().into(),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        // A module without a wrapper keeps its use of `__require`. It is that module's one use of the runtime
+        // module, and the chunk of the runtime module and the order of the chunks follow that use (#44495).
+        calls_runtime_require =
+            this.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::None;
+    }
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
@@ -560,4 +580,14 @@ pub(crate) fn generate_code_for_lazy_export(
     }
 
     Ok(())
+}
+
+/// Whether the `require(<asset>)` of the bundled `.node` file `source_index` (`require_embedded_asset`) calls
+/// `import.meta.require`, as a split `require()` does for Bun. The linker prints the path of the file for the
+/// chunk that holds the call, and the runtime's `__require` resolves from the chunk of the runtime module.
+/// For Node.js, see `LinkerContext::makes_require_for_asset`.
+fn requires_asset_from_import_meta(this: &LinkerContext, source_index: IndexInt) -> bool {
+    this.graph.code_splitting
+        && this.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Napi
+        && this.graph.ast.items_target()[source_index as usize].is_bun()
 }

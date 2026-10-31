@@ -1321,6 +1321,9 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// `ERequireCallTarget` prints `<require_ref>("node:module").createRequire(import.meta.url)`: a `require`
+    /// that resolves from the file that holds the call, not from the file that declares `require_ref`.
+    pub require_target_makes_require: bool,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1403,6 +1406,7 @@ impl<'a> Default for Options<'a> {
             to_esm_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
+            require_target_makes_require: false,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -3549,6 +3553,12 @@ pub(crate) mod __gated_printer {
 
                     if let Some(require_ref) = self.options.require_ref {
                         self.print_symbol(require_ref);
+                        if self.options.require_target_makes_require {
+                            if let Some(mi) = self.module_info() {
+                                mi.flags.contains_import_meta = true;
+                            }
+                            self.print(b"(\"node:module\").createRequire(import.meta.url)");
+                        }
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         self.print_symbol(self.options.hmr_ref);
                         self.print(b".require");

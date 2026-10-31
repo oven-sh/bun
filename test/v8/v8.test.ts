@@ -183,6 +183,22 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     ])("matches Node for IsMap/IsArray/IsInt32/IsBigInt on %s", async args => {
       await checkSameOutput("test_v8_value_type_checks", args);
     });
+
+    it("matches Node for IsExternal/IsArrayBuffer/IsArrayBufferView/IsSharedArrayBuffer on a matrix of values", async () => {
+      const lines = (await checkSameOutput("test_v8_value_external_and_buffer_type_checks")).split(/\r?\n/);
+      const answers = Object.fromEntries(lines.map(line => line.split(": ")));
+      const none = "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=0";
+      expect(answers).toMatchObject({
+        "ArrayBuffer": "IsExternal=0 IsArrayBuffer=1 IsArrayBufferView=0 IsSharedArrayBuffer=0",
+        "SharedArrayBuffer": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=1",
+        "Uint8Array": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=1 IsSharedArrayBuffer=0",
+        "DataView over an ArrayBuffer": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=1 IsSharedArrayBuffer=0",
+        "External": "IsExternal=1 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=0",
+        "ObjectTemplate instance with internal fields": none,
+        "Proxy of an ArrayBuffer": none,
+        "Proxy of an External": none,
+      });
+    });
   });
   describe("Number", () => {
     it("can create small integer", async () => {

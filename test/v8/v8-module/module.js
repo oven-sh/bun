@@ -39,6 +39,74 @@ module.exports = debugMode => {
       }
     },
 
+    test_v8_value_external_and_buffer_type_checks() {
+      const [external, templateInstance] = nativeModule.create_external_and_template_instance();
+      const detached = new ArrayBuffer(8);
+      const viewOfDetached = new Uint8Array(detached);
+      detached.transfer();
+      const { proxy: revokedProxy, revoke } = Proxy.revocable(new ArrayBuffer(8), {});
+      revoke();
+      const typedArrays = [
+        Int8Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Int16Array,
+        Uint16Array,
+        Int32Array,
+        Uint32Array,
+        Float16Array,
+        Float32Array,
+        Float64Array,
+        BigInt64Array,
+        BigUint64Array,
+      ];
+      const cases = [
+        ["ArrayBuffer", new ArrayBuffer(8)],
+        ["resizable ArrayBuffer", new ArrayBuffer(8, { maxByteLength: 16 })],
+        ["detached ArrayBuffer", detached],
+        ["ArrayBuffer subclass instance", new (class extends ArrayBuffer {})(8)],
+        ["WebAssembly.Memory buffer", new WebAssembly.Memory({ initial: 1 }).buffer],
+        ["SharedArrayBuffer", new SharedArrayBuffer(8)],
+        ["growable SharedArrayBuffer", new SharedArrayBuffer(8, { maxByteLength: 16 })],
+        ["SharedArrayBuffer subclass instance", new (class extends SharedArrayBuffer {})(8)],
+        ["shared WebAssembly.Memory buffer", new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer],
+        ...typedArrays.map(TypedArray => [TypedArray.name, new TypedArray(2)]),
+        ["Uint8Array subclass instance", new (class extends Uint8Array {})(2)],
+        ["Uint8Array over a SharedArrayBuffer", new Uint8Array(new SharedArrayBuffer(8))],
+        ["Uint8Array over a resizable ArrayBuffer", new Uint8Array(new ArrayBuffer(8, { maxByteLength: 16 }))],
+        ["Uint8Array over a detached ArrayBuffer", viewOfDetached],
+        ["Buffer", Buffer.from("hello")],
+        ["DataView over an ArrayBuffer", new DataView(new ArrayBuffer(8))],
+        ["DataView over a SharedArrayBuffer", new DataView(new SharedArrayBuffer(8))],
+        ["DataView over a resizable ArrayBuffer", new DataView(new ArrayBuffer(8, { maxByteLength: 16 }))],
+        ["DataView subclass instance", new (class extends DataView {})(new ArrayBuffer(8))],
+        ["External", external],
+        ["ObjectTemplate instance with internal fields", templateInstance],
+        ["Proxy of an ArrayBuffer", new Proxy(new ArrayBuffer(8), {})],
+        ["Proxy of a SharedArrayBuffer", new Proxy(new SharedArrayBuffer(8), {})],
+        ["Proxy of a Uint8Array", new Proxy(new Uint8Array(2), {})],
+        ["Proxy of a DataView", new Proxy(new DataView(new ArrayBuffer(8)), {})],
+        ["Proxy of an External", new Proxy(external, {})],
+        ["revoked Proxy of an ArrayBuffer", revokedProxy],
+        ["object whose prototype is ArrayBuffer.prototype", Object.create(ArrayBuffer.prototype)],
+        ["plain object", {}],
+        ["array", [1, 2, 3]],
+        ["function", function () {}],
+        ["undefined", undefined],
+        ["null", null],
+        ["true", true],
+        ["false", false],
+        ["int32", 42],
+        ["double", 1.5],
+        ["string", "ArrayBuffer"],
+        ["bigint", 123n],
+        ["symbol", Symbol("ArrayBuffer")],
+      ];
+      for (const [description, value] of cases) {
+        nativeModule.print_external_and_buffer_type_checks(value, description);
+      }
+    },
+
     test_v8_value_to_int32() {
       const cases = [
         ["int", 42],

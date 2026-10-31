@@ -1507,6 +1507,34 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void print_external_and_buffer_type_checks(
+    const FunctionCallbackInfo<Value> &info) {
+  Local<Value> value = info[0];
+  char label[128] = {0};
+  info[1].As<String>()->WriteUtf8V2(info.GetIsolate(), label,
+                                    sizeof(label) - 1);
+  std::cout << label << ": IsExternal=" << value->IsExternal()
+            << " IsArrayBuffer=" << value->IsArrayBuffer()
+            << " IsArrayBufferView=" << value->IsArrayBufferView()
+            << " IsSharedArrayBuffer=" << value->IsSharedArrayBuffer()
+            << std::endl;
+}
+
+void create_external_and_template_instance(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  static int target;
+  Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
+  obj_template->SetInternalFieldCount(2);
+  Local<Value> values[] = {
+      External::New(isolate, &target),
+      obj_template->NewInstance(context).ToLocalChecked(),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, values, 2));
+}
+
 void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
@@ -2526,6 +2554,10 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+  NODE_SET_METHOD(exports, "print_external_and_buffer_type_checks",
+                  print_external_and_buffer_type_checks);
+  NODE_SET_METHOD(exports, "create_external_and_template_instance",
+                  create_external_and_template_instance);
   NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
   NODE_SET_METHOD(exports, "perform_to_int32", perform_to_int32);
   NODE_SET_METHOD(exports, "get_function_script_origin",

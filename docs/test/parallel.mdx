@@ -59,7 +59,17 @@ Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--co
 
 The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.
 
-If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
+### Crashes and interrupts
+
+If a worker dies in the middle of a file, the coordinator reports that file as failed, and a replacement worker picks up the remaining files. A test that calls `process.exit` ends its worker this way. So does a signal such as `SIGKILL` or `SIGTERM`.
+
+A crash signal aborts the whole run instead, so later passing files can't mask the crash. The crash signals are `SIGSEGV`, `SIGABRT`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGTRAP` and `SIGSYS`.
+
+Windows has no signals. There the coordinator aborts the run when a worker exits with a crash status code such as `0xC0000409`. A crash that Bun reports with its `Bun has crashed` banner exits the worker with code `3` on Windows, so the coordinator counts that file as failed and the run continues.
+
+If `SIGINT` (Ctrl+C) or `SIGTERM` interrupts the run, the coordinator stops every worker and the processes their tests spawned. It lists the files that were still running and the files that had not started. Then it exits with 128 + the signal number: `130` for `SIGINT`, `143` for `SIGTERM`. Ctrl+C on Windows also exits with `130`.
+
+With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
 
 ### When `--parallel` helps, and when it doesn't
 

@@ -872,6 +872,40 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
   });
+
+  test("writes 9 entry points of one directory at the top of --outdir, and below --root when it is given", async () => {
+    const names = Array.from({ length: 9 }, (_, i) => `page${i}`);
+    using dir = tempDir(
+      "no-bundle-outdir-nine",
+      Object.fromEntries(names.map(name => [`pages/${name}.ts`, `export const ${name} = 1;\n`])),
+    );
+
+    async function build(outdir: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--no-bundle",
+          ...args,
+          ...names.map(name => `./pages/${name}.ts`),
+          "--outdir",
+          outdir,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const written = path.join(String(dir), outdir);
+      const files = fs.existsSync(written) ? (fs.readdirSync(written, { recursive: true }) as string[]) : [];
+      return { stderr, exitCode, files: files.filter(file => file.endsWith(".js")).sort() };
+    }
+
+    const [defaultRoot, givenRoot] = await Promise.all([build("dist"), build("dist-root", "--root=.")]);
+    expect(defaultRoot).toEqual({ stderr: "", exitCode: 0, files: names.map(name => `${name}.js`) });
+    expect(givenRoot).toEqual({ stderr: "", exitCode: 0, files: names.map(name => path.join("pages", `${name}.js`)) });
+  });
 });
 
 test.concurrent("bun build names every input that maps to a shared output path", async () => {
@@ -964,6 +998,63 @@ test("reports an empty entry point the same way with more than 8 entry points", 
   const [two, nine] = await Promise.all([build(entries.slice(0, 1), "dist-2"), build(entries, "dist-9")]);
   expect(two.firstStderrLine).not.toBe("");
   expect(nine).toEqual(two);
+});
+
+// The default root comes from the entry points as they are typed. Where that leads for the builds
+// below is not the subject here: more than 8 entry points must get what 2 get.
+describe.concurrent("bun build treats more than 8 entry points as it treats 2", () => {
+  async function build(cwd: string, outdir: string, entryPoints: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--outdir", outdir, ...entryPoints],
+      env: bunEnv,
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test.each([
+    ["is not a directory", {}],
+    ["is another directory", { "pkg/unrelated.txt": "" }],
+  ])("package files whose typed directory %s", async (_, inWorkingDirectory) => {
+    const entries = Array.from({ length: 9 }, (_, i) => `pkg/m${i}.js`);
+    using dir = tempDir("build-many-entries-package-subpaths", {
+      ...inWorkingDirectory,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      ...Object.fromEntries(entries.map((name, i) => [`node_modules/${name}`, `console.log(${i});`])),
+    });
+    const written = (outdir: string) =>
+      fs.existsSync(path.join(String(dir), outdir, "_.._", "node_modules", "pkg", "m0.js")) ? "_.._" : "no _.._";
+
+    const [two, nine] = await Promise.all([
+      build(String(dir), "dist-2", entries.slice(0, 2)),
+      build(String(dir), "dist-9", entries),
+    ]);
+    expect({ ...nine, written: written("dist-9") }).toEqual({ ...two, written: written("dist-2") });
+  });
+
+  test("an --outdir that is the directory of the entry points", async () => {
+    const source = `export const from = "source";\n`;
+    async function buildInPlace(count: number) {
+      const names = Array.from({ length: count }, (_, i) => `m${i}.js`);
+      using dir = tempDir(
+        "build-many-entries-in-place",
+        Object.fromEntries(names.map(name => [`lib/${name}`, source])),
+      );
+      const result = await build(
+        String(dir),
+        "lib",
+        names.map(name => `./lib/${name}`),
+      );
+      const kept = names.filter(name => fs.readFileSync(path.join(String(dir), "lib", name), "utf8") === source);
+      return { ...result, sourcesKept: kept.length === count ? "all" : kept.length };
+    }
+
+    const [two, nine] = await Promise.all([buildInPlace(2), buildInPlace(9)]);
+    expect(nine).toEqual(two);
+  });
 });
 
 describe("CLI argument error messages", () => {

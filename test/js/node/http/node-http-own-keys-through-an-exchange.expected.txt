@@ -19,28 +19,28 @@ by hand, after destroy: _events _eventsCount _maxListeners outputData outputSize
 by hand, after assignSocket: _events _eventsCount _maxListeners outputData outputSize destroyed _last maxRequestsOnConnectionReached _defaultKeepAlive useChunkedEncodingByDefault sendDate _removedConnection _removedContLen _removedTE strictContentLength _contentLength _hasBody _trailer finished _headerSent _closed _header _keepAliveTimeout _onPendingData req _sent100 statusCode statusMessage @shapeMode @kCapture @kChunkedEncoding @kShouldKeepAlive @kBytesWritten @kNeedDrain @corked @kChunkedBuffer @kChunkedLength @kSocket @kOutHeaders @errored @kHighWaterMark @kRejectNonStandardBodyWrites @kLenientValidation @headerState @pendingCallbacks @handle @fakeSocket
 after stores: writable true, chunkedEncoding true, shouldKeepAlive false
 after stores: _events _eventsCount _maxListeners outputData outputSize destroyed _last maxRequestsOnConnectionReached _defaultKeepAlive useChunkedEncodingByDefault sendDate _removedConnection _removedContLen _removedTE strictContentLength _contentLength _hasBody _trailer finished _headerSent _closed _header _keepAliveTimeout _onPendingData req _sent100 statusCode statusMessage @shapeMode @kCapture @kChunkedEncoding @kShouldKeepAlive @kBytesWritten @kNeedDrain @corked @kChunkedBuffer @kChunkedLength @kSocket @kOutHeaders @errored @kHighWaterMark @kRejectNonStandardBodyWrites @kLenientValidation @headerState @pendingCallbacks @handle
-EventEmitter, captureRejections: own emit true
-EventEmitter, while the default captures: own emit true
-a subclass with an emit of its own, captureRejections: own emit true
-a subclass with an emit of its own, while the default captures: own emit true
+EventEmitter, captureRejections: own emit false
+EventEmitter, while the default captures: own emit false
+a subclass with an emit of its own, captureRejections: own emit false
+a subclass with an emit of its own, while the default captures: own emit false
 EventEmitterAsyncResource, captureRejections: own emit false
 EventEmitterAsyncResource, while the default captures: own emit false
-Readable, captureRejections: own emit true
-Readable, while the default captures: own emit true
-Writable, captureRejections: own emit true
-Writable, while the default captures: own emit true
-Duplex, captureRejections: own emit true
-Duplex, while the default captures: own emit true
-net.Socket, captureRejections: own emit true
-net.Socket, while the default captures: own emit true
+Readable, captureRejections: own emit false
+Readable, while the default captures: own emit false
+Writable, captureRejections: own emit false
+Writable, while the default captures: own emit false
+Duplex, captureRejections: own emit false
+Duplex, while the default captures: own emit false
+net.Socket, captureRejections: own emit false
+net.Socket, while the default captures: own emit false
 ServerResponse, captureRejections: own emit false
-ServerResponse, while the default captures: own emit true
+ServerResponse, while the default captures: own emit false
 IncomingMessage, captureRejections: own emit false
-IncomingMessage, while the default captures: own emit true
-an emitter that captures rejections: _events _eventsCount _maxListeners emit @shapeMode @kCapture
-an emitter that captures rejections, for-in: _events _eventsCount _maxListeners emit setMaxListeners constructor getMaxListeners addListener on prependListener once prependOnceListener removeListener off removeAllListeners listeners rawListeners listenerCount eventNames
-its emit: emit, the prototype's false
-emit() of a subclass that captures: false
+IncomingMessage, while the default captures: own emit false
+an emitter that captures rejections: _events _eventsCount _maxListeners @shapeMode @kCapture
+an emitter that captures rejections, for-in: _events _eventsCount _maxListeners setMaxListeners constructor getMaxListeners emit addListener on prependListener once prependOnceListener removeListener off removeAllListeners listeners rawListeners listenerCount eventNames
+its emit: emit, the prototype's true
+emit() of a subclass that captures: of the subclass
 a socket at connection: _events _readableState _writableState allowHalfOpen _maxListeners _parent _parentWrap bytesRead connecting _host _port timeout _pendingData _pendingEncoding _hadError isServer _handle server _server _peername _sockname _closeAfterHandlingError _eventsCount parser _httpMessage _secureEstablished _paused encrypted @shapeMode @kCapture @kupgraded @kStandaloneWrap @kOnUpgradedClose @kOwesRawClose @kSetNoDelay @kSetKeepAlive @kSetKeepAliveInitialDelay @khandlers @kDestroyOnRead @kBytesWritten @closed @ended @::buntlsconnectoptions:: @::buntimeout:: @writeCallback @ksocket @kStreamingEnabled @kBoundOnAbort @keepAliveIdleStart @kBytesWritten @kClosedWithUnsentData @handle @kUpgradeIncoming @kOnReadParsed @kHandoffResponse @kDestroySoon @http.server.socketHandedOff
 /end req: _consuming _dumped complete _closed rawTrailers url method socket client upgrade _events _readableState _maxListeners @aborted @eofInProgress @kHeaders @kReqShouldKeepAlive @kRawHeaders @kHeaderSource @kHeadersCount @kTrailers @kTrailersCount @kAbortController @handle @noBody @shapeMode @kCapture
 /end res: _events _eventsCount _maxListeners outputData outputSize destroyed _last maxRequestsOnConnectionReached _defaultKeepAlive useChunkedEncodingByDefault sendDate _removedConnection _removedContLen _removedTE strictContentLength _contentLength _hasBody _trailer finished _headerSent _closed _header _keepAliveTimeout _onPendingData req _sent100 statusCode statusMessage @shapeMode @kCapture @kChunkedEncoding @kShouldKeepAlive @kBytesWritten @kNeedDrain @corked @kChunkedBuffer @kChunkedLength @kSocket @kOutHeaders @errored @kHighWaterMark @kRejectNonStandardBodyWrites @kLenientValidation @headerState @pendingCallbacks @handle @fakeSocket @closeCallback

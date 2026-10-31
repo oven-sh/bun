@@ -10,5 +10,5 @@
     // `extends` does not rebase this path.
     "types": ["../packages/bun-types"]
   },
-  "include": ["agent.ts", "buildkite.ts", "runner.node.ts", "ci-image.ts", "../.buildkite/ci.ts"]
+  "include": ["agent.ts", "buildkite.ts", "runner.node.ts", "vendor-skips.ts", "ci-image.ts", "../.buildkite/ci.ts"]
 }

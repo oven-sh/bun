@@ -2978,7 +2978,11 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(obj);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             init.set(Bun::createBunObject(init.vm, init.owner));
+             JSObject* bunObject = Bun::createBunObject(init.vm, init.owner);
+             init.set(bunObject);
+             // As for `process` below: require("bun") comes to the object without the name.
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
@@ -3189,6 +3193,11 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
     ASSERT(classInfo());
+}
+
+void GlobalObject::didCreateDOMConstructor(JSC::JSObject* constructor)
+{
+    JSC::AOT::hostDidCreateConstructor(this, constructor);
 }
 
 void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)

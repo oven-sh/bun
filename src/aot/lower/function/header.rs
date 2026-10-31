@@ -299,6 +299,9 @@ fn create_source_header(
     let mut header = create_header(file, key, kind, position);
     match find_frames_mark(file, function) {
         Some(FramesMark::NativeCode) => header.syntax |= FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE,
+        Some(FramesMark::ModuleOfHelpers) => {
+            header.syntax |= FunctionSyntax::IS_SHOWN_IN_MODULE_OF_HELPERS
+        }
         Some(FramesMark::Hidden) => header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
         None => {}
     }
@@ -379,6 +382,8 @@ fn create_source_header(
 enum FramesMark {
     NativeCode,
     Hidden,
+    /// `bun run` has the function in bun:wrap.
+    ModuleOfHelpers,
 }
 
 /// `bun run` has some functions of the library inside a built-in function, whose frames are native code, where an executable has them in a module.
@@ -394,6 +399,7 @@ fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Opti
         return match file.queries.atom_bytes(text) {
             b"frames are native code" => Some(FramesMark::NativeCode),
             b"has no frames" => Some(FramesMark::Hidden),
+            b"frames are of bun:wrap" => Some(FramesMark::ModuleOfHelpers),
             _ => None,
         };
     }

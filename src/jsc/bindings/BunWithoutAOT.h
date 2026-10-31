@@ -50,6 +50,7 @@ inline void lockBuiltinsWithoutImage() {}
 inline ASCIILiteral evaluationRefusedMessage() { return ""_s; }
 inline void hostDidCreateRealm(JSGlobalObject*) {}
 inline void hostDidCreateStructure(JSGlobalObject*, Structure*) {}
+inline void hostDidCreateConstructor(JSGlobalObject*, JSObject*) {}
 inline void hostDidCreateNodeModule(JSGlobalObject*, JSObject*) {}
 inline void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl*, JSObject*) {}
 inline void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral, std::span<const ASCIILiteral>) {}

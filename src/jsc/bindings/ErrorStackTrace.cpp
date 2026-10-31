@@ -514,6 +514,14 @@ String sourceURL(const JSC::AOT::SourcePosition& position)
         return JSC::AOT::sourceURLOf(position.source);
     return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
 }
+
+String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
+{
+    JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame);
+    if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+        return JSC::AOT::moduleOfCompilerHelpers;
+    return sourceURL(position);
+}
 #endif
 
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
@@ -529,7 +537,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 #if ENABLE(AOT)
     if (frame.isCompiledFrame()) [[unlikely]] {
         auto position = frame.compiledPosition();
-        return position ? sourceURL(*position) : String();
+        return position ? sourceURL(frame.compiledFrame(), *position) : String();
     }
 #endif
 

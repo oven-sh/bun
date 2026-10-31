@@ -56,15 +56,10 @@ public:
     }
 
     static void destroy(JSC::JSCell*);
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
+    // The class structure has sourceURL and sourceMapURL already: a Script of it is born with the two.
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
-
-    void cacheBytecode();
-    JSC::JSUint8Array* getBytecodeBuffer();
 
     // The source compiled the way globalObject compiles programs (see ProgramExecutable::initializeGlobalProperties):
     // m_unlinkedCodeBlock if it qualifies, otherwise a fresh compile that replaces it. Null with `error` set if
@@ -75,26 +70,18 @@ public:
     const JSC::SourceCode& source() const { return m_source; }
     const ScriptOptions& options() const { return m_options; }
     WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
-    bool cachedDataProduced() const { return m_cachedDataProduced; }
-    void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
-    TriState cachedDataRejected() const { return m_cachedDataRejected; }
-    void cachedDataRejected(TriState value) { m_cachedDataRejected = value; }
 
     DECLARE_VISIT_CHILDREN;
 
 private:
     JSC::SourceCode m_source;
-    RefPtr<JSC::CachedBytecode> m_cachedBytecode;
-    JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
     // The compile every run links. Only recompiled (and replaced) when a global object with a different
     // CodeGenerationMode, i.e. a debugger attached, runs the Script.
     JSC::WriteBarrier<JSC::UnlinkedProgramCodeBlock> m_unlinkedCodeBlock;
     ScriptOptions m_options;
-    bool m_cachedDataProduced = false;
-    TriState m_cachedDataRejected = TriState::Indeterminate;
 
-    NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)
-        : Base(vm, structure)
+    NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::Butterfly* butterfly, JSC::SourceCode source, ScriptOptions options)
+        : Base(vm, structure, butterfly)
         , m_source(WTF::move(source))
         , m_options(WTF::move(options))
     {

@@ -2,6 +2,10 @@
 #include "helpers.h"
 #include "BunCPUProfiler.h"
 #include "NodeValidator.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/DeferredWorkTimer.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Error.h>
@@ -15,6 +19,25 @@
 #include <wtf/JSONValues.h>
 
 using namespace JSC;
+
+extern "C" size_t Bun__gc(void* vm, bool sync);
+
+JSC_DECLARE_HOST_FUNCTION(jsFunction_collectInspectorGarbage);
+JSC_DEFINE_HOST_FUNCTION(jsFunction_collectInspectorGarbage, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, promise, {});
+    vm.deferredWorkTimer->scheduleWorkSoonIfActive(ticket, [](DeferredWorkTimer::Ticket& ticket) {
+        auto* promise = uncheckedDowncast<JSPromise>(ticket.target());
+        auto* globalObject = promise->globalObject();
+        Strong<JSPromise> protectedPromise(globalObject->vm(), promise);
+        // Collect after the posting job unwinds, before re-entering JavaScript.
+        Bun__gc(Bun::vm(globalObject), true);
+        promise->resolve(globalObject, globalObject->vm(), jsUndefined());
+    });
+    return JSValue::encode(promise);
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))

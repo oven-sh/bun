@@ -47,11 +47,65 @@ function shmRead(name: string, n: number): Buffer {
   return out;
 }
 
-// Bun.WebView only exists on darwin for now.
-const it = isMacOS ? test : test.skip;
-// Tests that need frames to tick (rAF / CSS animation). CI macOS runners
-// have no display, so CVDisplayLink never fires and these hang.
-const itRendering = isMacOS ? test.todoIf(isCI) : test.skip;
+// --- Scheduling ------------------------------------------------------------
+//
+// Bun.WebView only exists on darwin for now: one host subprocess per bun
+// process, and every `new Bun.WebView()` is a WKWebView in it that gets a
+// WebContent process of its own on its first navigate(). That process
+// launch is what this file's wall clock is made of: about 85ms per view on
+// an M-series Mac and 8x that in the Tart VMs behind the macOS 15 and 26 CI
+// lanes, where the file took 72 to 123 seconds when its ~110 views were
+// opened one after the other. Everything on macOS now runs with
+// test.concurrent, through a lane that caps how many tests of a kind are in
+// flight, so a burst of them cannot launch dozens of WebContent processes
+// at once on a loaded CI box:
+//
+//   it          — opens its own view(s); at most VIEW_LANES at a time.
+//   itInput     — drives native key or mouse events; one at a time. Key
+//                 events go through the process-wide text input machinery
+//                 (NSTextInputContext), and with two of these tests in
+//                 flight CI saw one press("Escape") arrive as a stream of
+//                 repeated keydowns.
+//   itRendering — needs frames to tick (rAF / CSS animation), so todo on
+//                 CI: the macOS runners have no display and CVDisplayLink
+//                 never fires. Native input too, so the same lane.
+//   itConcurrent — no lane: a test that paces itself (the lifetime cycles
+//                 below) or that only asserts on a child bun process of its
+//                 own (itInChild).
+//
+// A skipped test stays on the concurrent chain (test.concurrent.skip) so it
+// does not split the file's one concurrent group in two.
+
+function lanes(width: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let busy = 0;
+  const waiting: (() => void)[] = [];
+  return async fn => {
+    if (busy < width) busy++;
+    else await new Promise<void>(resolve => waiting.push(resolve));
+    try {
+      return await fn();
+    } finally {
+      // Hand the lane straight to the next waiter (busy stays counted), or free it.
+      const next = waiting.shift();
+      if (next) next();
+      else busy--;
+    }
+  };
+}
+
+const VIEW_LANES = 4;
+const viewLane = lanes(VIEW_LANES);
+const inputLane = lanes(1);
+
+type TestBody = () => void | Promise<void>;
+const skip = (name: string, fn: TestBody) => test.concurrent.skip(name, fn);
+const itConcurrent = isMacOS ? (name: string, fn: TestBody) => test.concurrent(name, fn) : skip;
+const itInChild = itConcurrent;
+const it = isMacOS ? (name: string, fn: TestBody) => itConcurrent(name, () => viewLane(async () => fn())) : skip;
+const itInput = isMacOS ? (name: string, fn: TestBody) => itConcurrent(name, () => inputLane(async () => fn())) : skip;
+const itRendering = isMacOS
+  ? (name: string, fn: TestBody) => test.concurrent.todoIf(isCI)(name, () => inputLane(async () => fn()))
+  : skip;
 
 // NSURL URLWithString: strictly follows RFC 3986 on x64 macOS system
 // libraries — unencoded <> return nil. arm64 builds of the same OS are
@@ -72,8 +126,42 @@ test("backend: 'webkit' throws on non-darwin", () => {
   }
 });
 
+type ErrorShape = { name: string; code?: string; message: string };
+/** `name`, `code` and `message` of what `fn` throws (toThrow(object) compares the message only). */
+function thrown(fn: () => unknown): ErrorShape {
+  try {
+    fn();
+  } catch (e: any) {
+    return { name: e.name, code: e.code, message: e.message };
+  }
+  throw new Error("expected the call to throw");
+}
+
 test("calling without new throws", () => {
-  expect(() => (Bun.WebView as any)({ width: 100, height: 100 })).toThrow(/without 'new'/);
+  expect(thrown(() => (Bun.WebView as any)({ width: 100, height: 100 }))).toEqual({
+    name: "TypeError",
+    code: "ERR_ILLEGAL_CONSTRUCTOR",
+    message: "Class constructor WebView cannot be invoked without 'new'",
+  });
+});
+
+// Option validation throws before any backend is touched, so it runs on every platform.
+const outOfRange = (name: string, received: number): ErrorShape => ({
+  name: "RangeError",
+  code: "ERR_OUT_OF_RANGE",
+  message: `The value of "${name}" is out of range. It must be >= 1 and <= 16384. Received ${received}`,
+});
+test.each<[string, Bun.WebView.ConstructorOptions, ErrorShape]>([
+  ["width: 0", { width: 0, height: 100 }, outOfRange("width", 0)],
+  ["height: 0", { width: 100, height: 0 }, outOfRange("height", 0)],
+  ["width: 99999", { width: 99999, height: 100 }, outOfRange("width", 99999)],
+  [
+    "headless: false",
+    { width: 100, height: 100, headless: false },
+    { name: "Error", code: "ERR_METHOD_NOT_IMPLEMENTED", message: "headless: false is not yet implemented" },
+  ],
+])("constructor rejects %s", (_, options, error) => {
+  expect(thrown(() => new Bun.WebView(options))).toEqual(error);
 });
 
 it("is an EventTarget", () => {
@@ -130,16 +218,6 @@ it("dispatchEvent fires addEventListener callbacks", () => {
   }
 });
 
-it("width/height validation", () => {
-  expect(() => new Bun.WebView({ width: 0, height: 100 })).toThrow();
-  expect(() => new Bun.WebView({ width: 100, height: 0 })).toThrow();
-  expect(() => new Bun.WebView({ width: 99999, height: 100 })).toThrow();
-});
-
-it("headless: false throws NOT_IMPLEMENTED", () => {
-  expect(() => new Bun.WebView({ width: 100, height: 100, headless: false })).toThrow(/not.*implemented/i);
-});
-
 it("navigate + evaluate round-trip", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<h1 id=t>hi</h1>"));
@@ -151,25 +229,37 @@ it("navigate + evaluate round-trip", async () => {
 // lifetime instance spent capped per-process OS resources (one
 // CVDisplayLink per pool; CoreVideo allows 64 per process). After exactly
 // 64 create/close cycles, the 65th view's navigate() hung forever. The
-// host now shares one WKProcessPool across all views. Sequential on
-// purpose: the cap is on lifetime instances, not concurrent ones.
-it("survives more than 64 lifetime create/navigate/close cycles", async () => {
-  for (let i = 1; i <= 70; i++) {
-    const view = new Bun.WebView({ width: 64, height: 64, backend: "webkit", dataStore: "ephemeral" });
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
-    try {
-      // Watchdog so a regression fails with the iteration number instead
-      // of a bare test timeout. Cleared every iteration.
-      const hung = new Promise<never>((_, reject) => {
-        watchdog = setTimeout(() => reject(new Error(`navigate() hung at lifetime instance #${i}`)), 10_000);
-      });
-      await Promise.race([view.navigate(html(`<p>v${i}</p>`)), hung]);
-      expect(view.url).toStartWith("data:text/html");
-    } finally {
-      clearTimeout(watchdog);
-      view.close();
+// host now shares one WKProcessPool across all views. The cap is on
+// lifetime instances, not concurrent ones, so the cycles run on a few
+// lanes at once: the 65th instance is still opened after 64 others have
+// come and gone.
+itConcurrent("survives more than 64 lifetime create/navigate/close cycles", async () => {
+  const INSTANCES = 70;
+  const LANES = 7;
+  let next = 0;
+  let created = 0;
+  const lane = async () => {
+    for (let i = ++next; i <= INSTANCES; i = ++next) {
+      const url = html(`<p>v${i}</p>`);
+      const view = new Bun.WebView({ width: 64, height: 64, backend: "webkit", dataStore: "ephemeral" });
+      created++;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // Watchdog so a regression fails with the instance number instead
+        // of a bare test timeout. Cleared every cycle.
+        const hung = new Promise<never>((_, reject) => {
+          watchdog = setTimeout(() => reject(new Error(`navigate() hung at lifetime instance #${i}`)), 30_000);
+        });
+        await Promise.race([view.navigate(url), hung]);
+        expect(view.url).toBe(url);
+      } finally {
+        clearTimeout(watchdog);
+        view.close();
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: LANES }, lane));
+  expect(created).toBe(INSTANCES);
 });
 
 it("url constructor option fires navigate()", async () => {
@@ -496,7 +586,7 @@ itRendering("document.visibilityState is visible and rAF fires", async () => {
   expect(fired).toBe("fired");
 });
 
-it("click dispatches native mousedown/mouseup/click with isTrusted", async () => {
+itInput("click dispatches native mousedown/mouseup/click with isTrusted", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -628,7 +718,7 @@ itRendering("click(selector) with options", async () => {
   expect(JSON.parse(ev)).toEqual([{ btn: 2, shift: true, det: 2 }]);
 });
 
-it("click(selector) is injection-safe", async () => {
+itInput("click(selector) is injection-safe", async () => {
   // The selector goes via callAsyncJavaScript:'s arguments: NSDictionary,
   // not string interpolation. A selector containing JS syntax is passed
   // as a literal string value to querySelector, which throws
@@ -719,7 +809,7 @@ itRendering("scrollTo(selector) rejects on timeout", async () => {
   await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);
 });
 
-it("type inserts text via InsertText command, fires input/beforeinput", async () => {
+itInput("type inserts text via InsertText command, fires input/beforeinput", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -748,7 +838,7 @@ it("type inserts text via InsertText command, fires input/beforeinput", async ()
   expect(JSON.parse(fired)).toEqual(["before:true", "input:true"]);
 });
 
-it("press dispatches virtual keys", async () => {
+itInput("press dispatches virtual keys", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -778,7 +868,7 @@ it("press dispatches virtual keys", async () => {
   expect(JSON.parse(keys)).toEqual(["Escape"]);
 });
 
-it("press with modifiers fires keydown with modifier flags", async () => {
+itInput("press with modifiers fires keydown with modifier flags", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -963,7 +1053,7 @@ it("close() rejects pending promises", async () => {
   await expect(p).rejects.toThrow(/closed/i);
 });
 
-it("close() with in-flight work raises no unhandled rejection", async () => {
+itInChild("close() with in-flight work raises no unhandled rejection", async () => {
   // Subprocess-isolated: `bun test` fails the running test on any unhandled
   // rejection instead of consulting process listeners, so the collector has
   // to live in a plain `bun -e` process. Two quiet cases (#40991): a
@@ -1011,7 +1101,7 @@ it("a failed constructor url navigation fires onNavigationFailed, not an unhandl
   expect(failed).toBeInstanceOf(Error);
 });
 
-it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
+itInChild("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
   // Subprocess-isolated — closeAll() SIGKILLs the one shared WKWebView host,
   // which would break subsequent tests. ensureSpawned respawns on the next
   // WebView construction, but only after EVFILT_PROC has cleared the Zig
@@ -1043,7 +1133,7 @@ it("WebView.closeAll() kills the host subprocess and pending promises reject", a
   expect(exitCode).toBe(0);
 });
 
-it("views orphaned by a host death are closed, even after a new view respawns the host", async () => {
+itInChild("views orphaned by a host death are closed, even after a new view respawns the host", async () => {
   // Subprocess-isolated for the same reason as the closeAll() test above.
   // Three views die with the host: one with an op in flight, one idle, one
   // never navigated. All three must end up closed. Without that, once a
@@ -1199,7 +1289,7 @@ it("GC: drop reference, collect, no crash", () => {
   Bun.gc(true);
 });
 
-it("process exits after close()", async () => {
+itInChild("process exits after close()", async () => {
   using dir = tempDir("webview-exit", {
     "index.js": `
       const view = new Bun.WebView({ width: 100, height: 100 });
@@ -1226,7 +1316,7 @@ it("process exits after close()", async () => {
 });
 
 // _WKWebsiteDataStoreConfiguration initWithDirectory: is macOS 15.2+.
-const itPersistentDataStore = isMacOS && isMacOSVersionAtLeast(15.2) ? test : test.skip;
+const itPersistentDataStore = isMacOS && isMacOSVersionAtLeast(15.2) ? it : skip;
 itPersistentDataStore("persistent dataStore: localStorage survives across instances", async () => {
   using dir = tempDir("webview-persist", {});
   // localStorage needs a real origin; data: URLs are opaque. Use a throwaway server.

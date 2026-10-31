@@ -520,7 +520,7 @@ fn evaluate_instruction(
                 if let PropertyLiteral::String(prop_name) = property {
                     if prop_name.slice() == b"length" {
                         // Use UTF-16 code unit count to match JS .length semantics
-                        let len = s.len_utf16() as f64;
+                        let len = s.len_utf16()? as f64;
                         let loc = *loc;
                         let result = Constant::Primitive {
                             value: PrimitiveValue::Number(FloatValue::new(len)),

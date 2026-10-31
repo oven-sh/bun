@@ -1593,6 +1593,7 @@ pub struct EString {
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
+    /// Not `is_utf16`: WTF-8 bytes, maybe ill-formed. Index them through [`Self::code_unit_at`].
     pub data: Str,
 
     // A very simple rope implementation
@@ -1600,6 +1601,7 @@ pub struct EString {
     // We don't need to deal with substrings
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
+    /// Bytes of all segments, or 0 if never joined. For `.length` see [`Self::javascript_length`].
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
@@ -1609,6 +1611,7 @@ pub struct EString {
     /// Temporal value instead of a string.
     pub toml_datetime: Option<TomlDateTimeKind>,
 }
+const _: () = assert!(core::mem::size_of::<EString>() == 40);
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
@@ -1820,11 +1823,18 @@ impl EString {
     }
 
     /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
+    #[inline]
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
-        if self.next.is_none() || !self.is_utf8() {
-            return;
+        if self.next.is_some() && self.is_utf8() {
+            self.flatten_in_place(bump);
         }
+    }
+
+    // Out of line: a caller that visits expressions recursively pays a test and a call.
+    #[inline(never)]
+    fn flatten_in_place(&mut self, bump: &Bump) {
         self.data = Str::new(self.flatten_rope(bump));
+        self.rope_len = self.data.len() as u32;
         self.next = None;
     }
 
@@ -1835,17 +1845,27 @@ impl EString {
         }
         let mut copy = self.shallow_clone();
         copy.data = Str::new(self.flatten_rope(bump));
+        copy.rope_len = copy.data.len() as u32;
         copy.next = None;
         Flattened::Owned(copy)
     }
 
     /// The rope's bytes, concatenated into a fresh `bump` slice.
+    /// Two halves of a surrogate pair that meet at a seam become one four-byte sequence.
     fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
         while let Some(part) = str_ {
-            bytes.extend_from_slice(&part.get().data);
+            let mut more: &[u8] = &part.get().data;
+            if more.first() == Some(&0xED)
+                && let Some(pair) = strings::wtf8_pair_across(&bytes, more)
+            {
+                bytes.truncate(bytes.len() - 3);
+                bytes.extend_from_slice(&pair);
+                more = &more[3..];
+            }
+            bytes.extend_from_slice(more);
             str_ = part.get().next;
         }
         bytes.into_bump_slice()
@@ -1897,10 +1917,9 @@ impl EString {
         crate::lexer_tables::is_identifier(self.slice(bump))
     }
 
-    /// Compares two strings lexicographically for JavaScript semantics.
-    /// Both strings must share the same encoding (UTF-8 vs UTF-16).
+    /// Order of bytes (8-bit) or code units (UTF-16). JavaScript's `<` is [`Self::js_order`].
     #[inline]
-    pub fn order(&self, other: &EString) -> Ordering {
+    fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
         if self.is_utf8() {
             strings::order(&self.data, &other.data)
@@ -1909,18 +1928,64 @@ impl EString {
         }
     }
 
+    /// JavaScript's `<` order of two flat strings, by UTF-16 code unit. `None` on ill-formed bytes.
+    pub fn js_order(&self, other: &EString) -> Option<Ordering> {
+        debug_assert!(self.next.is_none() && other.next.is_none());
+        match (self.is_utf8(), other.is_utf8()) {
+            (true, true) => strings::checked_order_utf16(&self.data, &other.data),
+            (false, false) => Some(strings::order_t(self.slice16(), other.slice16())),
+            (true, false) => strings::checked_order_wtf8_utf16(&self.data, other.slice16()),
+            (false, true) => strings::checked_order_wtf8_utf16(&other.data, self.slice16())
+                .map(Ordering::reverse),
+        }
+    }
+
+    /// `.length` in UTF-16 code units, of a rope too. `None` on ill-formed 8-bit bytes.
     pub fn javascript_length(&self) -> Option<u32> {
-        if self.rope_len > 0 {
-            // We only support ascii ropes for now
-            return Some(self.rope_len);
+        if !self.is_utf8() {
+            return Some(self.slice16().len() as u32);
         }
-        if self.is_utf8() {
-            if !strings::is_all_ascii(&self.data) {
-                return None;
+        let mut len = 0u32;
+        let mut segment = Some(self);
+        while let Some(s) = segment {
+            len += strings::wtf8_checked_len_utf16(&s.data)?;
+            segment = s.next.as_deref();
+        }
+        Some(len)
+    }
+
+    /// Segment, byte offset and value of code unit `index` of an 8-bit rope. `None` on ill-formed bytes.
+    fn locate_code_unit(&self, mut index: u32) -> Option<(&EString, usize, u16)> {
+        debug_assert!(self.is_utf8());
+        let mut segment = Some(self);
+        while let Some(s) = segment {
+            match strings::wtf8_code_unit_at(&s.data, index) {
+                strings::Wtf8CodeUnitAt::Unit { at, unit } => return Some((s, at, unit)),
+                strings::Wtf8CodeUnitAt::Past(len) => index -= len,
+                strings::Wtf8CodeUnitAt::IllFormed => return None,
             }
-            return Some(self.data.len() as u32);
+            segment = s.next.as_deref();
         }
-        Some(self.slice16().len() as u32)
+        None
+    }
+
+    /// `.charCodeAt(index)` of an 8-bit string. See [`Self::locate_code_unit`].
+    pub fn code_unit_at(&self, index: u32) -> Option<u16> {
+        self.locate_code_unit(index).map(|found| found.2)
+    }
+
+    /// `[index]` of an 8-bit string as 8-bit text, so folds chain. Half of a pair is 3 bytes in `bump`.
+    pub fn char_at(&self, index: u32, bump: &Bump) -> Option<EString> {
+        let (segment, at, unit) = self.locate_code_unit(index)?;
+        let sequence = &segment.data[at..];
+        Some(match strings::wtf8_byte_sequence_length(sequence[0]) {
+            4 => {
+                let mut half = [0u8; 4];
+                let len = strings::encode_wtf8_rune(&mut half, u32::from(unit));
+                EString::init(bump.alloc_slice_copy(&half[..len]))
+            }
+            len => EString::init(&sequence[..usize::from(len)]),
+        })
     }
 
     // `eql`, split by operand type.
@@ -2567,5 +2632,126 @@ mod json_tape_tests {
 
         assert_eq!(inner.properties()[0].key.slice(), b"b");
         assert_eq!(outer.properties()[0].key.slice(), b"a");
+    }
+}
+
+// Segments are 32 bytes or less: longer or non-ASCII ones reach simdutf, which Miri cannot call.
+#[cfg(test)]
+mod estring_reader_tests {
+    use super::*;
+
+    /// Links `segments` into one rope, as `fold_string_addition` does, and reads it.
+    fn with_rope<R>(segments: &[&'static [u8]], read: impl FnOnce(&EString) -> R) -> R {
+        let mut nodes: Vec<EString> = segments.iter().map(|s| EString::init(s)).collect();
+        let (head, rest) = nodes.split_first_mut().expect("one segment");
+        for node in rest {
+            head.push(node);
+        }
+        read(head)
+    }
+
+    #[test]
+    fn code_unit_at_walks_every_segment_by_utf16_code_unit() {
+        // "aé" + "😀" + "b": 3 + 4 + 1 bytes, 2 + 2 + 1 code units.
+        with_rope(&[b"a\xC3\xA9", b"\xF0\x9F\x98\x80", b"b"], |s| {
+            let got: Vec<_> = (0..6).map(|index| s.code_unit_at(index)).collect();
+            assert_eq!(
+                got,
+                [
+                    Some(0x61),
+                    Some(0xE9),
+                    Some(0xD83D),
+                    Some(0xDE00),
+                    Some(0x62),
+                    None
+                ]
+            );
+            assert_eq!(s.code_unit_at(u32::MAX), None);
+        });
+        // An ASCII rope, and the two halves of a pair that each have a segment.
+        with_rope(&[b"ab", b"cd"], |s| {
+            assert_eq!(s.code_unit_at(3), Some(0x64));
+            assert_eq!(s.code_unit_at(4), None);
+        });
+        with_rope(&[b"\xED\xA0\xBD", b"\xED\xB8\x80"], |s| {
+            assert_eq!(s.code_unit_at(0), Some(0xD83D));
+            assert_eq!(s.code_unit_at(1), Some(0xDE00));
+            assert_eq!(s.code_unit_at(2), None);
+        });
+    }
+
+    #[test]
+    fn code_unit_at_declines_at_and_after_bytes_that_are_not_wtf8() {
+        // A later segment does not answer for an index that an earlier one could not count up to.
+        with_rope(&[b"a", b"\xFF", b"bc"], |s| {
+            assert_eq!(s.code_unit_at(0), Some(0x61));
+            assert_eq!(s.code_unit_at(1), None);
+            assert_eq!(s.code_unit_at(2), None);
+            assert_eq!(s.code_unit_at(3), None);
+        });
+        // A sequence that is cut off by the seam is not read across it.
+        with_rope(&[b"a\xC3", b"\xA9b"], |s| {
+            assert_eq!(s.code_unit_at(0), Some(0x61));
+            assert_eq!(s.code_unit_at(1), None);
+            assert_eq!(s.code_unit_at(2), None);
+        });
+    }
+
+    #[test]
+    fn js_order_is_the_order_of_utf16_code_units() {
+        use Ordering::{Equal, Greater, Less};
+        let order =
+            |a: &'static [u8], b: &'static [u8]| EString::init(a).js_order(&EString::init(b));
+        assert_eq!(order(b"abc", b"abd"), Some(Less));
+        assert_eq!(order(b"ab", b"abc"), Some(Less));
+        assert_eq!(order(b"abc", b"abc"), Some(Equal));
+        // U+FF5E is after U+1F600 in code units (FF5E, D83D) and before it in bytes (EF, F0).
+        assert_eq!(
+            order("\u{FF5E}".as_bytes(), "\u{1F600}".as_bytes()),
+            Some(Greater)
+        );
+        // The first difference is inside a sequence: both are decoded from its lead byte.
+        assert_eq!(order("é".as_bytes(), "è".as_bytes()), Some(Greater));
+        assert_eq!(order("a€".as_bytes(), "a₭".as_bytes()), Some(Less));
+        assert_eq!(
+            order("\u{1F600}".as_bytes(), "\u{1F601}".as_bytes()),
+            Some(Less)
+        );
+        assert_eq!(order("éa".as_bytes(), "éb".as_bytes()), Some(Less));
+        assert_eq!(order("é".as_bytes(), "éa".as_bytes()), Some(Less));
+        // Bytes that are not WTF-8 at the first difference or before it: no order.
+        assert_eq!(order(b"\xFFaa", b"\xFFab"), None);
+        assert_eq!(order(b"\xE2\x41\x42", b"\xE2\x41\x43"), None);
+        assert_eq!(order(b"\xE2\x41", b"\xE2\x82\xAC"), None);
+        assert_eq!(order(b"a\xFF", b"b\xFF"), Some(Less));
+        // UTF-16 storage, and one string of each storage.
+        let (tilde, face, e_acute) = ([0xFF5Eu16], [0xD83Du16, 0xDE00], [0xE9u16]);
+        assert_eq!(
+            EString::init_utf16(&tilde).js_order(&EString::init_utf16(&face)),
+            Some(Greater)
+        );
+        let mixed = |a: &'static [u8], b: &[u16]| {
+            let (a, b) = (EString::init(a), EString::init_utf16(b));
+            (a.js_order(&b), b.js_order(&a))
+        };
+        assert_eq!(mixed("é".as_bytes(), &e_acute), (Some(Equal), Some(Equal)));
+        assert_eq!(mixed(b"z", &e_acute), (Some(Less), Some(Greater)));
+        assert_eq!(
+            mixed("\u{FF5E}".as_bytes(), &face),
+            (Some(Greater), Some(Less))
+        );
+        assert_eq!(mixed(b"\xFF", &e_acute), (None, None));
+    }
+
+    #[test]
+    fn javascript_length_of_an_ascii_rope_counts_every_segment() {
+        with_rope(&[b"ab", b"cd", b"e"], |s| {
+            assert_eq!(s.javascript_length(), Some(5));
+        });
+        assert_eq!(EString::init(b"abc").javascript_length(), Some(3));
+        assert_eq!(
+            EString::init_utf16(&[0xD83D, 0xDE00]).javascript_length(),
+            Some(2)
+        );
     }
 }

@@ -15,6 +15,68 @@ test("non-ascii regexp literals", () => {
   expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
 });
 
+// A `--define` value is parsed as JSON, not by the lexer, and is stored as 8-bit WTF-8. So is the
+// source of a regexp that `+` turns into a string. The runtime transpiler folds `U[0]`,
+// `` `${U}`.length ``, `U.charCodeAt(n)`, `+D`, `TILDE < FACE` and `{k: v}.k` with no flag, and has
+// to read such a string per UTF-16 code unit, not per byte.
+test("non-ascii --define values and regexp sources fold per UTF-16 code unit", async () => {
+  using dir = tempDir("define-non-ascii", {
+    "index.ts": `
+      declare const U: string, D: string, TILDE: string, FACE: string;
+      console.log(JSON.stringify([U, U[0], U[1], U[3], \`\${U}\`.length, U.length, (U + "")[0], U === "é😀", +D, -D, ~D]));
+      if (U[0] === "é") console.log("if é");
+      switch (U[0]) {
+        case "é":
+          console.log("case é");
+          break;
+        default:
+          console.log("default");
+      }
+      console.log(JSON.stringify([U.charCodeAt(2), (/é/ + "x")[1], (/é/ + "x").length]));
+      // U+FF5E is after U+1F600 in code units and before it in bytes. "é" is not the key "Ã©".
+      console.log(JSON.stringify([TILDE < FACE, TILDE > FACE, ({ "Ã©": 1 } as any).é]));
+    `,
+  });
+  const defines = ['U="é😀"', 'D="\u2028 12 "', 'TILDE="\uFF5E"', 'FACE="😀"'];
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...defines.flatMap(define => ["--define", define]), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({
+    stdout: '["é😀","é","\\ud83d",null,3,3,"é",true,12,-12,-13]\nif é\ncase é\n[56832,"é",4]\n[false,true,null]\n',
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// A `[define]` table in bunfig.toml is read like `--define`, and plain `bun run` folds `[0]`.
+test("a non-ASCII bunfig.toml [define] string folds per UTF-16 code unit", async () => {
+  using dir = tempDir("bunfig-define-non-ascii", {
+    "bunfig.toml": `[define]\n"process.env.TITLE" = "'élan'"\n`,
+    "index.ts": `
+      function local() {
+        const title = process.env.TITLE!;
+        return title[0].toUpperCase() + title.slice(1);
+      }
+      console.log(JSON.stringify([process.env.TITLE![0].toUpperCase() + process.env.TITLE!.slice(1), local()]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: '["Élan","Élan"]\n', stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 test("ascii regex with escapes", () => {
   expect(/^[-#!$@£%^&*()_+|~=`{}\[\]:";'<>?,.\/ ]$/).toBeInstanceOf(RegExp);
 });

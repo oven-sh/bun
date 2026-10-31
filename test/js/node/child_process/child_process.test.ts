@@ -29,6 +29,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import { Writable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -1799,4 +1800,127 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // several seconds, and the fixtures give up on their markers after 15 s so
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
+});
+
+it.each([
+  [true, false],
+  [false, false],
+  [true, true],
+  [false, true],
+])(
+  "cancels a pending stdin write before child exit (destroy error: %s, Writable write: %s)",
+  async (withError, viaWritable) => {
+    const child = spawn(bunExe(), ["-e", "process.stdout.write('ready'); setInterval(() => {}, 1000)"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const childClosed = once(child, "close");
+    const stdin = child.stdin!;
+    const errors: Error[] = [];
+    stdin.on("error", error => errors.push(error));
+    const stdinClosed = new Promise<void>(resolve => stdin.once("close", resolve));
+    const destroyed = withError ? Object.assign(new Error("stdin is not writable"), { code: "EPIPE" }) : undefined;
+    const attempts: Array<{ callbacks: number }> = [];
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        once(child.stdout!, "data"),
+        childClosed.then(() => {
+          throw new Error("child exited before readiness");
+        }),
+      ]);
+      const write = viaWritable ? Writable.prototype.write : stdin.write;
+      const writeOnce = () => {
+        const attempt = {
+          callbacks: 0,
+          written: Promise.withResolvers<Error | null | undefined>(),
+          returned: true,
+        };
+        attempt.returned = write.call(stdin, Buffer.alloc(1024 * 1024), error => {
+          attempt.callbacks++;
+          attempt.written.resolve(error);
+        });
+        attempts.push(attempt);
+        return attempt;
+      };
+      let pending = writeOnce();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      // Windows can acknowledge its in-flight slot; the next write creates native backpressure.
+      if (pending.callbacks > 0) {
+        expect(pending.callbacks).toBe(1);
+        expect((await pending.written.promise) ?? null).toBeNull();
+        pending = writeOnce();
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      expect(pending.returned).toBe(false);
+      expect(pending.callbacks).toBe(0);
+      stdin.destroy(destroyed);
+      // A broken cancellation has no completion event; bound the wait so finally can stop the child.
+      watchdog = setTimeout(() => pending.written.reject(new Error("pending write was not canceled")), 3000);
+      const writeError = await pending.written.promise;
+      expect(child.exitCode).toBeNull();
+      expect(writeError).toBeInstanceOf(Error);
+      expect(writeError).toMatchObject({
+        name: "Error",
+        code: "ECANCELED",
+        message: "write ECANCELED",
+        errno: process.binding("uv").UV_ECANCELED,
+        syscall: "write",
+      });
+      await stdinClosed;
+      expect(pending.callbacks).toBe(1);
+      expect(errors).toEqual(withError ? [destroyed] : []);
+      if (withError) expect(errors[0]).toBe(destroyed);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      clearTimeout(watchdog);
+      child.kill();
+      await childClosed;
+    }
+    for (const attempt of attempts) expect(attempt.callbacks).toBe(1);
+  },
+);
+
+it.each([false, true])("flushes an acknowledged stdin write on destroy (Writable write: %s)", async viaWritable => {
+  const child = spawn(bunExe(), ["-e", "process.stdout.write('ready\\n'); process.stdin.pipe(process.stdout)"], {
+    env: bunEnv,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const childClosed = once(child, "close");
+  const stdin = child.stdin!;
+  let output = "";
+  let stderr = "";
+  child.stdout!.on("data", chunk => (output += chunk));
+  child.stderr!.on("data", chunk => (stderr += chunk));
+  const written = Promise.withResolvers<Error | null | undefined>();
+  let callbacks = 0;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      once(child.stdout!, "data"),
+      childClosed.then(() => {
+        throw new Error("child exited before readiness");
+      }),
+    ]);
+    const write = viaWritable ? Writable.prototype.write : stdin.write;
+    write.call(stdin, "marker", error => {
+      callbacks++;
+      written.resolve(error);
+    });
+    stdin.destroy();
+    // Bound a broken close so cleanup can stop the child.
+    const timeout = new Promise<never>((_, reject) => {
+      watchdog = setTimeout(() => reject(new Error("stdin did not close")), 3000);
+    });
+    const [code] = await Promise.race([childClosed, timeout]);
+    expect(output).toBe("ready\nmarker");
+    expect(stderr).toBe("");
+    expect((await written.promise) ?? null).toBeNull();
+    expect(callbacks).toBe(1);
+    expect(code).toBe(0);
+  } finally {
+    clearTimeout(watchdog);
+    child.kill();
+    await childClosed;
+  }
 });

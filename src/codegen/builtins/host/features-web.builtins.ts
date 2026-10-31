@@ -196,4 +196,5 @@ export default b.declarations(
     ...nativeBindings("Bindgen", "proxy_testing.bind.ts", "noProxyMatches", "parseURL", "proxyFor"),
   ),
   extendAll(["InternalForTesting", "WebStreams"], ...nativeBindings("Bindgen", "ByteStream.bind.ts", "cancelOnDrain")),
+  extendAll(["FileSink"], ...nativeBindings("Bindgen", "FileSink.bind.ts", "cancel")),
 );

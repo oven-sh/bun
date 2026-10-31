@@ -89,6 +89,7 @@ declare global {
       bytesWritten: number;
       destroySoon: Writable["end"];
       [kWriteMonkeyPatchDefense]?: boolean;
+      [kFileSinkStdin]?: true;
     }
   }
 }
@@ -104,6 +105,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+const kFileSinkStdin = Symbol("kFileSinkStdin");
 const kFs = Symbol("kFs");
 
 let FileHandle: FileHandleInternals["FileHandle"] | undefined;
@@ -761,6 +763,14 @@ function _write(this: $Node.WriteStream, data: Buffer, encoding: string, cb: Err
 }
 writeStreamPrototype._write = _write;
 
+function fileSinkWriteError(stream: $Node.WriteStream, err: any) {
+  if (stream[kFileSinkStdin] && stream.destroyed && err?.code === "ECANCELED") {
+    const { ErrnoException } = require("internal/shared");
+    return new ErrnoException(process.binding("uv").UV_ECANCELED, "write");
+  }
+  return err;
+}
+
 function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: string, cb: ErrorCallback) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
@@ -782,6 +792,7 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
           emitDrain(this);
         },
         err => {
+          err = fileSinkWriteError(this, err);
           if (cb) cb(err);
           require("internal/streams/destroy").errorOrDestroy(this, err);
         },
@@ -855,6 +866,7 @@ function writeFast(
           cb(null);
         },
         err => {
+          err = fileSinkWriteError(this, err);
           cb(err);
           // Node.js onwriteError: callback AND destroy are both invoked; the
           // callback is additive, not a replacement for the 'error' event.
@@ -998,7 +1010,18 @@ function writableFromFileSink(fileSink: FileSink) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  w[kFileSinkStdin] = true;
+  w._destroy = destroyFileSink;
   return w;
+}
+
+function destroyFileSink(this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
+  if (this.writableFinished || !$bindgen("FileSink.bind.ts", "cancel")(this[kWriteStreamFastPath])) {
+    close(this, err, cb);
+    return;
+  }
+  this.fd = null;
+  cb(err);
 }
 
 export default {

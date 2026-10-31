@@ -549,6 +549,29 @@ describe("ES Decorators", () => {
       expect(stderr).toContain('Expected "class" but found "export"');
       expect(exitCode).not.toBe(0);
     });
+
+    test.concurrent.each(["ts", "js"])("`in` in a parenthesized decorator in a for initializer (.%s)", async ext => {
+      const run = ext === "ts" ? runDecoratorTS : runDecorator;
+      const { stdout, stderr, exitCode } = await run(`
+        const dec = tag => (cls, ctx) => {
+          console.log(tag, ctx.kind);
+          return cls;
+        };
+        for (var C = @("a" in { a: 1 } ? dec("yes") : dec("no")) class {}; ; ) break;
+        console.log(typeof C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("yes class\nfunction\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("`in` after a decorated class expression still ends a for initializer", async () => {
+      const { stderr, exitCode } = await runDecorator(`
+        for (var C = @("a" in {} ? d : d) class {} in {}; ; ) break;
+      `);
+      expect(stderr).toContain('error: Expected ")" but found ";"');
+      expect(exitCode).not.toBe(0);
+    });
   });
 
   describe("metadata", () => {

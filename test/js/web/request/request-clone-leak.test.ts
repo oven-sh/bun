@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, withoutAsanQuarantine } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAsanQuarantine } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Guards `new Request()` and `request.clone()` against a native leak on every
@@ -27,17 +28,29 @@ const shapes = [
   ["url", "headers"],
 ] as const;
 
-// With the leak of #12387 put back, one `new Request(request)` measures 194
-// bytes on a release build and 580 on an ASAN build, whose body slot is larger
-// and has a redzone. The bound is a third of that. A run with no leak measures
-// 8 at most on a release build, 12 on an ASAN build and 59 on a debug build.
-const maxBytesPerIteration = isASAN || isDebug ? 192 : 64;
+// The fixture sums /proc/self/smaps where the kernel serves that file, which
+// is exact. Elsewhere it reads the resident set size.
+function smapsIsReadable(): boolean {
+  try {
+    return readFileSync("/proc/self/smaps", "utf8").includes("\nAnonymous:");
+  } catch {
+    return false;
+  }
+}
+const source = smapsIsReadable() ? "smaps" : "rss";
+
+// The release bound is that of the in-process form of this test: 30 MB for
+// 1,000,000 requests. With the leak of #12387 put back, one
+// `new Request(request)` measures 194 bytes on a release build and 580 on an
+// ASAN build, whose body slot is larger and has a redzone. A run with no leak
+// measures 1 at most on a release build, 4 on an ASAN build and 59 on a debug
+// build.
+const maxBytesPerIteration = isDebug ? 192 : isASAN ? 64 : 32;
 // The loop is long enough that the bound, summed over the run, is well above
-// what a run with no leak moves by. On Linux the fixture reads an exact
-// number, so a short loop is enough. A debug build can only run a short one:
-// it spends 40 to 200 µs on each request, a release build 2. Elsewhere the
-// bound sums to 29 MB over the run.
-const iterationsPerRound = !isLinux ? 25_000 : isDebug ? 250 : isASAN ? 1000 : 5000;
+// what a run with no leak moves by: the release bound sums to 14 MB. An ASAN
+// build spends 15 µs on each request and a debug build 40 to 200, where a
+// release build spends 2. They run a shorter loop, which is enough with smaps.
+const iterationsPerRound = isDebug ? 250 : isASAN ? 2500 : 25_000;
 const rounds = 20;
 const warmupRounds = 2;
 
@@ -63,6 +76,7 @@ async function expectNoLeak(op: "construct" | "clone", [input, headers]: (typeof
       op,
       input,
       headers,
+      source,
       String(rounds),
       String(iterationsPerRound),
     ],
@@ -71,7 +85,8 @@ async function expectNoLeak(op: "construct" | "clone", [input, headers]: (typeof
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  // A fixture that dies prints no report, so this comes before the JSON.
+  expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
   const { samples, ...report } = JSON.parse(stdout) as { samples: number[] };
   // The loop copied a request that has the url, the method, the header and the
   // body, and so does its clone.
@@ -89,15 +104,30 @@ async function expectNoLeak(op: "construct" | "clone", [input, headers]: (typeof
   const bytesPerIteration = growthPerIteration(samples);
   console.log(op, input, headers + ":", bytesPerIteration.toFixed(1), "bytes per iteration");
   expect(bytesPerIteration).toBeLessThan(maxBytesPerIteration);
-  expect(exitCode).toBe(0);
 }
 
-// Without smaps the fixture reads the resident set size, which needs the long
-// loop, and a debug or ASAN build is too slow for it. No CI lane runs such a
-// build outside Linux.
-const tooSlowForALongLoop = !isLinux && (isDebug || isASAN);
+// The resident set size needs the long loop, and a debug or ASAN build is too
+// slow for it. No CI lane runs such a build without smaps.
+const tooSlowForALongLoop = source === "rss" && (isDebug || isASAN);
 
 for (const [i, shape] of shapes.entries()) {
   test.skipIf(tooSlowForALongLoop).concurrent("new Request(test #" + i + ")", () => expectNoLeak("construct", shape));
   test.skipIf(tooSlowForALongLoop).concurrent("request.clone(test #" + i + ")", () => expectNoLeak("clone", shape));
 }
+
+// The fixture runs without the quarantine, where ASAN gives a freed block to
+// the next allocation and can miss a read of it. This loop keeps the
+// constructor, clone() and the finalizers under the default quarantine, as
+// every loop of this file was before.
+test("a clone keeps its body after its request is collected", async () => {
+  const url = "http://foo/";
+  for (const headers of [undefined, { "test-header": "value" }]) {
+    const init = { body: "ahoyhoy", method: "POST", headers };
+    for (const args of [[new Request(url, init)], [url, init], [new URL(url), init]] as [any, RequestInit?][]) {
+      let clone = new Request(...args).clone();
+      for (let i = 0; i < 1000; i++) clone = new Request(...args).clone();
+      Bun.gc(true);
+      expect(await clone.text()).toBe("ahoyhoy");
+    }
+  }
+});

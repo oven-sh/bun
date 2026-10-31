@@ -5,15 +5,16 @@
 // JSON line with the request the loop builds and the samples. The test decides
 // what is a leak.
 //
-// argv: <"construct" | "clone"> <"request" | "string" | "url"> <"headers" | "no-headers"> <rounds> <iterationsPerRound>
+// argv: <"construct" | "clone"> <"request" | "string" | "url"> <"headers" | "no-headers"> <"smaps" | "rss"> <rounds> <iterationsPerRound>
 import { readFileSync } from "node:fs";
 
-const [op, input, headers] = process.argv.slice(2) as [
+const [op, input, headers, source] = process.argv.slice(2) as [
   "construct" | "clone",
   "request" | "string" | "url",
   "headers" | "no-headers",
+  "smaps" | "rss",
 ];
-const [rounds, iterationsPerRound] = process.argv.slice(5).map(Number);
+const [rounds, iterationsPerRound] = process.argv.slice(6).map(Number);
 
 const url = "http://foo/";
 const init: RequestInit = { body: "ahoyhoy", method: "POST" };
@@ -68,14 +69,9 @@ function anonymousBytes(): number {
   return kilobytes * 1024;
 }
 
-// Some sandboxes have no smaps. One source serves the whole run, because the
-// two do not count the same pages.
-let residentBytes: () => number = process.memoryUsage.rss;
-if (process.platform === "linux") {
-  try {
-    if (anonymousBytes() > 0) residentBytes = anonymousBytes;
-  } catch {}
-}
+// The test passes "smaps" where the kernel serves that file. One source serves
+// the whole run, because the two do not count the same pages.
+const residentBytes = source === "smaps" ? anonymousBytes : process.memoryUsage.rss;
 
 const args = constructorArgs();
 const samples: number[] = [];

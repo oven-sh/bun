@@ -1,15 +1,25 @@
 #include "root.h"
 #include "headers.h"
+#include "UtilInspect.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 #include "JSBuffer.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/ArrayPrototype.h"
+#include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/ObjectPrototype.h"
+#include "JavaScriptCore/RegExpPrototype.h"
+#include "JavaScriptCore/StringPrototype.h"
+#include "JavaScriptCore/JSPromisePrototype.h"
+#include "JavaScriptCore/JSTypedArrayViewPrototype.h"
 #include "JavaScriptCore/IdentifierInlines.h"
 
 namespace Bun {
@@ -38,6 +48,51 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     options->putDirectOffset(vm, 1, jsNumber(max_depth));
     options->putDirectOffset(vm, 2, jsBoolean(colors));
     return options;
+}
+
+// wellKnownPrototypes of https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L882-L904
+JSC::JSValue createWellKnownPrototypes(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // From the global object: the program can have replaced `globalThis.Date` or the prototype of `Uint8Array`.
+    const std::pair<JSObject*, ASCIILiteral> entries[] = {
+        { globalObject->arrayPrototype(), "Array"_s },
+        { globalObject->arrayBufferPrototype(ArrayBufferSharingMode::Default), "ArrayBuffer"_s },
+        { globalObject->functionPrototype(), "Function"_s },
+        { globalObject->mapPrototype(), "Map"_s },
+        { globalObject->jsSetPrototype(), "Set"_s },
+        { globalObject->objectPrototype(), "Object"_s },
+        { globalObject->m_typedArrayProto.get(globalObject), "TypedArray"_s },
+        { globalObject->regExpPrototype(), "RegExp"_s },
+        { globalObject->datePrototype(), "Date"_s },
+        { globalObject->typedArrayPrototype(TypeDataView), "DataView"_s },
+        { globalObject->errorPrototype(), "Error"_s },
+        { globalObject->errorStructure(ErrorType::AggregateError)->storedPrototypeObject(), "AggregateError"_s },
+        { globalObject->errorStructure(ErrorType::RangeError)->storedPrototypeObject(), "RangeError"_s },
+        { globalObject->errorStructure(ErrorType::TypeError)->storedPrototypeObject(), "TypeError"_s },
+        { globalObject->booleanPrototype(), "Boolean"_s },
+        { globalObject->numberPrototype(), "Number"_s },
+        { globalObject->stringPrototype(), "String"_s },
+        { globalObject->promisePrototype(), "Promise"_s },
+        { globalObject->weakMapStructure()->storedPrototypeObject(), "WeakMap"_s },
+        { globalObject->weakSetStructure()->storedPrototypeObject(), "WeakSet"_s },
+    };
+
+    JSMap* map = JSMap::create(vm, globalObject->mapStructure());
+    for (const auto& [prototype, name] : entries) {
+        // An atom, as a string literal of JavaScript is: `constructor === "Object"` then compares pointers.
+        map->set(globalObject, prototype, jsString(vm, makeAtomString(name)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return map;
+}
+
+// The program can have replaced `globalThis.Error`, and built-in JavaScript has no private name for it.
+JSC::JSValue errorPrototype(Zig::GlobalObject* globalObject)
+{
+    return globalObject->errorPrototype();
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(

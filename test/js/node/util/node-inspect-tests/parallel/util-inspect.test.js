@@ -3191,6 +3191,86 @@ test("no assertion failures 3", () => {
       "{ Symbol(Symbol.iterator): [Getter] }",
     );
   }
+
+  {
+    const o = {};
+    const { prototype: BuiltinPrototype } = Object;
+    const desc = Reflect.getOwnPropertyDescriptor(BuiltinPrototype, "constructor");
+    Object.defineProperty(BuiltinPrototype, "constructor", {
+      get: () => BuiltinPrototype,
+      configurable: true,
+    });
+    try {
+      assert.strictEqual(util.inspect(o), "{}");
+    } finally {
+      Object.defineProperty(BuiltinPrototype, "constructor", desc);
+    }
+  }
+
+  {
+    const o = { f() {} };
+    const { prototype: BuiltinPrototype } = Function;
+    const desc = Reflect.getOwnPropertyDescriptor(BuiltinPrototype, "constructor");
+    Object.defineProperty(BuiltinPrototype, "constructor", {
+      get: () => BuiltinPrototype,
+      configurable: true,
+    });
+    try {
+      assert.strictEqual(util.inspect(o), "{ f: [Function: f] }");
+    } finally {
+      Object.defineProperty(BuiltinPrototype, "constructor", desc);
+    }
+  }
+
+  {
+    const prototypes = [
+      Array.prototype,
+      ArrayBuffer.prototype,
+      Buffer.prototype,
+      Function.prototype,
+      Map.prototype,
+      Object.prototype,
+      Reflect.getPrototypeOf(Uint8Array.prototype),
+      Set.prototype,
+      Uint8Array.prototype,
+    ];
+    const descriptors = new Map();
+    const buffer = Buffer.from("Hello");
+    const o = {
+      arrayBuffer: new ArrayBuffer(),
+      buffer,
+      typedArray: Uint8Array.from(buffer),
+      array: [],
+      func() {},
+      set: new Set([1]),
+      map: new Map(),
+    };
+    for (const BuiltinPrototype of prototypes) {
+      descriptors.set(BuiltinPrototype, Reflect.getOwnPropertyDescriptor(BuiltinPrototype, "constructor"));
+      Object.defineProperty(BuiltinPrototype, "constructor", {
+        get: () => BuiltinPrototype,
+        configurable: true,
+      });
+    }
+    try {
+      assert.strictEqual(
+        util.inspect(o),
+        "{\n" +
+          "  arrayBuffer: ArrayBuffer { [Uint8Contents]: <>, [byteLength]: 0 },\n" +
+          "  buffer: <Buffer 48 65 6c 6c 6f>,\n" +
+          "  typedArray: TypedArray(5) [Uint8Array] [ 72, 101, 108, 108, 111 ],\n" +
+          "  array: [],\n" +
+          "  func: [Function: func],\n" +
+          "  set: Set(1) { 1 },\n" +
+          "  map: Map(0) {}\n" +
+          "}",
+      );
+    } finally {
+      for (const [BuiltinPrototype, desc] of descriptors) {
+        Object.defineProperty(BuiltinPrototype, "constructor", desc);
+      }
+    }
+  }
 });
 
 // Utility functions

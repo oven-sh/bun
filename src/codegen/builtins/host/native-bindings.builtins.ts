@@ -23,6 +23,29 @@ const vmBinding = "%NodeVMBinding%";
 const undeclaredFunction = b.otherwiseBy(b.generic);
 // The three functions lie in an array. No object stands for the holder, and each has the name that native code gives the function.
 const urlFunctions = "%NodeURLFunctions%";
+// The classes of `wellKnownPrototypes` in Node's lib/internal/util/inspect.js, as createWellKnownPrototypes of UtilInspect.cpp lists them.
+const [firstWellKnownPrototype, ...otherWellKnownPrototypes] = [
+  "Array",
+  "ArrayBuffer",
+  "Function",
+  "Map",
+  "Set",
+  "Object",
+  "%TypedArray%",
+  "RegExp",
+  "Date",
+  "DataView",
+  "Error",
+  "AggregateError",
+  "RangeError",
+  "TypeError",
+  "Boolean",
+  "Number",
+  "String",
+  "Promise",
+  "WeakMap",
+  "WeakSet",
+].map(name => b.builtin(`${name}.prototype`));
 
 const convertsDomain = {
   ...operandCodeOnly,
@@ -137,4 +160,12 @@ export default b.declarations(
 
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),
+
+  // The name under which util.inspect prints the values below each of these prototypes of the realm.
+  answers(
+    "native:Cpp:UtilInspect.cpp:createWellKnownPrototypes",
+    b.instance("Map").holding({ key: b.union(firstWellKnownPrototype, ...otherWellKnownPrototypes), value: b.string })
+      .fresh,
+  ),
+  answers("native:Cpp:UtilInspect.cpp:errorPrototype", b.builtin("Error.prototype")),
 );

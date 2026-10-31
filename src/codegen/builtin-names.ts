@@ -8,6 +8,7 @@ export const jscNames = {
     "getByIdDirect",
     "getByIdDirectPrivate",
     "getInternalField",
+    "getPrototypeOf",
     "getProxyInternalField",
     "isCallable",
     "isJSArray",

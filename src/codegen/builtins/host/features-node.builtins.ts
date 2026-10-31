@@ -214,6 +214,7 @@ export default b.declarations(
       "parseEnv",
       "uvTranslateSysError",
     ),
+    ...nativeBindings("Cpp", "UtilInspect.cpp", "createWellKnownPrototypes", "errorPrototype"),
     ...nativeBindings("NewCppFunction", "JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"),
     ...nativeBindings("NewCppFunction", "JSEventTargetNode.cpp", "jsFunctionNodeEventsGetEventListeners"),
     ...nativeBindings("NewCppFunction", "NodeUtilTypesModule.cpp", "jsFunctionIsError"),

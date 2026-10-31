@@ -258,20 +258,6 @@ declare global {
     interface Writable {
       write(chunk: unknown, encoding: string | null | undefined, callback: ErrorCallback | null | undefined): boolean;
     }
-
-    interface OutgoingMessageConstructor {
-      new (options?: OutgoingMessageOptions): OutgoingMessage;
-      (this: OutgoingMessage, options?: OutgoingMessageOptions): void;
-      /** The form of `ServerResponse` for a request of the native listener. */
-      (
-        this: OutgoingMessage,
-        marker: typeof kHandle,
-        highWaterMark: number | undefined,
-        rejectNonStandardBodyWrites: boolean | undefined,
-        keepAliveTimeout: number,
-      ): void;
-      prototype: any;
-    }
   }
 }
 

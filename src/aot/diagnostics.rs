@@ -23,8 +23,8 @@ use rustc_hash::FxHashMap;
 
 use self::int32_flows::Int32FlowKey;
 pub use self::shared::{InternalError, Severity};
+pub use self::sink::log_diagnostic;
 pub(crate) use self::sink::log_diagnostic_at;
-pub use self::sink::{log_diagnostic, log_internal_error};
 pub(crate) use self::spans::range_of_node;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::TypeSiteKind;

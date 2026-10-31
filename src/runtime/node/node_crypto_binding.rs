@@ -1060,15 +1060,8 @@ pub(crate) fn scrypt_with_defaults<'a>(
     password: StringOrJsBytes<'a>,
     salt: StringOrJsBytes<'a>,
     keylen: u32,
-    callback: JsLocal<'a>,
+    callback: JsLocal<'a, Callable>,
 ) -> JsResult<()> {
-    let Some(callback) = callback.as_callable() else {
-        return Err(cx.global().throw_invalid_argument_type_value(
-            b"callback",
-            b"function",
-            callback.to_js(),
-        ));
-    };
     scrypt(
         cx,
         password,

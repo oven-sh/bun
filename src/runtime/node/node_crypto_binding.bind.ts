@@ -152,17 +152,15 @@ export const crypto = b.namespace({
   getHashes: { returns: b.array(b.string.utf8) },
   scrypt: [
     {
-      /** `.default({})` so that an `undefined` fourth argument does not choose the other overload. */
-      args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions.default({}), callback: b.callable },
+      args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions, callback: b.callable },
       expected: { ...passwordAndSaltNames, callback: ["function"] },
       rustPath: "crate::node::crypto::scrypt",
       length: 5,
       ...js,
     },
-    /** Without a fifth argument the fourth is the callback, whatever it is: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L40-L44. The body reports one that is no function. */
     {
-      args: { ...passwordAndSaltHandles, keylen, callback: b.any },
-      expected: passwordAndSaltNames,
+      args: { ...passwordAndSaltHandles, keylen, callback: b.callable },
+      expected: { ...passwordAndSaltNames, callback: ["function"] },
       rustPath: "crate::node::crypto::scrypt_with_defaults",
       ...js,
     },

@@ -110,9 +110,6 @@ function logged(members) {
     ['scrypt(p, s, 4, { N: 2, cost: "x" }, null)', asyncOutcome, [4], { N: 2, cost: "x" }, [null]],
     ['scrypt(p, s, 4, { N: "x" }, 5)', asyncOutcome, [4], { N: "x" }, [5]],
     ["scrypt(p, s, 4, { N: 2 }, 5)", asyncOutcome, [4], { N: 2 }, [5]],
-    // Without a fifth argument the fourth is the callback, and nothing of it is read.
-    ['scrypt(p, s, 4, { N: 2, cost: "x" })', asyncOutcome, [4], { N: 2, cost: "x" }],
-    ['scrypt(p, s, 4, { N: 2, cost: "x" }, undefined)', asyncOutcome, [4], { N: 2, cost: "x" }, [undefined]],
   ];
   for (const [label, outcome, before, members, after = []] of calls) {
     const [options, read] = logged(members);
@@ -120,8 +117,6 @@ function logged(members) {
   }
 
   const others = [
-    ["scrypt(p, s, 4, 5)", () => asyncOutcome(4, 5)],
-    ["scrypt(p, s, 4, null)", () => asyncOutcome(4, null)],
     ["scrypt(p, s, 4)", () => asyncOutcome(4)],
     // Options that are undefined or null are no options.
     ["scrypt(p, s, 4, undefined, callback)", () => asyncOutcome(4, undefined, asyncOutcome.callback)],

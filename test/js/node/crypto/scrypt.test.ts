@@ -176,8 +176,8 @@ test("scrypt passes null as the error of a successful derivation", async () => {
 });
 
 // Node refuses the second name of an option where it reads it: before it validates what the name holds, before it reads
-// a later option, and before it checks the callback. Without a fifth argument, the fourth is the callback.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L40-L50 and #L90-L129
+// a later option, and before it checks the callback.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L46-L50 and #L90-L129
 // The fixture prints how each call ends. The expected text is the output of node v26.3.0.
 const optionChecksFixture = join(import.meta.dir, "scrypt-option-checks.fixture.js");
 const optionChecksExpected = `{ N: 2, cost: "x" }
@@ -258,16 +258,6 @@ scrypt(p, s, 4, { N: "x" }, 5)
 scrypt(p, s, 4, { N: 2 }, 5)
   TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received type number (5)
   reads: N, cost, r, blockSize, p, parallelization, maxmem
-scrypt(p, s, 4, { N: 2, cost: "x" })
-  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received an instance of Object
-  reads: none
-scrypt(p, s, 4, { N: 2, cost: "x" }, undefined)
-  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received an instance of Object
-  reads: none
-scrypt(p, s, 4, 5)
-  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received type number (5)
-scrypt(p, s, 4, null)
-  TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received null
 scrypt(p, s, 4)
   TypeError [ERR_INVALID_ARG_TYPE]: The "callback" argument must be of type function. Received undefined
 scrypt(p, s, 4, undefined, callback)

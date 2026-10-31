@@ -3795,6 +3795,85 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // https://github.com/oven-sh/bun/issues/45126
+    test("checks an object at every place it appears, not only the first", () => {
+      const o = { x: 1 };
+
+      // reused on the expected side
+      expect({ a: { x: 1 }, b: { x: 1 } }).toMatchObject({ a: o, b: o });
+      expect({ a: { x: 1 }, b: { x: 2 } }).not.toMatchObject({ a: o, b: o });
+      expect({ a: { x: 2 }, b: { x: 1 } }).not.toMatchObject({ a: o, b: o });
+
+      // reused on the received side
+      expect({ a: o, b: o }).toMatchObject({ a: { x: 1 }, b: { x: 1 } });
+      expect({ a: o, b: o }).not.toMatchObject({ a: { x: 1 }, b: { x: 2 } });
+
+      // reused one level deeper
+      expect({ a: { q: { x: 1 } }, b: { q: { x: 2 } } }).not.toMatchObject({ a: { q: o }, b: { q: o } });
+      expect({ a: { q: o }, b: { q: o } }).not.toMatchObject({ a: { q: { x: 1 } }, b: { q: { x: 2 } } });
+
+      // reused as array items
+      expect([{ x: 1 }, { x: 1 }]).toMatchObject([o, o]);
+      expect([{ x: 1 }, { x: 2 }]).not.toMatchObject([o, o]);
+      expect([o, o]).not.toMatchObject([{ x: 1 }, { x: 2 }]);
+
+      // reused asymmetric matcher object
+      const m = { id: expect.any(Number) };
+      expect([{ id: 1 }, { id: 2 }]).toMatchObject([m, m]);
+      expect([{ id: 1 }, { id: "2" }]).not.toMatchObject([m, m]);
+
+      // reused received object, a matcher at each place
+      const user = { id: 1 };
+      expect({ a: user, b: user }).not.toMatchObject({ a: { id: expect.any(Number) }, b: { id: expect.any(String) } });
+      expect({ a: user, b: user }).toMatchObject({ a: { id: expect.any(Number) }, b: { id: expect.any(Number) } });
+
+      // the same object on both sides at two places
+      expect({ a: o, b: o }).toMatchObject({ a: o, b: o });
+    });
+
+    test("a getter that throws inside a negated matcher stops the walk", () => {
+      let readB = 0;
+      const received = {
+        a: {
+          get x() {
+            throw new Error("boom");
+          },
+        },
+        get b() {
+          readB++;
+          return { y: 1 };
+        },
+      };
+      expect(() => expect(received).toMatchObject({ a: expect.not.objectContaining({ x: 1 }), b: { y: 1 } })).toThrow(
+        "boom",
+      );
+      expect(() => expect(received).toEqual({ a: expect.not.objectContaining({ x: 1 }), b: { y: 1 } })).toThrow("boom");
+      expect(readB).toBe(0);
+    });
+
+    test("a real cycle still matches", () => {
+      /** @type {any} */
+      const node = { id: 1 };
+      node.self = node;
+      /** @type {any} */
+      const pattern = { id: 1 };
+      pattern.self = pattern;
+      expect(node).toMatchObject(pattern);
+      expect(node).toMatchObject({ self: { self: { id: 1 } } });
+      expect(node).not.toMatchObject({ self: { self: { id: 2 } } });
+      expect({ a: node, b: node }).toMatchObject({ a: pattern, b: pattern });
+      expect({ a: node, b: { id: 2 } }).not.toMatchObject({ a: pattern, b: pattern });
+
+      /** @type {any} */
+      const ring = { id: "a", next: { id: "b", next: undefined } };
+      ring.next.next = ring;
+      /** @type {any} */
+      const ringPattern = { id: "a", next: { id: "b", next: undefined } };
+      ringPattern.next.next = ringPattern;
+      expect(ring).toMatchObject(ringPattern);
+      expect(ring).not.toMatchObject({ next: { next: { next: { id: "c" } } } });
+    });
   });
 
   describe("toMatch()", () => {

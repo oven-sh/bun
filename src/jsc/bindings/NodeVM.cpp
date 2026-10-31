@@ -8,7 +8,6 @@
 #include <JavaScriptCore/SourceProvider.h>
 
 #include "BunClientData.h"
-#include "FormatStackTraceForJS.h"
 #include "NodeVM.h"
 #include "CodeGenerationFromStrings.h"
 #include "NodeVMScript.h"
@@ -587,9 +586,7 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
     if (prepend.isNull()) [[unlikely]]
         return;
     const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
-    // The script that threw the error may have sealed or frozen it. A frozen error keeps its stack, without the header.
-    if (auto attributes = Bun::attributesForStackStore(vm, errorInstance))
-        errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), *attributes);
+    errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 

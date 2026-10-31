@@ -79,9 +79,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);
 JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
-// With which attributes to putDirect() `stack` once user code has had the object, or nullopt if a lock now forbids the store.
-std::optional<unsigned> attributesForStackStore(JSC::VM&, JSC::JSObject*);
-
 // Internal wrapper functions for JSC error info callbacks
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);

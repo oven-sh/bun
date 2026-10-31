@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
@@ -29,6 +29,88 @@ function readManifests(api: BundlerTestBundleAPI, file: string): Manifest[] {
     }
   }
   return manifests;
+}
+
+/** The script of the page that a bundled server entry point imports. */
+function readBrowserChunk(api: BundlerTestBundleAPI, file: string): string {
+  const [manifest] = readManifests(api, file);
+  return api.readFile(join("out", manifest.files.find(file => file.loader === "js")!.path));
+}
+
+/**
+ * Packages that a browser build and a server build resolve differently. `/server.js` and the
+ * script of the page it imports both import them, and each side prints what it got.
+ */
+function serverAndPage(target: "bun" | "node", show = "") {
+  const packages = `
+    import map from "browser-map";
+    import mode from "conditions/mode";
+    import platform from "conditions/platform";
+    import addons from "conditions/addons";
+  `;
+  const result = `browser: process.browser, map, mode, platform, addons${show && ", " + show}`;
+  return {
+    // The html loader is on by default for bun and the browser only.
+    "/server.js": `
+      import page from "./client.html"${target === "node" ? ` with { type: "html" }` : ""};
+      ${packages}
+      console.log("server", JSON.stringify({ ${result} }));
+      // Run the script of the page.
+      await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+    `,
+    "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+    "/client.js": `
+      ${packages}
+      import field from "browser-field";
+      console.log("client", JSON.stringify({ ${result}, field }));
+    `,
+
+    // The object form of "browser" replaces files, and removes them with `false`.
+    "/node_modules/browser-map/package.json": JSON.stringify({
+      name: "browser-map",
+      version: "1.0.0",
+      main: "./index.js",
+      browser: { "./impl.js": "./impl-browser.js", "./server-only.js": false, "fs": false },
+    }),
+    "/node_modules/browser-map/index.js": `
+      import impl from "./impl.js";
+      import { value } from "./server-only.js";
+      import * as fs from "fs";
+      export default { impl, serverOnly: typeof value, readFile: typeof fs.readFileSync };
+    `,
+    "/node_modules/browser-map/impl.js": `export default "impl";`,
+    "/node_modules/browser-map/impl-browser.js": `export default "impl-browser";`,
+    "/node_modules/browser-map/server-only.js": `export const value = "server-only";`,
+
+    // The string form of "browser" is a main field.
+    "/node_modules/browser-field/package.json": JSON.stringify({
+      name: "browser-field",
+      version: "1.0.0",
+      main: "./main.js",
+      module: "./module.js",
+      browser: "./browser.js",
+    }),
+    "/node_modules/browser-field/main.js": `module.exports = "main";`,
+    "/node_modules/browser-field/module.js": `export default "module";`,
+    "/node_modules/browser-field/browser.js": `export default "browser";`,
+
+    "/node_modules/conditions/package.json": JSON.stringify({
+      name: "conditions",
+      version: "1.0.0",
+      exports: {
+        "./mode": { custom: "./custom.js", development: "./development.js", default: "./production.js" },
+        "./platform": { bun: "./bun.js", node: "./node.js", browser: "./browser.js" },
+        // Only a server can load a node addon.
+        "./addons": { "node-addons": "./addon.js", default: "./fallback.js" },
+      },
+    }),
+    ...Object.fromEntries(
+      ["custom", "development", "production", "bun", "node", "browser", "addon", "fallback"].map(name => [
+        `/node_modules/conditions/${name}.js`,
+        `export default "${name}";`,
+      ]),
+    ),
+  };
 }
 
 /** `[input, loader]` of every manifest entry that came from a source file, sorted. */
@@ -726,5 +808,630 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('\\\"index\\\":\\\"./index.html\\\"');
       expect(entryCode).toContain('\\\"files\\\":[');
     },
+  });
+  // The page of an HTML import is a browser build, whatever the target of the server is. It
+  // resolves packages and replaces defines as `bun build client.html` does: `--conditions` and
+  // `--main-fields` say how the server resolves a package, and do not reach the page.
+  const serverSees = (target: "bun" | "node", mode: string, rest = "") =>
+    `server {"browser":false,"map":{"impl":"impl","serverOnly":"string","readFile":"function"},` +
+    `"mode":"${mode}","platform":"${target}","addons":"addon"${rest}}`;
+  const pageSees = (mode: string, rest = "") =>
+    `client {"browser":true,"map":{"impl":"impl-browser","serverOnly":"undefined","readFile":"undefined"},` +
+    `"mode":"${mode}","platform":"browser","addons":"fallback"${rest},"field":"browser"}`;
+
+  for (const target of ["bun", "node"] as const) {
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`html-import/browser-chunk-resolves-for-the-browser/${target}/${backend}`, {
+        outdir: "out/",
+        target,
+        backend,
+        files: serverAndPage(target),
+        entryPoints: ["/server.js"],
+        run: { stdout: [serverSees(target, "development"), pageSees("development")].join("\n") },
+        onAfterBundle(api) {
+          // `fs` is not left as an import for the browser to fail on.
+          expect(new Bun.Transpiler().scanImports(readBrowserChunk(api, "out/server.js"))).toEqual([]);
+        },
+      });
+    }
+  }
+
+  const pageImportsServerBuiltins = {
+    "/server.js": `
+      import page from "./client.html";
+      console.log(page);
+    `,
+    "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+    "/client.js": `
+      import { Database } from "bun:sqlite";
+      import { spawn } from "child_process";
+      console.log(Database, spawn);
+    `,
+  };
+  const loadedByAnHtmlFile =
+    "This file is loaded by an HTML file, so it is bundled for the browser. " +
+    "Use this import only in files that no HTML file loads";
+
+  for (const backend of ["api", "cli"] as const) {
+    // The shape of #24077: a dependency that only its `require("fs")` keeps out of the browser.
+    itBundled(`html-import/browser-chunk-polyfills-node-builtins/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: {
+        "/server.js": `
+          import page from "./client.html";
+          await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+        `,
+        "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+        "/client.js": `
+          import path from "node:path";
+          import { EventEmitter } from "node:events";
+          import builtins from "uses-builtins";
+          console.log(JSON.stringify({ join: path.join("a", "b"), emitter: typeof EventEmitter, ...builtins }));
+        `,
+        "/node_modules/uses-builtins/package.json": JSON.stringify({
+          name: "uses-builtins",
+          version: "1.0.0",
+          main: "./index.js",
+        }),
+        "/node_modules/uses-builtins/index.js": `
+          var fs = require("fs");
+          var Url = require("url");
+          module.exports = { readFile: typeof fs.readFileSync, parse: typeof Url.parse };
+        `,
+      },
+      entryPoints: ["/server.js"],
+      run: { stdout: `{"join":"a/b","emitter":"function","readFile":"undefined","parse":"function"}` },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(readBrowserChunk(api, "out/server.js"))).toEqual([]);
+      },
+    });
+
+    itBundled(`html-import/browser-chunk-keeps-the-conditions-of-the-browser/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      conditions: ["custom"],
+      files: serverAndPage("bun"),
+      entryPoints: ["/server.js"],
+      run: { stdout: [serverSees("bun", "custom"), pageSees("development")].join("\n") },
+    });
+
+    // The target of the build is the target of the server, so the error does not ask for another one.
+    itBundled(`html-import/browser-chunk-builtin-error-names-the-page/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: pageImportsServerBuiltins,
+      entryPoints: ["/server.js"],
+      bundleErrors: {
+        "/client.js": [
+          `Browser build cannot import Bun builtin: "bun:sqlite". ${loadedByAnHtmlFile}`,
+          `Browser build cannot import Node.js builtin: "child_process". ${loadedByAnHtmlFile}`,
+        ],
+      },
+    });
+
+    // A file of the server keeps the hint of its own graph.
+    itBundled(`html-import/browser-chunk-builtin-error-names-the-page/node/${backend}`, {
+      outdir: "out/",
+      target: "node",
+      backend,
+      files: {
+        "/server.js": `
+          import page from "./client.html" with { type: "html" };
+          import "./imports-bun.js";
+          console.log(page);
+        `,
+        "/imports-bun.js": `import bun from "bun"; console.log(bun);`,
+        "/client.html": pageImportsServerBuiltins["/client.html"],
+        "/client.js": `import bun from "bun"; console.log(bun);`,
+      },
+      entryPoints: ["/server.js"],
+      bundleErrors: {
+        "/imports-bun.js": [
+          `Browser build cannot import Bun builtin: "bun". When bundling for Bun, set target to 'bun'`,
+        ],
+        "/client.js": [`Browser build cannot import Bun builtin: "bun". ${loadedByAnHtmlFile}`],
+      },
+    });
+
+    // The polyfill of a Node.js builtin does not have every export. A module that the server
+    // also imports is bundled for the page too.
+    itBundled(`html-import/browser-chunk-polyfill-error-names-the-page/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: {
+        "/server.js": `
+          import page from "./client.html";
+          import { here } from "./shared.js";
+          console.log(page, here());
+        `,
+        "/client.html": pageImportsServerBuiltins["/client.html"],
+        "/client.js": `
+          import { clamp } from "./shared.js";
+          console.log(clamp(3));
+        `,
+        "/shared.js": `
+          import { fileURLToPath } from "node:url";
+          export const here = () => fileURLToPath(import.meta.url);
+          export const clamp = n => Math.min(n, 2);
+        `,
+      },
+      entryPoints: ["/server.js"],
+      bundleErrors: {
+        "/shared.js": [`Browser polyfill for module "node:url" doesn't have a matching export named "fileURLToPath"`],
+      },
+    });
+
+    // An HTML entry point is a page too.
+    itBundled(`html-import/html-entry-point-of-a-server-build/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: serverAndPage("bun"),
+      entryPoints: ["/client.html"],
+      async onAfterBundle(api) {
+        const script = api.readFile("out/client.html").match(/src="([^"]+\.js)"/)![1];
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), api.join(join("out", script))],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr }).toEqual({ stdout: pageSees("development") + "\n", stderr: "" });
+        expect(exitCode).toBe(0);
+      },
+    });
+  }
+
+  // An import that a plugin declines to resolve fails with a message of its own.
+  itBundled("html-import/browser-chunk-builtin-error-names-the-page/plugin", {
+    outdir: "out/",
+    target: "bun",
+    files: pageImportsServerBuiltins,
+    entryPoints: ["/server.js"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^child_process$/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/client.js": [
+        `Browser build cannot import Bun builtin: "bun:sqlite". ${loadedByAnHtmlFile}`,
+        `Browser build cannot import Node.js module: "child_process". ${loadedByAnHtmlFile}`,
+      ],
+    },
+  });
+
+  // A build for the browser has a target to set, and keeps that hint.
+  const setTarget = "To use Node.js builtins, set target to 'node' or 'bun'";
+  itBundled("html-import/browser-build-keeps-its-hint", {
+    outdir: "out/",
+    target: "browser",
+    files: { "/client.js": pageImportsServerBuiltins["/client.js"] },
+    entryPoints: ["/client.js"],
+    bundleErrors: {
+      "/client.js": [
+        `Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+        `Browser build cannot import Node.js builtin: "child_process". ${setTarget}`,
+      ],
+    },
+  });
+  itBundled("html-import/browser-build-keeps-its-hint/plugin", {
+    outdir: "out/",
+    target: "browser",
+    files: { "/client.js": pageImportsServerBuiltins["/client.js"] },
+    entryPoints: ["/client.js"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^child_process$/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/client.js": [
+        `Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+        `Browser build cannot import Node.js module: "child_process". ${setTarget}`,
+      ],
+    },
+  });
+
+  // The define table of the page is built again for the browser. What does not depend on the
+  // target stays as it was.
+  const nodeEnv = "env: [process.env.NODE_ENV, process.env.BUN_ENV]";
+  itBundled("html-import/browser-chunk-node-env/default", {
+    outdir: "out/",
+    target: "bun",
+    backend: "cli",
+    files: serverAndPage("bun", nodeEnv),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "development", `,"env":["development","development"]`),
+        pageSees("development", `,"env":["development","development"]`),
+      ].join("\n"),
+    },
+  });
+  itBundled("html-import/browser-chunk-node-env/production", {
+    outdir: "out/",
+    target: "bun",
+    production: true,
+    files: serverAndPage("bun", nodeEnv),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "production", `,"env":["production","production"]`),
+        pageSees("production", `,"env":["production","production"]`),
+      ].join("\n"),
+    },
+  });
+  itBundled("html-import/browser-chunk-node-env/define", {
+    outdir: "out/",
+    target: "bun",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"production"' },
+    files: serverAndPage("bun", nodeEnv),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "production", `,"env":["production","development"]`),
+        pageSees("production", `,"env":["production","development"]`),
+      ].join("\n"),
+    },
+  });
+  // A value that is not a literal is parsed again for the table of the page.
+  for (const backend of ["api", "cli"] as const) {
+    const defined = `,"config":{"a":[1,2]},"label":"a label"`;
+    itBundled(`html-import/browser-chunk-json-define/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      define: { CONFIG: '{"a":[1,2]}', LABEL: '"a label"' },
+      files: serverAndPage("bun", "config: CONFIG, label: LABEL"),
+      entryPoints: ["/server.js"],
+      run: { stdout: [serverSees("bun", "development", defined), pageSees("development", defined)].join("\n") },
+    });
+  }
+  itBundled("html-import/browser-chunk-inlines-env", {
+    outdir: "out/",
+    target: "bun",
+    dotenv: "PUBLIC_*",
+    env: { PUBLIC_NAME: "inlined" },
+    files: serverAndPage("bun", "name: process.env.PUBLIC_NAME"),
+    entryPoints: ["/server.js"],
+    run: {
+      stdout: [
+        serverSees("bun", "development", `,"name":"inlined"`),
+        pageSees("development", `,"name":"inlined"`),
+      ].join("\n"),
+    },
+  });
+
+  test("html-import/browser-chunk-keeps-the-main-fields-of-the-browser", async () => {
+    const fields = { version: "1.0.0", main: "./main.js", module: "./module.js", browser: "./browser.js" };
+    const files = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, ...fields }),
+      [`node_modules/${name}/main.js`]: `module.exports = "main";`,
+      [`node_modules/${name}/module.js`]: `export default "module";`,
+      [`node_modules/${name}/browser.js`]: `export default "browser";`,
+    });
+    using dir = tempDir("html-import-main-fields", {
+      "server.js": `
+        import page from "./client.html";
+        import field from "for-the-server";
+        console.log("server", field);
+        await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+      `,
+      "client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "client.js": `
+        import field from "for-the-page";
+        const required = require("required-by-the-page");
+        console.log("client", field, JSON.stringify(required));
+      `,
+      ...files("for-the-server"),
+      ...files("for-the-page"),
+      // With the default main fields, `require()` of a package that has "main" and "module"
+      // gets "main". Only the page imports this one: a package.json is read once per process.
+      ...files("required-by-the-page"),
+      "node_modules/required-by-the-page/package.json": JSON.stringify({
+        name: "required-by-the-page",
+        version: fields.version,
+        main: fields.main,
+        module: fields.module,
+      }),
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "--main-fields=main", "./server.js", "--outdir=out"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect(await Promise.all([build.stderr.text(), build.exited])).toEqual(["", 0]);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "server.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: 'server main\nclient browser "main"\n', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // `--extension-order` is for both graphs. Without it, only bun looks for `.node` files.
+  test("html-import/browser-chunk-keeps-the-extension-order-flag", async () => {
+    const script = (name: string) => `
+      const dep = require("./dep");
+      let addon = "none";
+      try {
+        addon = typeof require("./addon");
+      } catch {}
+      console.log("${name}", dep.from, addon);
+    `;
+    using dir = tempDir("html-import-extension-order", {
+      "server.js": `import page from "./client.html"; console.log(page); ${script("server")}`,
+      "client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "client.js": script("client"),
+      "dep.ts": `exports.from = "dep.ts";`,
+      "dep.js": `exports.from = "dep.js";`,
+      "addon.node": "not a real addon",
+    });
+
+    async function build(outdir: string, ...flags: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=bun", ...flags, "./server.js", `--outdir=${outdir}`],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const out = join(String(dir), outdir);
+      const names = [...new Bun.Glob("*").scanSync({ cwd: out })].sort();
+      const resolved = (name: string) => {
+        const text = readFileSync(join(out, name), "utf8");
+        return { dep: text.match(/"(dep\.[jt]s)"/)?.[1], addon: text.includes(".node") };
+      };
+      return {
+        stderr,
+        exitCode,
+        files: names.map(name => name.replace(/-[a-z0-9]+\./, "-[hash].")),
+        server: names.includes("server.js") && resolved("server.js"),
+        page: names.filter(name => /^client-.*\.js$/.test(name)).map(resolved),
+      };
+    }
+
+    expect(await build("out")).toEqual({
+      stderr: "",
+      exitCode: 0,
+      files: ["addon-[hash].node", "client-[hash].js", "client.html", "server.js"],
+      server: { dep: "dep.ts", addon: true },
+      page: [{ dep: "dep.ts", addon: false }],
+    });
+    expect(await build("out-flag", "--extension-order", ".js", "--extension-order", ".ts")).toEqual({
+      stderr: "",
+      exitCode: 0,
+      files: ["client-[hash].js", "client.html", "server.js"],
+      server: { dep: "dep.js", addon: false },
+      page: [{ dep: "dep.js", addon: false }],
+    });
+  });
+
+  // The note of the linker says why the file is a browser build.
+  test("html-import/browser-chunk-polyfill-warning-names-the-page", async () => {
+    using dir = tempDir("html-import-polyfill-warning", {
+      "server.js": `import page from "./client.html"; console.log(page);`,
+      "client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "client.js": `import * as url from "node:url"; console.log(typeof url.fileURLToPath);`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "./server.js", "--outdir=out"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(stderr).toContain(
+      `warn: Browser polyfill for module "node:url" doesn't have a matching export named "fileURLToPath"`,
+    );
+    expect(stderr).toContain(`note: ${loadedByAnHtmlFile}.`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The define table of the page is built deeper in the stack than the table of the server. So
+  // the deepest value that the server parses is too deep for the page, and the build fails.
+  test("html-import/browser-chunk-define-too-deep-for-the-page-fails-the-build", async () => {
+    using dir = tempDir("html-import-deep-define", {
+      "plain.js": `console.log("no page");`,
+      "server.js": `import page from "./client.html"; console.log(page);`,
+      "client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "client.js": `console.log("page");`,
+      "build.js": `
+        const build = async (entry, depth) => {
+          const DEEP = Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+          const result = await Bun.build({ entrypoints: [entry], target: "bun", define: { DEEP }, throw: false });
+          return result.logs.map(log => [log.message, ...log.notes.map(note => note.message)]);
+        };
+        // The deepest value that a build without a page accepts: double the depth until a build
+        // fails, then bisect. The limit is the stack of the platform, so there is no fixed bound.
+        const accepts = async depth => (await build("./plain.js", depth)).length === 0;
+        let low = 0;
+        let high = 128;
+        while (await accepts(high)) {
+          low = high;
+          high *= 2;
+        }
+        while (high - low > 1) {
+          const middle = (low + high) >> 1;
+          if (await accepts(middle)) low = middle;
+          else high = middle;
+        }
+        // An entry point that fails is skipped while other files are still parsed, so it runs a few times.
+        const entryPoint = new Set();
+        for (let i = 0; i < 3; i++) entryPoint.add(JSON.stringify(await build("./client.html", low)));
+        console.log(JSON.stringify({ imported: await build("./server.js", low), entryPoint: [...entryPoint].map(JSON.parse) }));
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const logs = [
+      ["JSON document is too deeply nested"],
+      [
+        `Could not bundle "./client.html" for the browser: a "define" value did not parse for its scripts`,
+        "The scripts of an HTML file get a define table of their own. Each value is parsed again for it, " +
+          "with less stack than the first time. Use a value with less nesting.",
+      ],
+    ];
+    const { imported, entryPoint } = stdout ? JSON.parse(stdout) : { imported: "no output", entryPoint: [] };
+    expect({ imported, stderr }).toEqual({ imported: logs, stderr: "" });
+    // An HTML entry point is only one level deeper than the server on a debug build. If a change
+    // to the stack makes the value parse for it, there is nothing to skip.
+    expect([[logs], [[]]]).toContainEqual(entryPoint);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun build --compile --target=browser page.html` has a transpiler for bun, and its page is a
+  // browser build too.
+  test("html-import/standalone-html-gets-the-polyfill-of-a-node-builtin", async () => {
+    using dir = tempDir("html-import-standalone-polyfill", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.js"></script></body></html>`,
+      "app.js": `
+        import { EventEmitter } from "events";
+        const emitter = new EventEmitter();
+        emitter.on("ready", value => console.log("ready", value, process.browser));
+        emitter.emit("ready", 1);
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", "./index.html", "--outdir=out"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect(await Promise.all([build.stderr.text(), build.exited])).toEqual(["", 0]);
+
+    const html = readFileSync(join(String(dir), "out", "index.html"), "utf8");
+    writeFileSync(join(String(dir), "inline.mjs"), html.match(/<script type="module">(.*?)<\/script>/s)![1]);
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "inline.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ready 1 true\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("html-import/standalone-html-cannot-import-a-bun-builtin", async () => {
+    using dir = tempDir("html-import-standalone-bun-builtin", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.js"></script></body></html>`,
+      "app.js": `import { Database } from "bun:sqlite"; console.log(Database);`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", "./index.html", "--outdir=out"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(stderr).toContain(`error: Browser build cannot import Bun builtin: "bun:sqlite". ${loadedByAnHtmlFile}`);
+    expect(exitCode).toBe(1);
+  });
+
+  // The browser graph of bake is not a page, and keeps the hint of a browser build.
+  test("html-import/bake-client-keeps-the-hint-of-a-browser-build", async () => {
+    using dir = tempDir("html-import-bake-hint", {
+      "client.ts": `import { Database } from "bun:sqlite"; console.log(Database);`,
+      "server.ts": `export function render() { return new Response("ok"); }`,
+      "routes/index.ts": `export default () => new Response("ok");`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(stderr).toContain(
+      `error: Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // A path in `external` is relative to the directory in which the build starts. The bundler
+  // reaches the page later, and the page takes the paths that the server has. This passes on
+  // main too, where the page was a copy of the server's options.
+  test("html-import/browser-chunk-keeps-the-external-paths-of-the-server", async () => {
+    using dir = tempDir("html-import-external-paths", {
+      "app/server.js": `
+        import page from "./client.html";
+        import vendor from "./vendor.js";
+        console.log(page, vendor);
+      `,
+      "app/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "app/client.js": `
+        import vendor from "./vendor.js";
+        console.log(vendor);
+      `,
+      "app/vendor.js": `export default "vendor";`,
+      "elsewhere/keep.txt": "",
+      "app/build.js": `
+        const result = await Bun.build({
+          entrypoints: ["./server.js"],
+          target: "bun",
+          external: ["./vendor.js"],
+          plugins: [
+            {
+              name: "chdir",
+              setup(build) {
+                // The page is found in the server entry point, so this runs before the page exists.
+                build.onLoad({ filter: /server\\.js$/ }, async ({ path }) => {
+                  process.chdir("../elsewhere");
+                  return { contents: await Bun.file(path).text(), loader: "js" };
+                });
+              },
+            },
+          ],
+        });
+        const imports = {};
+        for (const output of result.outputs) {
+          if (!output.path.endsWith(".js")) continue;
+          const paths = new Bun.Transpiler().scanImports(await output.text()).map(record => record.path);
+          imports[output.path.includes("server") ? "server" : "page"] = paths;
+        }
+        console.log(JSON.stringify(imports));
+      `,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: join(String(dir), "app"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ imports: stdout && JSON.parse(stdout), stderr }).toEqual({
+      imports: { server: ["./vendor.js"], page: ["./vendor.js"] },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });

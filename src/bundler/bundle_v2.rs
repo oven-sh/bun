@@ -1951,20 +1951,40 @@ pub mod bv2_impl {
             }
         }
 
-        fn ensure_client_transpiler(&mut self) {
+        /// An error is also in the log of the build, and the build fails on it. The caller skips `html`.
+        fn ensure_client_transpiler(
+            &mut self,
+            html: &[u8],
+            import: Option<(&bun_ast::Source, bun_ast::Range)>,
+        ) -> Result<(), Error> {
             if self.client_transpiler.is_none() {
-                let _ = self
-                    .initialize_client_transpiler()
-                    .unwrap_or_else(|e: Error| {
-                        panic!("Failed to initialize client transpiler: {}", e.name());
-                    });
+                if let Err(err) = self.initialize_client_transpiler() {
+                    let (source, range) = match import {
+                        Some((source, range)) => (Some(source), range),
+                        None => (None, bun_ast::Range::NONE),
+                    };
+                    self.transpiler.log_mut().add_range_error_fmt_with_note(
+                        source,
+                        range,
+                        format_args!(
+                            "Could not bundle \"{}\" for the browser: a \"define\" value did not parse for its scripts",
+                            bstr::BStr::new(html)
+                        ),
+                        format_args!(
+                            "The scripts of an HTML file get a define table of their own. Each value is parsed again for it, with less stack than the first time. Use a value with less nesting."
+                        ),
+                        range,
+                    );
+                    return Err(err);
+                }
             }
+            Ok(())
         }
 
         pub(crate) fn initialize_client_transpiler(
             &mut self,
         ) -> Result<&mut Transpiler<'a>, Error> {
-            // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
+            // Builds a fresh owned `Transpiler` via `Transpiler::for_target`
             // (per-field deep clone), mutates the browser-specific options with
             // ordinary assignment (every field is owned by the clone, so `Drop` on
             // the overwritten value is correct), then boxes it on the global heap
@@ -1974,7 +1994,7 @@ pub mod bv2_impl {
             // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
             // releases it.
 
-            // `arena` is only the scratch param for `Transpiler::for_worker`; the
+            // `arena` holds what the clone's define table points to; the
             // returned `Transpiler` itself is NOT placed in it.
             let arena = self.arena();
 
@@ -1983,24 +2003,17 @@ pub mod bv2_impl {
             let this_env = this_transpiler.env;
 
             // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
-            // outlives this `BundleV2<'a>`; `for_worker` widens those borrows to
+            // outlives this `BundleV2<'a>`; `for_target` widens those borrows to
             // the same `'a`.
-            let mut ct: Transpiler<'a> =
-                unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
+            let mut ct: Transpiler<'a> = unsafe {
+                Transpiler::for_target(this_transpiler, Target::Browser, arena, this_transpiler.log)
+            }?;
 
-            ct.options.target = Target::Browser;
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
                 ct.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
             }
-            ct.options.main_fields = Target::Browser
-                .default_main_fields()
-                .iter()
-                .map(|s| s.as_bytes().to_vec().into_boxed_slice())
-                .collect();
-            ct.options.conditions =
-                options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?;
 
             // We need to make sure it has [hash] in the names so we don't get conflicts.
             if this_compile {
@@ -2025,15 +2038,10 @@ pub mod bv2_impl {
             // leak them (bumpalo never drops).
             let mut boxed: Box<Transpiler<'a>> = Box::new(ct);
             // Log/allocator/linker-resolver/macro-context/cache wiring is all
-            // handled by `for_worker` + `wire_after_move`.
+            // handled by `for_target` + `wire_after_move`.
             boxed.wire_after_move();
 
-            // `configure_defines` early-returns on `options.defines_loaded` (cloned
-            // as `true`); kept for spec parity.
-            boxed.configure_defines()?;
-
-            // Re-project the resolver subset now that `target`/`conditions` etc.
-            // have been overwritten for the browser.
+            // Re-project the resolver subset now that `public_path` has been overwritten.
             boxed.sync_resolver_opts();
             boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
@@ -2046,6 +2054,16 @@ pub mod bv2_impl {
             let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
             self.client_transpiler = Some(bun_ptr::ParentRef::from_ref_mut(&mut *ct));
             Ok(ct)
+        }
+
+        /// The hint of a browser build says which target to set. A page has no such choice.
+        fn browser_build_hint(&self, graph: Target, set_target: &'static str) -> &'static str {
+            let build = self.transpiler.options.target;
+            if graph.is_page_of_server_build(build, self.framework.is_some()) {
+                options::PAGE_OF_SERVER_BUILD_HINT
+            } else {
+                set_target
+            }
         }
 
         /// By calling this function, it implies that the returned log *will* be
@@ -2839,9 +2857,10 @@ pub mod bv2_impl {
                                             source,
                                             import_record.range,
                                             format_args!(
-                                                "Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                                "Browser build cannot {} Node.js module: \"{}\"{}",
                                                 bstr::BStr::new(import_record.kind.error_label()),
-                                                bstr::BStr::new(path_to_use)
+                                                bstr::BStr::new(path_to_use),
+                                                self.browser_build_hint(target, ". To use Node.js builtins, set target to 'node' or 'bun'"),
                                             ),
                                             path_to_use,
                                             import_record.kind,
@@ -3222,10 +3241,9 @@ pub mod bv2_impl {
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // The Box is heap-owned and dropped by the caller.
-            transpiler.options.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
-            transpiler.resolver.opts.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            let keeps_builtins_external = transpiler.options.target.keeps_builtins_external();
+            transpiler.options.mark_builtins_as_external = keeps_builtins_external;
+            transpiler.resolver.opts.mark_builtins_as_external = keeps_builtins_external;
 
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all
@@ -3495,7 +3513,7 @@ pub mod bv2_impl {
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            for entry_point in data {
+            'entry_points: for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                     entry_point,
@@ -3532,7 +3550,9 @@ pub mod bv2_impl {
                         if let Some(path) = resolved.path_const() {
                             if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
                                 if loader == Loader::Html {
-                                    self.ensure_client_transpiler();
+                                    if self.ensure_client_transpiler(entry_point, None).is_err() {
+                                        continue 'entry_points;
+                                    }
                                     break 'brk Target::Browser;
                                 }
                             }
@@ -6911,7 +6931,7 @@ pub mod bv2_impl {
                                                     ),
                                                     bstr::BStr::new(&import_record.path.text),
                                                     if self.dev_server.is_none() {
-                                                        ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                                        self.browser_build_hint(ctx.target, ". To use Node.js builtins, set target to 'node' or 'bun'")
                                                     } else {
                                                         ""
                                                     },
@@ -6934,7 +6954,7 @@ pub mod bv2_impl {
                                                     ),
                                                     bstr::BStr::new(&import_record.path.text),
                                                     if self.dev_server.is_none() {
-                                                        ". When bundling for Bun, set target to 'bun'"
+                                                        self.browser_build_hint(ctx.target, ". When bundling for Bun, set target to 'bun'")
                                                     } else {
                                                         ""
                                                     },
@@ -7168,6 +7188,12 @@ pub mod bv2_impl {
                 }
 
                 if is_html_entrypoint {
+                    let import = Some((source, import_record.range));
+                    if let Err(err) = self.ensure_client_transpiler(import_record.path.text, import)
+                    {
+                        last_error = Some(err);
+                        continue;
+                    }
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
@@ -7260,6 +7286,9 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
+                if is_html_entrypoint && self.ensure_client_transpiler(key, None).is_err() {
+                    continue;
+                }
                 let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
                     &mut self.graph.build_graphs[Target::Browser]
                 } else {
@@ -7303,7 +7332,6 @@ pub mod bv2_impl {
                     let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
                     if is_html_entrypoint {
-                        self.ensure_client_transpiler();
                         self.graph
                             .entry_points
                             .push(bun_ast::Index(new_source_index));
@@ -7522,7 +7550,6 @@ pub mod bv2_impl {
                 .html_imports
                 .server_source_indices
                 .push(fake_source_index.0);
-            self.ensure_client_transpiler();
             Ok(())
         }
     }
